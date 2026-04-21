@@ -2,7 +2,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 
-const protectedRoutes = ["/dashboard", "/groups", "/leaderboard", "/profile"];
+const protectedRoutes = ["/dashboard", "/groups", "/leaderboard", "/profile", "/admin"];
 
 export async function middleware(request: NextRequest) {
   if (!hasSupabaseConfig()) {
@@ -57,6 +57,19 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
+  const isAdminRoute = request.nextUrl.pathname === "/admin" || request.nextUrl.pathname.startsWith("/admin/");
+
+  if (isAdminRoute && user) {
+    const { data: profile } = await supabase.from("users").select("role").eq("id", user.id).single();
+
+    if (profile?.role !== "admin") {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/dashboard";
+      redirectUrl.search = "";
+      return NextResponse.redirect(redirectUrl);
+    }
+  }
+
   if (request.nextUrl.pathname === "/login" && user) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
@@ -68,5 +81,12 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/groups/:path*", "/leaderboard/:path*", "/profile/:path*", "/login"]
+  matcher: [
+    "/admin/:path*",
+    "/dashboard/:path*",
+    "/groups/:path*",
+    "/leaderboard/:path*",
+    "/profile/:path*",
+    "/login"
+  ]
 };

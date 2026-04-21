@@ -1,7 +1,7 @@
 import type { Match, Prediction } from "@/lib/types";
 
-export function isPredictionLocked(match: Match, now = new Date()) {
-  return new Date(match.kickoffTime).getTime() <= now.getTime();
+export function isPredictionLocked(match: Match) {
+  return match.status === "final";
 }
 
 export function getPredictedOutcome(prediction: Prediction) {

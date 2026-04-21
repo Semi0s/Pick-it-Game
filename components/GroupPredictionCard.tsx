@@ -11,14 +11,17 @@ type GroupPredictionCardProps = {
   match: MatchWithTeams;
   prediction?: Prediction;
   userId: string;
-  onSave: (prediction: Prediction) => void;
+  onSave: (prediction: Prediction) => Promise<void>;
 };
 
 export function GroupPredictionCard({ match, prediction, userId, onSave }: GroupPredictionCardProps) {
   const locked = isPredictionLocked(match);
+  const isFinal = match.status === "final";
   const [homeScore, setHomeScore] = useState(getInitialScore(prediction?.predictedHomeScore));
   const [awayScore, setAwayScore] = useState(getInitialScore(prediction?.predictedAwayScore));
   const [saved, setSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const scoreOutcome = getOutcomeFromScore(homeScore, awayScore);
   const outcomeLabel = getOutcomeLabel(scoreOutcome, match);
   const hasUnsavedScoreChange =
@@ -32,33 +35,47 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
     setAwayScore(getInitialScore(prediction?.predictedAwayScore));
   }, [prediction]);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (locked) {
+    if (locked || isSaving) {
       return;
     }
 
     const predictedWinnerTeamId =
       scoreOutcome === "home" ? match.homeTeamId : scoreOutcome === "away" ? match.awayTeamId : undefined;
 
-    onSave({
-      id: prediction?.id ?? `${userId}-${match.id}`,
-      userId,
-      matchId: match.id,
-      predictedWinnerTeamId,
-      predictedIsDraw: scoreOutcome === "draw",
-      predictedHomeScore: homeScore === "" ? undefined : Number(homeScore),
-      predictedAwayScore: awayScore === "" ? undefined : Number(awayScore),
-      pointsAwarded: prediction?.pointsAwarded ?? 0
-    });
+    setIsSaving(true);
+    setSaveError("");
 
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1400);
+    try {
+      await onSave({
+        id: prediction?.id ?? `${userId}-${match.id}`,
+        userId,
+        matchId: match.id,
+        predictedWinnerTeamId,
+        predictedIsDraw: scoreOutcome === "draw",
+        predictedHomeScore: homeScore === "" ? undefined : Number(homeScore),
+        predictedAwayScore: awayScore === "" ? undefined : Number(awayScore),
+        pointsAwarded: prediction?.pointsAwarded ?? 0
+      });
+
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1400);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not save this pick. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+    <form
+      onSubmit={handleSubmit}
+      className={`rounded-lg border bg-white p-4 shadow-sm ${
+        isFinal ? "border-gray-300 bg-gray-50" : "border-gray-200"
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Your Pick</p>
@@ -76,9 +93,15 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
           }`}
         >
           {locked ? <LockKeyhole aria-hidden className="h-3.5 w-3.5" /> : null}
-          {locked ? "Locked" : "Open"}
+          {isFinal ? "Final" : locked ? "Locked" : "Open"}
         </span>
       </div>
+
+      {isFinal ? (
+        <p className="mt-3 rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
+          This match is final. Your saved pick is locked and read-only.
+        </p>
+      ) : null}
 
       <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -112,14 +135,20 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
 
       <button
         type="submit"
-        disabled={locked}
+        disabled={locked || isSaving}
         className={`mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-base font-bold disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-600 ${
           usePrimaryButton ? "bg-accent text-white" : "bg-accent-light text-accent-dark"
         }`}
       >
         {saved ? <Check aria-hidden className="h-5 w-5" /> : null}
-        {saved ? "Saved" : prediction ? "Update pick" : "Save pick"}
+        {isFinal ? "Final - pick locked" : isSaving ? "Saving..." : saved ? "Saved" : prediction ? "Update pick" : "Save pick"}
       </button>
+
+      {saveError ? (
+        <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+          {saveError}
+        </p>
+      ) : null}
     </form>
   );
 

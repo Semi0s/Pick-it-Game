@@ -26,6 +26,13 @@ type PredictionRow = {
   users?: UserRow | UserRow[] | null;
 };
 
+type LeaderboardEntryRow = {
+  user_id: string;
+  total_points: number;
+  rank: number;
+  users?: UserRow | UserRow[] | null;
+};
+
 export type SocialPrediction = Prediction & {
   user: UserProfile;
 };
@@ -79,6 +86,21 @@ export async function fetchPredictionsForUser(userId: string): Promise<SocialPre
 export async function fetchLeaderboardUsers(): Promise<UserProfile[]> {
   try {
     const supabase = createClient();
+    const { data: leaderboardData, error: leaderboardError } = await supabase
+      .from("leaderboard_entries")
+      .select("user_id,total_points,rank,users:user_id(id,name,email,avatar_url,role,total_points)")
+      .order("rank", { ascending: true })
+      .order("total_points", { ascending: false });
+
+    if (!leaderboardError && leaderboardData && leaderboardData.length > 0) {
+      return (leaderboardData as LeaderboardEntryRow[])
+        .map((entry) => {
+          const joinedUser = Array.isArray(entry.users) ? entry.users[0] : entry.users;
+          return joinedUser ? { ...mapUserRow(joinedUser), totalPoints: entry.total_points } : null;
+        })
+        .filter(Boolean) as UserProfile[];
+    }
+
     const { data, error } = await supabase
       .from("users")
       .select("id,name,email,avatar_url,role,total_points")

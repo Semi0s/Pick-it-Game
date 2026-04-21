@@ -1,46 +1,77 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { getGroupMatches, getTeam } from "@/lib/mock-data";
-import { getStoredPredictions, upsertStoredPrediction } from "@/lib/prediction-store";
+import { useEffect, useState } from "react";
+import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
+import { fetchPlayerPredictions, savePlayerPrediction } from "@/lib/player-predictions";
+import { getStoredPredictions } from "@/lib/prediction-store";
 import { isPredictionLocked } from "@/lib/scoring";
 import { fetchPredictionsForMatches, type SocialPrediction } from "@/lib/social-predictions";
-import { getMatchDateKey, tournamentCalendar, formatCalendarDate } from "@/lib/tournament-calendar";
-import type { MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
+import { getMatchDateKey } from "@/lib/tournament-calendar";
+import type { MatchStage, MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
 import { GroupPredictionCard } from "@/components/GroupPredictionCard";
-import { MatchDateNavigator } from "@/components/MatchDateNavigator";
 import { SocialPredictionList } from "@/components/SocialPredictionList";
 
 type GroupPredictionsProps = {
   user: UserProfile;
 };
 
-const INITIAL_VISIBLE_MATCHES = 10;
-const MATCHES_PER_PAGE = 10;
+const stages: ("all" | MatchStage)[] = ["all", "group"];
 
 export function GroupPredictions({ user }: GroupPredictionsProps) {
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [socialPredictions, setSocialPredictions] = useState<SocialPrediction[]>([]);
-  const [visibleMatchCount, setVisibleMatchCount] = useState(INITIAL_VISIBLE_MATCHES);
-  const matches = useMemo<MatchWithTeams[]>(
-    () =>
-      getGroupMatches().map((match) => ({
-        ...match,
-        homeTeam: getTeam(match.homeTeamId),
-        awayTeam: getTeam(match.awayTeamId)
-      })),
-    []
-  );
+  const [matches, setMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
+  const [stageFilter, setStageFilter] = useState<"all" | MatchStage>("all");
+  const [dateFilter, setDateFilter] = useState("all");
 
   useEffect(() => {
+    let isMounted = true;
+    fetchGroupMatchesForPredictions()
+      .then((items) => {
+        if (isMounted) {
+          setMatches(items);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setMatches(getLocalGroupMatches());
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
     setPredictions(getStoredPredictions(user.id));
+
+    fetchPlayerPredictions(user.id)
+      .then((items) => {
+        if (isMounted) {
+          setPredictions(items);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setPredictions(getStoredPredictions(user.id));
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, [user.id]);
 
   useEffect(() => {
     let isMounted = true;
-    const visibleMatchIds = matches.slice(0, visibleMatchCount).map((match) => match.id);
+    const filteredMatchIds = matches
+      .filter((match) => (stageFilter === "all" || match.stage === stageFilter))
+      .filter((match) => dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter)
+      .map((match) => match.id);
 
-    fetchPredictionsForMatches(visibleMatchIds).then((items) => {
+    fetchPredictionsForMatches(filteredMatchIds).then((items) => {
       if (isMounted) {
         setSocialPredictions(items);
       }
@@ -49,30 +80,40 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
     return () => {
       isMounted = false;
     };
-  }, [matches, visibleMatchCount]);
+  }, [matches, stageFilter, dateFilter]);
 
-  const matchesByDate = matches.reduce<Record<string, MatchWithTeams[]>>((groups, match) => {
+  const dateOptions = Array.from(new Set(matches.map((match) => getMatchDateKey(match.kickoffTime))));
+  const filteredMatches = matches.filter((match) => {
+    const stageMatches = stageFilter === "all" || match.stage === stageFilter;
+    const dateMatches = dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter;
+    return stageMatches && dateMatches;
+  });
+  const filteredMatchesByDate = filteredMatches.reduce<Record<string, MatchWithTeams[]>>((groups, match) => {
     const dateKey = getMatchDateKey(match.kickoffTime);
     groups[dateKey] = groups[dateKey] ?? [];
     groups[dateKey].push(match);
     return groups;
   }, {});
-  const groupCalendarEntries = tournamentCalendar.filter((entry) => entry.stage === "group");
-  const availableDateKeys = Object.keys(matchesByDate);
-  const visibleMatches = matches.slice(0, visibleMatchCount);
-  const visibleMatchIds = new Set(visibleMatches.map((match) => match.id));
-  const remainingMatchCount = Math.max(matches.length - visibleMatches.length, 0);
+  const filteredDates = Object.keys(filteredMatchesByDate).sort();
 
   const savedCount = matches.filter((match) =>
     predictions.some((prediction) => prediction.matchId === match.id)
   ).length;
 
-  function handleSave(prediction: Prediction) {
-    upsertStoredPrediction(prediction);
-    setPredictions(getStoredPredictions(user.id));
-    fetchPredictionsForMatches(matches.slice(0, visibleMatchCount).map((match) => match.id)).then(
-      setSocialPredictions
-    );
+  async function handleSave(prediction: Prediction) {
+    const savedPrediction = await savePlayerPrediction(prediction);
+    setPredictions((currentPredictions) => {
+      const existingIndex = currentPredictions.findIndex(
+        (item) => item.userId === savedPrediction.userId && item.matchId === savedPrediction.matchId
+      );
+
+      if (existingIndex < 0) {
+        return [...currentPredictions, savedPrediction];
+      }
+
+      return currentPredictions.map((item, index) => (index === existingIndex ? savedPrediction : item));
+    });
+    fetchPredictionsForMatches(filteredMatches.map((match) => match.id)).then(setSocialPredictions);
   }
 
   return (
@@ -89,27 +130,52 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
         </div>
       </section>
 
-      <MatchDateNavigator availableDateKeys={availableDateKeys} />
+      <section className="grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:grid-cols-2">
+        <label>
+          <span className="text-sm font-bold text-gray-700">Stage</span>
+          <select
+            value={stageFilter}
+            onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
+            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+          >
+            {stages.map((stage) => (
+              <option key={stage} value={stage}>
+                {stage === "all" ? "All stages" : formatStage(stage)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span className="text-sm font-bold text-gray-700">Date</span>
+          <select
+            value={dateFilter}
+            onChange={(event) => setDateFilter(event.target.value)}
+            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+          >
+            <option value="all">All dates</option>
+            {dateOptions.map((date) => (
+              <option key={date} value={date}>
+                {formatDateLabel(date)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
 
-      {groupCalendarEntries.map((calendarEntry) => {
-        const allDateMatches = matchesByDate[calendarEntry.date] ?? [];
-        const dateMatches = allDateMatches.filter((match) => visibleMatchIds.has(match.id));
+      <p className="rounded-lg bg-gray-100 px-4 py-3 text-center text-sm font-semibold text-gray-700">
+        Showing {filteredMatches.length} of {matches.length} group-stage matches.
+      </p>
 
-        if (dateMatches.length === 0) {
-          return null;
-        }
+      {filteredDates.map((date) => {
+        const dateMatches = filteredMatchesByDate[date] ?? [];
 
         return (
-          <section
-            key={calendarEntry.date}
-            id={`match-date-${calendarEntry.date}`}
-            className="scroll-mt-24 space-y-3"
-          >
+          <section key={date} className="space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-xl font-black">{formatCalendarDate(calendarEntry.date)}</h3>
+                <h3 className="text-xl font-black">{formatDateLabel(date)}</h3>
                 <p className="text-sm font-semibold text-gray-600">
-                  Showing {dateMatches.length} of {allDateMatches.length} matches
+                  {dateMatches.length} match{dateMatches.length === 1 ? "" : "es"}
                 </p>
               </div>
               <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold text-gray-600">
@@ -138,27 +204,26 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
         );
       })}
 
-      {remainingMatchCount > 0 ? (
-        <section className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
-          <p className="text-sm font-semibold text-gray-700">
-            Showing {visibleMatches.length} of {matches.length} group-stage matches.
-          </p>
-          <button
-            type="button"
-            onClick={() => setVisibleMatchCount((count) => Math.min(count + MATCHES_PER_PAGE, matches.length))}
-            className="mt-3 w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white sm:w-auto"
-          >
-            Load More Matches
-          </button>
-          <p className="mt-2 text-xs font-semibold text-gray-500">
-            {remainingMatchCount} more {remainingMatchCount === 1 ? "match" : "matches"} available
-          </p>
-        </section>
-      ) : (
+      {filteredMatches.length === 0 ? (
         <p className="rounded-lg bg-gray-100 px-4 py-3 text-center text-sm font-semibold text-gray-700">
-          All {matches.length} group-stage matches are showing.
+          No matches found for the current filters.
         </p>
-      )}
+      ) : null}
     </div>
   );
+}
+
+function formatStage(stage: MatchStage) {
+  return stage
+    .split("_")
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatDateLabel(date: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  }).format(new Date(`${date}T12:00:00Z`));
 }

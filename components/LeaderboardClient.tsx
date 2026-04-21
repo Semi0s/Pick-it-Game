@@ -14,15 +14,33 @@ export function LeaderboardClient() {
   useEffect(() => {
     let isMounted = true;
 
-    fetchLeaderboardUsers().then((items) => {
-      if (isMounted) {
-        setUsers(items);
-        setIsLoading(false);
+    function loadLeaderboard(showLoading = false) {
+      if (showLoading) {
+        setIsLoading(true);
       }
-    });
+
+      fetchLeaderboardUsers().then((items) => {
+        if (isMounted) {
+          setUsers(items);
+          setIsLoading(false);
+        }
+      });
+    }
+
+    function refreshWhenVisible() {
+      if (document.visibilityState === "visible") {
+        loadLeaderboard();
+      }
+    }
+
+    loadLeaderboard(true);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       isMounted = false;
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, []);
 

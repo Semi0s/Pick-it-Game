@@ -1,16 +1,39 @@
 "use client";
 
 import Link from "next/link";
-import { CalendarDays, ListOrdered, LockKeyhole, Network, Sparkles, Trophy } from "lucide-react";
-import { getGroupMatches } from "@/lib/mock-data";
+import { useEffect, useState, type ReactNode } from "react";
+import { CalendarDays, LayoutDashboard, ListOrdered, MailPlus, Network, Settings, Sparkles, Trophy, UsersRound } from "lucide-react";
+import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { getStoredPredictions } from "@/lib/prediction-store";
 import { isPredictionLocked } from "@/lib/scoring";
+import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 export function DashboardOverview() {
   const { user } = useCurrentUser();
-  const groupMatches = getGroupMatches();
+  const [groupMatches, setGroupMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
   const predictions = user ? getStoredPredictions(user.id) : [];
+
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchGroupMatchesForPredictions()
+      .then((items) => {
+        if (isMounted) {
+          setGroupMatches(items);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setGroupMatches(getLocalGroupMatches());
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const openMatches = groupMatches.filter((match) => !isPredictionLocked(match));
   const completedCount = groupMatches.filter((match) =>
     predictions.some((prediction) => prediction.matchId === match.id)
@@ -39,9 +62,9 @@ export function DashboardOverview() {
       </section>
 
       <section className="grid gap-3 sm:grid-cols-3">
-        <StatCard icon={CalendarDays} label="Group matches" value={String(groupMatches.length)} />
-        <StatCard icon={Sparkles} label="Picks saved" value={`${completedCount}/${groupMatches.length}`} />
-        <StatCard icon={LockKeyhole} label="Still open" value={String(openMatches.length)} />
+        <StatCard icon={<CalendarDays className="h-5 w-5" />} label="Group matches" value={String(groupMatches.length)} />
+        <StatCard icon={<Sparkles className="h-5 w-5" />} label="Picks saved" value={`${completedCount}/${groupMatches.length}`} />
+        <StatCard icon={<span className="text-xl leading-none">⚽</span>} label="Editable matches" value={String(openMatches.length)} />
       </section>
 
       <section className="grid gap-3 sm:grid-cols-3">
@@ -65,6 +88,21 @@ export function DashboardOverview() {
         />
       </section>
 
+      {user?.role === "admin" ? (
+        <section className="space-y-3 rounded-lg border border-accent-light bg-accent-light/40 p-4">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Admin Tools</p>
+            <h3 className="mt-1 text-xl font-black text-gray-950">Manage the challenge.</h3>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <DashboardLinkCard href="/admin" icon={Settings} title="Admin Home" copy="Open the admin dashboard." />
+            <DashboardLinkCard href="/admin/invites" icon={MailPlus} title="Invites" copy="Create and view invites." />
+            <DashboardLinkCard href="/admin/players" icon={UsersRound} title="Players" copy="View registered players." />
+            <DashboardLinkCard href="/admin/matches" icon={LayoutDashboard} title="Matches" copy="Update match results." />
+          </div>
+        </section>
+      ) : null}
+
       <section className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">Phase 1 scoring preview</h3>
         <p className="mt-2 text-sm leading-6 text-gray-600">
@@ -77,15 +115,15 @@ export function DashboardOverview() {
 }
 
 type StatCardProps = {
-  icon: typeof CalendarDays;
+  icon: ReactNode;
   label: string;
   value: string;
 };
 
-function StatCard({ icon: Icon, label, value }: StatCardProps) {
+function StatCard({ icon, label, value }: StatCardProps) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <Icon aria-hidden className="h-5 w-5 text-accent-dark" />
+      <span className="inline-flex h-5 w-5 items-center justify-center text-accent-dark">{icon}</span>
       <p className="mt-4 text-2xl font-black">{value}</p>
       <p className="mt-1 text-sm font-semibold text-gray-600">{label}</p>
     </div>
