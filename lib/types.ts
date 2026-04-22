@@ -1,4 +1,5 @@
 export type UserRole = "player" | "admin";
+export type UserStatus = "active" | "inactive" | "suspended";
 
 export type MatchStage = "group" | "round_of_32" | "round_of_16" | "quarterfinal" | "semifinal" | "final";
 
@@ -10,6 +11,7 @@ export type UserProfile = {
   email: string;
   avatarUrl?: string;
   role: UserRole;
+  status?: UserStatus;
   totalPoints: number;
 };
 

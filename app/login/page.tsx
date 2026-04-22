@@ -1,7 +1,17 @@
 import Image from "next/image";
 import { LoginForm } from "@/components/LoginForm";
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const confirmed = resolvedSearchParams.confirmed === "1";
+  const reset = resolvedSearchParams.reset === "1";
+  const mode = typeof resolvedSearchParams.mode === "string" ? resolvedSearchParams.mode : undefined;
+  const flow = typeof resolvedSearchParams.flow === "string" ? resolvedSearchParams.flow : undefined;
+
   return (
     <main className="min-h-screen bg-white px-4 py-8">
       <section className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-md flex-col justify-center">
@@ -22,7 +32,12 @@ export default function LoginPage() {
         </div>
 
         <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-          <LoginForm />
+          <LoginForm
+            confirmed={confirmed}
+            reset={reset}
+            initialMode={mode === "signup" ? "signup" : "login"}
+            flow={flow}
+          />
         </div>
       </section>
     </main>

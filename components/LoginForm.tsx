@@ -6,9 +6,21 @@ import { authenticateWithEmail, isUsingDemoAuthFallback } from "@/lib/auth-clien
 
 type AuthMode = "login" | "signup";
 
-export function LoginForm() {
+export function LoginForm({
+  confirmed = false,
+  reset = false,
+  initialMode = "login",
+  flow
+}: {
+  confirmed?: boolean;
+  reset?: boolean;
+  initialMode?: AuthMode;
+  flow?: string;
+}) {
   const router = useRouter();
-  const [mode, setMode] = useState<AuthMode>("login");
+  const inviteFlow = flow === "invite";
+  const signupContext = initialMode === "signup";
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +56,24 @@ export function LoginForm() {
         <ModeButton label="Sign in" isActive={mode === "login"} onClick={() => setMode("login")} />
         <ModeButton label="Sign up" isActive={mode === "signup"} onClick={() => setMode("signup")} />
       </div>
+
+      {confirmed ? (
+        <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700">
+          Your email has been confirmed. Sign in below.
+        </p>
+      ) : null}
+
+      {!confirmed && reset ? (
+        <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700">
+          Your password has been updated. Sign in below.
+        </p>
+      ) : null}
+
+      {!confirmed && (inviteFlow || signupContext) ? (
+        <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
+          Use your invited email to create your account or sign in below.
+        </p>
+      ) : null}
 
       <label className="block">
         <span className="text-sm font-semibold text-gray-800">Email</span>

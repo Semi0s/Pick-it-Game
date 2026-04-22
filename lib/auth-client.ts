@@ -1,6 +1,7 @@
 "use client";
 
 import { hasSupabaseConfig } from "@/lib/supabase/config";
+import { getSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/client";
 import { demoSignIn, demoSignOut, demoSignUp, getDemoCurrentUser } from "@/lib/demo-auth-fallback";
 import type { UserProfile } from "@/lib/types";
@@ -31,7 +32,13 @@ export async function authenticateWithEmail(mode: AuthMode, email: string, passw
   const response =
     mode === "login"
       ? await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
-      : await supabase.auth.signUp({ email: normalizedEmail, password });
+      : await supabase.auth.signUp({
+          email: normalizedEmail,
+          password,
+          options: {
+            emailRedirectTo: `${getSiteUrl()}/login?confirmed=1`
+          }
+        });
 
   if (response.error) {
     return { ok: false, message: getFriendlyAuthError(response.error.message, mode) };

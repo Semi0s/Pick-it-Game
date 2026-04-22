@@ -2,7 +2,8 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
-import { createAdminInvite, fetchAdminInvites, type AdminInvite } from "@/lib/admin-data";
+import { createAdminInviteAction } from "@/app/admin/actions";
+import { fetchAdminInvites, type AdminInvite } from "@/lib/admin-data";
 import type { UserRole } from "@/lib/types";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 
@@ -36,9 +37,9 @@ export function AdminInvitesClient() {
     setMessage(null);
 
     try {
-      const result = await createAdminInvite({ email, displayName, role });
-      setMessage({ tone: result.created ? "success" : "error", text: result.message });
-      if (result.created) {
+      const result = await createAdminInviteAction({ email, displayName, role });
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
         setEmail("");
         setDisplayName("");
         setRole("player");
@@ -93,7 +94,7 @@ export function AdminInvitesClient() {
           disabled={isSubmitting}
           className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
         >
-          {isSubmitting ? "Creating..." : "Create Invite"}
+          {isSubmitting ? "Queueing..." : "Send Access Email"}
         </button>
       </form>
 
@@ -107,13 +108,27 @@ export function AdminInvitesClient() {
                 <p className="truncate text-base font-black text-gray-950">{invite.displayName}</p>
                 <p className="truncate text-sm font-semibold text-gray-600">{invite.email}</p>
               </div>
+              <span className={`rounded-md px-2 py-1 text-xs font-bold uppercase ${getInviteStatusClassName(invite.status)}`}>
+                {formatInviteStatus(invite.status)}
+              </span>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3">
               <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold uppercase text-gray-700">
                 {invite.role}
               </span>
+              {invite.lastSentAt ? (
+                <p className="text-xs font-semibold text-gray-500">Last sent {formatDateTime(invite.lastSentAt)}</p>
+              ) : null}
             </div>
             <p className="mt-3 text-sm font-semibold text-gray-600">
-              Status: {invite.acceptedAt ? `Accepted ${formatDate(invite.acceptedAt)}` : "Pending"}
+              Status: {invite.status === "accepted" && invite.acceptedAt ? `Accepted ${formatDate(invite.acceptedAt)}` : formatInviteStatus(invite.status)}
             </p>
+            <p className="mt-1 text-sm font-semibold text-gray-600">Send attempts: {invite.sendAttempts}</p>
+            {invite.lastError ? (
+              <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+                {invite.lastError}
+              </p>
+            ) : null}
           </div>
         ))}
       </section>
@@ -142,4 +157,30 @@ export function formatDate(value: string) {
     day: "numeric",
     year: "numeric"
   }).format(new Date(value));
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function formatInviteStatus(status: AdminInvite["status"]) {
+  return status.replace("_", " ");
+}
+
+function getInviteStatusClassName(status: AdminInvite["status"]) {
+  if (status === "accepted") {
+    return "bg-green-50 text-green-700";
+  }
+
+  if (status === "failed" || status === "revoked" || status === "expired") {
+    return "bg-red-50 text-red-700";
+  }
+
+  return "bg-gray-100 text-gray-700";
 }

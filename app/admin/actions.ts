@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
+import { getSiteUrl } from "@/lib/site-url";
+import type { UserRole } from "@/lib/types";
 
 type MatchRow = {
   id: string;
@@ -36,6 +38,34 @@ type LeaderboardTotal = {
   total_points: number;
 };
 
+type InviteLookupRow = {
+  email: string;
+  display_name: string;
+  role: UserRole;
+  accepted_at?: string | null;
+  status?: "pending" | "accepted" | "revoked" | "expired" | "failed" | null;
+  last_sent_at?: string | null;
+  send_attempts?: number | null;
+  last_error?: string | null;
+};
+
+type EmailJobKind = "access_email" | "password_recovery";
+
+type EmailJobPayload = {
+  displayName?: string;
+  role?: UserRole;
+  source?: "admin_invites" | "admin_players";
+};
+
+type AuthUserSummary = {
+  id: string;
+  email?: string | null;
+};
+
+type EnqueueEmailJobResult =
+  | { ok: true; alreadyQueued: boolean }
+  | { ok: false; message: string };
+
 export type ScoreMatchResult =
   | {
       ok: true;
@@ -61,10 +91,313 @@ export type UpdateMatchResult =
       ok: true;
       match: ReturnType<typeof mapMatchRow>;
     }
+    | {
+      ok: false;
+      message: string;
+    };
+
+export type CreateInviteInput = {
+  email: string;
+  displayName: string;
+  role: UserRole;
+};
+
+export type CreateInviteResult =
+  | {
+      ok: true;
+      created: true;
+      message: string;
+    }
   | {
       ok: false;
       message: string;
     };
+
+export type SendPasswordResetInput = {
+  userId?: string;
+  email?: string;
+};
+
+export type SendPasswordResetResult =
+  | {
+      ok: true;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export async function createAdminInviteAction(input: CreateInviteInput): Promise<CreateInviteResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const adminSupabase = createAdminClient();
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const trimmedDisplayName = input.displayName.trim();
+
+  if (!normalizedEmail || !trimmedDisplayName) {
+    return { ok: false, message: "Email and display name are required." };
+  }
+
+  const [{ data: existingInvite, error: inviteLookupError }, { data: existingUser, error: userLookupError }, authUser] =
+    await Promise.all([
+      fetchInviteLookup(adminSupabase, normalizedEmail),
+      adminSupabase.from("users").select("id").eq("email", normalizedEmail).maybeSingle(),
+      findAuthUserByEmail(adminSupabase, normalizedEmail)
+    ]);
+
+  if (inviteLookupError) {
+    return { ok: false, message: inviteLookupError.message };
+  }
+
+  if (userLookupError) {
+    return { ok: false, message: userLookupError.message };
+  }
+
+  const rateLimitResult = await enforceEmailRateLimits(adminSupabase, adminCheck.userId, normalizedEmail);
+  if (!rateLimitResult.ok) {
+    return { ok: false, message: rateLimitResult.message };
+  }
+
+  const sendKind: EmailJobKind = authUser && existingUser ? "password_recovery" : "access_email";
+  const supportsEmailJobs = await hasEmailJobsTable(adminSupabase);
+  const inviteUpsertResult = await upsertInviteRow(adminSupabase, {
+    email: normalizedEmail,
+    displayName: trimmedDisplayName,
+    role: input.role,
+    status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
+    lastError: null,
+    preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
+  });
+
+  if (!inviteUpsertResult.ok) {
+    return { ok: false, message: inviteUpsertResult.message };
+  }
+
+  if (!supportsEmailJobs) {
+    const sendResult = await sendAdminEmailInline(adminSupabase, {
+      kind: sendKind,
+      email: normalizedEmail
+    });
+
+    if (!sendResult.ok) {
+      await upsertInviteRow(adminSupabase, {
+        email: normalizedEmail,
+        displayName: trimmedDisplayName,
+        role: input.role,
+        status: "failed",
+        lastError: sendResult.message,
+        preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
+      });
+      return { ok: false, message: sendResult.message };
+    }
+
+    if (sendKind === "access_email") {
+      await upsertInviteRow(adminSupabase, {
+        email: normalizedEmail,
+        displayName: trimmedDisplayName,
+        role: input.role,
+        status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
+        lastError: null,
+        preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at,
+        incrementAttempts: true,
+        setLastSentAt: true
+      });
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/invites");
+    return {
+      ok: true,
+      created: true,
+      message:
+        sendKind === "password_recovery"
+          ? "Account already exists. Password reset email sent instead."
+          : (existingInvite as InviteLookupRow | null)
+            ? "Invite email sent again."
+            : "Invite email sent."
+    };
+  }
+
+  const enqueueResult = await enqueueEmailJob(adminSupabase, {
+    kind: sendKind,
+    email: normalizedEmail,
+    requestedByAdminId: adminCheck.userId,
+    payload: {
+      displayName: trimmedDisplayName,
+      role: input.role,
+      source: "admin_invites"
+    }
+  });
+
+  if (!enqueueResult.ok && isMissingEmailJobsError(enqueueResult.message)) {
+    const sendResult = await sendAdminEmailInline(adminSupabase, {
+      kind: sendKind,
+      email: normalizedEmail
+    });
+
+    if (!sendResult.ok) {
+      await upsertInviteRow(adminSupabase, {
+        email: normalizedEmail,
+        displayName: trimmedDisplayName,
+        role: input.role,
+        status: "failed",
+        lastError: sendResult.message,
+        preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
+      });
+      return { ok: false, message: sendResult.message };
+    }
+
+    if (sendKind === "access_email") {
+      await upsertInviteRow(adminSupabase, {
+        email: normalizedEmail,
+        displayName: trimmedDisplayName,
+        role: input.role,
+        status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
+        lastError: null,
+        preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at,
+        incrementAttempts: true,
+        setLastSentAt: true
+      });
+    }
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/invites");
+    return {
+      ok: true,
+      created: true,
+      message:
+        sendKind === "password_recovery"
+          ? "Account already exists. Password reset email sent instead."
+          : (existingInvite as InviteLookupRow | null)
+            ? "Invite email sent again."
+            : "Invite email sent."
+    };
+  }
+
+  if (!enqueueResult.ok) {
+    await upsertInviteRow(adminSupabase, {
+      email: normalizedEmail,
+      displayName: trimmedDisplayName,
+      role: input.role,
+      status: "failed",
+      lastError: enqueueResult.message,
+      preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
+    });
+    return { ok: false, message: enqueueResult.message };
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/invites");
+
+  return {
+    ok: true,
+    created: true,
+    message:
+      enqueueResult.alreadyQueued
+        ? "A matching access email is already queued."
+        : sendKind === "password_recovery"
+          ? "Account already exists. Password recovery email queued instead."
+          : (existingInvite as InviteLookupRow | null)
+            ? "Access email queued again."
+            : "Invite queued and ready to send."
+  };
+}
+
+export async function sendAdminPasswordResetAction(
+  input: SendPasswordResetInput
+): Promise<SendPasswordResetResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const adminSupabase = createAdminClient();
+  let email = input.email?.trim().toLowerCase();
+
+  if (!email && input.userId) {
+    const { data: userRow, error: userLookupError } = await adminSupabase
+      .from("users")
+      .select("email")
+      .eq("id", input.userId)
+      .single();
+
+    if (userLookupError) {
+      return { ok: false, message: userLookupError.message };
+    }
+
+    email = userRow.email?.trim().toLowerCase();
+  }
+
+  if (!email) {
+    return { ok: false, message: "A valid user email is required to send a password reset." };
+  }
+
+  const authUser = await findAuthUserByEmail(adminSupabase, email);
+  if (!authUser) {
+    return {
+      ok: false,
+      message: "This user has not activated their account yet. Resend invite instead."
+    };
+  }
+
+  const rateLimitResult = await enforceEmailRateLimits(adminSupabase, adminCheck.userId, email);
+  if (!rateLimitResult.ok) {
+    return { ok: false, message: rateLimitResult.message };
+  }
+
+  if (!(await hasEmailJobsTable(adminSupabase))) {
+    const sendResult = await sendAdminEmailInline(adminSupabase, {
+      kind: "password_recovery",
+      email
+    });
+
+    if (!sendResult.ok) {
+      return { ok: false, message: sendResult.message };
+    }
+
+    revalidatePath("/admin/players");
+    return { ok: true, message: `Password reset email sent for ${email}.` };
+  }
+
+  const enqueueResult = await enqueueEmailJob(adminSupabase, {
+    kind: "password_recovery",
+    email,
+    requestedByAdminId: adminCheck.userId,
+    payload: {
+      source: "admin_players"
+    }
+  });
+
+  if (!enqueueResult.ok && isMissingEmailJobsError(enqueueResult.message)) {
+    const sendResult = await sendAdminEmailInline(adminSupabase, {
+      kind: "password_recovery",
+      email
+    });
+
+    if (!sendResult.ok) {
+      return { ok: false, message: sendResult.message };
+    }
+
+    revalidatePath("/admin/players");
+    return { ok: true, message: `Password reset email sent for ${email}.` };
+  }
+
+  if (!enqueueResult.ok) {
+    return { ok: false, message: enqueueResult.message };
+  }
+
+  revalidatePath("/admin/players");
+  return {
+    ok: true,
+    message: enqueueResult.alreadyQueued
+      ? `A password reset email is already queued for ${email}.`
+      : `Password reset email queued for ${email}.`
+  };
+}
 
 export async function updateAdminMatchResultAction(input: UpdateMatchResultInput): Promise<UpdateMatchResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
@@ -198,7 +531,7 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
   };
 }
 
-async function assertCurrentUserIsAdmin(): Promise<{ ok: true } | { ok: false; message: string }> {
+async function assertCurrentUserIsAdmin(): Promise<{ ok: true; userId: string } | { ok: false; message: string }> {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
@@ -219,7 +552,7 @@ async function assertCurrentUserIsAdmin(): Promise<{ ok: true } | { ok: false; m
     return { ok: false, message: "Only admins can score matches." };
   }
 
-  return { ok: true };
+  return { ok: true, userId: user.id };
 }
 
 async function recalculateLeaderboard(
@@ -322,4 +655,313 @@ function mapMatchRow(row: MatchRow) {
     winnerTeamId: row.winner_team_id ?? undefined,
     updatedAt: row.updated_at ?? undefined
   };
+}
+
+async function findAuthUserByEmail(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  normalizedEmail: string
+): Promise<AuthUserSummary | null> {
+  let page = 1;
+
+  while (true) {
+    const { data, error } = await adminSupabase.auth.admin.listUsers({
+      page,
+      perPage: 200
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const matchedUser = data.users.find(
+      (user) => user.email?.trim().toLowerCase() === normalizedEmail
+    );
+
+    if (matchedUser) {
+      return {
+        id: matchedUser.id,
+        email: matchedUser.email
+      };
+    }
+
+    if (data.users.length < 200) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return null;
+}
+
+async function enforceEmailRateLimits(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  adminUserId: string,
+  normalizedEmail: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!(await hasEmailJobsTable(adminSupabase))) {
+    return { ok: true };
+  }
+
+  const now = Date.now();
+  const adminWindowStart = new Date(now - 60_000).toISOString();
+  const emailWindowStart = new Date(now - 10 * 60_000).toISOString();
+  const globalWindowStart = new Date(now - 60 * 60_000).toISOString();
+
+  const [
+    { count: adminCount, error: adminRateError },
+    { count: emailCount, error: emailRateError },
+    { count: globalCount, error: globalRateError }
+  ] = await Promise.all([
+    adminSupabase
+      .from("email_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("requested_by_admin_id", adminUserId)
+      .gte("created_at", adminWindowStart),
+    adminSupabase
+      .from("email_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("email", normalizedEmail)
+      .gte("created_at", emailWindowStart),
+    adminSupabase
+      .from("email_jobs")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", globalWindowStart)
+  ]);
+
+  if (adminRateError || emailRateError || globalRateError) {
+    return {
+      ok: false,
+      message: adminRateError?.message ?? emailRateError?.message ?? globalRateError?.message ?? "Rate limit lookup failed."
+    };
+  }
+
+  if ((adminCount ?? 0) >= 10) {
+    return { ok: false, message: "You have reached the limit of 10 access emails per minute. Please wait a minute and try again." };
+  }
+
+  if ((emailCount ?? 0) >= 1) {
+    return { ok: false, message: "That email was sent recently. Please wait 10 minutes before sending again." };
+  }
+
+  if ((globalCount ?? 0) >= 100) {
+    return { ok: false, message: "Email sending is temporarily capped for the app. Please try again shortly." };
+  }
+
+  return { ok: true };
+}
+
+async function upsertInviteRow(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    email: string;
+    displayName: string;
+    role: UserRole;
+    status: "pending" | "accepted" | "revoked" | "expired" | "failed";
+    lastError: string | null;
+    preserveAcceptedAt?: string | null;
+    incrementAttempts?: boolean;
+    setLastSentAt?: boolean;
+  }
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  let nextSendAttempts: number | undefined;
+
+  if (input.incrementAttempts) {
+    const { data: currentInvite, error: currentInviteError } = await adminSupabase
+      .from("invites")
+      .select("send_attempts")
+      .eq("email", input.email)
+      .maybeSingle();
+
+    if (currentInviteError) {
+      return { ok: false, message: currentInviteError.message };
+    }
+
+    nextSendAttempts = (currentInvite?.send_attempts ?? 0) + 1;
+  }
+
+  const fullPayload = {
+    email: input.email,
+    display_name: input.displayName,
+    role: input.role,
+    accepted_at: input.preserveAcceptedAt ?? null,
+    status: input.status,
+    last_error: input.lastError,
+    ...(nextSendAttempts !== undefined ? { send_attempts: nextSendAttempts } : {}),
+    ...(input.setLastSentAt ? { last_sent_at: new Date().toISOString() } : {})
+  };
+
+  const { error } = await adminSupabase.from("invites").upsert(fullPayload, { onConflict: "email" });
+
+  if (error) {
+    if (!isMissingInviteLifecycleColumnError(error.message)) {
+      return { ok: false, message: error.message };
+    }
+
+    const minimalPayload = {
+      email: input.email,
+      display_name: input.displayName,
+      role: input.role,
+      accepted_at: input.preserveAcceptedAt ?? null
+    };
+
+    const { error: fallbackError } = await adminSupabase.from("invites").upsert(minimalPayload, { onConflict: "email" });
+    if (fallbackError) {
+      return { ok: false, message: fallbackError.message };
+    }
+  }
+
+  return { ok: true };
+}
+
+async function enqueueEmailJob(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    kind: EmailJobKind;
+    email: string;
+    requestedByAdminId: string;
+    payload: EmailJobPayload;
+  }
+): Promise<EnqueueEmailJobResult> {
+  const { error } = await adminSupabase.from("email_jobs").insert({
+    kind: input.kind,
+    email: input.email,
+    dedupe_key: `${input.kind}:${input.email}`,
+    payload: input.payload,
+    requested_by_admin_id: input.requestedByAdminId
+  });
+
+  if (error) {
+    if (error.code === "23505") {
+      return { ok: true, alreadyQueued: true };
+    }
+
+    return { ok: false, message: error.message };
+  }
+
+  return { ok: true, alreadyQueued: false };
+}
+
+async function fetchInviteLookup(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  normalizedEmail: string
+) {
+  const fullResult = await adminSupabase
+    .from("invites")
+    .select("email,display_name,role,accepted_at,status,last_sent_at,send_attempts,last_error")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  if (!fullResult.error || !isMissingInviteLifecycleColumnError(fullResult.error.message)) {
+    return fullResult;
+  }
+
+  const fallbackResult = await adminSupabase
+    .from("invites")
+    .select("email,display_name,role,accepted_at,status")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  if (!fallbackResult.error) {
+    return {
+      data: {
+        ...fallbackResult.data,
+        last_sent_at: null,
+        send_attempts: 0,
+        last_error: null
+      },
+      error: null
+    };
+  }
+
+  if (!isMissingInviteLifecycleColumnError(fallbackResult.error.message)) {
+    return fallbackResult;
+  }
+
+  const minimalResult = await adminSupabase
+    .from("invites")
+    .select("email,display_name,role,accepted_at")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  return {
+    data: minimalResult.data
+      ? {
+          ...minimalResult.data,
+          status: minimalResult.data.accepted_at ? "accepted" : "pending",
+          last_sent_at: null,
+          send_attempts: 0,
+          last_error: null
+        }
+      : null,
+    error: minimalResult.error
+  };
+}
+
+async function hasEmailJobsTable(adminSupabase: ReturnType<typeof createAdminClient>) {
+  const { error } = await adminSupabase.from("email_jobs").select("id", { head: true, count: "exact" });
+  if (!error) {
+    return true;
+  }
+
+  if (isMissingEmailJobsError(error.message)) {
+    return false;
+  }
+
+  return false;
+}
+
+async function sendAdminEmailInline(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: { kind: EmailJobKind; email: string }
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (input.kind === "access_email") {
+    const { error } = await adminSupabase.auth.admin.inviteUserByEmail(input.email, {
+      redirectTo: `${getSiteUrl()}/admin/invites`
+    });
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    return { ok: true };
+  }
+
+  const { error } = await adminSupabase.auth.resetPasswordForEmail(input.email, {
+    redirectTo: `${getSiteUrl()}/auth/confirm?next=/reset-password`
+  });
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  return { ok: true };
+}
+
+function isMissingInviteLifecycleColumnError(message: string) {
+  return (
+    isMissingColumnError(message, "status") ||
+    isMissingColumnError(message, "last_sent_at") ||
+    isMissingColumnError(message, "send_attempts") ||
+    isMissingColumnError(message, "last_error")
+  );
+}
+
+function isMissingColumnError(message: string, column: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes("column") && normalized.includes(column.toLowerCase()) && normalized.includes("does not exist");
+}
+
+function isMissingRelationError(message: string, relation: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes(relation.toLowerCase()) && normalized.includes("schema cache");
+}
+
+function isMissingEmailJobsError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    (normalized.includes("email_jobs") && normalized.includes("schema cache")) ||
+    (normalized.includes("email_jobs") && normalized.includes("does not exist")) ||
+    isMissingRelationError(message, "public.email_jobs")
+  );
 }

@@ -2,13 +2,17 @@
 
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/client";
-import type { MatchStage, MatchStatus, UserRole } from "@/lib/types";
+import type { MatchStage, MatchStatus, UserRole, UserStatus } from "@/lib/types";
 
 export type AdminInvite = {
   email: string;
   displayName: string;
   role: UserRole;
   acceptedAt?: string;
+  status: "pending" | "accepted" | "revoked" | "expired" | "failed";
+  lastSentAt?: string;
+  sendAttempts: number;
+  lastError?: string;
   createdAt: string;
 };
 
@@ -17,6 +21,7 @@ export type AdminPlayer = {
   name: string;
   email: string;
   role: UserRole;
+  status: UserStatus;
   totalPoints: number;
   createdAt: string;
   acceptedInvite: boolean;
@@ -59,6 +64,10 @@ type InviteRow = {
   display_name: string;
   role: UserRole;
   accepted_at?: string | null;
+  status?: AdminInvite["status"] | null;
+  last_sent_at?: string | null;
+  send_attempts?: number | null;
+  last_error?: string | null;
   created_at: string;
 };
 
@@ -67,6 +76,7 @@ type UserRow = {
   name: string;
   email: string;
   role: UserRole;
+  status?: UserStatus | null;
   total_points: number;
   created_at: string;
 };
@@ -135,8 +145,8 @@ export async function fetchAdminCounts(): Promise<AdminCounts> {
   const [invites, players, matches] = await Promise.all([fetchAdminInvites(), fetchAdminPlayers(), fetchAdminMatches()]);
 
   return {
-    pendingInvites: invites.filter((invite) => !invite.acceptedAt).length,
-    acceptedInvites: invites.filter((invite) => invite.acceptedAt).length,
+    pendingInvites: invites.filter((invite) => invite.status === "pending").length,
+    acceptedInvites: invites.filter((invite) => invite.status === "accepted").length,
     totalPlayers: players.length,
     matchesByStatus: {
       scheduled: matches.filter((match) => match.status === "scheduled").length,
@@ -151,63 +161,44 @@ export async function fetchAdminInvites(): Promise<AdminInvite[]> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from("invites")
+    .select("email,display_name,role,accepted_at,status,last_sent_at,send_attempts,last_error,created_at")
+    .order("created_at", { ascending: false });
+
+  if (!error) {
+    return (data as InviteRow[]).map(mapInviteRow);
+  }
+
+  if (!isMissingInviteColumnError(error.message)) {
+    throw new Error(error.message);
+  }
+
+  const { data: fallbackData, error: fallbackError } = await supabase
+    .from("invites")
+    .select("email,display_name,role,accepted_at,status,created_at")
+    .order("created_at", { ascending: false });
+
+  if (!fallbackError) {
+    return (fallbackData as InviteRow[]).map(mapInviteRow);
+  }
+
+  const { data: minimalData, error: minimalError } = await supabase
+    .from("invites")
     .select("email,display_name,role,accepted_at,created_at")
     .order("created_at", { ascending: false });
 
-  if (error) {
-    throw new Error(error.message);
+  if (minimalError) {
+    throw new Error(minimalError.message);
   }
 
-  return (data as InviteRow[]).map(mapInviteRow);
-}
-
-export async function createAdminInvite(input: {
-  email: string;
-  displayName: string;
-  role: UserRole;
-}) {
-  ensureSupabaseConfigured();
-  const supabase = createClient();
-  const normalizedEmail = input.email.trim().toLowerCase();
-
-  const { data: existingInvite, error: lookupError } = await supabase
-    .from("invites")
-    .select("email,accepted_at")
-    .eq("email", normalizedEmail)
-    .maybeSingle();
-
-  if (lookupError) {
-    throw new Error(lookupError.message);
-  }
-
-  if (existingInvite) {
-    return {
-      created: false,
-      message: existingInvite.accepted_at
-        ? "That invite already exists and has been accepted."
-        : "That invite already exists and is still pending."
-    };
-  }
-
-  const { error } = await supabase.from("invites").insert({
-    email: normalizedEmail,
-    display_name: input.displayName.trim(),
-    role: input.role
-  });
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return { created: true, message: "Invite created." };
+  return (minimalData as InviteRow[]).map(mapInviteRow);
 }
 
 export async function fetchAdminPlayers(): Promise<AdminPlayer[]> {
   ensureSupabaseConfigured();
   const supabase = createClient();
   const [{ data: users, error: usersError }, { data: invites, error: invitesError }] = await Promise.all([
-    supabase.from("users").select("id,name,email,role,total_points,created_at").order("created_at", { ascending: false }),
-    supabase.from("invites").select("email,accepted_at")
+    fetchAdminPlayerRows(supabase),
+    fetchInviteAcceptanceRows(supabase)
   ]);
 
   if (usersError) {
@@ -219,8 +210,8 @@ export async function fetchAdminPlayers(): Promise<AdminPlayer[]> {
   }
 
   const acceptedInviteEmails = new Set(
-    (invites as Pick<InviteRow, "email" | "accepted_at">[])
-      .filter((invite) => invite.accepted_at)
+    (invites as InviteRow[])
+      .filter((invite) => getInviteLifecycleStatus(invite) === "accepted")
       .map((invite) => invite.email.toLowerCase())
   );
 
@@ -229,6 +220,7 @@ export async function fetchAdminPlayers(): Promise<AdminPlayer[]> {
     name: user.name,
     email: user.email,
     role: user.role,
+    status: user.status ?? "active",
     totalPoints: user.total_points,
     createdAt: user.created_at,
     acceptedInvite: acceptedInviteEmails.has(user.email.toLowerCase())
@@ -300,8 +292,77 @@ function mapInviteRow(row: InviteRow): AdminInvite {
     displayName: row.display_name,
     role: row.role,
     acceptedAt: row.accepted_at ?? undefined,
+    status: getInviteLifecycleStatus(row),
+    lastSentAt: row.last_sent_at ?? undefined,
+    sendAttempts: row.send_attempts ?? 0,
+    lastError: row.last_error ?? undefined,
     createdAt: row.created_at
   };
+}
+
+function getInviteLifecycleStatus(row: Pick<InviteRow, "accepted_at" | "status">): AdminInvite["status"] {
+  if (row.accepted_at) {
+    return "accepted";
+  }
+
+  if (row.status === "accepted" || row.status === "revoked" || row.status === "expired" || row.status === "failed") {
+    return row.status;
+  }
+
+  return "pending";
+}
+
+async function fetchAdminPlayerRows(supabase: ReturnType<typeof createClient>) {
+  const withStatus = await supabase
+    .from("users")
+    .select("id,name,email,role,status,total_points,created_at")
+    .order("created_at", { ascending: false });
+
+  if (!withStatus.error) {
+    return withStatus;
+  }
+
+  if (!isMissingColumnError(withStatus.error.message, "status")) {
+    return withStatus;
+  }
+
+  const fallback = await supabase
+    .from("users")
+    .select("id,name,email,role,total_points,created_at")
+    .order("created_at", { ascending: false });
+
+  return {
+    data: (fallback.data ?? []).map((user) => ({ ...user, status: "active" })) as UserRow[],
+    error: fallback.error
+  };
+}
+
+async function fetchInviteAcceptanceRows(supabase: ReturnType<typeof createClient>) {
+  const withStatus = await supabase.from("invites").select("email,status,accepted_at");
+
+  if (!withStatus.error) {
+    return withStatus;
+  }
+
+  if (!isMissingInviteColumnError(withStatus.error.message)) {
+    return withStatus;
+  }
+
+  return supabase.from("invites").select("email,accepted_at");
+}
+
+function isMissingInviteColumnError(message: string) {
+  return (
+    isMissingColumnError(message, "status") ||
+    isMissingColumnError(message, "last_sent_at") ||
+    isMissingColumnError(message, "send_attempts") ||
+    isMissingColumnError(message, "last_error")
+  );
+}
+
+function isMissingColumnError(message: string, column: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes(`column`) && normalized.includes(column.toLowerCase()) && normalized.includes("does not exist");
 }
 
 function mapMatchRow(row: MatchRow): AdminMatch {
