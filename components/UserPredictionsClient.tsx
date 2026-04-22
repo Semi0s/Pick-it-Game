@@ -16,6 +16,7 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [predictions, setPredictions] = useState<SocialPrediction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const matches = useMemo<MatchWithTeams[]>(
     () =>
       getGroupMatches().map((match) => ({
@@ -41,13 +42,23 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
   useEffect(() => {
     let isMounted = true;
 
-    Promise.all([fetchLeaderboardUsers(), fetchPredictionsForUser(userId)]).then(([users, userPredictions]) => {
-      if (isMounted) {
-        setProfile(users.find((item) => item.id === userId) ?? userPredictions[0]?.user ?? null);
-        setPredictions(userPredictions);
-        setIsLoading(false);
-      }
-    });
+    Promise.all([fetchLeaderboardUsers(), fetchPredictionsForUser(userId)])
+      .then(([users, userPredictions]) => {
+        if (isMounted) {
+          setProfile(users.find((item) => item.id === userId) ?? userPredictions[0]?.user ?? null);
+          setPredictions(userPredictions);
+          setError(null);
+          setIsLoading(false);
+        }
+      })
+      .catch((caughtError: Error) => {
+        if (isMounted) {
+          setProfile(null);
+          setPredictions([]);
+          setError(caughtError.message);
+          setIsLoading(false);
+        }
+      });
 
     return () => {
       isMounted = false;
@@ -57,7 +68,7 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
   return (
     <div className="space-y-5">
       <section className="rounded-lg bg-gray-100 p-5">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Read-only picks</p>
+        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Public picks</p>
         <h2 className="mt-2 text-3xl font-black leading-tight">{profile?.name ?? "Player picks"}</h2>
         <Link
           href="/leaderboard"
@@ -71,9 +82,15 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
         <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">Loading picks...</p>
       ) : null}
 
-      {!isLoading && predictions.length === 0 ? (
+      {!isLoading && error ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-5 text-sm font-semibold text-red-700">
+          Could not load public picks right now: {error}
+        </p>
+      ) : null}
+
+      {!isLoading && !error && predictions.length === 0 ? (
         <p className="rounded-lg border border-gray-200 bg-white px-4 py-5 text-sm font-semibold text-gray-600">
-          No group-stage picks saved yet.
+          No public picks are available yet. Picks appear here once matches are live or final.
         </p>
       ) : null}
 

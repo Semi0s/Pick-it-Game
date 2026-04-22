@@ -3,6 +3,7 @@
 import { demoUsers } from "@/lib/mock-data";
 import { getAllStoredPredictions } from "@/lib/prediction-store";
 import { createClient } from "@/lib/supabase/client";
+import { hasSupabaseConfig } from "@/lib/supabase/config";
 import type { Prediction, UserProfile } from "@/lib/types";
 
 type UserRow = {
@@ -23,14 +24,12 @@ type PredictionRow = {
   predicted_home_score?: number | null;
   predicted_away_score?: number | null;
   points_awarded: number;
-  users?: UserRow | UserRow[] | null;
 };
 
 type LeaderboardEntryRow = {
   user_id: string;
   total_points: number;
   rank: number;
-  users?: UserRow | UserRow[] | null;
 };
 
 export type SocialPrediction = Prediction & {
@@ -42,13 +41,15 @@ export async function fetchPredictionsForMatches(matchIds: string[]): Promise<So
     return [];
   }
 
+  if (!hasSupabaseConfig()) {
+    return getLocalSocialPredictions().filter((prediction) => matchIds.includes(prediction.matchId));
+  }
+
   try {
     const supabase = createClient();
     const { data, error } = await supabase
       .from("predictions")
-      .select(
-        "id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded,users:user_id(id,name,email,avatar_url,role,total_points)"
-      )
+      .select("id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded")
       .in("match_id", matchIds)
       .order("created_at", { ascending: true });
 
@@ -56,20 +57,23 @@ export async function fetchPredictionsForMatches(matchIds: string[]): Promise<So
       throw error;
     }
 
-    return (data as PredictionRow[]).map(mapPredictionRow).filter(Boolean) as SocialPrediction[];
-  } catch {
-    return getLocalSocialPredictions().filter((prediction) => matchIds.includes(prediction.matchId));
+    return mapPredictionRowsWithUsers(supabase, (data as PredictionRow[]) ?? []);
+  } catch (error) {
+    console.error("Failed to load public predictions for matches.", error);
+    throw error;
   }
 }
 
 export async function fetchPredictionsForUser(userId: string): Promise<SocialPrediction[]> {
+  if (!hasSupabaseConfig()) {
+    return getLocalSocialPredictions().filter((prediction) => prediction.userId === userId);
+  }
+
   try {
     const supabase = createClient();
     const { data, error } = await supabase
       .from("predictions")
-      .select(
-        "id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded,users:user_id(id,name,email,avatar_url,role,total_points)"
-      )
+      .select("id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded")
       .eq("user_id", userId)
       .order("match_id", { ascending: true });
 
@@ -77,25 +81,35 @@ export async function fetchPredictionsForUser(userId: string): Promise<SocialPre
       throw error;
     }
 
-    return (data as PredictionRow[]).map(mapPredictionRow).filter(Boolean) as SocialPrediction[];
-  } catch {
-    return getLocalSocialPredictions().filter((prediction) => prediction.userId === userId);
+    return mapPredictionRowsWithUsers(supabase, (data as PredictionRow[]) ?? []);
+  } catch (error) {
+    console.error(`Failed to load public predictions for user ${userId}.`, error);
+    throw error;
   }
 }
 
 export async function fetchLeaderboardUsers(): Promise<UserProfile[]> {
+  if (!hasSupabaseConfig()) {
+    return [...demoUsers].sort((a, b) => b.totalPoints - a.totalPoints || a.name.localeCompare(b.name));
+  }
+
   try {
     const supabase = createClient();
     const { data: leaderboardData, error: leaderboardError } = await supabase
       .from("leaderboard_entries")
-      .select("user_id,total_points,rank,users:user_id(id,name,email,avatar_url,role,total_points)")
+      .select("user_id,total_points,rank")
       .order("rank", { ascending: true })
       .order("total_points", { ascending: false });
 
     if (!leaderboardError && leaderboardData && leaderboardData.length > 0) {
+      const usersById = await fetchUsersByIds(
+        supabase,
+        (leaderboardData as LeaderboardEntryRow[]).map((entry) => entry.user_id)
+      );
+
       return (leaderboardData as LeaderboardEntryRow[])
         .map((entry) => {
-          const joinedUser = Array.isArray(entry.users) ? entry.users[0] : entry.users;
+          const joinedUser = usersById.get(entry.user_id);
           return joinedUser ? { ...mapUserRow(joinedUser), totalPoints: entry.total_points } : null;
         })
         .filter(Boolean) as UserProfile[];
@@ -112,8 +126,9 @@ export async function fetchLeaderboardUsers(): Promise<UserProfile[]> {
     }
 
     return (data as UserRow[]).map(mapUserRow);
-  } catch {
-    return [...demoUsers].sort((a, b) => b.totalPoints - a.totalPoints || a.name.localeCompare(b.name));
+  } catch (error) {
+    console.error("Failed to load leaderboard users.", error);
+    throw error;
   }
 }
 
@@ -126,23 +141,56 @@ function getLocalSocialPredictions(): SocialPrediction[] {
     .filter(Boolean) as SocialPrediction[];
 }
 
-function mapPredictionRow(row: PredictionRow): SocialPrediction | null {
-  const joinedUser = Array.isArray(row.users) ? row.users[0] : row.users;
-  if (!joinedUser) {
-    return null;
+async function mapPredictionRowsWithUsers(
+  supabase: ReturnType<typeof createClient>,
+  rows: PredictionRow[]
+): Promise<SocialPrediction[]> {
+  const usersById = await fetchUsersByIds(
+    supabase,
+    rows.map((row) => row.user_id)
+  );
+
+  return rows
+    .map((row) => {
+      const user = usersById.get(row.user_id);
+      if (!user) {
+        return null;
+      }
+
+      return {
+        id: row.id,
+        userId: row.user_id,
+        matchId: row.match_id,
+        predictedWinnerTeamId: row.predicted_winner_team_id ?? undefined,
+        predictedIsDraw: row.predicted_is_draw,
+        predictedHomeScore: row.predicted_home_score ?? undefined,
+        predictedAwayScore: row.predicted_away_score ?? undefined,
+        pointsAwarded: row.points_awarded,
+        user: mapUserRow(user)
+      };
+    })
+    .filter(Boolean) as SocialPrediction[];
+}
+
+async function fetchUsersByIds(
+  supabase: ReturnType<typeof createClient>,
+  userIds: string[]
+): Promise<Map<string, UserRow>> {
+  const uniqueIds = Array.from(new Set(userIds)).filter(Boolean);
+  if (uniqueIds.length === 0) {
+    return new Map();
   }
 
-  return {
-    id: row.id,
-    userId: row.user_id,
-    matchId: row.match_id,
-    predictedWinnerTeamId: row.predicted_winner_team_id ?? undefined,
-    predictedIsDraw: row.predicted_is_draw,
-    predictedHomeScore: row.predicted_home_score ?? undefined,
-    predictedAwayScore: row.predicted_away_score ?? undefined,
-    pointsAwarded: row.points_awarded,
-    user: mapUserRow(joinedUser)
-  };
+  const { data, error } = await supabase
+    .from("users")
+    .select("id,name,email,avatar_url,role,total_points")
+    .in("id", uniqueIds);
+
+  if (error) {
+    throw error;
+  }
+
+  return new Map(((data as UserRow[]) ?? []).map((user) => [user.id, user]));
 }
 
 function mapUserRow(row: UserRow): UserProfile {

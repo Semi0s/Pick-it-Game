@@ -1,58 +1,5 @@
 {
-  "node": {
-    "401deabec32186cdc63ea12736a862bfd007bc75ab": {
-      "workers": {
-        "app/admin/players/page": {
-          "moduleId": "(action-browser)/./node_modules/next/dist/build/webpack/loaders/next-flight-action-entry-loader.js?actions=%5B%5B%22%2FUsers%2Fsemios%2FDocuments%2FCodex%2F2026-04-19-build-a-mobile-first-private-web%2Fapp%2Fadmin%2Factions.ts%22%2C%5B%7B%22id%22%3A%22401deabec32186cdc63ea12736a862bfd007bc75ab%22%2C%22exportedName%22%3A%22createAdminInviteAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240955f31b7773518fd8aa48078befdb65ff7452d96%22%2C%22exportedName%22%3A%22scoreFinalizedGroupMatch%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240af0facd5c483632320fd1d70b747a2a68a5a8999%22%2C%22exportedName%22%3A%22sendAdminPasswordResetAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240ff02e901ff911fb76f9881255cd49d7b6584418b%22%2C%22exportedName%22%3A%22updateAdminMatchResultAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%5D%5D%5D&__client_imported__=true!",
-          "async": false
-        }
-      },
-      "layer": {
-        "app/admin/players/page": "action-browser"
-      },
-      "filename": "app/admin/actions.ts",
-      "exportedName": "createAdminInviteAction"
-    },
-    "40955f31b7773518fd8aa48078befdb65ff7452d96": {
-      "workers": {
-        "app/admin/players/page": {
-          "moduleId": "(action-browser)/./node_modules/next/dist/build/webpack/loaders/next-flight-action-entry-loader.js?actions=%5B%5B%22%2FUsers%2Fsemios%2FDocuments%2FCodex%2F2026-04-19-build-a-mobile-first-private-web%2Fapp%2Fadmin%2Factions.ts%22%2C%5B%7B%22id%22%3A%22401deabec32186cdc63ea12736a862bfd007bc75ab%22%2C%22exportedName%22%3A%22createAdminInviteAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240955f31b7773518fd8aa48078befdb65ff7452d96%22%2C%22exportedName%22%3A%22scoreFinalizedGroupMatch%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240af0facd5c483632320fd1d70b747a2a68a5a8999%22%2C%22exportedName%22%3A%22sendAdminPasswordResetAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240ff02e901ff911fb76f9881255cd49d7b6584418b%22%2C%22exportedName%22%3A%22updateAdminMatchResultAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%5D%5D%5D&__client_imported__=true!",
-          "async": false
-        }
-      },
-      "layer": {
-        "app/admin/players/page": "action-browser"
-      },
-      "filename": "app/admin/actions.ts",
-      "exportedName": "scoreFinalizedGroupMatch"
-    },
-    "40af0facd5c483632320fd1d70b747a2a68a5a8999": {
-      "workers": {
-        "app/admin/players/page": {
-          "moduleId": "(action-browser)/./node_modules/next/dist/build/webpack/loaders/next-flight-action-entry-loader.js?actions=%5B%5B%22%2FUsers%2Fsemios%2FDocuments%2FCodex%2F2026-04-19-build-a-mobile-first-private-web%2Fapp%2Fadmin%2Factions.ts%22%2C%5B%7B%22id%22%3A%22401deabec32186cdc63ea12736a862bfd007bc75ab%22%2C%22exportedName%22%3A%22createAdminInviteAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240955f31b7773518fd8aa48078befdb65ff7452d96%22%2C%22exportedName%22%3A%22scoreFinalizedGroupMatch%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240af0facd5c483632320fd1d70b747a2a68a5a8999%22%2C%22exportedName%22%3A%22sendAdminPasswordResetAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240ff02e901ff911fb76f9881255cd49d7b6584418b%22%2C%22exportedName%22%3A%22updateAdminMatchResultAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%5D%5D%5D&__client_imported__=true!",
-          "async": false
-        }
-      },
-      "layer": {
-        "app/admin/players/page": "action-browser"
-      },
-      "filename": "app/admin/actions.ts",
-      "exportedName": "sendAdminPasswordResetAction"
-    },
-    "40ff02e901ff911fb76f9881255cd49d7b6584418b": {
-      "workers": {
-        "app/admin/players/page": {
-          "moduleId": "(action-browser)/./node_modules/next/dist/build/webpack/loaders/next-flight-action-entry-loader.js?actions=%5B%5B%22%2FUsers%2Fsemios%2FDocuments%2FCodex%2F2026-04-19-build-a-mobile-first-private-web%2Fapp%2Fadmin%2Factions.ts%22%2C%5B%7B%22id%22%3A%22401deabec32186cdc63ea12736a862bfd007bc75ab%22%2C%22exportedName%22%3A%22createAdminInviteAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240955f31b7773518fd8aa48078befdb65ff7452d96%22%2C%22exportedName%22%3A%22scoreFinalizedGroupMatch%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240af0facd5c483632320fd1d70b747a2a68a5a8999%22%2C%22exportedName%22%3A%22sendAdminPasswordResetAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%2C%7B%22id%22%3A%2240ff02e901ff911fb76f9881255cd49d7b6584418b%22%2C%22exportedName%22%3A%22updateAdminMatchResultAction%22%2C%22filename%22%3A%22app%2Fadmin%2Factions.ts%22%7D%5D%5D%5D&__client_imported__=true!",
-          "async": false
-        }
-      },
-      "layer": {
-        "app/admin/players/page": "action-browser"
-      },
-      "filename": "app/admin/actions.ts",
-      "exportedName": "updateAdminMatchResultAction"
-    }
-  },
+  "node": {},
   "edge": {},
   "encryptionKey": "MhQFKdyjP6WOIaCqzMGSFzLUjFU/C7rzEh9ugZvrfj4="
 }

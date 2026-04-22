@@ -240,8 +240,9 @@ drop policy if exists "Users manage own predictions before kickoff" on public.pr
 drop policy if exists "Users can read own predictions" on public.predictions;
 drop policy if exists "Admins can read all predictions" on public.predictions;
 drop policy if exists "Authenticated users can read predictions after kickoff" on public.predictions;
+drop policy if exists "Authenticated users can read predictions for live or final matches" on public.predictions;
 
-create policy "Authenticated users can read predictions after kickoff"
+create policy "Authenticated users can read predictions for live or final matches"
 on public.predictions for select
 to authenticated
 using (
@@ -250,7 +251,7 @@ using (
     select 1
     from public.matches
     where matches.id = predictions.match_id
-      and matches.kickoff_time <= now()
+      and matches.status in ('live', 'final')
   )
 );
 

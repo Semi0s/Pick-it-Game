@@ -10,6 +10,7 @@ export function LeaderboardClient() {
   const { user } = useCurrentUser();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -19,12 +20,21 @@ export function LeaderboardClient() {
         setIsLoading(true);
       }
 
-      fetchLeaderboardUsers().then((items) => {
-        if (isMounted) {
-          setUsers(items);
-          setIsLoading(false);
-        }
-      });
+      fetchLeaderboardUsers()
+        .then((items) => {
+          if (isMounted) {
+            setUsers(items);
+            setError(null);
+            setIsLoading(false);
+          }
+        })
+        .catch((caughtError: Error) => {
+          if (isMounted) {
+            setUsers([]);
+            setError(caughtError.message);
+            setIsLoading(false);
+          }
+        });
     }
 
     function refreshWhenVisible() {
@@ -48,13 +58,19 @@ export function LeaderboardClient() {
     <div className="space-y-5">
       <section className="rounded-lg bg-gray-100 p-5">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Leaderboard</p>
-        <h2 className="mt-2 text-3xl font-black leading-tight">Tap a name to see picks.</h2>
+        <h2 className="mt-2 text-3xl font-black leading-tight">Tap a name to see public picks.</h2>
       </section>
 
       <section className="space-y-2">
         {isLoading ? (
           <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
             Loading leaderboard...
+          </p>
+        ) : null}
+
+        {!isLoading && error ? (
+          <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+            Could not load the live leaderboard right now: {error}
           </p>
         ) : null}
 
@@ -72,7 +88,7 @@ export function LeaderboardClient() {
                 {profile.name}
                 {profile.id === user?.id ? " (You)" : ""}
               </span>
-              <span className="block text-xs font-semibold text-gray-500">View read-only picks</span>
+              <span className="block text-xs font-semibold text-gray-500">View public picks</span>
             </span>
             <span className="rounded-md bg-accent-light px-2 py-1 text-sm font-black text-accent-dark">
               {profile.totalPoints}
