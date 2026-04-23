@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { MailPlus, Trophy, UsersRound } from "lucide-react";
+import { Trophy, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 
@@ -24,35 +24,27 @@ export function AdminHomeClient() {
 
       {error ? <AdminMessage tone="error" message={error} /> : null}
 
-      <section className="grid gap-3 sm:grid-cols-3">
-        <AdminCard href="/admin/invites" icon={MailPlus} title="Invites" copy="Create and track invite status." />
-        <AdminCard href="/admin/players" icon={UsersRound} title="Players" copy="View registered players." />
-        <AdminCard href="/admin/matches" icon={Trophy} title="Matches" copy="Enter scores and winners." />
-      </section>
-
-      <section className="grid gap-3 sm:grid-cols-2">
-        <Stat label="Pending invites" value={counts ? String(counts.pendingInvites) : "-"} />
-        <Stat label="Accepted invites" value={counts ? String(counts.acceptedInvites) : "-"} />
-        <Stat label="Total players" value={counts ? String(counts.totalPlayers) : "-"} />
-        <Stat
-          label="Matches by status"
-          value={
-            counts
-              ? `${counts.matchesByStatus.scheduled} scheduled / ${counts.matchesByStatus.live} live / ${counts.matchesByStatus.final} final`
-              : "-"
-          }
-        />
-      </section>
+      <AdminToolsSection />
+      <AdminStatsSection counts={counts} />
     </div>
   );
 }
 
 type AdminCardProps = {
   href: string;
-  icon: typeof MailPlus;
+  icon: typeof Trophy;
   title: string;
   copy: string;
 };
+
+export function AdminToolsSection() {
+  return (
+    <section className="grid gap-3 sm:grid-cols-2">
+      <AdminCard href="/admin/players" icon={UsersRound} title="Players" copy="Manage invites and review auth state." />
+      <AdminCard href="/admin/matches" icon={Trophy} title="Matches" copy="Enter scores and winners." />
+    </section>
+  );
+}
 
 function AdminCard({ href, icon: Icon, title, copy }: AdminCardProps) {
   return (
@@ -64,6 +56,24 @@ function AdminCard({ href, icon: Icon, title, copy }: AdminCardProps) {
       <h3 className="mt-4 text-lg font-black">{title}</h3>
       <p className="mt-1 text-sm leading-6 text-gray-600">{copy}</p>
     </Link>
+  );
+}
+
+export function AdminStatsSection({ counts }: { counts: AdminCounts | null }) {
+  return (
+    <section className="grid gap-3 sm:grid-cols-2">
+      <Stat label="Pending invites" value={counts ? String(counts.pendingInvites) : "-"} />
+      <Stat label="Accepted invites" value={counts ? String(counts.acceptedInvites) : "-"} />
+      <Stat label="Total players" value={counts ? String(counts.totalPlayers) : "-"} />
+      <Stat
+        label="Matches by status"
+        value={
+          counts
+            ? `${counts.matchesByStatus.scheduled} scheduled / ${counts.matchesByStatus.live} live / ${counts.matchesByStatus.final} final`
+            : "-"
+        }
+      />
+    </section>
   );
 }
 

@@ -1,10 +1,14 @@
 "use client";
 
 import Image from "next/image";
+import { useState } from "react";
+import { sendCurrentUserPasswordReset } from "@/lib/auth-client";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 export function ProfileSummary() {
   const { user, isLoading } = useCurrentUser();
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [isSendingReset, setIsSendingReset] = useState(false);
 
   if (isLoading || !user) {
     return (
@@ -45,6 +49,38 @@ export function ProfileSummary() {
           Phase 1 stores demo profile details from the invite list. Editable display names and avatar uploads
           will move into Supabase-backed profile settings in a later phase.
         </p>
+      </div>
+
+      <div className="rounded-lg border border-gray-200 p-4">
+        <h3 className="text-lg font-bold">Password</h3>
+        <p className="mt-2 text-sm leading-6 text-gray-600">
+          Send yourself a password reset email if you want to change how you sign in.
+        </p>
+        {message ? (
+          <p
+            className={`mt-3 rounded-md border px-3 py-2 text-sm font-semibold ${
+              message.tone === "success"
+                ? "border-accent-light bg-accent-light text-accent-dark"
+                : "border-red-200 bg-red-50 text-red-700"
+            }`}
+          >
+            {message.text}
+          </p>
+        ) : null}
+        <button
+          type="button"
+          disabled={isSendingReset}
+          onClick={async () => {
+            setIsSendingReset(true);
+            setMessage(null);
+            const result = await sendCurrentUserPasswordReset(user.email);
+            setMessage({ tone: result.ok ? "success" : "error", text: result.message ?? "Something went wrong." });
+            setIsSendingReset(false);
+          }}
+          className="mt-4 w-full rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+        >
+          {isSendingReset ? "Sending..." : "Reset My Password"}
+        </button>
       </div>
     </section>
   );

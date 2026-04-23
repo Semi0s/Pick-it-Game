@@ -362,7 +362,13 @@ function isMissingInviteColumnError(message: string) {
 
 function isMissingColumnError(message: string, column: string) {
   const normalized = message.toLowerCase();
-  return normalized.includes(`column`) && normalized.includes(column.toLowerCase()) && normalized.includes("does not exist");
+  return (
+    normalized.includes(column.toLowerCase()) &&
+    (
+      (normalized.includes("column") && normalized.includes("does not exist")) ||
+      normalized.includes("schema cache")
+    )
+  );
 }
 
 function mapMatchRow(row: MatchRow): AdminMatch {

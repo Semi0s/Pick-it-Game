@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
-import { CalendarDays, LayoutDashboard, ListOrdered, MailPlus, Network, Settings, Sparkles, Trophy, UsersRound } from "lucide-react";
+import { CalendarDays, ListOrdered, Network, Sparkles, Trophy } from "lucide-react";
+import { AdminStatsSection, AdminToolsSection, AdminMessage } from "@/components/admin/AdminHomeClient";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
+import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { getStoredPredictions } from "@/lib/prediction-store";
 import { isPredictionLocked } from "@/lib/scoring";
 import type { MatchWithTeams } from "@/lib/types";
@@ -12,6 +14,8 @@ import { useCurrentUser } from "@/lib/use-current-user";
 export function DashboardOverview() {
   const { user } = useCurrentUser();
   const [groupMatches, setGroupMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
+  const [adminCounts, setAdminCounts] = useState<AdminCounts | null>(null);
+  const [adminError, setAdminError] = useState<string | null>(null);
   const predictions = user ? getStoredPredictions(user.id) : [];
 
   useEffect(() => {
@@ -34,11 +38,34 @@ export function DashboardOverview() {
     };
   }, []);
 
+  useEffect(() => {
+    if (user?.role !== "admin") {
+      return;
+    }
+
+    let isMounted = true;
+    fetchAdminCounts()
+      .then((counts) => {
+        if (isMounted) {
+          setAdminCounts(counts);
+        }
+      })
+      .catch((error: Error) => {
+        if (isMounted) {
+          setAdminError(error.message);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.role]);
+
   const openMatches = groupMatches.filter((match) => !isPredictionLocked(match));
   const completedCount = groupMatches.filter((match) =>
     predictions.some((prediction) => prediction.matchId === match.id)
   ).length;
-  const ctaLabel = completedCount > 0 ? "Continue Group Picks" : "Start Group Picks";
+  const ctaLabel = "Score Picks";
 
   return (
     <div className="space-y-5">
@@ -60,6 +87,18 @@ export function DashboardOverview() {
           </Link>
         </div>
       </section>
+
+      {user?.role === "admin" ? (
+        <section className="space-y-3 rounded-lg border border-accent-light bg-accent-light/40 p-4">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Admin</p>
+            <h3 className="mt-1 text-xl font-black text-gray-950">Manage the challenge.</h3>
+          </div>
+          {adminError ? <AdminMessage tone="error" message={adminError} /> : null}
+          <AdminToolsSection />
+          <AdminStatsSection counts={adminCounts} />
+        </section>
+      ) : null}
 
       <section className="grid gap-3 sm:grid-cols-3">
         <StatCard icon={<CalendarDays className="h-5 w-5" />} label="Group matches" value={String(groupMatches.length)} />
@@ -87,21 +126,6 @@ export function DashboardOverview() {
           copy="Tournament winner, Golden Boot, and MVP picks."
         />
       </section>
-
-      {user?.role === "admin" ? (
-        <section className="space-y-3 rounded-lg border border-accent-light bg-accent-light/40 p-4">
-          <div>
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Admin Tools</p>
-            <h3 className="mt-1 text-xl font-black text-gray-950">Manage the challenge.</h3>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <DashboardLinkCard href="/admin" icon={Settings} title="Admin Home" copy="Open the admin dashboard." />
-            <DashboardLinkCard href="/admin/invites" icon={MailPlus} title="Invites" copy="Create and view invites." />
-            <DashboardLinkCard href="/admin/players" icon={UsersRound} title="Players" copy="View registered players." />
-            <DashboardLinkCard href="/admin/matches" icon={LayoutDashboard} title="Matches" copy="Update match results." />
-          </div>
-        </section>
-      ) : null}
 
       <section className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">Phase 1 scoring preview</h3>

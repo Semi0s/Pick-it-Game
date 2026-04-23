@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect } from "react";
-import { CircleUserRound, Home, ListOrdered, Network, Trophy, UsersRound } from "lucide-react";
+import { CircleUserRound, ListOrdered, Network, Trophy, UsersRound } from "lucide-react";
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { signOutCurrentUser } from "@/lib/auth-client";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -13,9 +13,9 @@ type AppShellProps = {
 };
 
 const navItems = [
-  { href: "/dashboard", label: "Home", ariaLabel: "Home", icon: Home },
-  { href: "/groups", label: "Groups", ariaLabel: "Group Stage", icon: UsersRound },
-  { href: "/leaderboard", label: "Scores", ariaLabel: "Leaderboard", icon: ListOrdered },
+  { href: "/groups", label: "Score Picks", ariaLabel: "Score Picks", icon: ListOrdered },
+  { href: "/my-groups", label: "My Groups", ariaLabel: "My Groups", icon: UsersRound },
+  { href: "/leaderboard", label: "Leaderboard", ariaLabel: "Leaderboard", icon: ListOrdered },
   { href: "/knockout", label: "Knockout", ariaLabel: "Knockout Stage", icon: Network },
   { href: "/trophies", label: "Trophies", ariaLabel: "Additional Trophies", icon: Trophy },
   { href: "/profile", label: "Profile", ariaLabel: "Profile", icon: CircleUserRound }

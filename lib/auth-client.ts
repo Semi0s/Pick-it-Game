@@ -110,6 +110,34 @@ export async function signOutCurrentUser() {
   await supabase.auth.signOut();
 }
 
+export async function sendCurrentUserPasswordReset(email: string): Promise<AuthResult> {
+  if (!hasSupabaseConfig()) {
+    return {
+      ok: false,
+      message: "Password reset emails need a configured Supabase project."
+    };
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return { ok: false, message: "A valid email is required." };
+  }
+
+  const supabase = createClient();
+  const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+    redirectTo: `${getSiteUrl()}/auth/confirm?next=/reset-password`
+  });
+
+  if (error) {
+    return { ok: false, message: error.message || "Could not send the password reset email." };
+  }
+
+  return {
+    ok: true,
+    message: `Password reset email sent to ${normalizedEmail}.`
+  };
+}
+
 export function isUsingDemoAuthFallback() {
   return !hasSupabaseConfig();
 }

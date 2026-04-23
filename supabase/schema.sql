@@ -10,6 +10,13 @@ create type public.match_stage as enum (
   'final'
 );
 create type public.match_status as enum ('scheduled', 'live', 'final');
+create type public.invite_delivery_status as enum (
+  'pending',
+  'accepted',
+  'revoked',
+  'expired',
+  'failed'
+);
 create type public.email_job_kind as enum ('access_email', 'password_recovery');
 create type public.email_job_status as enum ('pending', 'processing', 'retrying', 'sent', 'failed');
 
@@ -18,12 +25,11 @@ create table public.invites (
   display_name text not null,
   role public.user_role not null default 'player',
   accepted_at timestamptz,
-  status text not null default 'pending',
+  status public.invite_delivery_status not null default 'pending',
   last_sent_at timestamptz,
   send_attempts integer not null default 0,
   last_error text,
-  created_at timestamptz not null default now(),
-  constraint invites_status_check check (status in ('pending', 'accepted', 'revoked', 'expired', 'failed'))
+  created_at timestamptz not null default now()
 );
 
 create table public.users (

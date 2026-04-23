@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
+import { fetchAdminPlayerHealthRows, type AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { getSiteUrl } from "@/lib/site-url";
 import type { UserRole } from "@/lib/types";
@@ -113,15 +114,25 @@ export type CreateInviteResult =
       message: string;
     };
 
-export type SendPasswordResetInput = {
-  userId?: string;
-  email?: string;
+export type ResetUserAccessInput = {
+  userId: string;
+  email: string;
 };
 
-export type SendPasswordResetResult =
+export type ResetUserAccessResult =
   | {
       ok: true;
       message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type FetchAdminPlayerHealthResult =
+  | {
+      ok: true;
+      players: AdminPlayerHealthRow[];
     }
   | {
       ok: false;
@@ -307,96 +318,64 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
   };
 }
 
-export async function sendAdminPasswordResetAction(
-  input: SendPasswordResetInput
-): Promise<SendPasswordResetResult> {
+export async function resetUserAccess(input: ResetUserAccessInput): Promise<ResetUserAccessResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
     return adminCheck;
   }
 
   const adminSupabase = createAdminClient();
-  let email = input.email?.trim().toLowerCase();
+  const userId = input.userId?.trim();
+  const email = input.email?.trim().toLowerCase();
 
-  if (!email && input.userId) {
-    const { data: userRow, error: userLookupError } = await adminSupabase
-      .from("users")
-      .select("email")
-      .eq("id", input.userId)
-      .single();
-
-    if (userLookupError) {
-      return { ok: false, message: userLookupError.message };
-    }
-
-    email = userRow.email?.trim().toLowerCase();
-  }
-
-  if (!email) {
-    return { ok: false, message: "A valid user email is required to send a password reset." };
+  if (!userId || !email) {
+    return { ok: false, message: "A valid user and email are required to reset access." };
   }
 
   const authUser = await findAuthUserByEmail(adminSupabase, email);
-  if (!authUser) {
+  if (!authUser || authUser.id !== userId) {
     return {
       ok: false,
       message: "This user has not activated their account yet. Resend invite instead."
     };
   }
 
-  const rateLimitResult = await enforceEmailRateLimits(adminSupabase, adminCheck.userId, email);
-  if (!rateLimitResult.ok) {
-    return { ok: false, message: rateLimitResult.message };
+  const { error: signOutError } = await adminSupabase.auth.admin.signOut(userId);
+  if (signOutError) {
+    return { ok: false, message: "Could not revoke active sessions for this user right now." };
   }
 
-  if (!(await hasEmailJobsTable(adminSupabase))) {
-    const sendResult = await sendAdminEmailInline(adminSupabase, {
-      kind: "password_recovery",
-      email
-    });
-
-    if (!sendResult.ok) {
-      return { ok: false, message: sendResult.message };
-    }
-
-    revalidatePath("/admin/players");
-    return { ok: true, message: `Password reset email sent for ${email}.` };
-  }
-
-  const enqueueResult = await enqueueEmailJob(adminSupabase, {
+  const sendResult = await sendAdminEmailInline(adminSupabase, {
     kind: "password_recovery",
-    email,
-    requestedByAdminId: adminCheck.userId,
-    payload: {
-      source: "admin_players"
-    }
+    email
   });
 
-  if (!enqueueResult.ok && isMissingEmailJobsError(enqueueResult.message)) {
-    const sendResult = await sendAdminEmailInline(adminSupabase, {
-      kind: "password_recovery",
-      email
-    });
-
-    if (!sendResult.ok) {
-      return { ok: false, message: sendResult.message };
-    }
-
-    revalidatePath("/admin/players");
-    return { ok: true, message: `Password reset email sent for ${email}.` };
-  }
-
-  if (!enqueueResult.ok) {
-    return { ok: false, message: enqueueResult.message };
+  if (!sendResult.ok) {
+    return { ok: false, message: sendResult.message };
   }
 
   revalidatePath("/admin/players");
   return {
     ok: true,
-    message: enqueueResult.alreadyQueued
-      ? `A password reset email is already queued for ${email}.`
-      : `Password reset email queued for ${email}.`
+    message: `User access reset. A password reset email was sent to ${email}.`
   };
+}
+
+export async function fetchAdminPlayerHealthAction(): Promise<FetchAdminPlayerHealthResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  try {
+    const players = await fetchAdminPlayerHealthRows();
+    return { ok: true, players };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load admin player health right now."
+    };
+  }
 }
 
 export async function updateAdminMatchResultAction(input: UpdateMatchResultInput): Promise<UpdateMatchResult> {
@@ -949,7 +928,13 @@ function isMissingInviteLifecycleColumnError(message: string) {
 
 function isMissingColumnError(message: string, column: string) {
   const normalized = message.toLowerCase();
-  return normalized.includes("column") && normalized.includes(column.toLowerCase()) && normalized.includes("does not exist");
+  return (
+    normalized.includes(column.toLowerCase()) &&
+    (
+      (normalized.includes("column") && normalized.includes("does not exist")) ||
+      normalized.includes("schema cache")
+    )
+  );
 }
 
 function isMissingRelationError(message: string, relation: string) {

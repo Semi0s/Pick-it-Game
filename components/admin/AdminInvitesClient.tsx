@@ -8,6 +8,16 @@ import type { UserRole } from "@/lib/types";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 
 export function AdminInvitesClient() {
+  return <AdminInvitesSection />;
+}
+
+export function AdminInvitesSection({
+  showHeader = true,
+  showInviteList = true
+}: {
+  showHeader?: boolean;
+  showInviteList?: boolean;
+}) {
   const [invites, setInvites] = useState<AdminInvite[]>([]);
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -54,7 +64,7 @@ export function AdminInvitesClient() {
 
   return (
     <div className="space-y-5">
-      <AdminHeader eyebrow="Invites" title="Create and track invites." />
+      {showHeader ? <AdminHeader eyebrow="Invites" title="Create and track invites." /> : null}
 
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
 
@@ -94,58 +104,70 @@ export function AdminInvitesClient() {
           disabled={isSubmitting}
           className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
         >
-          {isSubmitting ? "Queueing..." : "Send Access Email"}
+          {isSubmitting ? "Sending..." : "Send Access Email"}
         </button>
       </form>
 
-      <section className="space-y-3">
-        <h3 className="text-xl font-black">All invites</h3>
-        {isLoading ? <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold">Loading invites...</p> : null}
-        {invites.map((invite) => (
-          <div key={invite.email} className="rounded-lg border border-gray-200 bg-white p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-base font-black text-gray-950">{invite.displayName}</p>
-                <p className="truncate text-sm font-semibold text-gray-600">{invite.email}</p>
+      {showInviteList ? (
+        <section className="space-y-3">
+          <h3 className="text-xl font-black">All invites</h3>
+          {isLoading ? <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold">Loading invites...</p> : null}
+          {invites.map((invite) => (
+            <div key={invite.email} className="rounded-lg border border-gray-200 bg-white p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-base font-black text-gray-950">{invite.displayName}</p>
+                  <p className="truncate text-sm font-semibold text-gray-600">{invite.email}</p>
+                </div>
+                <span className={`rounded-md px-2 py-1 text-xs font-bold uppercase ${getInviteStatusClassName(invite.status)}`}>
+                  {formatInviteStatus(invite.status)}
+                </span>
               </div>
-              <span className={`rounded-md px-2 py-1 text-xs font-bold uppercase ${getInviteStatusClassName(invite.status)}`}>
-                {formatInviteStatus(invite.status)}
-              </span>
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold uppercase text-gray-700">
-                {invite.role}
-              </span>
-              {invite.lastSentAt ? (
-                <p className="text-xs font-semibold text-gray-500">Last sent {formatDateTime(invite.lastSentAt)}</p>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold uppercase text-gray-700">
+                  {invite.role}
+                </span>
+                {invite.lastSentAt ? (
+                  <p className="text-xs font-semibold text-gray-500">Last sent {formatDateTime(invite.lastSentAt)}</p>
+                ) : null}
+              </div>
+              <p className="mt-3 text-sm font-semibold text-gray-600">
+                Status: {invite.status === "accepted" && invite.acceptedAt ? `Accepted ${formatDate(invite.acceptedAt)}` : formatInviteStatus(invite.status)}
+              </p>
+              <p className="mt-1 text-sm font-semibold text-gray-600">Send attempts: {invite.sendAttempts}</p>
+              {invite.lastError ? (
+                <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+                  {invite.lastError}
+                </p>
               ) : null}
             </div>
-            <p className="mt-3 text-sm font-semibold text-gray-600">
-              Status: {invite.status === "accepted" && invite.acceptedAt ? `Accepted ${formatDate(invite.acceptedAt)}` : formatInviteStatus(invite.status)}
-            </p>
-            <p className="mt-1 text-sm font-semibold text-gray-600">Send attempts: {invite.sendAttempts}</p>
-            {invite.lastError ? (
-              <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
-                {invite.lastError}
-              </p>
-            ) : null}
-          </div>
-        ))}
-      </section>
+          ))}
+        </section>
+      ) : null}
     </div>
   );
 }
 
-export function AdminHeader({ eyebrow, title }: { eyebrow: string; title: string }) {
+export function AdminHeader({
+  eyebrow,
+  title,
+  backHref = "/dashboard",
+  backLabel = "Dashboard"
+}: {
+  eyebrow: string;
+  title: string;
+  backHref?: string;
+  backLabel?: string;
+}) {
   return (
     <section className="rounded-lg bg-gray-100 p-5">
       <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{eyebrow}</p>
       <h2 className="mt-2 text-3xl font-black leading-tight">{title}</h2>
       <Link
-        href="/admin"
+        href={backHref}
         className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700"
       >
-        Admin Home
+        {backLabel}
       </Link>
     </section>
   );

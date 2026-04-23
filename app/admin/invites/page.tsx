@@ -1,13 +1,5 @@
-import { AppShell } from "@/components/AppShell";
-import { AdminGuard } from "@/components/admin/AdminGuard";
-import { AdminInvitesClient } from "@/components/admin/AdminInvitesClient";
+import { redirect } from "next/navigation";
 
 export default function AdminInvitesPage() {
-  return (
-    <AppShell>
-      <AdminGuard>
-        <AdminInvitesClient />
-      </AdminGuard>
-    </AppShell>
-  );
+  redirect("/admin/players");
 }
