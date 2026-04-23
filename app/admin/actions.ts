@@ -139,6 +139,27 @@ export type FetchAdminPlayerHealthResult =
       message: string;
     };
 
+export type UpsertManagerLimitsInput = {
+  userId: string;
+  maxGroups: number;
+  maxMembersPerGroup: number;
+};
+
+export type UpsertManagerLimitsResult =
+  | {
+      ok: true;
+      managerLimits: {
+        userId: string;
+        maxGroups: number;
+        maxMembersPerGroup: number;
+      };
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export async function createAdminInviteAction(input: CreateInviteInput): Promise<CreateInviteResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
@@ -376,6 +397,72 @@ export async function fetchAdminPlayerHealthAction(): Promise<FetchAdminPlayerHe
       message: error instanceof Error ? error.message : "Could not load admin player health right now."
     };
   }
+}
+
+export async function upsertManagerLimitsAction(
+  input: UpsertManagerLimitsInput
+): Promise<UpsertManagerLimitsResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const userId = input.userId?.trim();
+  const maxGroups = Math.floor(input.maxGroups);
+  const maxMembersPerGroup = Math.floor(input.maxMembersPerGroup);
+
+  if (!userId) {
+    return { ok: false, message: "A valid user is required." };
+  }
+
+  if (maxGroups <= 0 || maxMembersPerGroup <= 0) {
+    return { ok: false, message: "Manager limits must be positive numbers." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const { data: existingUser, error: userError } = await adminSupabase
+    .from("users")
+    .select("id")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (userError) {
+    return { ok: false, message: userError.message };
+  }
+
+  if (!existingUser) {
+    return { ok: false, message: "That user was not found." };
+  }
+
+  const { data, error } = await adminSupabase
+    .from("manager_limits")
+    .upsert(
+      {
+        user_id: userId,
+        max_groups: maxGroups,
+        max_members_per_group: maxMembersPerGroup
+      },
+      { onConflict: "user_id" }
+    )
+    .select("user_id,max_groups,max_members_per_group")
+    .single();
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/dashboard");
+  revalidatePath("/admin/players");
+
+  return {
+    ok: true,
+    managerLimits: {
+      userId: data.user_id,
+      maxGroups: data.max_groups,
+      maxMembersPerGroup: data.max_members_per_group
+    },
+    message: "Manager limits updated."
+  };
 }
 
 export async function updateAdminMatchResultAction(input: UpdateMatchResultInput): Promise<UpdateMatchResult> {
