@@ -9,6 +9,16 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const bypassReason = getAuthBypassReason(request);
+  if (bypassReason) {
+    console.info("Middleware bypassing auth enforcement.", {
+      pathname: request.nextUrl.pathname,
+      search: request.nextUrl.search,
+      bypassReason
+    });
+    return NextResponse.next();
+  }
+
   let response = NextResponse.next({
     request: {
       headers: request.headers
@@ -85,8 +95,40 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+function getAuthBypassReason(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const searchParams = request.nextUrl.searchParams;
+
+  if (pathname.startsWith("/auth/callback")) {
+    return "auth-callback-path";
+  }
+
+  if (pathname.startsWith("/auth/confirm")) {
+    return "auth-confirm-path";
+  }
+
+  if (pathname === "/login" && hasAuthCallbackParams(searchParams)) {
+    return "login-with-auth-params";
+  }
+
+  if (hasAuthCallbackParams(searchParams)) {
+    return "auth-query-params";
+  }
+
+  return null;
+}
+
+function hasAuthCallbackParams(searchParams: URLSearchParams) {
+  return (
+    searchParams.has("token_hash") ||
+    searchParams.has("code") ||
+    searchParams.has("type")
+  );
+}
+
 export const config = {
   matcher: [
+    "/auth/:path*",
     "/admin/:path*",
     "/dashboard/:path*",
     "/groups/:path*",
