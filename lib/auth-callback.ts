@@ -24,18 +24,34 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
   const code = nextRequest.nextUrl.searchParams.get("code");
   const tokenHash = nextRequest.nextUrl.searchParams.get("token_hash");
   const type = nextRequest.nextUrl.searchParams.get("type") as SupportedOtpType | null;
+  const authError = nextRequest.nextUrl.searchParams.get("error");
+  const authErrorCode = nextRequest.nextUrl.searchParams.get("error_code");
+  const authErrorDescription = nextRequest.nextUrl.searchParams.get("error_description");
 
   console.info("Auth callback received.", {
     pathname: nextRequest.nextUrl.pathname,
+    search: nextRequest.nextUrl.search,
     nextPath,
     hasCode: Boolean(code),
     hasTokenHash: Boolean(tokenHash),
-    type
+    type,
+    authError,
+    authErrorCode,
+    hasAuthErrorDescription: Boolean(authErrorDescription)
   });
 
   let errorMessage: string | null = null;
+  let confirmedUserEmail: string | null = null;
+  let confirmedAt: string | null = null;
 
-  if (code) {
+  if (authError || authErrorDescription) {
+    errorMessage = authErrorDescription ?? authError ?? "Supabase returned an authentication error.";
+    console.error("Supabase callback returned an explicit error.", {
+      authError,
+      authErrorCode,
+      authErrorDescription
+    });
+  } else if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     console.info("exchangeCodeForSession completed.", { ok: !error, message: error?.message ?? null });
     if (error) {
@@ -66,7 +82,23 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
     if (userError || !user) {
       console.error("Auth callback could not load the authenticated user after exchange.", userError);
       errorMessage = userError?.message ?? "Could not load the confirmed user session.";
+    } else if (!user.email_confirmed_at) {
+      confirmedUserEmail = user.email ?? null;
+      confirmedAt = user.email_confirmed_at ?? null;
+      console.warn("Auth callback resolved a user session, but the email is still unconfirmed.", {
+        userId: user.id,
+        email: user.email,
+        emailConfirmedAt: user.email_confirmed_at ?? null
+      });
+      errorMessage = "Supabase did not confirm this email. Request a new confirmation email and try again.";
     } else {
+      confirmedUserEmail = user.email ?? null;
+      confirmedAt = user.email_confirmed_at ?? null;
+      console.info("Auth callback confirmed user session.", {
+        userId: user.id,
+        email: user.email,
+        emailConfirmedAt: user.email_confirmed_at ?? null
+      });
       try {
         const reconciliationResult = await reconcileInvitesForAuthUser({
           id: user.id,
@@ -87,10 +119,18 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
     }
   }
 
-  const redirectUrl = new URL(nextPath, nextRequest.url);
+  const redirectPath = errorMessage ? removeConfirmedFlag(nextPath) : nextPath;
+  const redirectUrl = new URL(redirectPath, nextRequest.url);
   if (errorMessage) {
     redirectUrl.searchParams.set("error", errorMessage);
   }
+
+  console.info("Auth callback redirecting.", {
+    redirectTo: `${redirectUrl.pathname}${redirectUrl.search}`,
+    confirmedUserEmail,
+    confirmedAt,
+    hasError: Boolean(errorMessage)
+  });
 
   const response = NextResponse.redirect(redirectUrl);
   cookieBuffer.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
@@ -103,4 +143,16 @@ function getSafeNextPath(value: string | null) {
   }
 
   return value;
+}
+
+function removeConfirmedFlag(path: string) {
+  const [pathname, search = ""] = path.split("?");
+  if (!search) {
+    return pathname;
+  }
+
+  const params = new URLSearchParams(search);
+  params.delete("confirmed");
+  const nextSearch = params.toString();
+  return nextSearch ? `${pathname}?${nextSearch}` : pathname;
 }
