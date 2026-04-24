@@ -6,6 +6,12 @@ import { createAdminInviteAction } from "@/app/admin/actions";
 import { fetchAdminInvites, type AdminInvite } from "@/lib/admin-data";
 import type { UserRole } from "@/lib/types";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
+import {
+  ActionButton,
+  ManagementBadge,
+  ManagementCard,
+  ManagementEmptyState
+} from "@/components/player-management/Shared";
 
 export function AdminInvitesClient() {
   return <AdminInvitesSection />;
@@ -68,65 +74,65 @@ export function AdminInvitesSection({
 
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
 
-      <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
-        <label className="block">
-          <span className="text-sm font-bold text-gray-800">Email</span>
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-          />
-        </label>
-        <label className="block">
-          <span className="text-sm font-bold text-gray-800">Display name</span>
-          <input
-            required
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-          />
-        </label>
-        <label className="block">
-          <span className="text-sm font-bold text-gray-800">Role</span>
-          <select
-            value={role}
-            onChange={(event) => setRole(event.target.value as UserRole)}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-          >
-            <option value="player">Player</option>
-            <option value="admin">Admin</option>
-          </select>
-        </label>
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
-        >
-          {isSubmitting ? "Sending..." : "Send Access Email"}
-        </button>
-      </form>
+      <ManagementCard
+        title="Invite player or admin"
+        subtitle="Use the same access workflow the rest of the management system uses."
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <label className="block">
+            <span className="text-sm font-bold text-gray-800">Email</span>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-gray-800">Display name</span>
+            <input
+              required
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-gray-800">Role</span>
+            <select
+              value={role}
+              onChange={(event) => setRole(event.target.value as UserRole)}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            >
+              <option value="player">Player</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <ActionButton type="submit" disabled={isSubmitting} tone="accent" fullWidth>
+            {isSubmitting ? "Sending..." : "Send Access Email"}
+          </ActionButton>
+        </form>
+      </ManagementCard>
 
       {showInviteList ? (
         <section className="space-y-3">
           <h3 className="text-xl font-black">All invites</h3>
-          {isLoading ? <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold">Loading invites...</p> : null}
+          {isLoading ? <ManagementEmptyState message="Loading invites..." /> : null}
+          {!isLoading && invites.length === 0 ? <ManagementEmptyState message="No invites yet." /> : null}
           {invites.map((invite) => (
-            <div key={invite.email} className="rounded-lg border border-gray-200 bg-white p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-base font-black text-gray-950">{invite.displayName}</p>
-                  <p className="truncate text-sm font-semibold text-gray-600">{invite.email}</p>
-                </div>
-                <span className={`rounded-md px-2 py-1 text-xs font-bold uppercase ${getInviteStatusClassName(invite.status)}`}>
-                  {formatInviteStatus(invite.status)}
-                </span>
-              </div>
+            <ManagementCard
+              key={invite.email}
+              title={invite.displayName}
+              subtitle={invite.email}
+              badges={
+                <>
+                  <ManagementBadge label={invite.role} tone={invite.role === "admin" ? "accent" : "neutral"} />
+                  <ManagementBadge label={formatInviteStatus(invite.status)} tone={getInviteStatusTone(invite.status)} />
+                </>
+              }
+            >
               <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold uppercase text-gray-700">
-                  {invite.role}
-                </span>
                 {invite.lastSentAt ? (
                   <p className="text-xs font-semibold text-gray-500">Last sent {formatDateTime(invite.lastSentAt)}</p>
                 ) : null}
@@ -140,7 +146,7 @@ export function AdminInvitesSection({
                   {invite.lastError}
                 </p>
               ) : null}
-            </div>
+            </ManagementCard>
           ))}
         </section>
       ) : null}
@@ -195,14 +201,14 @@ function formatInviteStatus(status: AdminInvite["status"]) {
   return status.replace("_", " ");
 }
 
-function getInviteStatusClassName(status: AdminInvite["status"]) {
+function getInviteStatusTone(status: AdminInvite["status"]) {
   if (status === "accepted") {
-    return "bg-green-50 text-green-700";
+    return "success";
   }
 
   if (status === "failed" || status === "revoked" || status === "expired") {
-    return "bg-red-50 text-red-700";
+    return "danger";
   }
 
-  return "bg-gray-100 text-gray-700";
+  return "neutral";
 }

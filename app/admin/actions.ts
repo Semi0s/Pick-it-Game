@@ -160,6 +160,9 @@ export type UpsertManagerLimitsResult =
       message: string;
     };
 
+export type RemoveManagerAccessResult = ResetUserAccessResult;
+export type UpdateUserDisplayNameResult = ResetUserAccessResult;
+
 export async function createAdminInviteAction(input: CreateInviteInput): Promise<CreateInviteResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
@@ -462,6 +465,73 @@ export async function upsertManagerLimitsAction(
       maxMembersPerGroup: data.max_members_per_group
     },
     message: "Manager limits updated."
+  };
+}
+
+export async function removeManagerAccessAction(userId: string): Promise<RemoveManagerAccessResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const trimmedUserId = userId.trim();
+  if (!trimmedUserId) {
+    return { ok: false, message: "A valid user is required." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const { error } = await adminSupabase
+    .from("manager_limits")
+    .delete()
+    .eq("user_id", trimmedUserId);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/dashboard");
+  revalidatePath("/admin/players");
+
+  return {
+    ok: true,
+    message: "Manager access removed."
+  };
+}
+
+export async function updateUserDisplayNameAction(
+  userId: string,
+  displayName: string
+): Promise<UpdateUserDisplayNameResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const trimmedUserId = userId.trim();
+  const trimmedDisplayName = displayName.trim();
+  if (!trimmedUserId || !trimmedDisplayName) {
+    return { ok: false, message: "A valid user and display name are required." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const { error } = await adminSupabase
+    .from("users")
+    .update({
+      name: trimmedDisplayName,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", trimmedUserId);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/dashboard");
+  revalidatePath("/admin/players");
+
+  return {
+    ok: true,
+    message: "Display name updated."
   };
 }
 
@@ -983,7 +1053,7 @@ async function sendAdminEmailInline(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (input.kind === "access_email") {
     const { error } = await adminSupabase.auth.admin.inviteUserByEmail(input.email, {
-      redirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite")}`
+      redirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`
     });
 
     if (error) {

@@ -221,6 +221,9 @@ function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; f
 
   if (input.flow) {
     params.set("flow", input.flow);
+    if (input.flow === "invite") {
+      params.set("mode", "signup");
+    }
   }
 
   if (input.nextPath?.startsWith("/")) {

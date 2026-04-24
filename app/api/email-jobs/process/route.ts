@@ -212,7 +212,7 @@ async function sendAccessEmail(
   }
 
   const { error } = await adminSupabase.auth.admin.inviteUserByEmail(normalizedEmail, {
-    redirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite")}`
+    redirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`
   });
 
   if (error) {

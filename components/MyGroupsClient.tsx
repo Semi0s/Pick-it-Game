@@ -19,6 +19,18 @@ import {
 } from "@/app/my-groups/actions";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { formatDate } from "@/components/admin/AdminInvitesClient";
+import {
+  ActionButton,
+  HierarchyPanel,
+  InlineConfirmation,
+  ManagementBadge,
+  ManagementCard,
+  ManagementDatum,
+  ManagementEmptyState,
+  ManagementGrid,
+  ManagementIntro,
+  ManagementToolbar
+} from "@/components/player-management/Shared";
 
 type MyGroupsClientProps = {
   inviteToken?: string;
@@ -47,6 +59,15 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   } | null>(null);
   const [isLoadingInvitePreview, setIsLoadingInvitePreview] = useState(Boolean(inviteToken));
   const [isAcceptingInvite, setIsAcceptingInvite] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
+  const [filterValue, setFilterValue] = useState<"all" | "members" | "invites">("all");
+  const [confirmation, setConfirmation] = useState<{
+    key: string;
+    title: string;
+    description: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -100,6 +121,30 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     () => (managedGroupsResult?.ok ? managedGroupsResult.groups : []),
     [managedGroupsResult]
   );
+  const filteredGroups = useMemo(() => {
+    const query = searchValue.trim().toLowerCase();
+    return groups.filter((group) => {
+      const matchesSearch =
+        !query ||
+        group.name.toLowerCase().includes(query) ||
+        group.members.some((member) => member.name.toLowerCase().includes(query) || member.email.toLowerCase().includes(query)) ||
+        group.invites.some((invite) => invite.email.toLowerCase().includes(query) || (invite.suggestedDisplayName ?? "").toLowerCase().includes(query));
+
+      if (!matchesSearch) {
+        return false;
+      }
+
+      if (filterValue === "members") {
+        return group.members.length > 0;
+      }
+
+      if (filterValue === "invites") {
+        return group.invites.length > 0;
+      }
+
+      return true;
+    });
+  }, [filterValue, groups, searchValue]);
   const currentUser = summary?.ok ? summary.currentUser : null;
   const isSignedIn = Boolean(currentUser);
   const canCreateGroups = summary?.ok && summary.currentUser.role === "admin"
@@ -185,15 +230,25 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
 
   return (
     <section className="space-y-5">
-      <div className="rounded-lg bg-gray-100 p-5">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">My Groups</p>
-        <h2 className="mt-2 text-3xl font-black leading-tight">Create and manage private pools.</h2>
-        <p className="mt-3 text-sm leading-6 text-gray-600">
-          Keep one set of picks across the app, then compete inside the groups you manage or join.
-        </p>
-      </div>
+      <ManagementIntro
+        eyebrow="My Groups"
+        title="Create and manage private pools."
+        description="Keep one set of picks across the app, then compete inside the groups you manage or join."
+      />
+      <HierarchyPanel />
 
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
+
+      {confirmation ? (
+        <InlineConfirmation
+          title={confirmation.title}
+          description={confirmation.description}
+          confirmLabel={confirmation.confirmLabel}
+          onConfirm={confirmation.onConfirm}
+          onCancel={() => setConfirmation(null)}
+          isPending={actionKey === confirmation.key}
+        />
+      ) : null}
 
       {inviteToken ? (
         <section className="rounded-lg border border-gray-200 bg-white p-4">
@@ -214,14 +269,9 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                 <AdminMessage tone={invitePreviewMessage.tone} message={invitePreviewMessage.text} />
               ) : null}
               {isSignedIn && invitePreview.status === "pending" ? (
-                <button
-                  type="button"
-                  onClick={handleAcceptInvite}
-                  disabled={isAcceptingInvite}
-                  className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
-                >
+                <ActionButton type="button" onClick={handleAcceptInvite} disabled={isAcceptingInvite} tone="accent" fullWidth>
                   {isAcceptingInvite ? "Joining..." : "Join Group"}
-                </button>
+                </ActionButton>
               ) : isSignedIn ? (
                 <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">
                   This invite has already been handled for your account.
@@ -234,13 +284,13 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                   <div className="grid grid-cols-2 gap-3">
                     <Link
                       href={inviteLoginPath}
-                      className="rounded-md border border-gray-300 bg-white px-4 py-3 text-center text-sm font-bold text-gray-800"
+                      className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
                     >
                       Sign In
                     </Link>
                     <Link
                       href={inviteSignupPath}
-                      className="rounded-md bg-accent px-4 py-3 text-center text-sm font-bold text-white"
+                      className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
                     >
                       Create Account
                     </Link>
@@ -256,12 +306,37 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
         </section>
       ) : null}
 
-      <section className="rounded-lg border border-gray-200 bg-white p-4">
-        <h3 className="text-lg font-bold">Manager access</h3>
+      <ManagementCard
+        title="Manager access"
+        subtitle={
+          summary?.ok && summary.currentUser.role === "admin"
+            ? "Super admins do not have group or manager limits."
+            : "Managers can only act inside groups they manage."
+        }
+        badges={
+          summary?.ok
+            ? (
+                <>
+                  <ManagementBadge label={summary.currentUser.role === "admin" ? "super admin" : "manager"} tone={summary.currentUser.role === "admin" ? "accent" : "neutral"} />
+                  <ManagementBadge
+                    label={
+                      summary.currentUser.role === "admin"
+                        ? "unlimited"
+                        : summary.managerAccess.enabled
+                          ? "limited by assigned permissions"
+                          : "participant"
+                    }
+                    tone={summary.currentUser.role === "admin" ? "accent" : "neutral"}
+                  />
+                </>
+              )
+            : undefined
+        }
+      >
         {isLoading ? (
           <p className="mt-3 text-sm font-semibold text-gray-600">Loading your access...</p>
         ) : summary?.ok ? (
-          <div className="mt-3 space-y-2 text-sm font-semibold text-gray-700">
+          <div className="space-y-2 text-sm font-semibold text-gray-700">
             <p>
               {summary.currentUser.role === "admin"
                 ? "Super admin access is active."
@@ -273,7 +348,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
         ) : (
           <p className="mt-3 text-sm font-semibold text-gray-600">{summary?.message ?? "Sign in to manage groups."}</p>
         )}
-      </section>
+      </ManagementCard>
 
       {canCreateGroups ? (
         <form onSubmit={handleCreateGroup} className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
@@ -298,13 +373,9 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
               placeholder="Leave blank for the default"
             />
           </label>
-          <button
-            type="submit"
-            disabled={isCreatingGroup}
-            className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
-          >
+          <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
             {isCreatingGroup ? "Creating..." : "Create Group"}
-          </button>
+          </ActionButton>
         </form>
       ) : null}
 
@@ -313,29 +384,43 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
           <h3 className="text-lg font-bold">Manage Players</h3>
           <p className="mt-1 text-sm font-semibold text-gray-600">See members, invites, and group capacity for every group you manage.</p>
         </div>
+        <ManagementToolbar
+          searchValue={searchValue}
+          onSearchChange={setSearchValue}
+          filterValue={filterValue}
+          onFilterChange={(value) => setFilterValue(value as "all" | "members" | "invites")}
+          filters={[
+            { value: "all", label: "All groups" },
+            { value: "members", label: "Groups with members" },
+            { value: "invites", label: "Groups with invites" }
+          ]}
+        />
         {isLoading ? (
-          <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold">Loading groups...</p>
-        ) : groups.length === 0 ? (
-          <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
-            No managed groups yet.
-          </p>
+          <ManagementEmptyState message="Loading groups..." />
+        ) : filteredGroups.length === 0 ? (
+          <ManagementEmptyState message="No groups match the current search or filter." />
         ) : (
-          groups.map((group) => {
+          filteredGroups.map((group) => {
             const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "" };
 
             return (
-              <div key={group.id} className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-base font-black text-gray-950">{group.name}</p>
-                    <p className="mt-1 text-sm font-semibold text-gray-600">
-                      {group.memberCount} members · {group.pendingInviteCount} pending invites · limit {group.membershipLimit}
-                    </p>
-                  </div>
-                  <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold uppercase text-gray-700">
-                    {group.status}
-                  </span>
-                </div>
+              <ManagementCard
+                key={group.id}
+                title={group.name}
+                subtitle={`${group.memberCount} members · ${group.pendingInviteCount} pending invites`}
+                badges={
+                  <>
+                    <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
+                    <ManagementBadge label={`limit ${group.membershipLimit}`} tone="neutral" />
+                  </>
+                }
+              >
+                <ManagementGrid>
+                  <ManagementDatum label="Capacity" value={`${group.memberCount + group.pendingInviteCount} / ${group.membershipLimit} used`} />
+                  <ManagementDatum label="Members" value={group.memberCount} />
+                  <ManagementDatum label="Pending invites" value={group.pendingInviteCount} />
+                  <ManagementDatum label="Scope" value="Managers can only act inside assigned groups." />
+                </ManagementGrid>
 
                 <form className="mt-4 space-y-3" onSubmit={(event) => handleCreateInvite(event, group)}>
                   <label className="block">
@@ -372,13 +457,9 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                       className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                     />
                   </label>
-                  <button
-                    type="submit"
-                    disabled={submittingInviteForGroup === group.id}
-                    className="w-full rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
-                  >
-                    {submittingInviteForGroup === group.id ? "Queueing invite..." : "Send Group Invite"}
-                  </button>
+                  <ActionButton type="submit" disabled={submittingInviteForGroup === group.id} fullWidth>
+                    {submittingInviteForGroup === group.id ? "Sending invite..." : "Send Group Invite"}
+                  </ActionButton>
                 </form>
 
                 <div className="space-y-2">
@@ -397,26 +478,30 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                             </p>
                           </div>
                           {member.role === "member" ? (
-                            <button
-                              type="button"
+                            <ActionButton
+                              tone="danger"
                               disabled={actionKey === `remove-member-${member.membershipId}`}
                               onClick={() => {
-                                if (!window.confirm(`Remove ${member.name} from ${group.name}?`)) {
-                                  return;
-                                }
-
-                                void withAction(`remove-member-${member.membershipId}`, async () => {
-                                  const result = await removeGroupMemberAction(group.id, member.userId);
-                                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                                  if (result.ok) {
-                                    await load();
+                                setConfirmation({
+                                  key: `remove-member-${member.membershipId}`,
+                                  title: `Remove ${member.name} from ${group.name}?`,
+                                  description: "They will keep their account, invites, and predictions. This only removes them from this group.",
+                                  confirmLabel: "Remove Player",
+                                  onConfirm: () => {
+                                    void withAction(`remove-member-${member.membershipId}`, async () => {
+                                      const result = await removeGroupMemberAction(group.id, member.userId);
+                                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                      if (result.ok) {
+                                        setConfirmation(null);
+                                        await load();
+                                      }
+                                    });
                                   }
                                 });
                               }}
-                              className="rounded-md border border-red-200 px-3 py-2 text-xs font-bold text-red-700 disabled:opacity-60"
                             >
                               Remove
-                            </button>
+                            </ActionButton>
                           ) : null}
                         </div>
                       </div>
@@ -454,8 +539,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                             <div className="flex flex-col gap-2">
                               {invite.status !== "accepted" ? (
                                 <>
-                                  <button
-                                    type="button"
+                                  <ActionButton
                                     disabled={actionKey === `resend-invite-${invite.id}`}
                                     onClick={() =>
                                       void withAction(`resend-invite-${invite.id}`, async () => {
@@ -466,30 +550,33 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                                         }
                                       })
                                     }
-                                    className="rounded-md border border-gray-300 px-3 py-2 text-xs font-bold text-gray-800 disabled:opacity-60"
                                   >
                                     Resend
-                                  </button>
-                                  <button
-                                    type="button"
+                                  </ActionButton>
+                                  <ActionButton
+                                    tone="danger"
                                     disabled={actionKey === `cancel-invite-${invite.id}`}
                                     onClick={() => {
-                                      if (!window.confirm(`Cancel the invite for ${invite.email}?`)) {
-                                        return;
-                                      }
-
-                                      void withAction(`cancel-invite-${invite.id}`, async () => {
-                                        const result = await cancelGroupInviteAction(invite.id);
-                                        setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                                        if (result.ok) {
-                                          await load();
+                                      setConfirmation({
+                                        key: `cancel-invite-${invite.id}`,
+                                        title: `Cancel the invite for ${invite.email}?`,
+                                        description: "This only affects this group invite. It will not touch the user's account or any app-level invite.",
+                                        confirmLabel: "Cancel Invite",
+                                        onConfirm: () => {
+                                          void withAction(`cancel-invite-${invite.id}`, async () => {
+                                            const result = await cancelGroupInviteAction(invite.id);
+                                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                            if (result.ok) {
+                                              setConfirmation(null);
+                                              await load();
+                                            }
+                                          });
                                         }
                                       });
                                     }}
-                                    className="rounded-md border border-red-200 px-3 py-2 text-xs font-bold text-red-700 disabled:opacity-60"
                                   >
                                     Cancel
-                                  </button>
+                                  </ActionButton>
                                 </>
                               ) : null}
                             </div>
@@ -510,8 +597,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                                   className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                                 />
                               </label>
-                              <button
-                                type="button"
+                              <ActionButton
                                 disabled={actionKey === `update-invite-${invite.id}`}
                                 onClick={() =>
                                   void withAction(`update-invite-${invite.id}`, async () => {
@@ -522,10 +608,10 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                                     }
                                   })
                                 }
-                                className="w-full rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-sm font-bold text-gray-800 disabled:opacity-60"
+                                fullWidth
                               >
                                 Save Suggested Name
-                              </button>
+                              </ActionButton>
                             </div>
                           ) : null}
                         </div>
@@ -533,7 +619,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                     })
                   )}
                 </div>
-              </div>
+              </ManagementCard>
             );
           })
         )}

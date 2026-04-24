@@ -57,6 +57,8 @@ export type AdminPlayerHealthRow = {
   isManager: boolean;
   maxGroups?: number | null;
   maxMembersPerGroup?: number | null;
+  currentGroupsUsed: number;
+  currentMembersUsed: number;
   createdAt?: string | null;
   invitedAt?: string | null;
   acceptedAt?: string | null;
@@ -71,13 +73,17 @@ export type AdminPlayerHealthRow = {
 export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow[]> {
   const adminSupabase = createAdminClient();
 
-  const [{ data: users, error: usersError }, { data: invites, error: invitesError }, { data: managerLimits, error: managerLimitsError }, authUsers] = await Promise.all([
+  const [{ data: users, error: usersError }, { data: invites, error: invitesError }, { data: managerLimits, error: managerLimitsError }, { data: groups, error: groupsError }, authUsers] = await Promise.all([
     adminSupabase.from("users").select("id,name,email,role,status,total_points,created_at").order("created_at", { ascending: false }),
     adminSupabase
       .from("invites")
       .select("email,display_name,role,status,accepted_at,created_at,last_sent_at,send_attempts,last_error")
       .order("created_at", { ascending: false }),
     adminSupabase.from("manager_limits").select("user_id,max_groups,max_members_per_group"),
+    adminSupabase
+      .from("groups")
+      .select("owner_user_id,group_members(count)")
+      .eq("status", "active"),
     fetchAllAuthUsers(adminSupabase)
   ]);
 
@@ -93,10 +99,29 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
     throw new Error(managerLimitsError.message);
   }
 
+  if (groupsError) {
+    throw new Error(groupsError.message);
+  }
+
   const rowsByKey = new Map<string, { appUser?: RawAdminAppUser; invite?: RawAdminInvite; authUser?: RawAdminAuthUser }>();
   const managerLimitsByUserId = new Map(
     ((managerLimits ?? []) as ManagerLimitsRow[]).map((row) => [row.user_id, row])
   );
+  const groupUsageByUserId = new Map<string, { currentGroupsUsed: number; currentMembersUsed: number }>();
+
+  for (const group of (groups ?? []) as Array<{ owner_user_id: string | null; group_members?: Array<{ count: number | null }> | { count: number | null } | null }>) {
+    if (!group.owner_user_id) {
+      continue;
+    }
+
+    const memberCount = Array.isArray(group.group_members)
+      ? (group.group_members[0]?.count ?? 0)
+      : (group.group_members?.count ?? 0);
+    const existing = groupUsageByUserId.get(group.owner_user_id) ?? { currentGroupsUsed: 0, currentMembersUsed: 0 };
+    existing.currentGroupsUsed += 1;
+    existing.currentMembersUsed += memberCount;
+    groupUsageByUserId.set(group.owner_user_id, existing);
+  }
 
   for (const user of (users ?? []) as UserRow[]) {
     const normalizedEmail = normalizeEmail(user.email);
@@ -171,6 +196,8 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         maxMembersPerGroup: health.appUserId
           ? (managerLimitsByUserId.get(health.appUserId)?.max_members_per_group ?? null)
           : null,
+        currentGroupsUsed: health.appUserId ? (groupUsageByUserId.get(health.appUserId)?.currentGroupsUsed ?? 0) : 0,
+        currentMembersUsed: health.appUserId ? (groupUsageByUserId.get(health.appUserId)?.currentMembersUsed ?? 0) : 0,
         createdAt: value.appUser?.createdAt ?? health.authCreatedAt ?? null,
         invitedAt: health.invitedAt ?? null,
         acceptedAt: health.acceptedAt ?? null,
