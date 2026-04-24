@@ -85,7 +85,22 @@ export function AdminPlayersClient() {
               </div>
               <div className="flex flex-col items-end gap-2">
                 <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold uppercase text-gray-700">
-                  {player.roleLabel}
+                  {player.roleLabel === "admin" ? "super admin" : "player"}
+                </span>
+                <span
+                  className={`rounded-md px-2 py-1 text-xs font-bold uppercase ${
+                    player.roleLabel === "admin"
+                      ? "bg-accent-light text-accent-dark"
+                      : player.isManager
+                        ? "bg-accent-light text-accent-dark"
+                        : "bg-gray-100 text-gray-700"
+                  }`}
+                >
+                  {player.roleLabel === "admin"
+                    ? "manager access via super admin"
+                    : player.isManager
+                      ? "manager enabled"
+                      : "manager not enabled"}
                 </span>
                 <span className={`rounded-md px-2 py-1 text-xs font-bold uppercase ${getHealthBadgeClassName(player.healthBadge)}`}>
                   {formatStateLabel(player.healthBadge)}
@@ -107,6 +122,16 @@ export function AdminPlayersClient() {
               <div>
                 <dt className="font-bold text-gray-500">Invite</dt>
                 <dd className="font-semibold text-gray-900">{formatStateLabel(player.inviteState)}</dd>
+              </div>
+              <div>
+                <dt className="font-bold text-gray-500">Manager status</dt>
+                <dd className="font-semibold text-gray-900">
+                  {player.roleLabel === "admin"
+                    ? "Included through super admin access"
+                    : player.isManager
+                    ? `Enabled (${player.maxGroups} group${player.maxGroups === 1 ? "" : "s"} / ${player.maxMembersPerGroup} members)`
+                    : "Not enabled"}
+                </dd>
               </div>
               <div>
                 <dt className="font-bold text-gray-500">Points</dt>

@@ -983,7 +983,7 @@ async function sendAdminEmailInline(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (input.kind === "access_email") {
     const { error } = await adminSupabase.auth.admin.inviteUserByEmail(input.email, {
-      redirectTo: `${getSiteUrl()}/admin/invites`
+      redirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite")}`
     });
 
     if (error) {

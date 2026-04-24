@@ -1,9 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { escapeHtml, sendTransactionalEmail } from "@/lib/email-sender";
 import { getSiteUrl } from "@/lib/site-url";
 import type { UserRole } from "@/lib/types";
 
-type EmailJobKind = "access_email" | "password_recovery";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type EmailJobKind = "access_email" | "password_recovery" | "group_invite_email";
 type EmailJobStatus = "pending" | "processing" | "retrying" | "sent" | "failed";
 type AccessEmailResult = "invite_sent" | "recovery_sent" | "no_op";
 
@@ -15,6 +19,13 @@ type EmailJobRow = {
     displayName?: string;
     role?: UserRole;
     source?: string;
+    groupInviteId?: string;
+    groupId?: string;
+    groupName?: string;
+    inviterName?: string;
+    inviterEmail?: string;
+    suggestedDisplayName?: string | null;
+    claimUrl?: string;
   } | null;
   status: EmailJobStatus;
   attempts: number;
@@ -31,6 +42,11 @@ type InviteRow = {
   send_attempts?: number | null;
 };
 
+type GroupInviteDeliveryRow = {
+  id: string;
+  send_attempts?: number | null;
+};
+
 export async function GET(request: NextRequest) {
   return handleRequest(request);
 }
@@ -40,7 +56,19 @@ export async function POST(request: NextRequest) {
 }
 
 async function handleRequest(request: NextRequest) {
-  if (!isAuthorized(request)) {
+  const auth = getAuthorizationState(request);
+  console.info("[email-jobs] Worker invoked.", {
+    method: request.method,
+    path: request.nextUrl.pathname,
+    source: auth.source
+  });
+
+  if (!auth.authorized) {
+    console.warn("[email-jobs] Unauthorized worker request rejected.", {
+      method: request.method,
+      path: request.nextUrl.pathname,
+      source: auth.source
+    });
     return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
   }
 
@@ -48,10 +76,16 @@ async function handleRequest(request: NextRequest) {
   const { data, error } = await adminSupabase.rpc("claim_email_jobs", { job_limit: 10 });
 
   if (error) {
+    console.error("[email-jobs] Failed to claim jobs.", { message: error.message });
     return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
   }
 
   const jobs = (data ?? []) as EmailJobRow[];
+  console.info("[email-jobs] Claimed jobs.", {
+    claimed: jobs.length,
+    jobIds: jobs.map((job) => job.id),
+    jobKinds: jobs.map((job) => job.kind)
+  });
   let sent = 0;
   let failed = 0;
   let retried = 0;
@@ -80,10 +114,19 @@ async function processJob(adminSupabase: ReturnType<typeof createAdminClient>, j
   let emailSent = false;
 
   try {
+    console.info("[email-jobs] Processing job.", {
+      jobId: job.id,
+      kind: job.kind,
+      email: job.email,
+      attempts: job.attempts,
+      maxAttempts: job.max_attempts
+    });
     let accessResult: AccessEmailResult | null = null;
 
     if (job.kind === "access_email") {
       accessResult = await sendAccessEmail(adminSupabase, job);
+    } else if (job.kind === "group_invite_email") {
+      await sendGroupInviteEmail(job);
     } else {
       await sendPasswordRecovery(adminSupabase, job.email);
     }
@@ -94,11 +137,27 @@ async function processJob(adminSupabase: ReturnType<typeof createAdminClient>, j
       await markInviteSent(adminSupabase, job.email);
     } else if (job.kind === "access_email") {
       await clearInviteQueueState(adminSupabase, job.email);
+    } else if (job.kind === "group_invite_email") {
+      await markGroupInviteSent(adminSupabase, job);
     }
 
+    console.info("[email-jobs] Job sent successfully.", {
+      jobId: job.id,
+      kind: job.kind,
+      email: job.email,
+      accessResult
+    });
     return "sent";
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown email processing error.";
+    console.error("[email-jobs] Job processing failed.", {
+      jobId: job.id,
+      kind: job.kind,
+      email: job.email,
+      message,
+      attempts: job.attempts,
+      maxAttempts: job.max_attempts
+    });
 
     if (emailSent) {
       const postSendMessage = `Email send completed, but post-send bookkeeping failed: ${message}`;
@@ -116,6 +175,8 @@ async function processJob(adminSupabase: ReturnType<typeof createAdminClient>, j
 
     if (job.kind === "access_email") {
       await markInviteFailed(adminSupabase, job.email, message);
+    } else if (job.kind === "group_invite_email") {
+      await markGroupInviteFailed(adminSupabase, job, message);
     }
 
     if (shouldRetry) {
@@ -151,7 +212,7 @@ async function sendAccessEmail(
   }
 
   const { error } = await adminSupabase.auth.admin.inviteUserByEmail(normalizedEmail, {
-    redirectTo: `${getSiteUrl()}/admin/invites`
+    redirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite")}`
   });
 
   if (error) {
@@ -159,6 +220,97 @@ async function sendAccessEmail(
   }
 
   return "invite_sent";
+}
+
+async function sendGroupInviteEmail(job: EmailJobRow) {
+  const payload = job.payload ?? {};
+  if (!payload.groupInviteId || !payload.groupName || !payload.claimUrl) {
+    throw new Error("Group invite email job is missing required payload.");
+  }
+
+  const groupName = payload.groupName;
+  const invitedEmail = job.email;
+  const suggestedDisplayName = payload.suggestedDisplayName?.trim() || null;
+  const inviterLabel = payload.inviterName?.trim() || payload.inviterEmail?.trim() || "A group manager";
+  const claimUrl = payload.claimUrl;
+  const appName = "PICK-IT!";
+
+  const escapedGroupName = escapeHtml(groupName);
+  const escapedInvitedEmail = escapeHtml(invitedEmail);
+  const escapedInviterLabel = escapeHtml(inviterLabel);
+  const escapedSuggestedName = suggestedDisplayName ? escapeHtml(suggestedDisplayName) : null;
+  const escapedClaimUrl = escapeHtml(claimUrl);
+  const escapedAppName = escapeHtml(appName);
+
+  const introLine = escapedSuggestedName
+    ? `${escapedInviterLabel} invited ${escapedSuggestedName} (${escapedInvitedEmail}) to join ${escapedGroupName}.`
+    : `${escapedInviterLabel} invited ${escapedInvitedEmail} to join ${escapedGroupName}.`;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+      <h1 style="font-size: 24px; margin-bottom: 16px;">Join ${escapedGroupName} on ${escapedAppName}</h1>
+      <p style="margin-bottom: 12px;">${introLine}</p>
+      <p style="margin-bottom: 12px;">
+        Use the secure claim link below to sign in or create your account, then join the group with your global picks.
+      </p>
+      <p style="margin: 24px 0;">
+        <a href="${escapedClaimUrl}" style="display: inline-block; background: #1f8b4c; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-weight: 700;">
+          Open Group Invite
+        </a>
+      </p>
+      <p style="margin-bottom: 12px; font-size: 14px; color: #4b5563;">
+        If the button does not work, paste this link into your browser:<br />
+        <span style="word-break: break-all;">${escapedClaimUrl}</span>
+      </p>
+      <p style="font-size: 14px; color: #6b7280;">If you already have an account, sign in with ${escapedInvitedEmail}. Otherwise create one with that email first.</p>
+    </div>
+  `;
+
+  const textLines = [
+    `Join ${groupName} on ${appName}`,
+    "",
+    suggestedDisplayName
+      ? `${inviterLabel} invited ${suggestedDisplayName} (${invitedEmail}) to join ${groupName}.`
+      : `${inviterLabel} invited ${invitedEmail} to join ${groupName}.`,
+    "",
+    "Use this secure claim link to sign in or create your account, then join the group:",
+    claimUrl,
+    "",
+    `If you already have an account, sign in with ${invitedEmail}. Otherwise create one with that email first.`
+  ];
+
+  console.info("[email-jobs] Sending group invite email.", {
+    jobId: job.id,
+    groupInviteId: payload.groupInviteId,
+    groupId: payload.groupId ?? null,
+    email: invitedEmail
+  });
+
+  try {
+    const result = await sendTransactionalEmail({
+      to: invitedEmail,
+      subject: `You're invited to join ${groupName} on PICK-IT!`,
+      html,
+      text: textLines.join("\n"),
+      replyTo: payload.inviterEmail?.trim() || undefined
+    });
+
+    console.info("[email-jobs] Group invite email sent.", {
+      jobId: job.id,
+      groupInviteId: payload.groupInviteId,
+      email: invitedEmail,
+      providerResponseId: result.providerResponseId
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Resend error.";
+    console.error("[email-jobs] Group invite email send failed.", {
+      jobId: job.id,
+      groupInviteId: payload.groupInviteId,
+      email: invitedEmail,
+      message
+    });
+    throw error;
+  }
 }
 
 async function sendPasswordRecovery(adminSupabase: ReturnType<typeof createAdminClient>, email: string) {
@@ -327,6 +479,71 @@ async function clearInviteQueueState(adminSupabase: ReturnType<typeof createAdmi
   });
 }
 
+async function markGroupInviteSent(adminSupabase: ReturnType<typeof createAdminClient>, job: EmailJobRow) {
+  const groupInviteId = job.payload?.groupInviteId;
+  if (!groupInviteId) {
+    return;
+  }
+
+  const { data: invite, error: inviteLookupError } = await adminSupabase
+    .from("group_invites")
+    .select("id,send_attempts")
+    .eq("id", groupInviteId)
+    .maybeSingle();
+
+  if (inviteLookupError || !invite) {
+    return;
+  }
+
+  const inviteRow = invite as GroupInviteDeliveryRow;
+  const { error } = await adminSupabase
+    .from("group_invites")
+    .update({
+      last_sent_at: new Date().toISOString(),
+      send_attempts: (inviteRow.send_attempts ?? 0) + 1,
+      last_error: null
+    })
+    .eq("id", groupInviteId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function markGroupInviteFailed(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  job: EmailJobRow,
+  message: string
+) {
+  const groupInviteId = job.payload?.groupInviteId;
+  if (!groupInviteId) {
+    return;
+  }
+
+  const { data: invite, error: inviteLookupError } = await adminSupabase
+    .from("group_invites")
+    .select("id,send_attempts")
+    .eq("id", groupInviteId)
+    .maybeSingle();
+
+  if (inviteLookupError || !invite) {
+    return;
+  }
+
+  const inviteRow = invite as GroupInviteDeliveryRow;
+  const { error } = await adminSupabase
+    .from("group_invites")
+    .update({
+      send_attempts: (inviteRow.send_attempts ?? 0) + 1,
+      last_error: message
+    })
+    .eq("id", groupInviteId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 async function markInviteFailed(adminSupabase: ReturnType<typeof createAdminClient>, email: string, message: string) {
   const { data: invite, error: inviteLookupError } = await adminSupabase
     .from("invites")
@@ -418,15 +635,36 @@ function isTransientEmailError(message: string) {
   );
 }
 
-function isAuthorized(request: NextRequest) {
+function getAuthorizationState(request: NextRequest) {
   const secret = process.env.EMAIL_JOB_SECRET ?? process.env.CRON_SECRET;
-
-  if (!secret) {
-    return process.env.NODE_ENV !== "production";
-  }
-
   const authHeader = request.headers.get("authorization");
   const cronHeader = request.headers.get("x-cron-secret");
+  const vercelCronHeader = request.headers.get("x-vercel-cron");
+  const userAgent = request.headers.get("user-agent");
 
-  return authHeader === `Bearer ${secret}` || cronHeader === secret;
+  if (!secret) {
+    return {
+      authorized: process.env.NODE_ENV !== "production",
+      source:
+        vercelCronHeader ? "vercel-cron-header-no-secret"
+        : authHeader ? "bearer-no-secret"
+        : cronHeader ? "x-cron-secret-no-secret"
+        : userAgent?.includes("vercel-cron") ? "vercel-cron-user-agent-no-secret"
+        : "no-secret-configured"
+    };
+  }
+
+  if (authHeader === `Bearer ${secret}`) {
+    return { authorized: true, source: "bearer" };
+  }
+
+  if (cronHeader === secret) {
+    return { authorized: true, source: "x-cron-secret" };
+  }
+
+  if (vercelCronHeader && userAgent?.includes("vercel-cron")) {
+    return { authorized: false, source: "vercel-cron-header-without-secret-match" };
+  }
+
+  return { authorized: false, source: "unauthorized" };
 }

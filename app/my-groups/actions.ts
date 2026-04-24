@@ -3,6 +3,7 @@
 import { createHash, randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { sendTransactionalEmail } from "@/lib/email-sender";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { getSiteUrl } from "@/lib/site-url";
 
@@ -55,7 +56,41 @@ type GroupInviteRow = {
   expires_at?: string | null;
   accepted_by_user_id?: string | null;
   accepted_at?: string | null;
+  last_sent_at?: string | null;
+  send_attempts?: number | null;
+  last_error?: string | null;
 };
+
+type GroupInviteRecord = {
+  id: string;
+  group_id: string;
+  email: string;
+  normalized_email: string;
+  invited_by_user_id: string | null;
+  suggested_display_name?: string | null;
+  status: GroupInviteStatus;
+  expires_at?: string | null;
+  accepted_by_user_id?: string | null;
+  accepted_at?: string | null;
+  last_sent_at?: string | null;
+  send_attempts?: number | null;
+  last_error?: string | null;
+  created_at: string;
+  invited_by?: { name?: string | null; email?: string | null } | Array<{ name?: string | null; email?: string | null }> | null;
+};
+
+type GroupMemberRecord = {
+  id: string;
+  group_id: string;
+  user_id: string;
+  role: GroupMemberRole;
+  joined_at: string;
+  user?: { id: string; name: string; email: string } | Array<{ id: string; name: string; email: string }> | null;
+};
+
+type EnqueueEmailJobResult =
+  | { ok: true; alreadyQueued: boolean }
+  | { ok: false; message: string };
 
 export type CreateGroupInput = {
   name: string;
@@ -94,8 +129,6 @@ export type CreateGroupInviteResult =
         email: string;
         status: GroupInviteStatus;
         expiresAt: string | null;
-        token: string;
-        claimUrl: string;
       };
       message: string;
     }
@@ -122,6 +155,104 @@ export type AcceptGroupInviteResult =
       ok: false;
       message: string;
     };
+
+export type MyManagedGroup = {
+  id: string;
+  name: string;
+  membershipLimit: number;
+  status: GroupStatus;
+  memberCount: number;
+  pendingInviteCount: number;
+};
+
+export type ManagedGroupMember = {
+  membershipId: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: GroupMemberRole;
+  joinedAt: string;
+};
+
+export type ManagedGroupInvite = {
+  id: string;
+  email: string;
+  suggestedDisplayName?: string;
+  invitedByLabel?: string;
+  status: GroupInviteStatus;
+  expiresAt?: string | null;
+  acceptedAt?: string | null;
+  acceptedByUserId?: string | null;
+  lastSentAt?: string | null;
+  sendAttempts: number;
+  lastError?: string | null;
+  createdAt: string;
+};
+
+export type ManagedGroupDetails = MyManagedGroup & {
+  members: ManagedGroupMember[];
+  invites: ManagedGroupInvite[];
+};
+
+export type FetchMyGroupsResult =
+  | {
+      ok: true;
+      currentUser: {
+        userId: string;
+        email: string;
+        role: PlatformRole;
+      };
+      managerAccess: {
+        enabled: boolean;
+        maxGroups?: number;
+        maxMembersPerGroup?: number;
+      };
+      groups: MyManagedGroup[];
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type GroupInvitePreviewResult =
+  | {
+      ok: true;
+      invite: {
+        groupId: string;
+        groupName: string;
+        email: string;
+        status: GroupInviteStatus;
+        expiresAt: string | null;
+      };
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type ListManagedGroupPlayersResult =
+  | {
+      ok: true;
+      groups: ManagedGroupDetails[];
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type ResendGroupInviteResult =
+  | {
+      ok: true;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type CancelGroupInviteResult = ResendGroupInviteResult;
+export type RemoveGroupMemberResult = ResendGroupInviteResult;
+export type UpdateGroupInviteNameResult = ResendGroupInviteResult;
 
 export async function createGroupAction(input: CreateGroupInput): Promise<CreateGroupResult> {
   const currentUser = await getCurrentUserContext();
@@ -213,6 +344,12 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
     return { ok: false, message: "You do not manage that group." };
   }
 
+  console.info("Manager group invite requested.", {
+    managerUserId: currentUser.userId,
+    groupId: managedGroup.id,
+    email: normalizedEmail
+  });
+
   const seatCheck = await ensureGroupHasInviteCapacity(adminSupabase, managedGroup.id, managedGroup.membership_limit);
   if (!seatCheck.ok) {
     return seatCheck;
@@ -240,6 +377,11 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
   }
 
   if (existingMembership) {
+    console.info("Manager group invite blocked because user is already a member.", {
+      managerUserId: currentUser.userId,
+      groupId: managedGroup.id,
+      email: normalizedEmail
+    });
     return { ok: false, message: "That user is already a member of this group." };
   }
 
@@ -256,12 +398,27 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
   }
 
   if (existingPendingInvite) {
+    console.info("Manager group invite blocked because a pending invite already exists.", {
+      managerUserId: currentUser.userId,
+      groupId: managedGroup.id,
+      email: normalizedEmail
+    });
     return { ok: false, message: "A pending invite already exists for that email in this group." };
   }
 
   const token = randomBytes(24).toString("hex");
   const tokenHash = hashInviteToken(token);
+  const claimUrl = buildGroupInviteClaimUrl(token);
   const expiresAt = new Date(Date.now() + normalizeExpiryDays(input.expiresInDays) * 24 * 60 * 60 * 1000).toISOString();
+
+  console.info("Manager group invite claim link generated.", {
+    managerUserId: currentUser.userId,
+    groupId: managedGroup.id,
+    email: normalizedEmail,
+    claimUrl
+  });
+
+  const inviterProfile = await getUserLabel(adminSupabase, currentUser.userId);
 
   const { data, error } = await adminSupabase
     .from("group_invites")
@@ -282,6 +439,35 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
     return { ok: false, message: error.message };
   }
 
+  const enqueueResult = await enqueueGroupInviteEmail(adminSupabase, {
+    email: normalizedEmail,
+    groupInviteId: data.id,
+    groupId: managedGroup.id,
+    groupName: managedGroup.name ?? "Group",
+    invitedByUserId: currentUser.userId,
+    inviterName: inviterProfile.name,
+    inviterEmail: inviterProfile.email,
+    suggestedDisplayName: input.suggestedDisplayName?.trim() || null,
+    claimUrl
+  });
+
+  console.info("Manager group invite email enqueue result.", {
+    managerUserId: currentUser.userId,
+    groupInviteId: data.id,
+    groupId: managedGroup.id,
+    email: normalizedEmail,
+    enqueueResult
+  });
+
+  if (!enqueueResult.ok) {
+    await markGroupInviteEmailFailure(adminSupabase, data.id, enqueueResult.message);
+    revalidatePath("/my-groups");
+    return {
+      ok: false,
+      message: `Group invite saved, but the email could not be queued: ${enqueueResult.message}`
+    };
+  }
+
   revalidatePath("/my-groups");
 
   return {
@@ -291,11 +477,9 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
       groupId: data.group_id,
       email: data.email,
       status: data.status,
-      expiresAt: data.expires_at ?? null,
-      token,
-      claimUrl: buildGroupInviteClaimUrl(token)
+      expiresAt: data.expires_at ?? null
     },
-    message: "Group invite created."
+    message: enqueueResult.alreadyQueued ? "A matching group invite email is already queued." : "Group invite email queued."
   };
 }
 
@@ -417,6 +601,330 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
   };
 }
 
+export async function listManagedGroupPlayersAction(): Promise<ListManagedGroupPlayersResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const groups = await fetchManagedGroupDetails(adminSupabase, currentUser.userId, currentUser.role);
+    return { ok: true, groups };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load managed group players."
+    };
+  }
+}
+
+export async function resendGroupInviteAction(inviteId: string): Promise<ResendGroupInviteResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedInviteId = inviteId.trim();
+  if (!trimmedInviteId) {
+    return { ok: false, message: "Invite id is required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const invite = await getManagedGroupInvite(adminSupabase, trimmedInviteId, currentUser.userId, currentUser.role);
+    if (!invite) {
+      return { ok: false, message: "You do not manage that invite." };
+    }
+
+    if (invite.status === "accepted") {
+      return { ok: false, message: "That invite has already been accepted." };
+    }
+
+    const managedGroup = await getManagedGroup(adminSupabase, invite.group_id, currentUser.userId, currentUser.role);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    const seatCheck = await ensureGroupHasInviteCapacity(adminSupabase, managedGroup.id, managedGroup.membership_limit, invite.id);
+    if (!seatCheck.ok) {
+      return seatCheck;
+    }
+
+    const freshToken = randomBytes(24).toString("hex");
+    const freshTokenHash = hashInviteToken(freshToken);
+    const claimUrl = buildGroupInviteClaimUrl(freshToken);
+    const refreshedExpiry = new Date(Date.now() + DEFAULT_INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const inviterProfile = await getUserLabel(adminSupabase, invite.invited_by_user_id ?? currentUser.userId);
+
+    const { error: updateInviteError } = await adminSupabase
+      .from("group_invites")
+      .update({
+        status: "pending",
+        token_hash: freshTokenHash,
+        expires_at: refreshedExpiry,
+        last_error: null
+      })
+      .eq("id", invite.id);
+
+    if (updateInviteError) {
+      return { ok: false, message: updateInviteError.message };
+    }
+
+    const enqueueResult = await enqueueGroupInviteEmail(adminSupabase, {
+      email: invite.email,
+      groupInviteId: invite.id,
+      groupId: invite.group_id,
+      groupName: managedGroup.name ?? "Group",
+      invitedByUserId: invite.invited_by_user_id ?? currentUser.userId,
+      inviterName: inviterProfile.name,
+      inviterEmail: inviterProfile.email,
+      suggestedDisplayName: invite.suggested_display_name ?? null,
+      claimUrl
+    });
+
+    if (!enqueueResult.ok) {
+      await markGroupInviteEmailFailure(adminSupabase, invite.id, enqueueResult.message);
+      return { ok: false, message: `Could not queue the group invite email: ${enqueueResult.message}` };
+    }
+
+    revalidatePath("/my-groups");
+    return {
+      ok: true,
+      message: enqueueResult.alreadyQueued ? "A matching group invite email is already queued." : "Group invite email queued again."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not resend that invite."
+    };
+  }
+}
+
+export async function cancelGroupInviteAction(inviteId: string): Promise<CancelGroupInviteResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedInviteId = inviteId.trim();
+  if (!trimmedInviteId) {
+    return { ok: false, message: "Invite id is required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const invite = await getManagedGroupInvite(adminSupabase, trimmedInviteId, currentUser.userId, currentUser.role);
+    if (!invite) {
+      return { ok: false, message: "You do not manage that invite." };
+    }
+
+    if (invite.status === "accepted") {
+      return { ok: false, message: "Accepted invites cannot be canceled." };
+    }
+
+    const { error } = await adminSupabase
+      .from("group_invites")
+      .update({
+        status: "revoked",
+        last_error: null
+      })
+      .eq("id", invite.id);
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    revalidatePath("/my-groups");
+    return { ok: true, message: "Group invite canceled." };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not cancel that invite."
+    };
+  }
+}
+
+export async function removeGroupMemberAction(groupId: string, userId: string): Promise<RemoveGroupMemberResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  if (!groupId.trim() || !userId.trim()) {
+    return { ok: false, message: "A valid group and user are required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managedGroup = await getManagedGroup(adminSupabase, groupId.trim(), currentUser.userId, currentUser.role);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    const { data: membership, error: membershipError } = await adminSupabase
+      .from("group_members")
+      .select("id,role")
+      .eq("group_id", groupId.trim())
+      .eq("user_id", userId.trim())
+      .maybeSingle();
+
+    if (membershipError) {
+      return { ok: false, message: membershipError.message };
+    }
+
+    if (!membership) {
+      return { ok: false, message: "That player is not in this group anymore." };
+    }
+
+    if (membership.role === "manager") {
+      return { ok: false, message: "Manager memberships cannot be removed from this screen." };
+    }
+
+    const { error } = await adminSupabase
+      .from("group_members")
+      .delete()
+      .eq("id", membership.id);
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    revalidatePath("/my-groups");
+    return { ok: true, message: "Player removed from the group." };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not remove that player."
+    };
+  }
+}
+
+export async function updateGroupInviteNameAction(inviteId: string, suggestedDisplayName: string): Promise<UpdateGroupInviteNameResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedInviteId = inviteId.trim();
+  if (!trimmedInviteId) {
+    return { ok: false, message: "Invite id is required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const invite = await getManagedGroupInvite(adminSupabase, trimmedInviteId, currentUser.userId, currentUser.role);
+    if (!invite) {
+      return { ok: false, message: "You do not manage that invite." };
+    }
+
+    if (invite.status !== "pending") {
+      return { ok: false, message: "Only pending invites can be edited." };
+    }
+
+    const { error } = await adminSupabase
+      .from("group_invites")
+      .update({
+        suggested_display_name: suggestedDisplayName.trim() || null
+      })
+      .eq("id", invite.id);
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    revalidatePath("/my-groups");
+    return { ok: true, message: "Suggested display name updated." };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update that invite."
+    };
+  }
+}
+
+export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managerLimits = await getManagerLimits(adminSupabase, currentUser.userId);
+    const groups = await fetchManagedGroups(adminSupabase, currentUser.userId, currentUser.role);
+
+    return {
+      ok: true,
+      currentUser: {
+        userId: currentUser.userId,
+        email: currentUser.email,
+        role: currentUser.role
+      },
+      managerAccess: currentUser.role === "admin"
+        ? {
+            enabled: true
+          }
+        : {
+            enabled: Boolean(managerLimits),
+            maxGroups: managerLimits?.max_groups,
+            maxMembersPerGroup: managerLimits?.max_members_per_group
+          },
+      groups
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load your groups."
+    };
+  }
+}
+
+export async function fetchGroupInvitePreviewAction(token: string): Promise<GroupInvitePreviewResult> {
+  const trimmedToken = token.trim();
+  if (!trimmedToken) {
+    return { ok: false, message: "Invite token is required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const tokenHash = hashInviteToken(trimmedToken);
+    const { data, error } = await adminSupabase
+      .from("group_invites")
+      .select("group_id,email,status,expires_at,groups(name)")
+      .eq("token_hash", tokenHash)
+      .maybeSingle();
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    if (!data) {
+      return { ok: false, message: "That invite could not be found." };
+    }
+
+    const groupName =
+      Array.isArray(data.groups) ? data.groups[0]?.name :
+      (data.groups as { name?: string } | null)?.name;
+
+    return {
+      ok: true,
+      invite: {
+        groupId: data.group_id,
+        groupName: groupName ?? "Group",
+        email: data.email,
+        status: data.status,
+        expiresAt: data.expires_at ?? null
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load the invite."
+    };
+  }
+}
+
 async function getCurrentUserContext(): Promise<CurrentUserContext> {
   const supabase = await createServerSupabaseClient();
   const {
@@ -474,6 +982,168 @@ async function getActiveOwnedGroupCount(adminSupabase: ReturnType<typeof createA
   return count ?? 0;
 }
 
+async function fetchManagedGroups(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  role: PlatformRole
+): Promise<MyManagedGroup[]> {
+  const { data: groups, error: groupsError } = role === "admin"
+    ? await adminSupabase
+        .from("groups")
+        .select("id,name,membership_limit,status")
+        .order("created_at", { ascending: false })
+    : await adminSupabase
+        .from("groups")
+        .select("id,name,membership_limit,status")
+        .or(`owner_user_id.eq.${userId},id.in.(${await managedGroupIdList(adminSupabase, userId)})`)
+        .order("created_at", { ascending: false });
+
+  if (groupsError) {
+    throw new Error(groupsError.message);
+  }
+
+  const groupRows = (groups ?? []) as Array<{
+    id: string;
+    name: string;
+    membership_limit: number;
+    status: GroupStatus;
+  }>;
+
+  if (groupRows.length === 0) {
+    return [];
+  }
+
+  const groupIds = groupRows.map((group) => group.id);
+  const [memberCounts, pendingInviteCounts] = await Promise.all([
+    fetchCountsByGroup(adminSupabase, "group_members", groupIds),
+    fetchCountsByGroup(adminSupabase, "group_invites", groupIds, { status: "pending" })
+  ]);
+
+  return groupRows.map((group) => ({
+    id: group.id,
+    name: group.name,
+    membershipLimit: group.membership_limit,
+    status: group.status,
+    memberCount: memberCounts.get(group.id) ?? 0,
+    pendingInviteCount: pendingInviteCounts.get(group.id) ?? 0
+  }));
+}
+
+async function fetchManagedGroupDetails(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  role: PlatformRole
+): Promise<ManagedGroupDetails[]> {
+  const groups = await fetchManagedGroups(adminSupabase, userId, role);
+  if (groups.length === 0) {
+    return [];
+  }
+
+  const groupIds = groups.map((group) => group.id);
+  const [memberResult, inviteResult] = await Promise.all([
+    adminSupabase
+      .from("group_members")
+      .select("id,group_id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email)")
+      .in("group_id", groupIds)
+      .order("joined_at", { ascending: true }),
+    adminSupabase
+      .from("group_invites")
+      .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
+      .in("group_id", groupIds)
+      .order("created_at", { ascending: false })
+  ]);
+
+  if (memberResult.error) {
+    throw new Error(memberResult.error.message);
+  }
+
+  if (inviteResult.error) {
+    throw new Error(inviteResult.error.message);
+  }
+
+  const membersByGroup = new Map<string, ManagedGroupMember[]>();
+  for (const row of ((memberResult.data ?? []) as GroupMemberRecord[])) {
+    const userRow = Array.isArray(row.user) ? row.user[0] : row.user;
+    const list = membersByGroup.get(row.group_id) ?? [];
+    list.push({
+      membershipId: row.id,
+      userId: row.user_id,
+      name: userRow?.name ?? "Player",
+      email: userRow?.email ?? "",
+      role: row.role,
+      joinedAt: row.joined_at
+    });
+    membersByGroup.set(row.group_id, list);
+  }
+
+  const invitesByGroup = new Map<string, ManagedGroupInvite[]>();
+  for (const row of ((inviteResult.data ?? []) as GroupInviteRecord[])) {
+    const inviterRow = Array.isArray(row.invited_by) ? row.invited_by[0] : row.invited_by;
+    const list = invitesByGroup.get(row.group_id) ?? [];
+    list.push({
+      id: row.id,
+      email: row.email,
+      suggestedDisplayName: row.suggested_display_name ?? undefined,
+      invitedByLabel: inviterRow?.name ?? inviterRow?.email ?? undefined,
+      status: row.status,
+      expiresAt: row.expires_at ?? null,
+      acceptedAt: row.accepted_at ?? null,
+      acceptedByUserId: row.accepted_by_user_id ?? null,
+      lastSentAt: row.last_sent_at ?? null,
+      sendAttempts: row.send_attempts ?? 0,
+      lastError: row.last_error ?? null,
+      createdAt: row.created_at
+    });
+    invitesByGroup.set(row.group_id, list);
+  }
+
+  return groups.map((group) => ({
+    ...group,
+    members: membersByGroup.get(group.id) ?? [],
+    invites: invitesByGroup.get(group.id) ?? []
+  }));
+}
+
+async function managedGroupIdList(adminSupabase: ReturnType<typeof createAdminClient>, userId: string) {
+  const { data, error } = await adminSupabase
+    .from("group_members")
+    .select("group_id")
+    .eq("user_id", userId)
+    .eq("role", "manager");
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const ids = ((data ?? []) as Array<{ group_id: string }>).map((row) => row.group_id);
+  return ids.length > 0 ? ids.join(",") : "00000000-0000-0000-0000-000000000000";
+}
+
+async function fetchCountsByGroup(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  table: "group_members" | "group_invites",
+  groupIds: string[],
+  filters?: { status?: GroupInviteStatus }
+) {
+  let query = adminSupabase.from(table).select("group_id");
+  query = query.in("group_id", groupIds);
+  if (table === "group_invites" && filters?.status) {
+    query = query.eq("status", filters.status);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const counts = new Map<string, number>();
+  for (const row of ((data ?? []) as Array<{ group_id: string }>)) {
+    counts.set(row.group_id, (counts.get(row.group_id) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
 async function getManagedGroup(
   adminSupabase: ReturnType<typeof createAdminClient>,
   groupId: string,
@@ -482,7 +1152,7 @@ async function getManagedGroup(
 ) {
   const { data, error } = await adminSupabase
     .from("groups")
-    .select("id,owner_user_id,membership_limit,status")
+    .select("id,name,owner_user_id,membership_limit,status")
     .eq("id", groupId)
     .maybeSingle();
 
@@ -537,15 +1207,22 @@ async function ensureGroupHasOpenSeat(
 async function ensureGroupHasInviteCapacity(
   adminSupabase: ReturnType<typeof createAdminClient>,
   groupId: string,
-  membershipLimit: number
+  membershipLimit: number,
+  ignoreInviteId?: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  const pendingInviteQuery = adminSupabase
+    .from("group_invites")
+    .select("id", { count: "exact", head: true })
+    .eq("group_id", groupId)
+    .eq("status", "pending");
+
+  if (ignoreInviteId) {
+    pendingInviteQuery.neq("id", ignoreInviteId);
+  }
+
   const [memberCountResult, pendingInviteCountResult] = await Promise.all([
     adminSupabase.from("group_members").select("id", { count: "exact", head: true }).eq("group_id", groupId),
-    adminSupabase
-      .from("group_invites")
-      .select("id", { count: "exact", head: true })
-      .eq("group_id", groupId)
-      .eq("status", "pending")
+    pendingInviteQuery
   ]);
 
   if (memberCountResult.error || pendingInviteCountResult.error) {
@@ -575,6 +1252,175 @@ async function findUserIdByEmail(adminSupabase: ReturnType<typeof createAdminCli
   }
 
   return data?.id ?? null;
+}
+
+async function getManagedGroupInvite(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  inviteId: string,
+  userId: string,
+  role: PlatformRole
+) {
+  const { data, error } = await adminSupabase
+    .from("group_invites")
+    .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error")
+    .eq("id", inviteId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const managedGroup = await getManagedGroup(adminSupabase, data.group_id, userId, role);
+  return managedGroup ? (data as GroupInviteRow) : null;
+}
+
+async function getUserLabel(adminSupabase: ReturnType<typeof createAdminClient>, userId: string) {
+  const { data, error } = await adminSupabase
+    .from("users")
+    .select("name,email")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return {
+    name: data?.name ?? null,
+    email: data?.email ?? null
+  };
+}
+
+async function enqueueGroupInviteEmail(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    email: string;
+    groupInviteId: string;
+    groupId: string;
+    groupName: string;
+    invitedByUserId: string;
+    inviterName?: string | null;
+    inviterEmail?: string | null;
+    suggestedDisplayName?: string | null;
+    claimUrl: string;
+  }
+): Promise<EnqueueEmailJobResult> {
+  const normalizedEmail = normalizeEmail(input.email);
+  const { error } = await adminSupabase.from("email_jobs").insert({
+    kind: "group_invite_email",
+    email: input.email,
+    dedupe_key: `group_invite:${input.groupId}:${normalizedEmail}`,
+    payload: {
+      groupInviteId: input.groupInviteId,
+      groupId: input.groupId,
+      groupName: input.groupName,
+      inviterName: input.inviterName ?? undefined,
+      inviterEmail: input.inviterEmail ?? undefined,
+      suggestedDisplayName: input.suggestedDisplayName ?? undefined,
+      claimUrl: input.claimUrl
+    },
+    requested_by_admin_id: input.invitedByUserId
+  });
+
+  if (error) {
+    if (error.code === "23505") {
+      return { ok: true, alreadyQueued: true };
+    }
+
+    if (isMissingEmailJobsError(error.message)) {
+      try {
+        await sendGroupInviteEmailInline({
+          to: input.email,
+          groupName: input.groupName,
+          invitedEmail: input.email,
+          suggestedDisplayName: input.suggestedDisplayName ?? null,
+          inviterName: input.inviterName ?? null,
+          inviterEmail: input.inviterEmail ?? null,
+          claimUrl: input.claimUrl
+        });
+        return { ok: true, alreadyQueued: false };
+      } catch (inlineError) {
+        return {
+          ok: false,
+          message: inlineError instanceof Error ? inlineError.message : "Could not send the group invite email."
+        };
+      }
+    }
+
+    return { ok: false, message: error.message };
+  }
+
+  return { ok: true, alreadyQueued: false };
+}
+
+async function markGroupInviteEmailFailure(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupInviteId: string,
+  message: string
+) {
+  await adminSupabase
+    .from("group_invites")
+    .update({
+      last_error: message
+    })
+    .eq("id", groupInviteId);
+}
+
+async function sendGroupInviteEmailInline(input: {
+  to: string;
+  groupName: string;
+  invitedEmail: string;
+  suggestedDisplayName?: string | null;
+  inviterName?: string | null;
+  inviterEmail?: string | null;
+  claimUrl: string;
+}) {
+  const inviterLabel = input.inviterName?.trim() || input.inviterEmail?.trim() || "A group manager";
+  const subject = `You're invited to join ${input.groupName} on PICK-IT!`;
+  const introLine = input.suggestedDisplayName?.trim()
+    ? `${inviterLabel} invited ${input.suggestedDisplayName.trim()} (${input.invitedEmail}) to join ${input.groupName}.`
+    : `${inviterLabel} invited ${input.invitedEmail} to join ${input.groupName}.`;
+
+  await sendTransactionalEmail({
+    to: input.to,
+    subject,
+    html: `
+      <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+        <h1 style="font-size: 24px; margin-bottom: 16px;">Join ${input.groupName} on PICK-IT!</h1>
+        <p style="margin-bottom: 12px;">${introLine}</p>
+        <p style="margin-bottom: 12px;">Use the secure claim link below to sign in or create your account, then join the group.</p>
+        <p style="margin: 24px 0;">
+          <a href="${input.claimUrl}" style="display: inline-block; background: #1f8b4c; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-weight: 700;">
+            Open Group Invite
+          </a>
+        </p>
+        <p style="font-size: 14px; color: #6b7280; word-break: break-all;">${input.claimUrl}</p>
+      </div>
+    `,
+    text: [
+      `Join ${input.groupName} on PICK-IT!`,
+      "",
+      introLine,
+      "",
+      "Use this secure claim link to sign in or create your account, then join the group:",
+      input.claimUrl
+    ].join("\n"),
+    replyTo: input.inviterEmail?.trim() || undefined
+  });
+}
+
+function isMissingEmailJobsError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("email_jobs") &&
+    ((normalized.includes("schema cache")) ||
+      (normalized.includes("relation") && normalized.includes("does not exist")) ||
+      (normalized.includes("table") && normalized.includes("does not exist")))
+  );
 }
 
 function normalizeRequestedMembershipLimit(value?: number) {

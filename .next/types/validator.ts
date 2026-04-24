@@ -182,10 +182,28 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/api/auth/reconcile/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/auth/reconcile">> = Specific
+  const handler = {} as typeof import("../../app/api/auth/reconcile/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/api/email-jobs/process/route.ts
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/email-jobs/process">> = Specific
   const handler = {} as typeof import("../../app/api/email-jobs/process/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/auth/callback/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/auth/callback">> = Specific
+  const handler = {} as typeof import("../../app/auth/callback/route.js")
   type __Check = __IsExpected<typeof handler>
   // @ts-ignore
   type __Unused = __Check

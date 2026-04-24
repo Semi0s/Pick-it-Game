@@ -71,6 +71,11 @@ export async function middleware(request: NextRequest) {
   }
 
   if (request.nextUrl.pathname === "/login" && user) {
+    const requestedNext = request.nextUrl.searchParams.get("next");
+    if (requestedNext && requestedNext.startsWith("/")) {
+      return NextResponse.redirect(new URL(requestedNext, request.url));
+    }
+
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
     redirectUrl.search = "";

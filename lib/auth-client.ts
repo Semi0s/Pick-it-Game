@@ -12,6 +12,11 @@ export type AuthResult =
   | { ok: true; user?: UserProfile | null; needsEmailConfirmation?: boolean; message?: string }
   | { ok: false; message: string };
 
+type AuthOptions = {
+  nextPath?: string;
+  flow?: string;
+};
+
 type UserRow = {
   id: string;
   name: string;
@@ -21,7 +26,12 @@ type UserRow = {
   total_points: number;
 };
 
-export async function authenticateWithEmail(mode: AuthMode, email: string, password: string): Promise<AuthResult> {
+export async function authenticateWithEmail(
+  mode: AuthMode,
+  email: string,
+  password: string,
+  options?: AuthOptions
+): Promise<AuthResult> {
   if (!hasSupabaseConfig()) {
     const result = mode === "login" ? demoSignIn(email, password) : demoSignUp(email, password);
     return result.ok ? { ok: true, user: result.user } : result;
@@ -29,6 +39,18 @@ export async function authenticateWithEmail(mode: AuthMode, email: string, passw
 
   const supabase = createClient();
   const normalizedEmail = email.trim().toLowerCase();
+  const loginReturnPath = buildLoginReturnPath({
+    confirmed: true,
+    nextPath: options?.nextPath,
+    flow: options?.flow
+  });
+  const signupRedirectUrl = `${getSiteUrl()}/auth/callback?next=${encodeURIComponent(loginReturnPath)}`;
+  if (mode === "signup") {
+    console.info("Starting signup with confirmation redirect.", {
+      email: normalizedEmail,
+      redirectTo: signupRedirectUrl
+    });
+  }
   const response =
     mode === "login"
       ? await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
@@ -36,7 +58,7 @@ export async function authenticateWithEmail(mode: AuthMode, email: string, passw
           email: normalizedEmail,
           password,
           options: {
-            emailRedirectTo: `${getSiteUrl()}/login?confirmed=1`
+            emailRedirectTo: signupRedirectUrl
           }
         });
 
@@ -50,6 +72,21 @@ export async function authenticateWithEmail(mode: AuthMode, email: string, passw
       needsEmailConfirmation: true,
       message: "Check your email to confirm your account, then sign in."
     };
+  }
+
+  if (mode === "login") {
+    try {
+      const reconcileResponse = await fetch("/api/auth/reconcile", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+      const reconcileResult = await reconcileResponse.json();
+      console.info("Post-login invite reconciliation completed.", reconcileResult);
+    } catch (reconcileError) {
+      console.error("Post-login invite reconciliation failed.", reconcileError);
+    }
   }
 
   const profile = response.data.user ? await fetchCurrentProfile() : null;
@@ -157,11 +194,15 @@ function getFriendlyAuthError(message: string, mode: AuthMode) {
   const normalized = message.toLowerCase();
 
   if (mode === "signup" && (normalized.includes("not invited") || normalized.includes("database error"))) {
-    return "That email is not on the invite list yet. Ask the pool admin for an invite.";
+    return "That email is not eligible yet. Ask the pool admin for an invite to the app or the group.";
   }
 
   if (normalized.includes("invalid login") || normalized.includes("invalid credentials")) {
     return "Email or password did not match. Try again.";
+  }
+
+  if (normalized.includes("email not confirmed") || normalized.includes("email_not_confirmed")) {
+    return "Your email still needs confirmation. Open the confirmation email, then sign in again.";
   }
 
   if (normalized.includes("already registered") || normalized.includes("already been registered")) {
@@ -169,4 +210,23 @@ function getFriendlyAuthError(message: string, mode: AuthMode) {
   }
 
   return message || "Something went wrong. Please try again.";
+}
+
+function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; flow?: string }) {
+  const params = new URLSearchParams();
+
+  if (input.confirmed) {
+    params.set("confirmed", "1");
+  }
+
+  if (input.flow) {
+    params.set("flow", input.flow);
+  }
+
+  if (input.nextPath?.startsWith("/")) {
+    params.set("next", input.nextPath);
+  }
+
+  const query = params.toString();
+  return query ? `/login?${query}` : "/login";
 }

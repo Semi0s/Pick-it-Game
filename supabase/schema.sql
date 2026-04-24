@@ -20,7 +20,7 @@ create type public.invite_delivery_status as enum (
 create type public.group_status as enum ('active', 'archived');
 create type public.group_member_role as enum ('manager', 'member');
 create type public.group_invite_status as enum ('pending', 'accepted', 'revoked', 'expired');
-create type public.email_job_kind as enum ('access_email', 'password_recovery');
+create type public.email_job_kind as enum ('access_email', 'password_recovery', 'group_invite_email');
 create type public.email_job_status as enum ('pending', 'processing', 'retrying', 'sent', 'failed');
 
 create table public.invites (
@@ -186,6 +186,9 @@ create table public.group_invites (
   expires_at timestamptz,
   accepted_by_user_id uuid references public.users(id) on delete set null,
   accepted_at timestamptz,
+  last_sent_at timestamptz,
+  send_attempts integer not null default 0,
+  last_error text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint group_invites_normalized_email_check check (normalized_email = lower(email))
@@ -200,9 +203,10 @@ create index email_jobs_email_created_idx
 create index email_jobs_requested_by_created_idx
   on public.email_jobs (requested_by_admin_id, created_at desc);
 
-create unique index email_jobs_active_kind_email_idx
-  on public.email_jobs (kind, lower(email))
-  where status in ('pending', 'retrying', 'processing');
+create unique index email_jobs_active_dedupe_idx
+  on public.email_jobs (dedupe_key)
+  where status in ('pending', 'retrying', 'processing')
+    and dedupe_key is not null;
 
 create index group_members_user_id_idx
   on public.group_members (user_id);
@@ -388,6 +392,7 @@ begin
     from public.email_jobs
     where email_jobs.status in ('pending', 'retrying')
       and email_jobs.available_at <= now()
+      and email_jobs.attempts < email_jobs.max_attempts
     order by email_jobs.created_at
     for update skip locked
     limit job_limit
@@ -413,24 +418,40 @@ set search_path = public
 as $$
 declare
   invite_row public.invites%rowtype;
+  group_invite_row public.group_invites%rowtype;
+  derived_name text;
 begin
   select *
   into invite_row
   from public.invites
   where lower(email) = lower(new.email);
 
-  if invite_row.email is null then
+  if invite_row.email is not null then
+    insert into public.users (id, name, email, role)
+    values (new.id, invite_row.display_name, new.email, invite_row.role)
+    on conflict (id) do nothing;
+
+    return new;
+  end if;
+
+  select *
+  into group_invite_row
+  from public.group_invites
+  where normalized_email = lower(new.email)
+    and status = 'pending'
+    and (expires_at is null or expires_at > now())
+  order by created_at desc
+  limit 1;
+
+  if group_invite_row.id is null then
     raise exception 'Email is not invited';
   end if;
 
-  insert into public.users (id, name, email, role)
-  values (new.id, invite_row.display_name, new.email, invite_row.role);
+  derived_name := coalesce(nullif(trim(group_invite_row.suggested_display_name), ''), split_part(new.email, '@', 1));
 
-  update public.invites
-  set accepted_at = now(),
-      status = 'accepted',
-      last_error = null
-  where lower(email) = lower(new.email);
+  insert into public.users (id, name, email, role)
+  values (new.id, derived_name, new.email, 'player')
+  on conflict (id) do nothing;
 
   return new;
 end;

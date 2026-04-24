@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { authenticateWithEmail, isUsingDemoAuthFallback } from "@/lib/auth-client";
+import { authenticateWithEmail, isUsingDemoAuthFallback, sendCurrentUserPasswordReset } from "@/lib/auth-client";
 
 type AuthMode = "login" | "signup";
 
@@ -10,12 +10,16 @@ export function LoginForm({
   confirmed = false,
   reset = false,
   initialMode = "login",
-  flow
+  flow,
+  callbackError,
+  nextPath
 }: {
   confirmed?: boolean;
   reset?: boolean;
   initialMode?: AuthMode;
   flow?: string;
+  callbackError?: string;
+  nextPath?: string;
 }) {
   const router = useRouter();
   const inviteFlow = flow === "invite";
@@ -26,6 +30,7 @@ export function LoginForm({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSendingReset, setIsSendingReset] = useState(false);
   const isDemoFallback = isUsingDemoAuthFallback();
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -33,7 +38,10 @@ export function LoginForm({
     setError(null);
     setNotice(null);
     setIsSubmitting(true);
-    const result = await authenticateWithEmail(mode, email, password);
+    const result = await authenticateWithEmail(mode, email, password, {
+      nextPath,
+      flow
+    });
     setIsSubmitting(false);
 
     if (!result.ok) {
@@ -46,8 +54,29 @@ export function LoginForm({
       return;
     }
 
-    router.replace("/dashboard");
+    router.replace(nextPath?.startsWith("/") ? nextPath : "/dashboard");
     router.refresh();
+  }
+
+  async function handlePasswordReset() {
+    setError(null);
+    setNotice(null);
+
+    if (!email.trim()) {
+      setError("Enter your email first, then tap Forgot password?");
+      return;
+    }
+
+    setIsSendingReset(true);
+    const result = await sendCurrentUserPasswordReset(email);
+    setIsSendingReset(false);
+
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
+
+    setNotice(result.message ?? "Check your email for the password reset link.");
   }
 
   return (
@@ -72,6 +101,12 @@ export function LoginForm({
       {!confirmed && (inviteFlow || signupContext) ? (
         <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
           Use your invited email to create your account or sign in below.
+        </p>
+      ) : null}
+
+      {callbackError ? (
+        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+          {callbackError}
         </p>
       ) : null}
 
@@ -100,6 +135,19 @@ export function LoginForm({
           required
         />
       </label>
+
+      {mode === "login" ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={handlePasswordReset}
+            disabled={isSendingReset || isSubmitting}
+            className="text-sm font-bold text-accent-dark"
+          >
+            {isSendingReset ? "Sending reset..." : "Forgot password?"}
+          </button>
+        </div>
+      ) : null}
 
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
