@@ -468,6 +468,15 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
     };
   }
 
+  const workerTriggerResult = await triggerEmailWorkerNow();
+  console.info("Manager group invite worker trigger result.", {
+    managerUserId: currentUser.userId,
+    groupInviteId: data.id,
+    groupId: managedGroup.id,
+    email: normalizedEmail,
+    workerTriggerResult
+  });
+
   revalidatePath("/my-groups");
 
   return {
@@ -479,7 +488,12 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
       status: data.status,
       expiresAt: data.expires_at ?? null
     },
-    message: enqueueResult.alreadyQueued ? "A matching group invite email is already queued." : "Group invite email queued."
+    message:
+      !workerTriggerResult.ok
+        ? "Group invite email queued. Automatic sending could not be triggered right away, so the worker cron will pick it up shortly."
+        : enqueueResult.alreadyQueued
+          ? "A matching group invite email is already queued."
+          : "Group invite email queued and sending started."
   };
 }
 
@@ -688,10 +702,24 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
       return { ok: false, message: `Could not queue the group invite email: ${enqueueResult.message}` };
     }
 
+    const workerTriggerResult = await triggerEmailWorkerNow();
+    console.info("Manager resend invite worker trigger result.", {
+      managerUserId: currentUser.userId,
+      groupInviteId: invite.id,
+      groupId: invite.group_id,
+      email: invite.email,
+      workerTriggerResult
+    });
+
     revalidatePath("/my-groups");
     return {
       ok: true,
-      message: enqueueResult.alreadyQueued ? "A matching group invite email is already queued." : "Group invite email queued again."
+      message:
+        !workerTriggerResult.ok
+          ? "Group invite email queued again. Automatic sending could not be triggered right away, so the worker cron will pick it up shortly."
+          : enqueueResult.alreadyQueued
+            ? "A matching group invite email is already queued."
+            : "Group invite email queued again and sending started."
     };
   } catch (error) {
     return {
@@ -1355,6 +1383,43 @@ async function enqueueGroupInviteEmail(
   }
 
   return { ok: true, alreadyQueued: false };
+}
+
+type TriggerEmailWorkerResult =
+  | { ok: true; status: number }
+  | { ok: false; message: string };
+
+async function triggerEmailWorkerNow(): Promise<TriggerEmailWorkerResult> {
+  const secret = process.env.EMAIL_JOB_SECRET ?? process.env.CRON_SECRET;
+  const workerUrl = `${getSiteUrl()}/api/email-jobs/process`;
+
+  try {
+    const headers: Record<string, string> = {};
+    if (secret) {
+      headers.Authorization = `Bearer ${secret}`;
+    }
+
+    const response = await fetch(workerUrl, {
+      method: "POST",
+      headers,
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
+      return {
+        ok: false,
+        message: `Worker responded with ${response.status}.${bodyText ? ` ${bodyText}` : ""}`.trim()
+      };
+    }
+
+    return { ok: true, status: response.status };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Unknown worker trigger error."
+    };
+  }
 }
 
 async function markGroupInviteEmailFailure(
