@@ -402,7 +402,7 @@ export function AdminPlayersClient() {
     setManagerEditor({
       userId: player.appUserId,
       displayName: player.displayName,
-      maxGroups: String(player.maxGroups ?? 1),
+      maxGroups: String(player.maxGroups ?? 3),
       maxMembersPerGroup: String(player.maxMembersPerGroup ?? 15)
     });
   }

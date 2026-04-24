@@ -1,5 +1,6 @@
 export type UserRole = "player" | "admin";
 export type UserStatus = "active" | "inactive" | "suspended";
+export type AccessLevel = "player" | "manager" | "super_admin";
 
 export type MatchStage = "group" | "round_of_32" | "round_of_16" | "quarterfinal" | "semifinal" | "final";
 
@@ -11,6 +12,11 @@ export type UserProfile = {
   email: string;
   avatarUrl?: string;
   role: UserRole;
+  accessLevel?: AccessLevel;
+  managerLimits?: {
+    maxGroups: number;
+    maxMembersPerGroup: number;
+  } | null;
   status?: UserStatus;
   totalPoints: number;
 };

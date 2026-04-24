@@ -1,21 +1,28 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { CalendarDays, ListOrdered, Network, Sparkles, Trophy } from "lucide-react";
+import { fetchMyGroupsAction } from "@/app/my-groups/actions";
 import { AdminStatsSection, AdminToolsSection, AdminMessage } from "@/components/admin/AdminHomeClient";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
+import { InviteEntryForm, normalizeInviteTokenInput } from "@/components/player-management/Shared";
 import { getStoredPredictions } from "@/lib/prediction-store";
 import { isPredictionLocked } from "@/lib/scoring";
 import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 export function DashboardOverview() {
+  const router = useRouter();
   const { user } = useCurrentUser();
   const [groupMatches, setGroupMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
   const [adminCounts, setAdminCounts] = useState<AdminCounts | null>(null);
   const [adminError, setAdminError] = useState<string | null>(null);
+  const [groupAccess, setGroupAccess] = useState<{ hasAnyGroups: boolean; joinedGroupCount: number } | null>(null);
+  const [inviteEntryValue, setInviteEntryValue] = useState("");
+  const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
   const predictions = user ? getStoredPredictions(user.id) : [];
 
   useEffect(() => {
@@ -37,6 +44,35 @@ export function DashboardOverview() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setGroupAccess(null);
+      return;
+    }
+
+    let isMounted = true;
+    fetchMyGroupsAction()
+      .then((result) => {
+        if (!isMounted || !result.ok) {
+          return;
+        }
+
+        setGroupAccess({
+          hasAnyGroups: result.groupAccess.hasAnyGroups,
+          joinedGroupCount: result.groupAccess.joinedGroupCount
+        });
+      })
+      .catch(() => {
+        if (isMounted) {
+          setGroupAccess(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
 
   useEffect(() => {
     if (user?.role !== "admin") {
@@ -66,6 +102,17 @@ export function DashboardOverview() {
     predictions.some((prediction) => prediction.matchId === match.id)
   ).length;
   const ctaLabel = "Score Picks";
+
+  function handleInviteEntrySubmit() {
+    const token = normalizeInviteTokenInput(inviteEntryValue);
+    if (!token) {
+      setInviteEntryError("Paste a valid invite link or token first.");
+      return;
+    }
+
+    setInviteEntryError(null);
+    router.push(`/my-groups?invite=${encodeURIComponent(token)}`);
+  }
 
   return (
     <div className="space-y-5">
@@ -97,6 +144,45 @@ export function DashboardOverview() {
           {adminError ? <AdminMessage tone="error" message={adminError} /> : null}
           <AdminToolsSection />
           <AdminStatsSection counts={adminCounts} />
+        </section>
+      ) : null}
+
+      {user && groupAccess && !groupAccess.hasAnyGroups ? (
+        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-bold uppercase tracking-wide text-amber-800">Group Access</p>
+          <h3 className="mt-1 text-xl font-black text-gray-950">You are not in any groups right now.</h3>
+          <p className="mt-2 text-sm font-semibold leading-6 text-gray-700">
+            Your account and predictions are still here. Ask a manager for a new invite link to join another group, or jump back into scoring while you wait.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              href="/my-groups"
+              className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+            >
+              Open My Groups
+            </Link>
+            <Link
+              href="/groups"
+              className="inline-flex items-center justify-center rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:bg-accent-dark"
+            >
+              Go to Score Picks
+            </Link>
+          </div>
+          <div className="mt-4">
+            <InviteEntryForm
+              value={inviteEntryValue}
+              onValueChange={(value) => {
+                setInviteEntryValue(value);
+                if (inviteEntryError) {
+                  setInviteEntryError(null);
+                }
+              }}
+              onSubmit={handleInviteEntrySubmit}
+              submitLabel="Open Invite"
+              description="Paste a fresh group invite link or token to jump straight back into signup or joining."
+            />
+          </div>
+          {inviteEntryError ? <div className="mt-3"><AdminMessage tone="error" message={inviteEntryError} /></div> : null}
         </section>
       ) : null}
 

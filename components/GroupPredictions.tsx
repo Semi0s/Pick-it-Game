@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Trophy } from "lucide-react";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchPlayerPredictions, savePlayerPrediction } from "@/lib/player-predictions";
 import { getStoredPredictions } from "@/lib/prediction-store";
@@ -119,14 +121,23 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
   return (
     <div className="space-y-6">
       <section className="rounded-lg bg-gray-100 p-5">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Group stage</p>
+        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Play</p>
         <h2 className="mt-2 text-3xl font-black leading-tight">Pick every match.</h2>
         <p className="mt-3 text-base leading-7 text-gray-600">
           Choose the winner or call the draw. Exact scores are optional now, but they will matter once scoring
           goes live.
         </p>
-        <div className="mt-4 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
-          {savedCount} of {matches.length} picks saved
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <div className="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
+            {savedCount} of {matches.length} picks saved
+          </div>
+          <Link
+            href="/trophies"
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            <Trophy aria-hidden className="h-4 w-4 text-accent-dark" />
+            Trophies
+          </Link>
         </div>
       </section>
 

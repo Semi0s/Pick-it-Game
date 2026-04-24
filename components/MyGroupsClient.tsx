@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Info } from "lucide-react";
 import {
   acceptGroupInviteAction,
   cancelGroupInviteAction,
   createGroupAction,
   createGroupInviteAction,
+  deleteManagedGroupAction,
   fetchGroupInvitePreviewAction,
   fetchMyGroupsAction,
   listManagedGroupPlayersAction,
@@ -17,19 +20,22 @@ import {
   type ListManagedGroupPlayersResult,
   type MyManagedGroup
 } from "@/app/my-groups/actions";
+import { AdminInvitesSection } from "@/components/admin/AdminInvitesClient";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { formatDate } from "@/components/admin/AdminInvitesClient";
 import {
   ActionButton,
   HierarchyPanel,
   InlineConfirmation,
+  InviteEntryForm,
+  InlineTextConfirmation,
   ManagementBadge,
   ManagementCard,
   ManagementDatum,
   ManagementEmptyState,
   ManagementGrid,
   ManagementIntro,
-  ManagementToolbar
+  normalizeInviteTokenInput
 } from "@/components/player-management/Shared";
 
 type MyGroupsClientProps = {
@@ -39,6 +45,7 @@ type MyGroupsClientProps = {
 type ToastState = { tone: "success" | "error"; text: string } | null;
 
 export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
+  const router = useRouter();
   const [summary, setSummary] = useState<FetchMyGroupsResult | null>(null);
   const [managedGroupsResult, setManagedGroupsResult] = useState<ListManagedGroupPlayersResult | null>(null);
   const [message, setMessage] = useState<ToastState>(null);
@@ -59,8 +66,6 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   } | null>(null);
   const [isLoadingInvitePreview, setIsLoadingInvitePreview] = useState(Boolean(inviteToken));
   const [isAcceptingInvite, setIsAcceptingInvite] = useState(false);
-  const [searchValue, setSearchValue] = useState("");
-  const [filterValue, setFilterValue] = useState<"all" | "members" | "invites">("all");
   const [confirmation, setConfirmation] = useState<{
     key: string;
     title: string;
@@ -68,6 +73,14 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     confirmLabel: string;
     onConfirm: () => void;
   } | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{
+    key: string;
+    groupId: string;
+    groupName: string;
+  } | null>(null);
+  const [deleteConfirmationValue, setDeleteConfirmationValue] = useState("");
+  const [inviteEntryValue, setInviteEntryValue] = useState("");
+  const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -121,32 +134,24 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     () => (managedGroupsResult?.ok ? managedGroupsResult.groups : []),
     [managedGroupsResult]
   );
-  const filteredGroups = useMemo(() => {
-    const query = searchValue.trim().toLowerCase();
-    return groups.filter((group) => {
-      const matchesSearch =
-        !query ||
-        group.name.toLowerCase().includes(query) ||
-        group.members.some((member) => member.name.toLowerCase().includes(query) || member.email.toLowerCase().includes(query)) ||
-        group.invites.some((invite) => invite.email.toLowerCase().includes(query) || (invite.suggestedDisplayName ?? "").toLowerCase().includes(query));
-
-      if (!matchesSearch) {
-        return false;
-      }
-
-      if (filterValue === "members") {
-        return group.members.length > 0;
-      }
-
-      if (filterValue === "invites") {
-        return group.invites.length > 0;
-      }
-
-      return true;
-    });
-  }, [filterValue, groups, searchValue]);
   const currentUser = summary?.ok ? summary.currentUser : null;
   const isSignedIn = Boolean(currentUser);
+  const hasAnyGroups = summary?.ok ? summary.groupAccess.hasAnyGroups : false;
+  const activeHierarchyLevel =
+    summary?.ok
+      ? summary.currentUser.role === "admin"
+        ? "super_admin"
+        : summary.managerAccess.enabled
+          ? "manager"
+          : "player"
+      : undefined;
+  const managerGroupLimitReached = Boolean(
+    summary?.ok &&
+      summary.currentUser.role !== "admin" &&
+      summary.managerAccess.enabled &&
+      summary.managerAccess.maxGroups !== undefined &&
+      summary.groupAccess.managedGroupCount >= summary.managerAccess.maxGroups
+  );
   const canCreateGroups = summary?.ok && summary.currentUser.role === "admin"
     ? true
     : Boolean(summary?.ok && summary.managerAccess.enabled);
@@ -223,6 +228,17 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     }
   }
 
+  function handleInviteEntrySubmit() {
+    const token = normalizeInviteTokenInput(inviteEntryValue);
+    if (!token) {
+      setInviteEntryError("Paste a valid invite link or token first.");
+      return;
+    }
+
+    setInviteEntryError(null);
+    router.push(`/my-groups?invite=${encodeURIComponent(token)}`);
+  }
+
   const inviteLoginPath = inviteToken ? `/login?flow=invite&next=${encodeURIComponent(`/my-groups?invite=${inviteToken}`)}` : "/login";
   const inviteSignupPath = inviteToken
     ? `/login?mode=signup&flow=invite&next=${encodeURIComponent(`/my-groups?invite=${inviteToken}`)}`
@@ -231,11 +247,11 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   return (
     <section className="space-y-5">
       <ManagementIntro
-        eyebrow="My Groups"
-        title="Create and manage private pools."
-        description="Keep one set of picks across the app, then compete inside the groups you manage or join."
+        eyebrow="Groups"
+        title="Play in groups and manage them"
+        description="Players see the groups they belong to. Managers get group controls. Super admins get an elevated control layer at the top."
       />
-      <HierarchyPanel />
+      <HierarchyPanel activeLevel={activeHierarchyLevel} />
 
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
 
@@ -247,6 +263,35 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
           onConfirm={confirmation.onConfirm}
           onCancel={() => setConfirmation(null)}
           isPending={actionKey === confirmation.key}
+        />
+      ) : null}
+
+      {deleteConfirmation ? (
+        <InlineTextConfirmation
+          title={`Delete ${deleteConfirmation.groupName}?`}
+          description="This removes the group, its memberships, and its pending group invites. It does not delete player accounts, app-level invites, or predictions."
+          confirmLabel="Delete Group"
+          expectedValue={deleteConfirmation.groupName}
+          inputLabel="Type the group name to confirm"
+          inputPlaceholder={deleteConfirmation.groupName}
+          value={deleteConfirmationValue}
+          onValueChange={setDeleteConfirmationValue}
+          onConfirm={() => {
+            void withAction(deleteConfirmation.key, async () => {
+              const result = await deleteManagedGroupAction(deleteConfirmation.groupId, deleteConfirmationValue);
+              setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+              if (result.ok) {
+                setDeleteConfirmation(null);
+                setDeleteConfirmationValue("");
+                await load();
+              }
+            });
+          }}
+          onCancel={() => {
+            setDeleteConfirmation(null);
+            setDeleteConfirmationValue("");
+          }}
+          isPending={actionKey === deleteConfirmation.key}
         />
       ) : null}
 
@@ -306,60 +351,151 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
         </section>
       ) : null}
 
+      {summary?.ok && summary.currentUser.role === "admin" ? (
+        <ManagementCard
+          title="Admin Controls"
+          subtitle="Full system control lives here without adding another dock tab."
+          badges={
+            <>
+              <ManagementBadge label="super admin" tone="accent" />
+              <ManagementBadge label="unlimited" tone="accent" />
+            </>
+          }
+          actions={
+            <>
+              <Link href="/admin/players" className="inline-flex">
+                <ActionButton>Manage Players</ActionButton>
+              </Link>
+              <Link href="/admin/players" className="inline-flex">
+                <ActionButton>Manage Managers</ActionButton>
+              </Link>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <p className="text-sm font-semibold leading-6 text-gray-600">
+              Create groups without limits, invite players globally, and review every group from this hub.
+            </p>
+            <AdminInvitesSection showHeader={false} showInviteList={false} />
+          </div>
+        </ManagementCard>
+      ) : null}
+
       <ManagementCard
-        title="Manager access"
+        title="Your access"
         subtitle={
           summary?.ok && summary.currentUser.role === "admin"
-            ? "Super admins do not have group or manager limits."
-            : "Managers can only act inside groups they manage."
-        }
-        badges={
-          summary?.ok
-            ? (
-                <>
-                  <ManagementBadge label={summary.currentUser.role === "admin" ? "super admin" : "manager"} tone={summary.currentUser.role === "admin" ? "accent" : "neutral"} />
-                  <ManagementBadge
-                    label={
-                      summary.currentUser.role === "admin"
-                        ? "unlimited"
-                        : summary.managerAccess.enabled
-                          ? "limited by assigned permissions"
-                          : "participant"
-                    }
-                    tone={summary.currentUser.role === "admin" ? "accent" : "neutral"}
-                  />
-                </>
-              )
-            : undefined
+            ? "Unlimited controls inside Groups."
+            : summary?.ok && summary.managerAccess.enabled
+              ? "Your manager limits and current usage."
+              : "Your current group access."
         }
       >
         {isLoading ? (
           <p className="mt-3 text-sm font-semibold text-gray-600">Loading your access...</p>
         ) : summary?.ok ? (
-          <div className="space-y-2 text-sm font-semibold text-gray-700">
-            <p>
-              {summary.currentUser.role === "admin"
-                ? "Super admin access is active."
-                : summary.managerAccess.enabled
-                  ? `Manager access is enabled. You can manage up to ${summary.managerAccess.maxGroups} group${summary.managerAccess.maxGroups === 1 ? "" : "s"} with up to ${summary.managerAccess.maxMembersPerGroup} members each.`
-                  : "Manager access is not enabled for this account yet."}
-            </p>
-          </div>
+          <ManagementGrid>
+            <ManagementDatum
+              label="Joined groups"
+              value={`${summary.groupAccess.joinedGroupCount}`}
+            />
+            <ManagementDatum
+              label="Managed groups"
+              value={
+                summary.currentUser.role === "admin"
+                  ? "Unlimited"
+                  : summary.managerAccess.enabled
+                    ? `${summary.groupAccess.managedGroupCount} / ${summary.managerAccess.maxGroups}`
+                    : "None"
+              }
+            />
+            <ManagementDatum
+              label="Members per group"
+              value={
+                summary.currentUser.role === "admin"
+                  ? "Unlimited"
+                  : summary.managerAccess.enabled
+                    ? `${summary.managerAccess.maxMembersPerGroup}`
+                    : "Not enabled"
+              }
+            />
+            <ManagementDatum
+              label="Scope"
+              value={
+                summary.currentUser.role === "admin"
+                  ? "All groups"
+                  : summary.managerAccess.enabled
+                    ? "Assigned groups only"
+                    : "Joined groups only"
+              }
+            />
+          </ManagementGrid>
         ) : (
           <p className="mt-3 text-sm font-semibold text-gray-600">{summary?.message ?? "Sign in to manage groups."}</p>
         )}
       </ManagementCard>
 
+      {summary?.ok && !hasAnyGroups ? (
+        <ManagementCard
+          title="You are not in any groups right now."
+          subtitle="Your account and predictions are still safe."
+          actions={
+            <>
+              <Link href="/groups" className="inline-flex">
+                <ActionButton>Go to Score Picks</ActionButton>
+              </Link>
+              <Link href="/login?mode=signup" className="inline-flex">
+                <ActionButton>Use a New Invite</ActionButton>
+              </Link>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <p className="text-sm font-semibold leading-6 text-gray-600">
+              If a manager deleted one of your groups, you can still sign in and keep playing anywhere else you are invited.
+              Ask a manager for a fresh invite link when you are ready to join your next group.
+            </p>
+            <InviteEntryForm
+              value={inviteEntryValue}
+              onValueChange={(value) => {
+                setInviteEntryValue(value);
+                if (inviteEntryError) {
+                  setInviteEntryError(null);
+                }
+              }}
+              onSubmit={handleInviteEntrySubmit}
+              submitLabel="Open Invite"
+            />
+            {inviteEntryError ? <AdminMessage tone="error" message={inviteEntryError} /> : null}
+          </div>
+        </ManagementCard>
+      ) : null}
+
       {canCreateGroups ? (
-        <form onSubmit={handleCreateGroup} className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
-          <h3 className="text-lg font-bold">Create a group</h3>
+        <form
+          onSubmit={handleCreateGroup}
+          className={`space-y-4 rounded-lg border p-4 transition-colors ${
+            managerGroupLimitReached ? "border-gray-200 bg-gray-100" : "border-green-200 bg-green-50"
+          }`}
+        >
+          <h3 className="text-lg font-bold">{summary?.ok && summary.currentUser.role === "admin" ? "Create a group (Unlimited)" : "Create a group"}</h3>
+          {managerGroupLimitReached ? (
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+              <Info aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                You are already using all {summary?.ok ? summary.managerAccess.maxGroups : 0} of your available groups.
+                Ask a super admin if you need a higher group limit.
+              </p>
+            </div>
+          ) : null}
           <label className="block">
             <span className="text-sm font-bold text-gray-800">Group name</span>
             <input
               required
               value={groupName}
               onChange={(event) => setGroupName(event.target.value)}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+              disabled={managerGroupLimitReached}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-500"
             />
           </label>
           <label className="block">
@@ -369,98 +505,150 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
               min={1}
               value={membershipLimit}
               onChange={(event) => setMembershipLimit(event.target.value)}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+              disabled={managerGroupLimitReached}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-500"
               placeholder="Leave blank for the default"
             />
           </label>
-          <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
-            {isCreatingGroup ? "Creating..." : "Create Group"}
+          <ActionButton type="submit" disabled={isCreatingGroup || managerGroupLimitReached} tone="accent" fullWidth>
+            {managerGroupLimitReached ? "Group limit reached" : isCreatingGroup ? "Creating..." : "Create Group"}
           </ActionButton>
         </form>
       ) : null}
 
       <section className="space-y-3">
         <div>
-          <h3 className="text-lg font-bold">Manage Players</h3>
-          <p className="mt-1 text-sm font-semibold text-gray-600">See members, invites, and group capacity for every group you manage.</p>
+          <h3 className="text-lg font-bold">Groups</h3>
+          <p className="mt-1 text-sm font-semibold text-gray-600">
+            {summary?.ok && summary.currentUser.role === "admin"
+              ? "See every group, members, invites, and the admin control layer."
+              : summary?.ok && summary.managerAccess.enabled
+                ? "See your groups, members, invites, and the limits that apply to you."
+                : "See the groups you belong to and who is in them."}
+          </p>
         </div>
-        <ManagementToolbar
-          searchValue={searchValue}
-          onSearchChange={setSearchValue}
-          filterValue={filterValue}
-          onFilterChange={(value) => setFilterValue(value as "all" | "members" | "invites")}
-          filters={[
-            { value: "all", label: "All groups" },
-            { value: "members", label: "Groups with members" },
-            { value: "invites", label: "Groups with invites" }
-          ]}
-        />
         {isLoading ? (
           <ManagementEmptyState message="Loading groups..." />
-        ) : filteredGroups.length === 0 ? (
-          <ManagementEmptyState message="No groups match the current search or filter." />
+        ) : groups.length === 0 ? (
+          <ManagementEmptyState
+            message={
+              summary?.ok && !summary.groupAccess.hasAnyGroups
+                ? "No managed groups yet. Use a new invite link or create a group if you have manager access."
+                : "No groups match the current search or filter."
+            }
+          />
         ) : (
-          filteredGroups.map((group) => {
+          groups.map((group) => {
             const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "" };
 
             return (
               <ManagementCard
                 key={group.id}
                 title={group.name}
-                subtitle={`${group.memberCount} members · ${group.pendingInviteCount} pending invites`}
+                titleClassName="text-xl"
+                subtitle={
+                  group.canManage
+                    ? `${group.memberCount} members · ${group.pendingInviteCount} pending invites`
+                    : `${group.memberCount} members`
+                }
                 badges={
                   <>
                     <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
                     <ManagementBadge label={`limit ${group.membershipLimit}`} tone="neutral" />
+                    {group.userRole === "super_admin" ? (
+                      <ManagementBadge label="super admin" tone="accent" />
+                    ) : group.userRole === "manager" ? (
+                      <ManagementBadge label="manager" tone="accent" />
+                    ) : (
+                      <ManagementBadge label="player" tone="neutral" />
+                    )}
                   </>
                 }
               >
                 <ManagementGrid>
                   <ManagementDatum label="Capacity" value={`${group.memberCount + group.pendingInviteCount} / ${group.membershipLimit} used`} />
                   <ManagementDatum label="Members" value={group.memberCount} />
-                  <ManagementDatum label="Pending invites" value={group.pendingInviteCount} />
-                  <ManagementDatum label="Scope" value="Managers can only act inside assigned groups." />
+                  <ManagementDatum label="Pending invites" value={group.canManage ? group.pendingInviteCount : "Manager only"} />
+                  <ManagementDatum
+                    label="Your access"
+                    value={
+                      group.userRole === "super_admin"
+                        ? "Super Admin"
+                        : group.userRole === "manager"
+                          ? "Manager"
+                          : "Player"
+                    }
+                  />
                 </ManagementGrid>
 
-                <form className="mt-4 space-y-3" onSubmit={(event) => handleCreateInvite(event, group)}>
-                  <label className="block">
-                    <span className="text-sm font-bold text-gray-800">Invite by email</span>
-                    <input
-                      type="email"
-                      required
-                      value={formState.email}
-                      onChange={(event) =>
-                        setInviteForms((current) => ({
-                          ...current,
-                          [group.id]: {
-                            ...formState,
-                            email: event.target.value
+                {group.canManage ? (
+                  <>
+                    <div className="mt-4">
+                      <ActionButton
+                        tone="danger"
+                        disabled={actionKey === `delete-group-${group.id}`}
+                        onClick={() => {
+                          setConfirmation(null);
+                          setDeleteConfirmation({
+                            key: `delete-group-${group.id}`,
+                            groupId: group.id,
+                            groupName: group.name
+                          });
+                          setDeleteConfirmationValue("");
+                        }}
+                        fullWidth
+                      >
+                        Delete Group
+                      </ActionButton>
+                    </div>
+
+                    <form className="mt-4 space-y-3" onSubmit={(event) => handleCreateInvite(event, group)}>
+                      <label className="block">
+                        <span className="text-sm font-bold text-gray-800">Invite by email</span>
+                        <input
+                          type="email"
+                          required
+                          value={formState.email}
+                          onChange={(event) =>
+                            setInviteForms((current) => ({
+                              ...current,
+                              [group.id]: {
+                                ...formState,
+                                email: event.target.value
+                              }
+                            }))
                           }
-                        }))
-                      }
-                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-sm font-bold text-gray-800">Suggested display name</span>
-                    <input
-                      value={formState.suggestedDisplayName}
-                      onChange={(event) =>
-                        setInviteForms((current) => ({
-                          ...current,
-                          [group.id]: {
-                            ...formState,
-                            suggestedDisplayName: event.target.value
+                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-sm font-bold text-gray-800">Suggested display name</span>
+                        <input
+                          value={formState.suggestedDisplayName}
+                          onChange={(event) =>
+                            setInviteForms((current) => ({
+                              ...current,
+                              [group.id]: {
+                                ...formState,
+                                suggestedDisplayName: event.target.value
+                              }
+                            }))
                           }
-                        }))
-                      }
-                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                    />
-                  </label>
-                  <ActionButton type="submit" disabled={submittingInviteForGroup === group.id} fullWidth>
-                    {submittingInviteForGroup === group.id ? "Sending invite..." : "Send Group Invite"}
-                  </ActionButton>
-                </form>
+                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                        />
+                      </label>
+                      <ActionButton type="submit" disabled={submittingInviteForGroup === group.id} fullWidth>
+                        {submittingInviteForGroup === group.id ? "Sending invite..." : "Send Group Invite"}
+                      </ActionButton>
+                    </form>
+                  </>
+                ) : (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Link href="/leaderboard" className="inline-flex">
+                      <ActionButton>View Leaderboard</ActionButton>
+                    </Link>
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Members</h4>
@@ -477,7 +665,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                               {member.role} · Joined {formatDate(member.joinedAt)}
                             </p>
                           </div>
-                          {member.role === "member" ? (
+                          {group.canManage && member.role === "member" ? (
                             <ActionButton
                               tone="danger"
                               disabled={actionKey === `remove-member-${member.membershipId}`}
@@ -509,12 +697,13 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                   )}
                 </div>
 
-                <div className="space-y-2">
-                  <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Invites</h4>
-                  {group.invites.length === 0 ? (
-                    <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">No invites yet.</p>
-                  ) : (
-                    group.invites.map((invite) => {
+                {group.canManage ? (
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Invites</h4>
+                    {group.invites.length === 0 ? (
+                      <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">No invites yet.</p>
+                    ) : (
+                      group.invites.map((invite) => {
                       const inviteStatusLabel = invite.status === "revoked" ? "canceled" : invite.status;
                       const editValue = editingInviteNames[invite.id] ?? invite.suggestedDisplayName ?? "";
 
@@ -616,9 +805,10 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                           ) : null}
                         </div>
                       );
-                    })
-                  )}
-                </div>
+                      })
+                    )}
+                  </div>
+                ) : null}
               </ManagementCard>
             );
           })

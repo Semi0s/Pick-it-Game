@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useState } from "react";
 import { sendCurrentUserPasswordReset } from "@/lib/auth-client";
+import { getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-levels";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 export function ProfileSummary() {
@@ -36,8 +37,11 @@ export function ProfileSummary() {
             </div>
           )}
           <div className="min-w-0">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{user.role}</p>
             <h2 className="truncate text-2xl font-black">{user.name}</h2>
+            <p className="mt-1 text-sm font-bold text-accent-dark">
+              {getAccessLevelLabel(user)}
+              {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
+            </p>
             <p className="truncate text-sm font-medium text-gray-600">{user.email}</p>
           </div>
         </div>
@@ -50,6 +54,21 @@ export function ProfileSummary() {
           will move into Supabase-backed profile settings in a later phase.
         </p>
       </div>
+
+      {user.role === "admin" ? (
+        <div className="rounded-lg border border-accent-light bg-accent-light/40 p-4">
+          <h3 className="text-lg font-bold">Super admin access</h3>
+          <p className="mt-2 text-sm leading-6 text-gray-700">
+            Groups is your main operational hub, with deeper player and manager tools available when you need them.
+          </p>
+          <a
+            href="/admin/players"
+            className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Open Player Management
+          </a>
+        </div>
+      ) : null}
 
       <div className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">Password</h3>

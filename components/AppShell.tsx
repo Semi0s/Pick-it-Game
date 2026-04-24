@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect } from "react";
-import { CircleUserRound, ListOrdered, Network, Trophy, UsersRound } from "lucide-react";
+import { CircleUserRound, Gamepad2, ListOrdered, UsersRound } from "lucide-react";
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { signOutCurrentUser } from "@/lib/auth-client";
+import { getAccessLevelLabel, shouldShowAccessBadge } from "@/lib/access-levels";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 type AppShellProps = {
@@ -13,11 +14,9 @@ type AppShellProps = {
 };
 
 const navItems = [
-  { href: "/groups", label: "Score Picks", ariaLabel: "Score Picks", icon: ListOrdered },
-  { href: "/my-groups", label: "My Groups", ariaLabel: "My Groups", icon: UsersRound },
+  { href: "/groups", label: "Play", ariaLabel: "Play", icon: Gamepad2 },
+  { href: "/my-groups", label: "Groups", ariaLabel: "Groups", icon: UsersRound },
   { href: "/leaderboard", label: "Leaderboard", ariaLabel: "Leaderboard", icon: ListOrdered },
-  { href: "/knockout", label: "Knockout", ariaLabel: "Knockout Stage", icon: Network },
-  { href: "/trophies", label: "Trophies", ariaLabel: "Additional Trophies", icon: Trophy },
   { href: "/profile", label: "Profile", ariaLabel: "Profile", icon: CircleUserRound }
 ];
 
@@ -50,24 +49,31 @@ export function AppShell({ children }: AppShellProps) {
             <h1 className="truncate text-xl font-black leading-tight">{APP_NAME}</h1>
             <p className="truncate text-xs font-semibold text-accent-dark">{APP_TAGLINE}</p>
           </Link>
-          <button
-            type="button"
-            onClick={async () => {
-              await signOutCurrentUser();
-              router.replace("/login");
-              router.refresh();
-            }}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700"
-          >
-            Sign out
-          </button>
+          <div className="flex items-center gap-2">
+            {shouldShowAccessBadge(user) ? (
+              <span className="rounded-md bg-accent-light px-2 py-1 text-xs font-bold uppercase text-accent-dark">
+                {getAccessLevelLabel(user)}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={async () => {
+                await signOutCurrentUser();
+                router.replace("/login");
+                router.refresh();
+              }}
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-4xl px-4 py-5">{children}</main>
 
       <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-gray-200 bg-white">
-        <div className="mx-auto grid max-w-4xl grid-cols-6 px-1 py-2">
+        <div className="mx-auto grid max-w-4xl grid-cols-4 px-1 py-2">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;

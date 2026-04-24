@@ -163,6 +163,8 @@ export type MyManagedGroup = {
   status: GroupStatus;
   memberCount: number;
   pendingInviteCount: number;
+  canManage: boolean;
+  userRole: "super_admin" | GroupMemberRole | "viewer";
 };
 
 export type ManagedGroupMember = {
@@ -206,6 +208,11 @@ export type FetchMyGroupsResult =
         enabled: boolean;
         maxGroups?: number;
         maxMembersPerGroup?: number;
+      };
+      groupAccess: {
+        joinedGroupCount: number;
+        managedGroupCount: number;
+        hasAnyGroups: boolean;
       };
       groups: MyManagedGroup[];
     }
@@ -253,6 +260,7 @@ export type ResendGroupInviteResult =
 export type CancelGroupInviteResult = ResendGroupInviteResult;
 export type RemoveGroupMemberResult = ResendGroupInviteResult;
 export type UpdateGroupInviteNameResult = ResendGroupInviteResult;
+export type DeleteManagedGroupResult = ResendGroupInviteResult;
 
 export async function createGroupAction(input: CreateGroupInput): Promise<CreateGroupResult> {
   const currentUser = await getCurrentUserContext();
@@ -871,6 +879,53 @@ export async function updateGroupInviteNameAction(inviteId: string, suggestedDis
   }
 }
 
+export async function deleteManagedGroupAction(groupId: string, confirmationName: string): Promise<DeleteManagedGroupResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedGroupId = groupId.trim();
+  const trimmedConfirmationName = confirmationName.trim();
+  if (!trimmedGroupId || !trimmedConfirmationName) {
+    return { ok: false, message: "Group id and confirmation name are required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    if (trimmedConfirmationName !== managedGroup.name.trim()) {
+      return { ok: false, message: "Type the exact group name before deleting it." };
+    }
+
+    const { error } = await adminSupabase
+      .from("groups")
+      .delete()
+      .eq("id", managedGroup.id);
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    revalidatePath("/my-groups");
+    revalidatePath("/dashboard");
+
+    return {
+      ok: true,
+      message: "Group deleted. Players kept their accounts, invites, and predictions."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not delete that group."
+    };
+  }
+}
+
 export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
   const currentUser = await getCurrentUserContext();
   if (!currentUser.ok) {
@@ -881,6 +936,7 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
     const adminSupabase = createAdminClient();
     const managerLimits = await getManagerLimits(adminSupabase, currentUser.userId);
     const groups = await fetchManagedGroups(adminSupabase, currentUser.userId, currentUser.role);
+    const joinedGroupCount = await getJoinedGroupCount(adminSupabase, currentUser.userId);
 
     return {
       ok: true,
@@ -898,6 +954,11 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
             maxGroups: managerLimits?.max_groups,
             maxMembersPerGroup: managerLimits?.max_members_per_group
           },
+      groupAccess: {
+        joinedGroupCount,
+        managedGroupCount: groups.length,
+        hasAnyGroups: joinedGroupCount > 0
+      },
       groups
     };
   } catch (error) {
@@ -1010,6 +1071,19 @@ async function getActiveOwnedGroupCount(adminSupabase: ReturnType<typeof createA
   return count ?? 0;
 }
 
+async function getJoinedGroupCount(adminSupabase: ReturnType<typeof createAdminClient>, userId: string) {
+  const { count, error } = await adminSupabase
+    .from("group_members")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return count ?? 0;
+}
+
 async function fetchManagedGroups(
   adminSupabase: ReturnType<typeof createAdminClient>,
   userId: string,
@@ -1018,11 +1092,11 @@ async function fetchManagedGroups(
   const { data: groups, error: groupsError } = role === "admin"
     ? await adminSupabase
         .from("groups")
-        .select("id,name,membership_limit,status")
+        .select("id,name,membership_limit,status,owner_user_id")
         .order("created_at", { ascending: false })
     : await adminSupabase
         .from("groups")
-        .select("id,name,membership_limit,status")
+        .select("id,name,membership_limit,status,owner_user_id")
         .or(`owner_user_id.eq.${userId},id.in.(${await managedGroupIdList(adminSupabase, userId)})`)
         .order("created_at", { ascending: false });
 
@@ -1035,6 +1109,7 @@ async function fetchManagedGroups(
     name: string;
     membership_limit: number;
     status: GroupStatus;
+    owner_user_id?: string | null;
   }>;
 
   if (groupRows.length === 0) {
@@ -1042,6 +1117,7 @@ async function fetchManagedGroups(
   }
 
   const groupIds = groupRows.map((group) => group.id);
+  const membershipRoleByGroup = await fetchMembershipRolesByGroup(adminSupabase, userId, groupIds);
   const [memberCounts, pendingInviteCounts] = await Promise.all([
     fetchCountsByGroup(adminSupabase, "group_members", groupIds),
     fetchCountsByGroup(adminSupabase, "group_invites", groupIds, { status: "pending" })
@@ -1053,7 +1129,14 @@ async function fetchManagedGroups(
     membershipLimit: group.membership_limit,
     status: group.status,
     memberCount: memberCounts.get(group.id) ?? 0,
-    pendingInviteCount: pendingInviteCounts.get(group.id) ?? 0
+    pendingInviteCount: pendingInviteCounts.get(group.id) ?? 0,
+    canManage: true,
+    userRole:
+      role === "admin"
+        ? "super_admin"
+        : membershipRoleByGroup.get(group.id) === "manager"
+          ? "manager"
+          : "manager"
   }));
 }
 
@@ -1062,23 +1145,26 @@ async function fetchManagedGroupDetails(
   userId: string,
   role: PlatformRole
 ): Promise<ManagedGroupDetails[]> {
-  const groups = await fetchManagedGroups(adminSupabase, userId, role);
+  const groups = await fetchVisibleGroups(adminSupabase, userId, role);
   if (groups.length === 0) {
     return [];
   }
 
   const groupIds = groups.map((group) => group.id);
+  const manageableGroupIds = groups.filter((group) => group.canManage).map((group) => group.id);
   const [memberResult, inviteResult] = await Promise.all([
     adminSupabase
       .from("group_members")
       .select("id,group_id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email)")
       .in("group_id", groupIds)
       .order("joined_at", { ascending: true }),
-    adminSupabase
-      .from("group_invites")
-      .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
-      .in("group_id", groupIds)
-      .order("created_at", { ascending: false })
+    manageableGroupIds.length > 0
+      ? adminSupabase
+          .from("group_invites")
+          .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
+          .in("group_id", manageableGroupIds)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null })
   ]);
 
   if (memberResult.error) {
@@ -1132,6 +1218,71 @@ async function fetchManagedGroupDetails(
   }));
 }
 
+async function fetchVisibleGroups(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  role: PlatformRole
+): Promise<MyManagedGroup[]> {
+  const membershipGroupIds = await allVisibleGroupIdList(adminSupabase, userId);
+  const membershipRoleByGroup = await fetchMembershipRolesByGroup(
+    adminSupabase,
+    userId,
+    membershipGroupIds.length > 0 ? membershipGroupIds : undefined
+  );
+
+  const { data: groups, error: groupsError } = role === "admin"
+    ? await adminSupabase
+        .from("groups")
+        .select("id,name,membership_limit,status,owner_user_id")
+        .order("created_at", { ascending: false })
+    : await adminSupabase
+        .from("groups")
+        .select("id,name,membership_limit,status,owner_user_id")
+        .or(`owner_user_id.eq.${userId},id.in.(${membershipGroupIds.length > 0 ? membershipGroupIds.join(",") : "00000000-0000-0000-0000-000000000000"})`)
+        .order("created_at", { ascending: false });
+
+  if (groupsError) {
+    throw new Error(groupsError.message);
+  }
+
+  const groupRows = (groups ?? []) as Array<{
+    id: string;
+    name: string;
+    membership_limit: number;
+    status: GroupStatus;
+    owner_user_id?: string | null;
+  }>;
+
+  if (groupRows.length === 0) {
+    return [];
+  }
+
+  const groupIds = groupRows.map((group) => group.id);
+  const [memberCounts, pendingInviteCounts] = await Promise.all([
+    fetchCountsByGroup(adminSupabase, "group_members", groupIds),
+    fetchCountsByGroup(adminSupabase, "group_invites", groupIds, { status: "pending" })
+  ]);
+
+  return groupRows.map((group) => {
+    const membershipRole = membershipRoleByGroup.get(group.id);
+    const canManage = role === "admin" || group.owner_user_id === userId || membershipRole === "manager";
+
+    return {
+      id: group.id,
+      name: group.name,
+      membershipLimit: group.membership_limit,
+      status: group.status,
+      memberCount: memberCounts.get(group.id) ?? 0,
+      pendingInviteCount: canManage ? pendingInviteCounts.get(group.id) ?? 0 : 0,
+      canManage,
+      userRole:
+        role === "admin"
+          ? "super_admin"
+          : membershipRole ?? "viewer"
+    };
+  });
+}
+
 async function managedGroupIdList(adminSupabase: ReturnType<typeof createAdminClient>, userId: string) {
   const { data, error } = await adminSupabase
     .from("group_members")
@@ -1145,6 +1296,46 @@ async function managedGroupIdList(adminSupabase: ReturnType<typeof createAdminCl
 
   const ids = ((data ?? []) as Array<{ group_id: string }>).map((row) => row.group_id);
   return ids.length > 0 ? ids.join(",") : "00000000-0000-0000-0000-000000000000";
+}
+
+async function allVisibleGroupIdList(adminSupabase: ReturnType<typeof createAdminClient>, userId: string) {
+  const { data, error } = await adminSupabase
+    .from("group_members")
+    .select("group_id")
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return ((data ?? []) as Array<{ group_id: string }>).map((row) => row.group_id);
+}
+
+async function fetchMembershipRolesByGroup(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  groupIds?: string[]
+) {
+  let query = adminSupabase
+    .from("group_members")
+    .select("group_id,role")
+    .eq("user_id", userId);
+
+  if (groupIds && groupIds.length > 0) {
+    query = query.in("group_id", groupIds);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const roles = new Map<string, GroupMemberRole>();
+  for (const row of ((data ?? []) as Array<{ group_id: string; role: GroupMemberRole }>)) {
+    roles.set(row.group_id, row.role);
+  }
+
+  return roles;
 }
 
 async function fetchCountsByGroup(

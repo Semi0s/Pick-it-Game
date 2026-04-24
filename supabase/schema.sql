@@ -145,7 +145,7 @@ create table public.email_jobs (
 
 create table public.manager_limits (
   user_id uuid primary key references public.users(id) on delete cascade,
-  max_groups integer not null default 1,
+  max_groups integer not null default 3,
   max_members_per_group integer not null default 15,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

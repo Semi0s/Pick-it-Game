@@ -26,6 +26,11 @@ type UserRow = {
   total_points: number;
 };
 
+type ManagerLimitsRow = {
+  max_groups: number;
+  max_members_per_group: number;
+};
+
 export async function authenticateWithEmail(
   mode: AuthMode,
   email: string,
@@ -105,14 +110,21 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
     return null;
   }
 
-  const { data: profile } = await supabase
-    .from("users")
-    .select("id,name,email,avatar_url,role,total_points")
-    .eq("id", authData.user.id)
-    .single();
+  const [{ data: profile }, { data: managerLimits }] = await Promise.all([
+    supabase
+      .from("users")
+      .select("id,name,email,avatar_url,role,total_points")
+      .eq("id", authData.user.id)
+      .single(),
+    supabase
+      .from("manager_limits")
+      .select("max_groups,max_members_per_group")
+      .eq("user_id", authData.user.id)
+      .maybeSingle()
+  ]);
 
   if (profile) {
-    return mapUserRow(profile as UserRow);
+    return mapUserRow(profile as UserRow, (managerLimits as ManagerLimitsRow | null) ?? null);
   }
 
   return {
@@ -120,6 +132,13 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
     name: authData.user.email?.split("@")[0] ?? "Player",
     email: authData.user.email ?? "",
     role: "player",
+    accessLevel: managerLimits ? "manager" : "player",
+    managerLimits: managerLimits
+      ? {
+          maxGroups: managerLimits.max_groups,
+          maxMembersPerGroup: managerLimits.max_members_per_group
+        }
+      : null,
     totalPoints: 0
   };
 }
@@ -179,13 +198,20 @@ export function isUsingDemoAuthFallback() {
   return !hasSupabaseConfig();
 }
 
-function mapUserRow(row: UserRow): UserProfile {
+function mapUserRow(row: UserRow, managerLimits: ManagerLimitsRow | null): UserProfile {
   return {
     id: row.id,
     name: row.name,
     email: row.email,
     avatarUrl: row.avatar_url ?? undefined,
     role: row.role,
+    accessLevel: row.role === "admin" ? "super_admin" : managerLimits ? "manager" : "player",
+    managerLimits: managerLimits
+      ? {
+          maxGroups: managerLimits.max_groups,
+          maxMembersPerGroup: managerLimits.max_members_per_group
+        }
+      : null,
     totalPoints: row.total_points
   };
 }
