@@ -50,8 +50,8 @@ export function ProfileSummary() {
       <div className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">Profile editing</h3>
         <p className="mt-2 text-sm leading-6 text-gray-600">
-          Phase 1 stores demo profile details from the invite list. Editable display names and avatar uploads
-          will move into Supabase-backed profile settings in a later phase.
+          Your invite gets you in the door. After that, your display name and username belong to you. Super admins can
+          still make corrections later if something needs cleanup.
         </p>
       </div>
 

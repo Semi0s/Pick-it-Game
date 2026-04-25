@@ -11,6 +11,7 @@ export type AdminAuthState =
   | "unknown";
 export type AdminInviteState =
   | "not_invited"
+  | "invite_not_sent"
   | "invited_pending"
   | "invite_accepted"
   | "invite_expired"
@@ -38,6 +39,7 @@ export type AdminUserHealth = {
   authCreatedAt?: string | null;
   invitedAt?: string | null;
   acceptedAt?: string | null;
+  onboardingIncomplete: boolean;
   troubleshootingNotes: string[];
 };
 
@@ -47,6 +49,9 @@ export type RawAdminAppUser = {
   email: string;
   role: UserRole;
   status?: UserStatus | null;
+  username?: string | null;
+  usernameSetAt?: string | null;
+  needsProfileSetup?: boolean | null;
   totalPoints: number;
   createdAt: string;
 };
@@ -61,6 +66,8 @@ export type RawAdminInvite = {
   lastSentAt?: string | null;
   sendAttempts?: number | null;
   lastError?: string | null;
+  hasPendingEmailJob?: boolean;
+  latestEmailJobStatus?: "pending" | "processing" | "retrying" | "sent" | "failed" | null;
 };
 
 export type RawAdminAuthUser = {
@@ -100,6 +107,16 @@ export function deriveAdminUserHealth(input: {
     troubleshootingNotes.push("Invite is marked accepted, but no matching auth account was found.");
   }
 
+  if (
+    invite &&
+    inviteState === "invite_not_sent" &&
+    !authUser &&
+    (invite.sendAttempts ?? 0) === 0 &&
+    !invite.lastSentAt
+  ) {
+    troubleshootingNotes.push("Invite exists, but no auth account or email delivery path was found yet.");
+  }
+
   if (appUser && !authUser) {
     troubleshootingNotes.push("App profile exists without a matching auth account.");
   }
@@ -110,6 +127,11 @@ export function deriveAdminUserHealth(input: {
 
   if (invite?.lastError) {
     troubleshootingNotes.push(`Latest invite error: ${invite.lastError}`);
+  }
+
+  const onboardingIncomplete = Boolean(appUser?.needsProfileSetup);
+  if (onboardingIncomplete) {
+    troubleshootingNotes.push("Authenticated user still needs to choose a username and finish profile setup.");
   }
 
   const hasMismatch =
@@ -139,6 +161,7 @@ export function deriveAdminUserHealth(input: {
     authCreatedAt: authUser?.createdAt ?? null,
     invitedAt: invite?.createdAt ?? null,
     acceptedAt: invite?.acceptedAt ?? null,
+    onboardingIncomplete,
     troubleshootingNotes
   };
 }
@@ -202,6 +225,10 @@ function deriveInviteState(invite?: RawAdminInvite | null): AdminInviteState {
   }
 
   if (invite.status === "pending") {
+    if (!invite.lastSentAt && (invite.sendAttempts ?? 0) === 0 && !invite.hasPendingEmailJob) {
+      return "invite_not_sent";
+    }
+
     return "invited_pending";
   }
 

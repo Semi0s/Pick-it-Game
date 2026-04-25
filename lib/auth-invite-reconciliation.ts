@@ -120,7 +120,8 @@ export async function reconcileInvitesForAuthUser(user: AuthUserForReconciliatio
         id: user.id,
         name: derivedName,
         email: normalizedEmail,
-        role: derivedRole
+        role: derivedRole,
+        needs_profile_setup: true
       })
       .select("id,name,email,role")
       .single();

@@ -99,7 +99,7 @@ export type UpdateMatchResult =
 
 export type CreateInviteInput = {
   email: string;
-  displayName: string;
+  displayName?: string;
   role: UserRole;
 };
 
@@ -162,6 +162,7 @@ export type UpsertManagerLimitsResult =
 
 export type RemoveManagerAccessResult = ResetUserAccessResult;
 export type UpdateUserDisplayNameResult = ResetUserAccessResult;
+export type RepairPendingInviteResult = ResetUserAccessResult;
 
 export async function createAdminInviteAction(input: CreateInviteInput): Promise<CreateInviteResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
@@ -171,10 +172,10 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
 
   const adminSupabase = createAdminClient();
   const normalizedEmail = input.email.trim().toLowerCase();
-  const trimmedDisplayName = input.displayName.trim();
+  const trimmedDisplayName = derivePlaceholderDisplayName(normalizedEmail, input.displayName);
 
-  if (!normalizedEmail || !trimmedDisplayName) {
-    return { ok: false, message: "Email and display name are required." };
+  if (!normalizedEmail) {
+    return { ok: false, message: "Email is required." };
   }
 
   const [{ data: existingInvite, error: inviteLookupError }, { data: existingUser, error: userLookupError }, authUser] =
@@ -245,6 +246,7 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
 
     revalidatePath("/admin");
     revalidatePath("/admin/invites");
+    revalidatePath("/admin/players");
     return {
       ok: true,
       created: true,
@@ -301,6 +303,7 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
 
     revalidatePath("/admin");
     revalidatePath("/admin/invites");
+    revalidatePath("/admin/players");
     return {
       ok: true,
       created: true,
@@ -327,6 +330,9 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
 
   revalidatePath("/admin");
   revalidatePath("/admin/invites");
+  revalidatePath("/admin/players");
+
+  const workerTriggerResult = sendKind === "access_email" ? await triggerEmailWorkerNow() : null;
 
   return {
     ok: true,
@@ -337,8 +343,12 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
         : sendKind === "password_recovery"
           ? "Account already exists. Password recovery email queued instead."
           : (existingInvite as InviteLookupRow | null)
-            ? "Access email queued again."
-            : "Invite queued and ready to send."
+            ? workerTriggerResult?.ok === false
+              ? `Access email queued again. Delivery will continue on the worker schedule. ${workerTriggerResult.message}`
+              : "Access email queued again."
+            : workerTriggerResult?.ok === false
+              ? `Invite queued. Delivery will continue on the worker schedule. ${workerTriggerResult.message}`
+              : "Invite queued and ready to send."
   };
 }
 
@@ -366,7 +376,11 @@ export async function resetUserAccess(input: ResetUserAccessInput): Promise<Rese
 
   const { error: signOutError } = await adminSupabase.auth.admin.signOut(userId);
   if (signOutError) {
-    return { ok: false, message: "Could not revoke active sessions for this user right now." };
+    console.warn("Admin reset could not revoke active sessions before sending recovery email.", {
+      userId,
+      email,
+      message: signOutError.message
+    });
   }
 
   const sendResult = await sendAdminEmailInline(adminSupabase, {
@@ -381,7 +395,50 @@ export async function resetUserAccess(input: ResetUserAccessInput): Promise<Rese
   revalidatePath("/admin/players");
   return {
     ok: true,
-    message: `User access reset. A password reset email was sent to ${email}.`
+    message: signOutError
+      ? `Password reset email sent to ${email}. Active sessions could not be revoked automatically, so the user should use the new reset link to regain access.`
+      : `User access reset. A password reset email was sent to ${email}.`
+  };
+}
+
+export async function repairPendingInviteAction(email: string): Promise<RepairPendingInviteResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return { ok: false, message: "A valid email is required." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const inviteLookup = await fetchInviteLookup(adminSupabase, normalizedEmail);
+  if (inviteLookup.error) {
+    return { ok: false, message: inviteLookup.error.message };
+  }
+
+  if (!inviteLookup.data) {
+    return { ok: false, message: "No pending app invite was found for that email." };
+  }
+
+  const authUser = await findAuthUserByEmail(adminSupabase, normalizedEmail);
+  if (authUser) {
+    return {
+      ok: false,
+      message: "This user already has a Supabase auth account. Use Reset User Access or ask them to finish confirming their email."
+    };
+  }
+
+  const repairResult = await createAdminInviteAction({
+    email: normalizedEmail,
+    role: inviteLookup.data.role ?? "player",
+    displayName: inviteLookup.data.display_name ?? normalizedEmail.split("@")[0]
+  });
+
+  return {
+    ok: repairResult.ok,
+    message: repairResult.ok ? `Invite repaired for ${normalizedEmail}. ${repairResult.message}` : repairResult.message
   };
 }
 
@@ -978,6 +1035,43 @@ async function enqueueEmailJob(
   return { ok: true, alreadyQueued: false };
 }
 
+type TriggerEmailWorkerResult =
+  | { ok: true; status: number }
+  | { ok: false; message: string };
+
+async function triggerEmailWorkerNow(): Promise<TriggerEmailWorkerResult> {
+  const secret = process.env.EMAIL_JOB_SECRET ?? process.env.CRON_SECRET;
+  const workerUrl = `${getSiteUrl()}/api/email-jobs/process`;
+
+  try {
+    const headers: Record<string, string> = {};
+    if (secret) {
+      headers.Authorization = `Bearer ${secret}`;
+    }
+
+    const response = await fetch(workerUrl, {
+      method: "POST",
+      headers,
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
+      return {
+        ok: false,
+        message: `Worker responded with ${response.status}.${bodyText ? ` ${bodyText}` : ""}`.trim()
+      };
+    }
+
+    return { ok: true, status: response.status };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Unknown worker trigger error."
+    };
+  }
+}
+
 async function fetchInviteLookup(
   adminSupabase: ReturnType<typeof createAdminClient>,
   normalizedEmail: string
@@ -1106,4 +1200,13 @@ function isMissingEmailJobsError(message: string) {
     (normalized.includes("email_jobs") && normalized.includes("does not exist")) ||
     isMissingRelationError(message, "public.email_jobs")
   );
+}
+
+function derivePlaceholderDisplayName(normalizedEmail: string, displayName?: string | null) {
+  const trimmedDisplayName = displayName?.trim();
+  if (trimmedDisplayName) {
+    return trimmedDisplayName;
+  }
+
+  return normalizedEmail.split("@")[0] || "Player";
 }

@@ -19,6 +19,9 @@ type UserRow = {
   email: string;
   role: UserRole;
   status?: UserStatus | null;
+  username?: string | null;
+  username_set_at?: string | null;
+  needs_profile_setup?: boolean | null;
   total_points: number;
   created_at: string;
 };
@@ -39,6 +42,12 @@ type ManagerLimitsRow = {
   user_id: string;
   max_groups: number;
   max_members_per_group: number;
+};
+
+type EmailJobRow = {
+  email: string;
+  status: "pending" | "processing" | "retrying" | "sent" | "failed";
+  created_at: string;
 };
 
 export type AdminPlayerHealthRow = {
@@ -65,16 +74,19 @@ export type AdminPlayerHealthRow = {
   inviteLastSentAt?: string | null;
   inviteSendAttempts: number;
   inviteLastError?: string | null;
+  inviteDeliveryState: "not_sent" | "queued" | "sent" | "failed" | "unknown";
   emailConfirmedAt?: string | null;
   lastSignInAt?: string | null;
+  onboardingIncomplete: boolean;
+  username?: string | null;
   troubleshootingNotes: string[];
 };
 
 export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow[]> {
   const adminSupabase = createAdminClient();
 
-  const [{ data: users, error: usersError }, { data: invites, error: invitesError }, { data: managerLimits, error: managerLimitsError }, { data: groups, error: groupsError }, authUsers] = await Promise.all([
-    adminSupabase.from("users").select("id,name,email,role,status,total_points,created_at").order("created_at", { ascending: false }),
+  const [{ data: users, error: usersError }, { data: invites, error: invitesError }, { data: managerLimits, error: managerLimitsError }, { data: groups, error: groupsError }, emailJobsResult, authUsers] = await Promise.all([
+    adminSupabase.from("users").select("id,name,email,role,status,username,username_set_at,needs_profile_setup,total_points,created_at").order("created_at", { ascending: false }),
     adminSupabase
       .from("invites")
       .select("email,display_name,role,status,accepted_at,created_at,last_sent_at,send_attempts,last_error")
@@ -84,6 +96,11 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
       .from("groups")
       .select("owner_user_id,group_members(count)")
       .eq("status", "active"),
+    adminSupabase
+      .from("email_jobs")
+      .select("email,status,created_at")
+      .eq("kind", "access_email")
+      .order("created_at", { ascending: false }),
     fetchAllAuthUsers(adminSupabase)
   ]);
 
@@ -103,11 +120,23 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
     throw new Error(groupsError.message);
   }
 
+  const emailJobRows = !emailJobsResult.error ? ((emailJobsResult.data ?? []) as EmailJobRow[]) : [];
+
   const rowsByKey = new Map<string, { appUser?: RawAdminAppUser; invite?: RawAdminInvite; authUser?: RawAdminAuthUser }>();
   const managerLimitsByUserId = new Map(
     ((managerLimits ?? []) as ManagerLimitsRow[]).map((row) => [row.user_id, row])
   );
+  const latestInviteJobByEmail = new Map<string, EmailJobRow>();
   const groupUsageByUserId = new Map<string, { currentGroupsUsed: number; currentMembersUsed: number }>();
+
+  for (const emailJob of emailJobRows) {
+    const normalizedEmail = normalizeEmail(emailJob.email);
+    if (!normalizedEmail || latestInviteJobByEmail.has(normalizedEmail)) {
+      continue;
+    }
+
+    latestInviteJobByEmail.set(normalizedEmail, emailJob);
+  }
 
   for (const group of (groups ?? []) as Array<{ owner_user_id: string | null; group_members?: Array<{ count: number | null }> | { count: number | null } | null }>) {
     if (!group.owner_user_id) {
@@ -134,6 +163,9 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         email: user.email,
         role: user.role,
         status: user.status ?? "active",
+        username: user.username ?? null,
+        usernameSetAt: user.username_set_at ?? null,
+        needsProfileSetup: user.needs_profile_setup ?? null,
         totalPoints: user.total_points,
         createdAt: user.created_at
       }
@@ -154,7 +186,9 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         createdAt: invite.created_at ?? null,
         lastSentAt: invite.last_sent_at ?? null,
         sendAttempts: invite.send_attempts ?? null,
-        lastError: invite.last_error ?? null
+        lastError: invite.last_error ?? null,
+        hasPendingEmailJob: normalizedEmail ? latestInviteJobByEmail.has(normalizedEmail) : false,
+        latestEmailJobStatus: normalizedEmail ? (latestInviteJobByEmail.get(normalizedEmail)?.status ?? null) : null
       }
     });
   }
@@ -177,6 +211,7 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         value.authUser?.email?.split("@")[0] ??
         "Unknown user";
       const roleLabel = value.appUser?.role ?? value.invite?.role ?? "player";
+      const inviteDeliveryState = deriveInviteDeliveryState(value.invite);
 
       return {
         key,
@@ -204,8 +239,11 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         inviteLastSentAt: value.invite?.lastSentAt ?? null,
         inviteSendAttempts: value.invite?.sendAttempts ?? 0,
         inviteLastError: value.invite?.lastError ?? null,
+        inviteDeliveryState,
         emailConfirmedAt: health.emailConfirmedAt ?? null,
         lastSignInAt: health.lastSignInAt ?? null,
+        onboardingIncomplete: health.onboardingIncomplete,
+        username: value.appUser?.username ?? null,
         troubleshootingNotes: health.troubleshootingNotes
       };
     })
@@ -275,4 +313,28 @@ function compareHealthBadge(badge: AdminHealthBadge) {
     default:
       return 6;
   }
+}
+
+function deriveInviteDeliveryState(invite?: RawAdminInvite | null): AdminPlayerHealthRow["inviteDeliveryState"] {
+  if (!invite) {
+    return "unknown";
+  }
+
+  if (invite.lastError || invite.status === "failed" || invite.latestEmailJobStatus === "failed") {
+    return "failed";
+  }
+
+  if (invite.hasPendingEmailJob && ["pending", "processing", "retrying"].includes(invite.latestEmailJobStatus ?? "")) {
+    return "queued";
+  }
+
+  if (invite.lastSentAt || invite.latestEmailJobStatus === "sent") {
+    return "sent";
+  }
+
+  if ((invite.sendAttempts ?? 0) === 0 && !invite.lastSentAt) {
+    return "not_sent";
+  }
+
+  return "unknown";
 }

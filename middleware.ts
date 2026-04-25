@@ -2,7 +2,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 
-const protectedRoutes = ["/dashboard", "/groups", "/leaderboard", "/profile", "/admin"];
+const protectedRoutes = ["/dashboard", "/groups", "/leaderboard", "/profile", "/profile-setup", "/admin"];
 
 export async function middleware(request: NextRequest) {
   if (!hasSupabaseConfig()) {
@@ -134,6 +134,7 @@ export const config = {
     "/groups/:path*",
     "/leaderboard/:path*",
     "/profile/:path*",
+    "/profile-setup/:path*",
     "/login"
   ]
 };

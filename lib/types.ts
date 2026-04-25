@@ -13,6 +13,9 @@ export type UserProfile = {
   avatarUrl?: string;
   role: UserRole;
   accessLevel?: AccessLevel;
+  username?: string | null;
+  usernameSetAt?: string | null;
+  needsProfileSetup?: boolean;
   managerLimits?: {
     maxGroups: number;
     maxMembersPerGroup: number;

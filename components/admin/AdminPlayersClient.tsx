@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   fetchAdminPlayerHealthAction,
+  repairPendingInviteAction,
   removeManagerAccessAction,
   resetUserAccess,
   updateUserDisplayNameAction,
@@ -88,7 +89,11 @@ export function AdminPlayersClient() {
       }
 
       if (filterValue === "pending") {
-        return ["pending_signup", "pending_confirmation", "pending_first_login"].includes(player.healthBadge);
+        return (
+          ["pending_signup", "pending_confirmation", "pending_first_login"].includes(player.healthBadge) ||
+          player.inviteState === "invite_not_sent" ||
+          player.onboardingIncomplete
+        );
       }
 
       return true;
@@ -279,6 +284,26 @@ export function AdminPlayersClient() {
                     >
                       {sendingResetForUserId === player.appUserId ? "Resetting..." : "Reset User Access"}
                     </ActionButton>
+                    {canRepairInvite(player) ? (
+                      <ActionButton
+                        onClick={() => {
+                          void withAction(`repair-invite-${player.email}`, async () => {
+                            const result = await repairPendingInviteAction(player.email);
+                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                            if (result.ok) {
+                              await loadPlayers();
+                            }
+                          });
+                        }}
+                        disabled={activeActionKey === `repair-invite-${player.email}`}
+                      >
+                        {activeActionKey === `repair-invite-${player.email}`
+                          ? "Repairing..."
+                          : player.inviteDeliveryState === "not_sent"
+                            ? "Repair Invite"
+                            : "Resend Invite"}
+                      </ActionButton>
+                    ) : null}
                   </>
                 }
               >
@@ -286,6 +311,8 @@ export function AdminPlayersClient() {
                   <ManagementDatum label="App" value={`${formatStateLabel(player.appState)}${player.userStatus ? ` (${player.userStatus})` : ""}`} />
                   <ManagementDatum label="Auth" value={formatStateLabel(player.authState)} />
                   <ManagementDatum label="Invite" value={formatStateLabel(player.inviteState)} />
+                  <ManagementDatum label="Delivery" value={formatDeliveryState(player)} />
+                  <ManagementDatum label="Onboarding" value={player.onboardingIncomplete ? "Incomplete" : player.appUserId ? "Complete" : "Waiting for auth"} />
                   <ManagementDatum
                     label="Manager status"
                     value={
@@ -301,6 +328,7 @@ export function AdminPlayersClient() {
                   <ManagementDatum label="Created" value={player.createdAt ? formatDate(player.createdAt) : "—"} />
                   <ManagementDatum label="Last sign in" value={player.lastSignInAt ? formatDate(player.lastSignInAt) : "Never"} />
                   <ManagementDatum label="Email confirmed" value={player.emailConfirmedAt ? formatDate(player.emailConfirmedAt) : "Not yet"} />
+                  <ManagementDatum label="Username" value={player.username ?? "Not set"} />
                   <ManagementDatum label="Invite accepted" value={player.acceptedAt ? formatDate(player.acceptedAt) : "No"} />
                   <ManagementDatum label="Send attempts" value={player.inviteSendAttempts} />
                   <ManagementDatum label="Last invite send" value={player.inviteLastSentAt ? formatDate(player.inviteLastSentAt) : "Not sent"} />
@@ -448,4 +476,29 @@ function formatLimitSummary(player: AdminPlayerHealthRow) {
   const withinMembers = player.maxMembersPerGroup ? player.currentMembersUsed <= player.maxMembersPerGroup : true;
 
   return `${withinGroups && withinMembers ? "Within limit" : "At or over limit"} · ${player.currentGroupsUsed} / ${player.maxGroups ?? 0} groups · ${player.currentMembersUsed} / ${player.maxMembersPerGroup ?? 0} members`;
+}
+
+function canRepairInvite(player: AdminPlayerHealthRow) {
+  return (
+    !player.authUserId &&
+    (player.inviteState === "invited_pending" ||
+      player.inviteState === "invite_not_sent" ||
+      player.inviteState === "invite_failed" ||
+      player.inviteState === "resend_needed")
+  );
+}
+
+function formatDeliveryState(player: AdminPlayerHealthRow) {
+  switch (player.inviteDeliveryState) {
+    case "not_sent":
+      return "Invite not sent";
+    case "queued":
+      return "Invite email queued";
+    case "sent":
+      return "Invite email sent";
+    case "failed":
+      return "Invite delivery failed";
+    default:
+      return player.inviteState === "not_invited" ? "No invite" : "Awaiting update";
+  }
 }

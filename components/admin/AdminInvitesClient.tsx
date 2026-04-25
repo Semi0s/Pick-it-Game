@@ -30,7 +30,6 @@ export function AdminInvitesSection({
   const { user } = useCurrentUser();
   const [invites, setInvites] = useState<AdminInvite[]>([]);
   const [email, setEmail] = useState("");
-  const [displayName, setDisplayName] = useState("");
   const [accessLevel, setAccessLevel] = useState<InviteAccessLevel>("player");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -65,11 +64,10 @@ export function AdminInvitesSection({
 
     try {
       const inviteRole: UserRole = accessLevel === "super_admin" ? "admin" : "player";
-      const result = await createAdminInviteAction({ email, displayName, role: inviteRole });
+      const result = await createAdminInviteAction({ email, role: inviteRole });
       setMessage({ tone: result.ok ? "success" : "error", text: result.message });
       if (result.ok) {
         setEmail("");
-        setDisplayName("");
         setAccessLevel("player");
         await loadInvites();
         if (accessLevel === "manager") {
@@ -118,15 +116,6 @@ export function AdminInvitesSection({
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-bold text-gray-800">Display name</span>
-            <input
-              required
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
               className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
             />
           </label>

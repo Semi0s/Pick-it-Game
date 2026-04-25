@@ -39,6 +39,9 @@ create table public.users (
   id uuid primary key references auth.users(id) on delete cascade,
   name text not null,
   email text not null unique,
+  username text,
+  username_set_at timestamptz,
+  needs_profile_setup boolean not null default false,
   avatar_url text,
   role public.user_role not null default 'player',
   status text not null default 'active',
@@ -207,6 +210,10 @@ create unique index email_jobs_active_dedupe_idx
   on public.email_jobs (dedupe_key)
   where status in ('pending', 'retrying', 'processing')
     and dedupe_key is not null;
+
+create unique index users_username_lower_unique_idx
+  on public.users (lower(username))
+  where username is not null;
 
 create index group_members_user_id_idx
   on public.group_members (user_id);
@@ -427,8 +434,8 @@ begin
   where lower(email) = lower(new.email);
 
   if invite_row.email is not null then
-    insert into public.users (id, name, email, role)
-    values (new.id, invite_row.display_name, new.email, invite_row.role)
+    insert into public.users (id, name, email, role, needs_profile_setup)
+    values (new.id, invite_row.display_name, new.email, invite_row.role, true)
     on conflict (id) do nothing;
 
     return new;
@@ -449,8 +456,8 @@ begin
 
   derived_name := coalesce(nullif(trim(group_invite_row.suggested_display_name), ''), split_part(new.email, '@', 1));
 
-  insert into public.users (id, name, email, role)
-  values (new.id, derived_name, new.email, 'player')
+  insert into public.users (id, name, email, role, needs_profile_setup)
+  values (new.id, derived_name, new.email, 'player', true)
   on conflict (id) do nothing;
 
   return new;

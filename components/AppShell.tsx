@@ -31,7 +31,13 @@ export function AppShell({ children }: AppShellProps) {
     }
   }, [isLoading, router, user]);
 
-  if (isLoading || !user) {
+  useEffect(() => {
+    if (!isLoading && user?.needsProfileSetup) {
+      router.replace("/profile-setup");
+    }
+  }, [isLoading, router, user]);
+
+  if (isLoading || !user || user.needsProfileSetup) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-white px-5">
         <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">

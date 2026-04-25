@@ -54,6 +54,12 @@ export function LoginForm({
       return;
     }
 
+    if (result.user?.needsProfileSetup) {
+      router.replace("/profile-setup");
+      router.refresh();
+      return;
+    }
+
     router.replace(nextPath?.startsWith("/") ? nextPath : "/dashboard");
     router.refresh();
   }

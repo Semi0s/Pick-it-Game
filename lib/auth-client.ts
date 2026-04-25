@@ -23,6 +23,9 @@ type UserRow = {
   email: string;
   avatar_url?: string | null;
   role: UserProfile["role"];
+  username?: string | null;
+  username_set_at?: string | null;
+  needs_profile_setup?: boolean | null;
   total_points: number;
 };
 
@@ -113,7 +116,7 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
   const [{ data: profile }, { data: managerLimits }] = await Promise.all([
     supabase
       .from("users")
-      .select("id,name,email,avatar_url,role,total_points")
+      .select("id,name,email,avatar_url,role,username,username_set_at,needs_profile_setup,total_points")
       .eq("id", authData.user.id)
       .single(),
     supabase
@@ -133,6 +136,9 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
     email: authData.user.email ?? "",
     role: "player",
     accessLevel: managerLimits ? "manager" : "player",
+    username: null,
+    usernameSetAt: null,
+    needsProfileSetup: false,
     managerLimits: managerLimits
       ? {
           maxGroups: managerLimits.max_groups,
@@ -206,6 +212,9 @@ function mapUserRow(row: UserRow, managerLimits: ManagerLimitsRow | null): UserP
     avatarUrl: row.avatar_url ?? undefined,
     role: row.role,
     accessLevel: row.role === "admin" ? "super_admin" : managerLimits ? "manager" : "player",
+    username: row.username ?? null,
+    usernameSetAt: row.username_set_at ?? null,
+    needsProfileSetup: row.needs_profile_setup ?? false,
     managerLimits: managerLimits
       ? {
           maxGroups: managerLimits.max_groups,
