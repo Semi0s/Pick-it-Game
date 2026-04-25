@@ -91,7 +91,7 @@ export function AppShell({ children }: AppShellProps) {
                 key={item.href}
                 href={item.href}
                 aria-label={item.ariaLabel}
-                className={`flex min-w-0 items-center justify-center gap-2 rounded-md px-1 py-2 text-[11px] font-semibold sm:text-xs ${
+                className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-md px-2 py-2.5 text-xs font-bold sm:text-sm ${
                   isActive ? "bg-accent-light text-accent-dark" : "text-gray-600"
                 }`}
               >
