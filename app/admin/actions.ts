@@ -2062,13 +2062,35 @@ async function resetGroupMatchScoring(
   adminSupabase: ReturnType<typeof createAdminClient>,
   matchId: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { error } = await adminSupabase
-    .from("predictions")
-    .update({ points_awarded: 0 })
-    .eq("match_id", matchId);
+  const [
+    predictionResetResult,
+    predictionScoresDeleteResult,
+    snapshotsDeleteResult,
+    eventsDeleteResult
+  ] = await Promise.all([
+    adminSupabase
+      .from("predictions")
+      .update({ points_awarded: 0 })
+      .eq("match_id", matchId),
+    adminSupabase.from("prediction_scores").delete().eq("match_id", matchId),
+    adminSupabase.from("leaderboard_snapshots").delete().eq("match_id", matchId),
+    adminSupabase.from("leaderboard_events").delete().eq("match_id", matchId)
+  ]);
 
-  if (error) {
-    return { ok: false, message: error.message };
+  if (predictionResetResult.error) {
+    return { ok: false, message: predictionResetResult.error.message };
+  }
+
+  if (predictionScoresDeleteResult.error) {
+    return { ok: false, message: predictionScoresDeleteResult.error.message };
+  }
+
+  if (snapshotsDeleteResult.error) {
+    return { ok: false, message: snapshotsDeleteResult.error.message };
+  }
+
+  if (eventsDeleteResult.error) {
+    return { ok: false, message: eventsDeleteResult.error.message };
   }
 
   return recalculateLeaderboard(adminSupabase);
