@@ -3,7 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
+import {
+  fetchLeaderboardFeatureSettings,
+  updateLeaderboardFeatureSetting,
+  type LeaderboardFeatureSettingKey,
+  type LeaderboardFeatureSettings
+} from "@/lib/app-settings";
 import { fetchAdminPlayerHealthRows, type AdminPlayerHealthRow } from "@/lib/admin-player-health";
+import { escapeHtml, sendTransactionalEmail } from "@/lib/email-sender";
+import { fetchGlobalLeaderboardRankMovement, fetchGroupLeaderboardRankMovement } from "@/lib/leaderboard-movement";
+import { createNotificationsForLeaderboardEvents, type NotificationEventSeed } from "@/lib/notifications";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { getSiteUrl } from "@/lib/site-url";
 import type { UserRole } from "@/lib/types";
@@ -39,6 +48,33 @@ type LeaderboardTotal = {
   total_points: number;
 };
 
+type ScoredPrediction = {
+  predictionId: string;
+  userId: string;
+  matchId: string;
+  scoreBreakdown: {
+    points: number;
+    outcome_points: number;
+    exact_score_points: number;
+    goal_difference_points: number;
+  };
+};
+
+type LeaderboardEventInsert = {
+  event_type: "points_awarded" | "perfect_pick" | "rank_moved_up" | "rank_moved_down";
+  scope_type: "global" | "group";
+  group_id: string | null;
+  match_id: string;
+  user_id: string;
+  related_user_id: null;
+  points_delta: number | null;
+  rank_delta: number | null;
+  message: string;
+  metadata: Record<string, unknown>;
+};
+
+type InsertedLeaderboardEventRow = NotificationEventSeed;
+
 type InviteLookupRow = {
   email: string;
   display_name: string;
@@ -63,6 +99,9 @@ type EmailJobPayload = {
 type AuthUserSummary = {
   id: string;
   email?: string | null;
+  emailConfirmedAt?: string | null;
+  confirmationSentAt?: string | null;
+  lastSignInAt?: string | null;
 };
 
 type EnqueueEmailJobResult =
@@ -141,6 +180,20 @@ export type FetchAdminPlayerHealthResult =
       message: string;
     };
 
+export type ResendConfirmationNudgeResult = ResetUserAccessResult;
+export type ResetOnboardingStateResult = ResetUserAccessResult;
+export type DeleteUserAndStartOverResult = ResetUserAccessResult;
+export type FetchLeaderboardFeatureSettingsResult =
+  | {
+      ok: true;
+      settings: LeaderboardFeatureSettings;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+export type UpdateLeaderboardFeatureSettingResult = ResetUserAccessResult;
+
 export type UpsertManagerLimitsInput = {
   userId: string;
   maxGroups: number;
@@ -181,6 +234,7 @@ export type AdminGroupSummary = {
     userId: string;
     name: string;
     email: string;
+    avatarUrl?: string | null;
     role: GroupMemberRole;
     joinedAt: string;
   }>;
@@ -497,6 +551,254 @@ export async function repairPendingInviteAction(email: string): Promise<RepairPe
   };
 }
 
+export async function resendConfirmationOrOnboardingNudgeAction(
+  email: string
+): Promise<ResendConfirmationNudgeResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return { ok: false, message: "A valid email is required." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const authUser = await findAuthUserByEmail(adminSupabase, normalizedEmail);
+  if (!authUser) {
+    return { ok: false, message: "This user does not have a Supabase auth account yet. Use Repair Invite / Resend Invite instead." };
+  }
+
+  const { data: appUser, error: appUserError } = await adminSupabase
+    .from("users")
+    .select("id,name,email,username,needs_profile_setup")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  if (appUserError) {
+    return { ok: false, message: appUserError.message };
+  }
+
+  const isConfirmed = Boolean(authUser.emailConfirmedAt);
+  const needsProfileSetup = Boolean(appUser?.needs_profile_setup || !appUser?.username?.trim());
+  const redirectTo = isConfirmed
+    ? `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/profile-setup")}`
+    : `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`;
+  const { data: linkData, error: linkError } = isConfirmed
+    ? await adminSupabase.auth.admin.generateLink({
+        type: "magiclink",
+        email: normalizedEmail,
+        options: {
+          redirectTo
+        }
+      })
+    : await adminSupabase.auth.admin.generateLink({
+        type: "invite",
+        email: normalizedEmail,
+        options: {
+          redirectTo
+        }
+      });
+
+  if (linkError || !linkData?.properties?.action_link) {
+    return { ok: false, message: linkError?.message ?? "Could not generate a fresh auth link for this user." };
+  }
+
+  try {
+    await sendTransactionalEmail({
+      to: normalizedEmail,
+      subject: isConfirmed
+        ? "Finish your Pick-It profile setup"
+        : "Confirm your Pick-It account",
+      html: buildAdminRecoveryEmailHtml({
+        heading: isConfirmed ? "Finish setting up your profile" : "Confirm your account",
+        intro: isConfirmed
+          ? `${escapeHtml(appUser?.name?.trim() || normalizedEmail)}, finish your profile setup so your groups, scores, and leaderboard name stay in sync.`
+          : `Use the secure confirmation link below to finish creating your Pick-It account for ${escapeHtml(normalizedEmail)}.`,
+        actionLabel: isConfirmed ? "Open Profile Setup" : "Confirm Account",
+        actionUrl: linkData.properties.action_link,
+        note: isConfirmed
+          ? "This link signs the player in and sends them straight to profile setup."
+          : "This link confirms the account first, then returns them to the app."
+      }),
+      text: buildAdminRecoveryEmailText({
+        heading: isConfirmed ? "Finish your Pick-It profile setup" : "Confirm your Pick-It account",
+        intro: isConfirmed
+          ? `${appUser?.name?.trim() || normalizedEmail}, finish your profile setup so your groups, scores, and leaderboard name stay in sync.`
+          : `Use the secure confirmation link below to finish creating your Pick-It account for ${normalizedEmail}.`,
+        actionLabel: isConfirmed ? "Open Profile Setup" : "Confirm Account",
+        actionUrl: linkData.properties.action_link,
+        note: isConfirmed
+          ? "This link signs the player in and sends them straight to profile setup."
+          : "This link confirms the account first, then returns them to the app."
+      })
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not send the confirmation/onboarding nudge."
+    };
+  }
+
+  revalidatePath("/admin/players");
+  return {
+    ok: true,
+    message: isConfirmed
+      ? needsProfileSetup
+        ? `Onboarding reminder sent to ${normalizedEmail}.`
+        : `Sign-in reminder sent to ${normalizedEmail}.`
+      : `A fresh confirmation email was sent to ${normalizedEmail}.`
+  };
+}
+
+export async function resetOnboardingStateAction(userId: string): Promise<ResetOnboardingStateResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const trimmedUserId = userId.trim();
+  if (!trimmedUserId) {
+    return { ok: false, message: "A valid user is required." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const { data: existingUser, error: lookupError } = await adminSupabase
+    .from("users")
+    .select("id,name,email")
+    .eq("id", trimmedUserId)
+    .maybeSingle();
+
+  if (lookupError) {
+    return { ok: false, message: lookupError.message };
+  }
+
+  if (!existingUser) {
+    return { ok: false, message: "That app profile could not be found." };
+  }
+
+  const { error: updateError } = await adminSupabase
+    .from("users")
+    .update({
+      username: null,
+      username_set_at: null,
+      needs_profile_setup: true,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", trimmedUserId);
+
+  if (updateError) {
+    return { ok: false, message: updateError.message };
+  }
+
+  revalidatePath("/profile-setup");
+  revalidatePath("/profile");
+  revalidatePath("/admin/players");
+  return {
+    ok: true,
+    message: `Profile setup was reset for ${existingUser.email}. They can choose their username again on the next login.`
+  };
+}
+
+export async function deleteUserAndStartOverAction(
+  email: string,
+  confirmationText: string
+): Promise<DeleteUserAndStartOverResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  if (confirmationText.trim() !== "DELETE") {
+    return { ok: false, message: "Type DELETE to confirm this destructive reset." };
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return { ok: false, message: "A valid email is required." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const authUser = await findAuthUserByEmail(adminSupabase, normalizedEmail);
+  const { data: appUser, error: appUserError } = await adminSupabase
+    .from("users")
+    .select("id")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  if (appUserError) {
+    return { ok: false, message: appUserError.message };
+  }
+
+  if (!authUser && !appUser) {
+    return { ok: false, message: "No auth or app user was found for that email." };
+  }
+
+  if (appUser?.id) {
+    const [predictionsResult, bracketResult, sidePicksResult] = await Promise.all([
+      adminSupabase.from("predictions").select("id", { count: "exact", head: true }).eq("user_id", appUser.id),
+      adminSupabase.from("bracket_picks").select("id", { count: "exact", head: true }).eq("user_id", appUser.id),
+      adminSupabase.from("side_picks").select("id", { count: "exact", head: true }).eq("user_id", appUser.id)
+    ]);
+
+    const gameplayCount =
+      (predictionsResult.count ?? 0) +
+      (bracketResult.count ?? 0) +
+      (sidePicksResult.count ?? 0);
+
+    if (predictionsResult.error || bracketResult.error || sidePicksResult.error) {
+      return {
+        ok: false,
+        message:
+          predictionsResult.error?.message ??
+          bracketResult.error?.message ??
+          sidePicksResult.error?.message ??
+          "Could not inspect the player's gameplay data."
+      };
+    }
+
+    if (gameplayCount > 0) {
+      return {
+        ok: false,
+        message: "This user already has gameplay data. To avoid deleting predictions or scores, use the non-destructive recovery actions instead."
+      };
+    }
+  }
+
+  const deleteOperations = await Promise.all([
+    adminSupabase.from("group_invites").delete().eq("normalized_email", normalizedEmail),
+    adminSupabase.from("invites").delete().eq("email", normalizedEmail),
+    adminSupabase.from("email_jobs").delete().eq("email", normalizedEmail)
+  ]);
+
+  const failedDelete = deleteOperations.find((result) => result.error);
+  if (failedDelete?.error) {
+    return { ok: false, message: failedDelete.error.message };
+  }
+
+  if (appUser?.id) {
+    const { error: deleteProfileError } = await adminSupabase.from("users").delete().eq("id", appUser.id);
+    if (deleteProfileError) {
+      return { ok: false, message: deleteProfileError.message };
+    }
+  }
+
+  if (authUser?.id) {
+    const { error: deleteAuthError } = await adminSupabase.auth.admin.deleteUser(authUser.id);
+    if (deleteAuthError) {
+      return { ok: false, message: deleteAuthError.message };
+    }
+  }
+
+  revalidatePath("/admin/players");
+  revalidatePath("/my-groups");
+  return {
+    ok: true,
+    message: `Deleted the auth/invite state for ${normalizedEmail}. The user can now start fresh.`
+  };
+}
+
 export async function fetchAdminPlayerHealthAction(): Promise<FetchAdminPlayerHealthResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
@@ -510,6 +812,48 @@ export async function fetchAdminPlayerHealthAction(): Promise<FetchAdminPlayerHe
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not load admin player health right now."
+    };
+  }
+}
+
+export async function fetchLeaderboardFeatureSettingsAction(): Promise<FetchLeaderboardFeatureSettingsResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  try {
+    const settings = await fetchLeaderboardFeatureSettings();
+    return { ok: true, settings };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load leaderboard feature settings."
+    };
+  }
+}
+
+export async function updateLeaderboardFeatureSettingAction(
+  key: LeaderboardFeatureSettingKey,
+  enabled: boolean
+): Promise<UpdateLeaderboardFeatureSettingResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  try {
+    await updateLeaderboardFeatureSetting(key, enabled);
+    revalidatePath("/leaderboard");
+    revalidatePath("/admin/players");
+    return {
+      ok: true,
+      message: `${formatLeaderboardFeatureSettingLabel(key)} ${enabled ? "enabled" : "disabled"}.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update leaderboard feature settings."
     };
   }
 }
@@ -603,7 +947,7 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
     adminSupabase
       .from("groups")
       .select(
-        "id,name,status,owner_user_id,membership_limit,owner:users!groups_owner_user_id_fkey(id,name,email),members:group_members(id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email))"
+        "id,name,status,owner_user_id,membership_limit,owner:users!groups_owner_user_id_fkey(id,name,email),members:group_members(id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email,avatar_url))"
       )
       .order("created_at", { ascending: false }),
     adminSupabase
@@ -632,7 +976,10 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
       user_id: string;
       role: GroupMemberRole;
       joined_at: string;
-      user?: { id: string; name: string; email: string } | Array<{ id: string; name: string; email: string }> | null;
+      user?:
+        | { id: string; name: string; email: string; avatar_url?: string | null }
+        | Array<{ id: string; name: string; email: string; avatar_url?: string | null }>
+        | null;
     }> | null;
   }>).map((group) => {
     const owner = unwrapRelation(group.owner);
@@ -643,6 +990,7 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
         userId: member.user_id,
         name: user?.name ?? "Unknown user",
         email: user?.email ?? "Unknown email",
+        avatarUrl: user?.avatar_url ?? null,
         role: member.role,
         joinedAt: member.joined_at
       };
@@ -1128,21 +1476,32 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
   }
 
   const predictionRows = (predictions ?? []) as PredictionRow[];
-  const predictionUpdates = predictionRows.map((prediction) =>
+  const scoredPredictions = predictionRows.map((prediction) => {
+    const scoreBreakdown = scoreGroupStagePrediction(
+      {
+        predictedWinnerTeamId: prediction.predicted_winner_team_id,
+        predictedIsDraw: prediction.predicted_is_draw,
+        predictedHomeScore: prediction.predicted_home_score,
+        predictedAwayScore: prediction.predicted_away_score
+      },
+      mappedMatch
+    );
+
+    return {
+      predictionId: prediction.id,
+      userId: prediction.user_id,
+      matchId: prediction.match_id,
+      scoreBreakdown
+    };
+  });
+
+  const predictionUpdates = scoredPredictions.map((prediction) =>
     adminSupabase
       .from("predictions")
       .update({
-        points_awarded: scoreGroupStagePrediction(
-          {
-            predictedWinnerTeamId: prediction.predicted_winner_team_id,
-            predictedIsDraw: prediction.predicted_is_draw,
-            predictedHomeScore: prediction.predicted_home_score,
-            predictedAwayScore: prediction.predicted_away_score
-          },
-          mappedMatch
-        )
+        points_awarded: prediction.scoreBreakdown.points
       })
-      .eq("id", prediction.id)
+      .eq("id", prediction.predictionId)
   );
 
   const updateResults = await Promise.all(predictionUpdates);
@@ -1151,9 +1510,41 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
     return { ok: false, message: failedPredictionUpdate.error.message };
   }
 
-  const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+  if (scoredPredictions.length > 0) {
+    const { error: predictionScoresError } = await adminSupabase
+      .from("prediction_scores")
+      .upsert(
+        scoredPredictions.map((prediction) => ({
+          prediction_id: prediction.predictionId,
+          match_id: prediction.matchId,
+          user_id: prediction.userId,
+          points: prediction.scoreBreakdown.points,
+          outcome_points: prediction.scoreBreakdown.outcome_points,
+          exact_score_points: prediction.scoreBreakdown.exact_score_points,
+          goal_difference_points: prediction.scoreBreakdown.goal_difference_points,
+          scored_at: new Date().toISOString()
+        })),
+        { onConflict: "prediction_id,match_id" }
+      );
+
+    if (predictionScoresError) {
+      return { ok: false, message: predictionScoresError.message };
+    }
+  }
+
+  const leaderboardResult = await recalculateLeaderboard(adminSupabase, matchId);
   if (!leaderboardResult.ok) {
     return leaderboardResult;
+  }
+
+  const eventResult = await recreateGlobalLeaderboardEventsForMatch(adminSupabase, matchId, scoredPredictions);
+  if (!eventResult.ok) {
+    return eventResult;
+  }
+
+  const groupEventResult = await recreateGroupLeaderboardEventsForMatch(adminSupabase, matchId, scoredPredictions);
+  if (!groupEventResult.ok) {
+    return groupEventResult;
   }
 
   revalidatePath("/");
@@ -1197,7 +1588,8 @@ async function assertCurrentUserIsAdmin(): Promise<{ ok: true; userId: string } 
 }
 
 async function recalculateLeaderboard(
-  adminSupabase: ReturnType<typeof createAdminClient>
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  triggeringMatchId?: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const { data: predictionPoints, error: predictionPointsError } = await adminSupabase
     .from("predictions")
@@ -1234,6 +1626,89 @@ async function recalculateLeaderboard(
     if (leaderboardError) {
       return { ok: false, message: leaderboardError.message };
     }
+
+    if (triggeringMatchId) {
+      const { error: snapshotDeleteError } = await adminSupabase
+        .from("leaderboard_snapshots")
+        .delete()
+        .eq("scope_type", "global")
+        .eq("match_id", triggeringMatchId)
+        .is("group_id", null);
+
+      if (snapshotDeleteError) {
+        return { ok: false, message: snapshotDeleteError.message };
+      }
+
+      const { error: snapshotError } = await adminSupabase.from("leaderboard_snapshots").insert(
+        rankedEntries.map((entry) => ({
+          scope_type: "global",
+          group_id: null,
+          match_id: triggeringMatchId,
+          user_id: entry.user_id,
+          rank: entry.rank,
+          total_points: entry.total_points
+        }))
+      );
+
+      if (snapshotError) {
+        return { ok: false, message: snapshotError.message };
+      }
+
+      const { data: groupMembers, error: groupMembersError } = await adminSupabase
+        .from("group_members")
+        .select("group_id,user_id");
+
+      if (groupMembersError) {
+        return { ok: false, message: groupMembersError.message };
+      }
+
+      const membersByGroupId = new Map<string, string[]>();
+      for (const membership of (groupMembers as { group_id: string; user_id: string }[] | null) ?? []) {
+        const existing = membersByGroupId.get(membership.group_id) ?? [];
+        existing.push(membership.user_id);
+        membersByGroupId.set(membership.group_id, existing);
+      }
+
+      const groupSnapshotRows = Array.from(membersByGroupId.entries()).flatMap(([groupId, memberUserIds]) => {
+        const rankedGroupEntries = assignRanks(
+          Array.from(new Set(memberUserIds))
+            .map((userId) => ({
+              user_id: userId,
+              total_points: totalsByUser.get(userId) ?? 0
+            }))
+            .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id))
+        );
+
+        return rankedGroupEntries.map((entry) => ({
+          scope_type: "group",
+          group_id: groupId,
+          match_id: triggeringMatchId,
+          user_id: entry.user_id,
+          rank: entry.rank,
+          total_points: entry.total_points
+        }));
+      });
+
+      const { error: groupSnapshotDeleteError } = await adminSupabase
+        .from("leaderboard_snapshots")
+        .delete()
+        .eq("scope_type", "group")
+        .eq("match_id", triggeringMatchId);
+
+      if (groupSnapshotDeleteError) {
+        return { ok: false, message: groupSnapshotDeleteError.message };
+      }
+
+      if (groupSnapshotRows.length > 0) {
+        const { error: groupSnapshotInsertError } = await adminSupabase
+          .from("leaderboard_snapshots")
+          .insert(groupSnapshotRows);
+
+        if (groupSnapshotInsertError) {
+          return { ok: false, message: groupSnapshotInsertError.message };
+        }
+      }
+    }
   }
 
   const userTotalUpdates = (users as { id: string }[]).map((user) =>
@@ -1250,6 +1725,337 @@ async function recalculateLeaderboard(
   }
 
   return { ok: true };
+}
+
+async function recreateGlobalLeaderboardEventsForMatch(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchId: string,
+  scoredPredictions: ScoredPrediction[]
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const globalEventTypes = ["points_awarded", "perfect_pick", "rank_moved_up", "rank_moved_down"] as const;
+  const events: LeaderboardEventInsert[] = [];
+
+  for (const prediction of scoredPredictions) {
+    if (prediction.scoreBreakdown.points > 0) {
+      events.push({
+        event_type: "points_awarded",
+        scope_type: "global",
+        group_id: null,
+        match_id: matchId,
+        user_id: prediction.userId,
+        related_user_id: null,
+        points_delta: prediction.scoreBreakdown.points,
+        rank_delta: null,
+        message: buildPointsAwardedMessage(prediction.scoreBreakdown.points),
+        metadata: {
+          predictionId: prediction.predictionId,
+          outcomePoints: prediction.scoreBreakdown.outcome_points,
+          exactScorePoints: prediction.scoreBreakdown.exact_score_points,
+          goalDifferencePoints: prediction.scoreBreakdown.goal_difference_points
+        }
+      });
+    }
+
+    if (prediction.scoreBreakdown.exact_score_points > 0) {
+      events.push({
+        event_type: "perfect_pick",
+        scope_type: "global",
+        group_id: null,
+        match_id: matchId,
+        user_id: prediction.userId,
+        related_user_id: null,
+        points_delta: prediction.scoreBreakdown.points,
+        rank_delta: null,
+        message: "nailed a Perfect Pick",
+        metadata: {
+          predictionId: prediction.predictionId,
+          exactScorePoints: prediction.scoreBreakdown.exact_score_points
+        }
+      });
+    }
+  }
+
+  const movementRows = await fetchGlobalLeaderboardRankMovement(matchId);
+  for (const movement of movementRows) {
+    if ((movement.rank_delta ?? 0) > 0) {
+      events.push({
+        event_type: "rank_moved_up",
+        scope_type: "global",
+        group_id: null,
+        match_id: matchId,
+        user_id: movement.user_id,
+        related_user_id: null,
+        points_delta: movement.points_delta,
+        rank_delta: movement.rank_delta,
+        message: `moved up ${movement.rank_delta} ${movement.rank_delta === 1 ? "spot" : "spots"}`,
+        metadata: {
+          currentRank: movement.current_rank,
+          previousRank: movement.previous_rank,
+          currentPoints: movement.current_points,
+          previousPoints: movement.previous_points
+        }
+      });
+    }
+
+    if ((movement.rank_delta ?? 0) < 0) {
+      const spotsDropped = Math.abs(movement.rank_delta ?? 0);
+      events.push({
+        event_type: "rank_moved_down",
+        scope_type: "global",
+        group_id: null,
+        match_id: matchId,
+        user_id: movement.user_id,
+        related_user_id: null,
+        points_delta: movement.points_delta,
+        rank_delta: movement.rank_delta,
+        message: `moved down ${spotsDropped} ${spotsDropped === 1 ? "spot" : "spots"}`,
+        metadata: {
+          currentRank: movement.current_rank,
+          previousRank: movement.previous_rank,
+          currentPoints: movement.current_points,
+          previousPoints: movement.previous_points
+        }
+      });
+    }
+  }
+
+  const { error: deleteError } = await adminSupabase
+    .from("leaderboard_events")
+    .delete()
+    .eq("scope_type", "global")
+    .eq("match_id", matchId)
+    .is("group_id", null)
+    .in("event_type", [...globalEventTypes]);
+
+  if (deleteError) {
+    return { ok: false, message: deleteError.message };
+  }
+
+  if (events.length === 0) {
+    return { ok: true };
+  }
+
+  const userIds = Array.from(new Set(events.map((event) => event.user_id)));
+  const { data: users, error: usersError } = await adminSupabase.from("users").select("id,name").in("id", userIds);
+
+  if (usersError) {
+    return { ok: false, message: usersError.message };
+  }
+
+  const namesById = new Map((((users as Array<{ id: string; name: string }> | null) ?? []).map((user) => [user.id, user.name])));
+
+  const { data: insertedEvents, error: insertError } = await adminSupabase
+    .from("leaderboard_events")
+    .insert(
+      events.map((event) => ({
+        ...event,
+        message: `${namesById.get(event.user_id) ?? "A player"} ${event.message}`
+      }))
+    )
+    .select("id,event_type,scope_type,group_id,user_id,points_delta,rank_delta,message");
+
+  if (insertError) {
+    return { ok: false, message: insertError.message };
+  }
+
+  await createNotificationsForLeaderboardEvents(
+    adminSupabase,
+    ((insertedEvents as InsertedLeaderboardEventRow[] | null) ?? [])
+  );
+
+  return { ok: true };
+}
+
+async function recreateGroupLeaderboardEventsForMatch(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchId: string,
+  scoredPredictions: ScoredPrediction[]
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const groupEventTypes = ["points_awarded", "perfect_pick", "rank_moved_up", "rank_moved_down"] as const;
+  const { data: memberships, error: membershipsError } = await adminSupabase
+    .from("group_members")
+    .select("group_id,user_id");
+
+  if (membershipsError) {
+    return { ok: false, message: membershipsError.message };
+  }
+
+  const groupIdsByUserId = new Map<string, string[]>();
+  const memberUserIdsByGroupId = new Map<string, Set<string>>();
+
+  for (const membership of ((memberships as Array<{ group_id: string; user_id: string }> | null) ?? [])) {
+    const userGroups = groupIdsByUserId.get(membership.user_id) ?? [];
+    userGroups.push(membership.group_id);
+    groupIdsByUserId.set(membership.user_id, userGroups);
+
+    const groupMembers = memberUserIdsByGroupId.get(membership.group_id) ?? new Set<string>();
+    groupMembers.add(membership.user_id);
+    memberUserIdsByGroupId.set(membership.group_id, groupMembers);
+  }
+
+  const eventsByGroupId = new Map<string, LeaderboardEventInsert[]>();
+
+  for (const prediction of scoredPredictions) {
+    const groupIds = groupIdsByUserId.get(prediction.userId) ?? [];
+
+    for (const groupId of groupIds) {
+      const events = eventsByGroupId.get(groupId) ?? [];
+
+      if (prediction.scoreBreakdown.points > 0) {
+        events.push({
+          event_type: "points_awarded",
+          scope_type: "group",
+          group_id: groupId,
+          match_id: matchId,
+          user_id: prediction.userId,
+          related_user_id: null,
+          points_delta: prediction.scoreBreakdown.points,
+          rank_delta: null,
+          message: buildPointsAwardedMessage(prediction.scoreBreakdown.points),
+          metadata: {
+            predictionId: prediction.predictionId,
+            outcomePoints: prediction.scoreBreakdown.outcome_points,
+            exactScorePoints: prediction.scoreBreakdown.exact_score_points,
+            goalDifferencePoints: prediction.scoreBreakdown.goal_difference_points
+          }
+        });
+      }
+
+      if (prediction.scoreBreakdown.exact_score_points > 0) {
+        events.push({
+          event_type: "perfect_pick",
+          scope_type: "group",
+          group_id: groupId,
+          match_id: matchId,
+          user_id: prediction.userId,
+          related_user_id: null,
+          points_delta: prediction.scoreBreakdown.points,
+          rank_delta: null,
+          message: "nailed a Perfect Pick",
+          metadata: {
+            predictionId: prediction.predictionId,
+            exactScorePoints: prediction.scoreBreakdown.exact_score_points
+          }
+        });
+      }
+
+      eventsByGroupId.set(groupId, events);
+    }
+  }
+
+  for (const [groupId, memberUserIds] of memberUserIdsByGroupId.entries()) {
+    if (memberUserIds.size === 0) {
+      continue;
+    }
+
+    const movementRows = await fetchGroupLeaderboardRankMovement(matchId, groupId);
+    const events = eventsByGroupId.get(groupId) ?? [];
+
+    for (const movement of movementRows) {
+      if (!memberUserIds.has(movement.user_id)) {
+        continue;
+      }
+
+      if ((movement.rank_delta ?? 0) > 0) {
+        events.push({
+          event_type: "rank_moved_up",
+          scope_type: "group",
+          group_id: groupId,
+          match_id: matchId,
+          user_id: movement.user_id,
+          related_user_id: null,
+          points_delta: movement.points_delta,
+          rank_delta: movement.rank_delta,
+          message: `moved up ${movement.rank_delta} ${movement.rank_delta === 1 ? "spot" : "spots"}`,
+          metadata: {
+            currentRank: movement.current_rank,
+            previousRank: movement.previous_rank,
+            currentPoints: movement.current_points,
+            previousPoints: movement.previous_points
+          }
+        });
+      }
+
+      if ((movement.rank_delta ?? 0) < 0) {
+        const spotsDropped = Math.abs(movement.rank_delta ?? 0);
+        events.push({
+          event_type: "rank_moved_down",
+          scope_type: "group",
+          group_id: groupId,
+          match_id: matchId,
+          user_id: movement.user_id,
+          related_user_id: null,
+          points_delta: movement.points_delta,
+          rank_delta: movement.rank_delta,
+          message: `moved down ${spotsDropped} ${spotsDropped === 1 ? "spot" : "spots"}`,
+          metadata: {
+            currentRank: movement.current_rank,
+            previousRank: movement.previous_rank,
+            currentPoints: movement.current_points,
+            previousPoints: movement.previous_points
+          }
+        });
+      }
+    }
+
+    eventsByGroupId.set(groupId, events);
+  }
+
+  const groupIds = Array.from(eventsByGroupId.keys());
+  if (groupIds.length === 0) {
+    return { ok: true };
+  }
+
+  const { error: deleteError } = await adminSupabase
+    .from("leaderboard_events")
+    .delete()
+    .eq("scope_type", "group")
+    .eq("match_id", matchId)
+    .in("group_id", groupIds)
+    .in("event_type", [...groupEventTypes]);
+
+  if (deleteError) {
+    return { ok: false, message: deleteError.message };
+  }
+
+  const allEvents = Array.from(eventsByGroupId.values()).flat();
+  if (allEvents.length === 0) {
+    return { ok: true };
+  }
+
+  const userIds = Array.from(new Set(allEvents.map((event) => event.user_id)));
+  const { data: users, error: usersError } = await adminSupabase.from("users").select("id,name").in("id", userIds);
+
+  if (usersError) {
+    return { ok: false, message: usersError.message };
+  }
+
+  const namesById = new Map((((users as Array<{ id: string; name: string }> | null) ?? []).map((user) => [user.id, user.name])));
+
+  const { data: insertedEvents, error: insertError } = await adminSupabase
+    .from("leaderboard_events")
+    .insert(
+      allEvents.map((event) => ({
+        ...event,
+        message: `${namesById.get(event.user_id) ?? "A player"} ${event.message}`
+      }))
+    )
+    .select("id,event_type,scope_type,group_id,user_id,points_delta,rank_delta,message");
+
+  if (insertError) {
+    return { ok: false, message: insertError.message };
+  }
+
+  await createNotificationsForLeaderboardEvents(
+    adminSupabase,
+    ((insertedEvents as InsertedLeaderboardEventRow[] | null) ?? [])
+  );
+
+  return { ok: true };
+}
+
+function buildPointsAwardedMessage(points: number) {
+  return `earned +${points} ${points === 1 ? "point" : "points"}`;
 }
 
 async function resetGroupMatchScoring(
@@ -1321,7 +2127,10 @@ async function findAuthUserByEmail(
     if (matchedUser) {
       return {
         id: matchedUser.id,
-        email: matchedUser.email
+        email: matchedUser.email,
+        emailConfirmedAt: matchedUser.email_confirmed_at ?? null,
+        confirmationSentAt: matchedUser.confirmation_sent_at ?? null,
+        lastSignInAt: matchedUser.last_sign_in_at ?? null
       };
     }
 
@@ -1333,6 +2142,69 @@ async function findAuthUserByEmail(
   }
 
   return null;
+}
+
+function buildAdminRecoveryEmailHtml(input: {
+  heading: string;
+  intro: string;
+  actionLabel: string;
+  actionUrl: string;
+  note: string;
+}) {
+  const escapedHeading = escapeHtml(input.heading);
+  const escapedIntro = escapeHtml(input.intro);
+  const escapedActionLabel = escapeHtml(input.actionLabel);
+  const escapedActionUrl = escapeHtml(input.actionUrl);
+  const escapedNote = escapeHtml(input.note);
+
+  return `
+    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+      <h1 style="font-size: 24px; margin-bottom: 16px;">${escapedHeading}</h1>
+      <p style="margin-bottom: 16px;">${escapedIntro}</p>
+      <p style="margin: 24px 0;">
+        <a href="${escapedActionUrl}" style="display: inline-block; background: #1f8b4c; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-weight: 700;">
+          ${escapedActionLabel}
+        </a>
+      </p>
+      <p style="margin-bottom: 12px; font-size: 14px; color: #4b5563;">
+        If the button does not work, paste this link into your browser:<br />
+        <span style="word-break: break-all;">${escapedActionUrl}</span>
+      </p>
+      <p style="font-size: 14px; color: #6b7280;">${escapedNote}</p>
+    </div>
+  `;
+}
+
+function buildAdminRecoveryEmailText(input: {
+  heading: string;
+  intro: string;
+  actionLabel: string;
+  actionUrl: string;
+  note: string;
+}) {
+  return [
+    input.heading,
+    "",
+    input.intro,
+    "",
+    `${input.actionLabel}:`,
+    input.actionUrl,
+    "",
+    input.note
+  ].join("\n");
+}
+
+function formatLeaderboardFeatureSettingLabel(key: LeaderboardFeatureSettingKey) {
+  switch (key) {
+    case "daily_winner_enabled":
+      return "Daily Winner";
+    case "perfect_pick_enabled":
+      return "Perfect Pick";
+    case "leaderboard_activity_enabled":
+      return "Leaderboard activity";
+    default:
+      return "Leaderboard feature";
+  }
 }
 
 async function enforceEmailRateLimits(

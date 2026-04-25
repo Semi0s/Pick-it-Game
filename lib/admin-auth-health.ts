@@ -35,6 +35,7 @@ export type AdminUserHealth = {
   appUserId?: string | null;
   email?: string | null;
   emailConfirmedAt?: string | null;
+  confirmationSentAt?: string | null;
   lastSignInAt?: string | null;
   authCreatedAt?: string | null;
   invitedAt?: string | null;
@@ -47,6 +48,7 @@ export type RawAdminAppUser = {
   id: string;
   name: string;
   email: string;
+  avatar_url?: string | null;
   role: UserRole;
   status?: UserStatus | null;
   username?: string | null;
@@ -74,6 +76,7 @@ export type RawAdminAuthUser = {
   id: string;
   email?: string | null;
   emailConfirmedAt?: string | null;
+  confirmationSentAt?: string | null;
   confirmedAt?: string | null;
   lastSignInAt?: string | null;
   createdAt?: string | null;
@@ -157,6 +160,7 @@ export function deriveAdminUserHealth(input: {
     appUserId: appUser?.id ?? null,
     email: appUser?.email ?? authUser?.email ?? invite?.email ?? null,
     emailConfirmedAt: authUser?.emailConfirmedAt ?? authUser?.confirmedAt ?? null,
+    confirmationSentAt: authUser?.confirmationSentAt ?? null,
     lastSignInAt: authUser?.lastSignInAt ?? null,
     authCreatedAt: authUser?.createdAt ?? null,
     invitedAt: invite?.createdAt ?? null,

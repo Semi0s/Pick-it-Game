@@ -1,7 +1,8 @@
 import type { Match, Prediction } from "@/lib/types";
+import { isPredictionLockedStatus } from "@/lib/prediction-state";
 
 export function isPredictionLocked(match: Match) {
-  return match.status === "final";
+  return isPredictionLockedStatus(match.status);
 }
 
 export function getPredictedOutcome(prediction: Prediction) {

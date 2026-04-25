@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect } from "react";
 import { CircleUserRound, Gamepad2, ListOrdered, UsersRound } from "lucide-react";
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
+import { NotificationsBell } from "@/components/NotificationsBell";
 import { signOutCurrentUser } from "@/lib/auth-client";
 import { getAccessLevelLabel, shouldShowAccessBadge } from "@/lib/access-levels";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -56,6 +57,7 @@ export function AppShell({ children }: AppShellProps) {
             <p className="truncate text-xs font-semibold text-accent-dark">{APP_TAGLINE}</p>
           </Link>
           <div className="flex items-center gap-2">
+            <NotificationsBell />
             {shouldShowAccessBadge(user) ? (
               <span className="rounded-md bg-accent-light px-2 py-1 text-xs font-bold uppercase text-accent-dark">
                 {getAccessLevelLabel(user)}
@@ -89,12 +91,12 @@ export function AppShell({ children }: AppShellProps) {
                 key={item.href}
                 href={item.href}
                 aria-label={item.ariaLabel}
-                className={`flex flex-col items-center gap-1 rounded-md px-1 py-2 text-[11px] font-semibold sm:text-xs ${
+                className={`flex min-w-0 items-center justify-center gap-2 rounded-md px-1 py-2 text-[11px] font-semibold sm:text-xs ${
                   isActive ? "bg-accent-light text-accent-dark" : "text-gray-600"
                 }`}
               >
-                <Icon aria-hidden className="h-5 w-5" />
-                {item.label}
+                <Icon aria-hidden className="h-5 w-5 shrink-0" />
+                <span className="truncate">{item.label}</span>
               </Link>
             );
           })}

@@ -16,6 +16,8 @@ export type UserProfile = {
   username?: string | null;
   usernameSetAt?: string | null;
   needsProfileSetup?: boolean;
+  notificationsEnabled?: boolean;
+  pushNotificationsEnabled?: boolean;
   managerLimits?: {
     maxGroups: number;
     maxMembersPerGroup: number;
@@ -57,6 +59,7 @@ export type Prediction = {
   predictedHomeScore?: number;
   predictedAwayScore?: number;
   pointsAwarded: number;
+  updatedAt?: string;
 };
 
 export type Invite = {

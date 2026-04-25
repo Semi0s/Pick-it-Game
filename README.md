@@ -24,6 +24,12 @@ npm run dev
 
 Copy `.env.example` to `.env.local` and add your Supabase project values when you are ready to connect the app to a real backend.
 
+For web push notifications, also provide VAPID keys:
+
+- `NEXT_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY`
+- `WEB_PUSH_VAPID_PRIVATE_KEY`
+- `WEB_PUSH_VAPID_SUBJECT`
+
 ## Demo Invites
 
 Use one of these emails with any password of six or more characters:

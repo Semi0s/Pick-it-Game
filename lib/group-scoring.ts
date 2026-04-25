@@ -21,6 +21,13 @@ export type ScorablePrediction = {
   predictedAwayScore?: number | null;
 };
 
+export type GroupStageScoreBreakdown = {
+  points: number;
+  outcome_points: number;
+  exact_score_points: number;
+  goal_difference_points: number;
+};
+
 export function canScoreGroupMatch(match: ScorableGroupMatch) {
   return (
     match.stage === "group" &&
@@ -34,7 +41,7 @@ export function canScoreGroupMatch(match: ScorableGroupMatch) {
 
 export function scoreGroupStagePrediction(prediction: ScorablePrediction, match: ScorableGroupMatch) {
   if (!canScoreGroupMatch(match)) {
-    return 0;
+    return createEmptyScoreBreakdown();
   }
 
   if (
@@ -43,7 +50,7 @@ export function scoreGroupStagePrediction(prediction: ScorablePrediction, match:
     prediction.predictedAwayScore === null ||
     prediction.predictedAwayScore === undefined
   ) {
-    return 0;
+    return createEmptyScoreBreakdown();
   }
 
   const actualOutcome = getOutcome(match);
@@ -51,20 +58,30 @@ export function scoreGroupStagePrediction(prediction: ScorablePrediction, match:
   const hasCorrectOutcome = actualOutcome === predictedOutcome;
 
   if (!hasCorrectOutcome) {
-    return 0;
+    return createEmptyScoreBreakdown();
   }
 
   const hasExactScore =
     prediction.predictedHomeScore === match.homeScore && prediction.predictedAwayScore === match.awayScore;
 
   if (hasExactScore) {
-    return CORRECT_OUTCOME_POINTS + EXACT_SCORE_BONUS;
+    return {
+      points: CORRECT_OUTCOME_POINTS + EXACT_SCORE_BONUS,
+      outcome_points: CORRECT_OUTCOME_POINTS,
+      exact_score_points: EXACT_SCORE_BONUS,
+      goal_difference_points: 0
+    };
   }
 
   const hasExactGoalDifference =
     prediction.predictedHomeScore - prediction.predictedAwayScore === match.homeScore! - match.awayScore!;
 
-  return CORRECT_OUTCOME_POINTS + (hasExactGoalDifference ? EXACT_GOAL_DIFFERENCE_BONUS : 0);
+  return {
+    points: CORRECT_OUTCOME_POINTS + (hasExactGoalDifference ? EXACT_GOAL_DIFFERENCE_BONUS : 0),
+    outcome_points: CORRECT_OUTCOME_POINTS,
+    exact_score_points: 0,
+    goal_difference_points: hasExactGoalDifference ? EXACT_GOAL_DIFFERENCE_BONUS : 0
+  };
 }
 
 function getOutcome(match: ScorableGroupMatch) {
@@ -77,4 +94,13 @@ function getOutcome(match: ScorableGroupMatch) {
   }
 
   return match.awayTeamId ?? "none";
+}
+
+function createEmptyScoreBreakdown(): GroupStageScoreBreakdown {
+  return {
+    points: 0,
+    outcome_points: 0,
+    exact_score_points: 0,
+    goal_difference_points: 0
+  };
 }

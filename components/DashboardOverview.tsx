@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { CalendarDays, ListOrdered, Network, Sparkles, Trophy } from "lucide-react";
+import { CalendarDays, CircleHelp, ListOrdered, Network, Sparkles, Trophy } from "lucide-react";
 import { fetchMyGroupsAction } from "@/app/my-groups/actions";
 import { AdminStatsSection, AdminToolsSection, AdminMessage } from "@/components/admin/AdminHomeClient";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { InviteEntryForm, normalizeInviteTokenInput } from "@/components/player-management/Shared";
+import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
-import { isPredictionLocked } from "@/lib/scoring";
 import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
@@ -97,7 +97,7 @@ export function DashboardOverview() {
     };
   }, [user?.role]);
 
-  const openMatches = groupMatches.filter((match) => !isPredictionLocked(match));
+  const openMatches = groupMatches.filter((match) => canEditPrediction(match.status));
   const completedCount = groupMatches.filter((match) =>
     predictions.some((prediction) => prediction.matchId === match.id)
   ).length;
@@ -122,6 +122,15 @@ export function DashboardOverview() {
       >
         <div className="absolute inset-0 bg-gray-100/70" />
         <div className="relative">
+          <Link
+            href="/help"
+            className="absolute right-0 top-0 inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white/90 px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-accent-light text-accent-dark">
+              <CircleHelp aria-hidden className="h-4 w-4" />
+            </span>
+            Help
+          </Link>
           <p className="text-4xl font-black uppercase leading-none tracking-wide text-accent-dark">Hello</p>
           <h2 className="mt-2 text-4xl font-black leading-tight text-gray-950 sm:text-5xl">
             {user?.name ?? "Player"}

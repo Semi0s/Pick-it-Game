@@ -2,6 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
+import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
 import type { Prediction } from "@/lib/types";
 
 type SavePredictionInput = {
@@ -46,8 +47,11 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
   }
 
   const matchRow = match as MatchRow;
-  if (matchRow.status === "final") {
-    return { ok: false, message: "This pick is locked because the match is final." };
+  if (!canEditPrediction(matchRow.status)) {
+    return {
+      ok: false,
+      message: `This pick is ${getPredictionStateLabel(matchRow.status).toLowerCase()} and can no longer be edited.`
+    };
   }
 
   const derivedOutcome = deriveOutcome(matchRow, input.predictedHomeScore, input.predictedAwayScore);
@@ -60,12 +64,13 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
         predicted_winner_team_id: derivedOutcome.predictedWinnerTeamId,
         predicted_is_draw: derivedOutcome.predictedIsDraw,
         predicted_home_score: input.predictedHomeScore ?? null,
-        predicted_away_score: input.predictedAwayScore ?? null
+        predicted_away_score: input.predictedAwayScore ?? null,
+        updated_at: new Date().toISOString()
       },
       { onConflict: "user_id,match_id" }
     )
     .select(
-      "id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded"
+      "id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded,updated_at"
     )
     .single();
 
@@ -83,7 +88,8 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
       predictedIsDraw: data.predicted_is_draw,
       predictedHomeScore: data.predicted_home_score ?? undefined,
       predictedAwayScore: data.predicted_away_score ?? undefined,
-      pointsAwarded: data.points_awarded ?? 0
+      pointsAwarded: data.points_awarded ?? 0,
+      updatedAt: data.updated_at ?? undefined
     }
   };
 }

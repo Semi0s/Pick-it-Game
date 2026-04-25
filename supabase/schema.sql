@@ -127,6 +127,20 @@ create table public.leaderboard_entries (
   updated_at timestamptz not null default now()
 );
 
+create table public.app_settings (
+  key text primary key,
+  boolean_value boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.user_settings (
+  user_id uuid primary key references public.users(id) on delete cascade,
+  notifications_enabled boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table public.email_jobs (
   id uuid primary key default gen_random_uuid(),
   kind public.email_job_kind not null,
@@ -149,7 +163,7 @@ create table public.email_jobs (
 create table public.manager_limits (
   user_id uuid primary key references public.users(id) on delete cascade,
   max_groups integer not null default 3,
-  max_members_per_group integer not null default 15,
+  max_members_per_group integer not null default 4,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint manager_limits_max_groups_positive check (max_groups > 0),
@@ -197,6 +211,25 @@ create table public.group_invites (
   constraint group_invites_normalized_email_check check (normalized_email = lower(email))
 );
 
+create table public.user_notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  event_id uuid references public.leaderboard_events(id) on delete cascade,
+  type text not null,
+  payload jsonb not null default '{}'::jsonb,
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table public.push_tokens (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  platform text not null,
+  token text not null,
+  created_at timestamptz not null default now(),
+  constraint push_tokens_platform_check check (platform in ('ios', 'android', 'web'))
+);
+
 create index email_jobs_status_available_idx
   on public.email_jobs (status, available_at, created_at);
 
@@ -214,6 +247,15 @@ create unique index email_jobs_active_dedupe_idx
 create unique index users_username_lower_unique_idx
   on public.users (lower(username))
   where username is not null;
+
+create unique index user_notifications_user_event_type_unique_idx
+  on public.user_notifications (user_id, event_id, type);
+
+create index user_notifications_user_created_idx
+  on public.user_notifications (user_id, created_at desc);
+
+create unique index push_tokens_user_token_unique_idx
+  on public.push_tokens (user_id, token);
 
 create index group_members_user_id_idx
   on public.group_members (user_id);
@@ -488,6 +530,14 @@ create trigger on_group_created_add_manager_membership
 after insert on public.groups
 for each row execute function public.handle_group_owner_membership();
 
+create trigger set_app_settings_updated_at
+before update on public.app_settings
+for each row execute function public.set_updated_at();
+
+create trigger set_user_settings_updated_at
+before update on public.user_settings
+for each row execute function public.set_updated_at();
+
 alter table public.invites enable row level security;
 alter table public.users enable row level security;
 alter table public.teams enable row level security;
@@ -496,11 +546,20 @@ alter table public.predictions enable row level security;
 alter table public.bracket_picks enable row level security;
 alter table public.side_picks enable row level security;
 alter table public.leaderboard_entries enable row level security;
+alter table public.app_settings enable row level security;
+alter table public.user_settings enable row level security;
 alter table public.email_jobs enable row level security;
 alter table public.manager_limits enable row level security;
 alter table public.groups enable row level security;
 alter table public.group_members enable row level security;
 alter table public.group_invites enable row level security;
+alter table public.user_notifications enable row level security;
+alter table public.push_tokens enable row level security;
+
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true)
+on conflict (id) do update
+set public = excluded.public;
 
 drop policy if exists "Users manage own predictions before kickoff" on public.predictions;
 drop policy if exists "Users can read own predictions" on public.predictions;
@@ -601,6 +660,43 @@ to authenticated
 using (public.is_admin())
 with check (public.is_admin());
 
+drop policy if exists "Public can read avatars" on storage.objects;
+create policy "Public can read avatars"
+on storage.objects for select
+to public
+using (bucket_id = 'avatars');
+
+drop policy if exists "Users can upload own avatar" on storage.objects;
+create policy "Users can upload own avatar"
+on storage.objects for insert
+to authenticated
+with check (
+  bucket_id = 'avatars'
+  and auth.uid()::text = split_part(name, '.', 1)
+);
+
+drop policy if exists "Users can update own avatar" on storage.objects;
+create policy "Users can update own avatar"
+on storage.objects for update
+to authenticated
+using (
+  bucket_id = 'avatars'
+  and auth.uid()::text = split_part(name, '.', 1)
+)
+with check (
+  bucket_id = 'avatars'
+  and auth.uid()::text = split_part(name, '.', 1)
+);
+
+drop policy if exists "Users can delete own avatar" on storage.objects;
+create policy "Users can delete own avatar"
+on storage.objects for delete
+to authenticated
+using (
+  bucket_id = 'avatars'
+  and auth.uid()::text = split_part(name, '.', 1)
+);
+
 create policy "Authenticated users can read teams"
 on public.teams for select
 to authenticated
@@ -633,6 +729,28 @@ create policy "Authenticated users can read leaderboard"
 on public.leaderboard_entries for select
 to authenticated
 using (true);
+
+create policy "Authenticated users can read app settings"
+on public.app_settings for select
+to authenticated
+using (true);
+
+create policy "Super admins manage app settings"
+on public.app_settings for all
+to authenticated
+using (public.is_super_admin(auth.uid()))
+with check (public.is_super_admin(auth.uid()));
+
+create policy "Users can read own settings"
+on public.user_settings for select
+to authenticated
+using (user_id = auth.uid());
+
+create policy "Users can manage own settings"
+on public.user_settings for all
+to authenticated
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
 
 create policy "Super admins manage manager limits"
 on public.manager_limits for all
@@ -690,6 +808,28 @@ with check (
   public.is_group_manager(groups.id, auth.uid())
   and public.can_set_group_membership_limit(auth.uid(), membership_limit)
 );
+
+create policy "Users can read own notifications"
+on public.user_notifications for select
+to authenticated
+using (user_id = auth.uid());
+
+create policy "Users can update own notifications"
+on public.user_notifications for update
+to authenticated
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
+
+create policy "Users can read own push tokens"
+on public.push_tokens for select
+to authenticated
+using (user_id = auth.uid());
+
+create policy "Users can manage own push tokens"
+on public.push_tokens for all
+to authenticated
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
 
 create policy "Super admins manage group members"
 on public.group_members for all

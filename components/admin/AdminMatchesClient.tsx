@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
 import { scoreFinalizedGroupMatch, updateAdminMatchResultAction } from "@/app/admin/actions";
+import { getPredictionStateLabel } from "@/lib/prediction-state";
 import type { MatchStage, MatchStatus } from "@/lib/types";
 import { AdminHeader } from "@/components/admin/AdminInvitesClient";
 import { getMatchDateKey } from "@/lib/tournament-calendar";
@@ -164,6 +165,9 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
   const [homeScore, setHomeScore] = useState(match.homeScore?.toString() ?? "");
   const [awayScore, setAwayScore] = useState(match.awayScore?.toString() ?? "");
   const [isSaving, setIsSaving] = useState(false);
+  const isFinalized = status === "final";
+  const isLive = status === "live";
+  const predictionStateLabel = getPredictionStateLabel(status);
   const homeLabel = getSideLabel(match, "home");
   const awayLabel = getSideLabel(match, "away");
   const resolvedWinnerTeamId = getResolvedWinnerTeamId(match, homeScore, awayScore);
@@ -220,34 +224,112 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
   }
 
   return (
-    <form onSubmit={handleSubmit} className="rounded-lg border border-gray-200 bg-white p-4">
+    <form
+      onSubmit={handleSubmit}
+      className={`rounded-lg border p-4 transition-colors ${
+        isFinalized
+          ? "border-gray-300 bg-gray-100"
+          : isLive
+            ? "border-amber-200 bg-amber-50"
+            : "border-gray-200 bg-white"
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+          <p
+            className={`text-xs font-bold uppercase tracking-wide ${
+              isFinalized ? "text-gray-600" : isLive ? "text-amber-700" : "text-gray-500"
+            }`}
+          >
             {formatStage(match.stage)} {match.groupName ? `- Group ${match.groupName}` : ""}
           </p>
-          <h3 className="mt-1 text-lg font-black text-gray-950">
+          {isFinalized ? (
+            <span className="mt-2 inline-flex items-center rounded-md bg-gray-200 px-2 py-1 text-[11px] font-black uppercase tracking-wide text-gray-700">
+              Finalized
+            </span>
+          ) : null}
+          <h3
+            className={`mt-1 text-lg font-black ${
+              isFinalized ? "text-gray-800" : isLive ? "text-amber-950" : "text-gray-950"
+            }`}
+          >
             {homeLabel.short} vs {awayLabel.short}
           </h3>
-          <p className="mt-1 text-sm font-semibold text-gray-700">
+          <p
+            className={`mt-1 text-sm font-semibold ${
+              isFinalized ? "text-gray-600" : isLive ? "text-amber-900" : "text-gray-700"
+            }`}
+          >
             {homeLabel.full} vs {awayLabel.full}
           </p>
-          <p className="mt-1 text-sm font-semibold text-gray-500">{formatDateTime(match.kickoffTime)}</p>
-          <p className="mt-1 text-xs font-semibold text-gray-500">
-            Match ID: {match.id}
-            {match.updatedAt ? ` / Updated ${formatDateTime(match.updatedAt)}` : ""}
+          <p
+            className={`mt-1 text-sm font-semibold ${
+              isFinalized ? "text-gray-500" : isLive ? "text-amber-800" : "text-gray-500"
+            }`}
+          >
+            {formatDateTime(match.kickoffTime)}
           </p>
+          <div
+            className={`mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold ${
+              isFinalized ? "text-gray-500" : isLive ? "text-amber-800" : "text-gray-500"
+            }`}
+          >
+            <span>
+              Match ID: {match.id}
+              {match.updatedAt ? ` / Updated ${formatDateTime(match.updatedAt)}` : ""}
+            </span>
+            {isFinalized ? (
+              <span className="inline-flex items-center rounded-md bg-gray-200 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700">
+                Finalized
+              </span>
+            ) : null}
+          </div>
         </div>
-        <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold uppercase text-gray-700">{match.status}</span>
+        <div className="flex flex-col items-end gap-2">
+          <span
+            className={`rounded-md px-2 py-1 text-xs font-bold uppercase ${
+              isFinalized
+                ? "bg-gray-200 text-gray-700"
+                : isLive
+                  ? "bg-amber-100 text-amber-800"
+                  : "bg-gray-100 text-gray-700"
+            }`}
+          >
+            {formatMatchStatus(status)}
+          </span>
+          <span
+            className={`rounded-md px-2 py-1 text-xs font-bold uppercase ${
+              isFinalized
+                ? "bg-gray-700 text-gray-100"
+                : isLive
+                  ? "bg-amber-200 text-amber-900"
+                  : "bg-accent-light text-accent-dark"
+            }`}
+          >
+            {predictionStateLabel}
+          </span>
+        </div>
       </div>
 
       <div className="mt-4 grid gap-3">
         <label>
-          <span className="text-sm font-bold text-gray-700">Status</span>
+          <span
+            className={`text-sm font-bold ${
+              isFinalized ? "text-gray-600" : isLive ? "text-amber-900" : "text-gray-700"
+            }`}
+          >
+            Status
+          </span>
           <select
             value={status}
             onChange={(event) => setStatus(event.target.value as MatchStatus)}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+            className={`mt-2 w-full rounded-md border px-3 py-3 text-base ${
+              isFinalized
+                ? "border-gray-300 bg-gray-50 text-gray-800"
+                : isLive
+                  ? "border-amber-200 bg-white text-gray-900"
+                  : "border-gray-300 bg-white"
+            }`}
           >
             <option value="scheduled">Scheduled</option>
             <option value="live">Live</option>
@@ -256,16 +338,42 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
         </label>
 
         <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
-          <ScoreInput label={homeLabel.short} value={homeScore} onChange={setHomeScore} />
-          <span className="pb-3 text-sm font-black text-gray-400">vs</span>
-          <ScoreInput label={awayLabel.short} value={awayScore} onChange={setAwayScore} />
+          <ScoreInput label={homeLabel.short} value={homeScore} onChange={setHomeScore} isFinalized={isFinalized} />
+          <span
+            className={`pb-3 text-sm font-black ${
+              isFinalized ? "text-gray-500" : isLive ? "text-amber-700" : "text-gray-400"
+            }`}
+          >
+            vs
+          </span>
+          <ScoreInput label={awayLabel.short} value={awayScore} onChange={setAwayScore} isFinalized={isFinalized} />
         </div>
 
-        <div className="rounded-md bg-gray-50 px-3 py-2">
-          <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Winner</p>
-          <p className="mt-1 text-sm font-black text-gray-900">{resolvedWinnerLabel}</p>
+        <div
+          className={`rounded-md px-3 py-2 ${
+            isFinalized ? "bg-gray-200" : isLive ? "bg-amber-100" : "bg-gray-50"
+          }`}
+        >
+          <p
+            className={`text-xs font-bold uppercase tracking-wide ${
+              isFinalized ? "text-gray-600" : isLive ? "text-amber-800" : "text-gray-500"
+            }`}
+          >
+            Winner
+          </p>
+          <p
+            className={`mt-1 text-sm font-black ${
+              isFinalized ? "text-gray-800" : isLive ? "text-amber-950" : "text-gray-900"
+            }`}
+          >
+            {resolvedWinnerLabel}
+          </p>
           {homeScore !== "" && awayScore !== "" && resolvedWinnerTeamId === null ? (
-            <p className="mt-1 text-xs font-semibold text-gray-500">
+            <p
+              className={`mt-1 text-xs font-semibold ${
+                isFinalized ? "text-gray-600" : isLive ? "text-amber-800" : "text-gray-500"
+              }`}
+            >
               Scores are equal. Winner will be saved as blank for a group-stage draw.
             </p>
           ) : null}
@@ -286,22 +394,28 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
 function ScoreInput({
   label,
   value,
-  onChange
+  onChange,
+  isFinalized
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  isFinalized?: boolean;
 }) {
   return (
     <label>
-      <span className="text-xs font-bold uppercase tracking-wide text-gray-500">{label}</span>
+      <span className={`text-xs font-bold uppercase tracking-wide ${isFinalized ? "text-gray-600" : "text-gray-500"}`}>
+        {label}
+      </span>
       <input
         type="number"
         min={0}
         inputMode="numeric"
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-center text-xl font-black"
+        className={`mt-1 w-full rounded-md border px-3 py-3 text-center text-xl font-black ${
+          isFinalized ? "border-gray-300 bg-white text-gray-800" : "border-gray-300 bg-white"
+        }`}
       />
     </label>
   );
@@ -374,6 +488,18 @@ function formatStage(stage: MatchStage) {
     .split("_")
     .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatMatchStatus(status: MatchStatus) {
+  if (status === "live") {
+    return "Live";
+  }
+
+  if (status === "final") {
+    return "Final";
+  }
+
+  return "Scheduled";
 }
 
 function formatDateTime(value: string, includeTime = true) {

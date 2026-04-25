@@ -1,5 +1,6 @@
 "use client";
 
+import { getPublicWebPushVapidKey } from "@/lib/push-config";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { getSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/client";
@@ -11,6 +12,12 @@ type AuthMode = "login" | "signup";
 export type AuthResult =
   | { ok: true; user?: UserProfile | null; needsEmailConfirmation?: boolean; message?: string }
   | { ok: false; message: string };
+
+export type AvatarUploadResult =
+  | { ok: true; avatarUrl: string; message: string }
+  | { ok: false; message: string };
+
+export type PushRegistrationResult = AuthResult;
 
 type AuthOptions = {
   nextPath?: string;
@@ -32,6 +39,14 @@ type UserRow = {
 type ManagerLimitsRow = {
   max_groups: number;
   max_members_per_group: number;
+};
+
+type UserSettingsRow = {
+  notifications_enabled: boolean;
+};
+
+type PushTokenRow = {
+  id: string;
 };
 
 export async function authenticateWithEmail(
@@ -107,38 +122,75 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
   }
 
   const supabase = createClient();
-  const { data: authData, error: authError } = await supabase.auth.getUser();
+  const {
+    data: { session },
+    error: sessionError
+  } = await supabase.auth.getSession();
 
-  if (authError || !authData.user) {
+  if (sessionError) {
+    if (isInvalidRefreshTokenError(sessionError.message)) {
+      await supabase.auth.signOut({ scope: "local" });
+      return null;
+    }
+
     return null;
   }
 
-  const [{ data: profile }, { data: managerLimits }] = await Promise.all([
+  if (!session?.user) {
+    return null;
+  }
+
+  const [{ data: profile }, { data: managerLimits }, userSettingsResult, pushTokensResult] = await Promise.all([
     supabase
       .from("users")
       .select("id,name,email,avatar_url,role,username,username_set_at,needs_profile_setup,total_points")
-      .eq("id", authData.user.id)
+      .eq("id", session.user.id)
       .single(),
     supabase
       .from("manager_limits")
       .select("max_groups,max_members_per_group")
-      .eq("user_id", authData.user.id)
+      .eq("user_id", session.user.id)
+      .maybeSingle(),
+    supabase
+      .from("user_settings")
+      .select("notifications_enabled")
+      .eq("user_id", session.user.id)
+      .maybeSingle(),
+    supabase
+      .from("push_tokens")
+      .select("id")
+      .eq("user_id", session.user.id)
+      .limit(1)
       .maybeSingle()
   ]);
 
+  const notificationsEnabled = isMissingUserSettingsTableError(userSettingsResult.error?.message)
+    ? false
+    : ((userSettingsResult.data as UserSettingsRow | null)?.notifications_enabled ?? false);
+  const pushNotificationsEnabled = isMissingPushTokensTableError(pushTokensResult.error?.message)
+    ? false
+    : Boolean((pushTokensResult.data as PushTokenRow | null)?.id);
+
   if (profile) {
-    return mapUserRow(profile as UserRow, (managerLimits as ManagerLimitsRow | null) ?? null);
+    return mapUserRow(
+      profile as UserRow,
+      (managerLimits as ManagerLimitsRow | null) ?? null,
+      notificationsEnabled,
+      pushNotificationsEnabled
+    );
   }
 
   return {
-    id: authData.user.id,
-    name: authData.user.email?.split("@")[0] ?? "Player",
-    email: authData.user.email ?? "",
+    id: session.user.id,
+    name: session.user.email?.split("@")[0] ?? "Player",
+    email: session.user.email ?? "",
     role: "player",
     accessLevel: managerLimits ? "manager" : "player",
     username: null,
     usernameSetAt: null,
     needsProfileSetup: false,
+    notificationsEnabled,
+    pushNotificationsEnabled,
     managerLimits: managerLimits
       ? {
           maxGroups: managerLimits.max_groups,
@@ -200,11 +252,65 @@ export async function sendCurrentUserPasswordReset(email: string): Promise<AuthR
   };
 }
 
+export async function uploadCurrentUserAvatar(file: File): Promise<AvatarUploadResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Avatar uploads need a configured Supabase project." };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to upload an avatar." };
+  }
+
+  if (!file.type.startsWith("image/")) {
+    return { ok: false, message: "Choose an image file for your avatar." };
+  }
+
+  const objectPath = `${user.id}.jpg`;
+  const { error: uploadError } = await supabase.storage.from("avatars").upload(objectPath, file, {
+    upsert: true,
+    contentType: file.type || "image/jpeg",
+    cacheControl: "3600"
+  });
+
+  if (uploadError) {
+    return { ok: false, message: uploadError.message };
+  }
+
+  const { data: publicUrlData } = supabase.storage.from("avatars").getPublicUrl(objectPath);
+  const avatarUrl = `${publicUrlData.publicUrl}?v=${Date.now()}`;
+
+  const { error: profileError } = await supabase
+    .from("users")
+    .update({ avatar_url: avatarUrl })
+    .eq("id", user.id);
+
+  if (profileError) {
+    return { ok: false, message: profileError.message };
+  }
+
+  return {
+    ok: true,
+    avatarUrl,
+    message: "Avatar updated."
+  };
+}
+
 export function isUsingDemoAuthFallback() {
   return !hasSupabaseConfig();
 }
 
-function mapUserRow(row: UserRow, managerLimits: ManagerLimitsRow | null): UserProfile {
+function mapUserRow(
+  row: UserRow,
+  managerLimits: ManagerLimitsRow | null,
+  notificationsEnabled: boolean,
+  pushNotificationsEnabled: boolean
+): UserProfile {
   return {
     id: row.id,
     name: row.name,
@@ -215,6 +321,8 @@ function mapUserRow(row: UserRow, managerLimits: ManagerLimitsRow | null): UserP
     username: row.username ?? null,
     usernameSetAt: row.username_set_at ?? null,
     needsProfileSetup: row.needs_profile_setup ?? false,
+    notificationsEnabled,
+    pushNotificationsEnabled,
     managerLimits: managerLimits
       ? {
           maxGroups: managerLimits.max_groups,
@@ -223,6 +331,120 @@ function mapUserRow(row: UserRow, managerLimits: ManagerLimitsRow | null): UserP
       : null,
     totalPoints: row.total_points
   };
+}
+
+export async function updateCurrentUserNotificationPreferences(enabled: boolean): Promise<AuthResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Notifications need a configured Supabase project." };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to update notifications." };
+  }
+
+  const { error } = await supabase.from("user_settings").upsert(
+    {
+      user_id: user.id,
+      notifications_enabled: enabled
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error) {
+    if (isMissingUserSettingsTableError(error.message)) {
+      return {
+        ok: false,
+        message: "Notification preferences are not available yet. Apply the user notifications migration first."
+      };
+    }
+
+    return { ok: false, message: error.message || "Could not update notifications right now." };
+  }
+
+  return {
+    ok: true,
+    message: enabled ? "Leaderboard notifications turned on." : "Leaderboard notifications turned off."
+  };
+}
+
+export async function registerCurrentBrowserPushNotifications(): Promise<PushRegistrationResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Push notifications need a configured Supabase project." };
+  }
+
+  if (
+    typeof window === "undefined" ||
+    typeof Notification === "undefined" ||
+    typeof navigator === "undefined" ||
+    !("serviceWorker" in navigator)
+  ) {
+    return { ok: false, message: "This browser does not support push notifications." };
+  }
+
+  const publicVapidKey = getPublicWebPushVapidKey();
+  if (!publicVapidKey) {
+    return { ok: false, message: "Web push is not configured yet." };
+  }
+
+  let permission = Notification.permission;
+  if (permission === "default") {
+    permission = await Notification.requestPermission();
+  }
+
+  if (permission !== "granted") {
+    return { ok: false, message: "Push notification permission was not granted." };
+  }
+
+  try {
+    const registration = await navigator.serviceWorker.register("/push-sw.js");
+    const existingSubscription = await registration.pushManager.getSubscription();
+    const subscription =
+      existingSubscription ??
+      (await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: decodeBase64UrlToUint8Array(publicVapidKey)
+      }));
+
+    const response = await fetch("/api/push/register", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        token: JSON.stringify(subscription.toJSON()),
+        platform: "web"
+      })
+    });
+
+    const result = (await response.json()) as { ok: true; message?: string } | { ok: false; message?: string };
+    if (!response.ok || !result.ok) {
+      throw new Error(result.ok ? "Could not register this browser for push notifications." : result.message);
+    }
+
+    return {
+      ok: true,
+      message: result.message ?? "Push notifications enabled for this browser."
+    };
+  } catch (error) {
+    console.error("Failed to register browser push notifications.", error);
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not register this browser for push notifications."
+    };
+  }
+}
+
+function decodeBase64UrlToUint8Array(value: string) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = window.atob(base64);
+  return Uint8Array.from(raw, (char) => char.charCodeAt(0));
 }
 
 function getFriendlyAuthError(message: string, mode: AuthMode) {
@@ -245,6 +467,39 @@ function getFriendlyAuthError(message: string, mode: AuthMode) {
   }
 
   return message || "Something went wrong. Please try again.";
+}
+
+function isInvalidRefreshTokenError(message: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes("invalid refresh token") || normalized.includes("refresh token not found");
+}
+
+function isMissingUserSettingsTableError(message?: string) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("could not find the table 'public.user_settings'") ||
+    normalized.includes("relation \"public.user_settings\" does not exist") ||
+    normalized.includes("relation \"user_settings\" does not exist") ||
+    (normalized.includes("user_settings") && normalized.includes("schema cache"))
+  );
+}
+
+function isMissingPushTokensTableError(message?: string) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("could not find the table 'public.push_tokens'") ||
+    normalized.includes("relation \"public.push_tokens\" does not exist") ||
+    normalized.includes("relation \"push_tokens\" does not exist") ||
+    (normalized.includes("push_tokens") && normalized.includes("schema cache"))
+  );
 }
 
 function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; flow?: string }) {

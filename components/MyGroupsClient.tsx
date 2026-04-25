@@ -22,6 +22,7 @@ import {
   type MyManagedGroup
 } from "@/app/my-groups/actions";
 import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
+import { Avatar } from "@/components/Avatar";
 import { AdminInvitesSection } from "@/components/admin/AdminInvitesClient";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { formatDate } from "@/components/admin/AdminInvitesClient";
@@ -978,12 +979,15 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                         {filteredMembers.map((member) => (
                           <div key={member.membershipId} className="rounded-md border border-gray-200 px-3 py-3">
                             <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
-                                <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
-                                <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                  {member.role} · Joined {formatDate(member.joinedAt)}
-                                </p>
+                              <div className="min-w-0 flex items-start gap-3">
+                                <Avatar name={member.name} avatarUrl={member.avatarUrl} size="sm" />
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
+                                  <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
+                                  <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                    {member.role} · Joined {formatDate(member.joinedAt)}
+                                  </p>
+                                </div>
                               </div>
                               {group.canManage && member.role === "member" ? (
                                 <ActionButton

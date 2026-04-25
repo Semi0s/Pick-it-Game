@@ -131,8 +131,8 @@ export function ManagementCard({
   titleClassName,
   headerActions
 }: {
-  title: string;
-  subtitle?: string;
+  title: ReactNode;
+  subtitle?: ReactNode;
   badges?: ReactNode;
   children: ReactNode;
   actions?: ReactNode;
@@ -143,8 +143,8 @@ export function ManagementCard({
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className={`truncate font-black text-gray-950 ${titleClassName ?? "text-base"}`}>{title}</p>
-          {subtitle ? <p className="truncate text-sm font-semibold text-gray-600">{subtitle}</p> : null}
+          <div className={titleClassName ?? "text-base"}>{title}</div>
+          {subtitle ? <div className="truncate text-sm font-semibold text-gray-600">{subtitle}</div> : null}
         </div>
         {badges || headerActions ? (
           <div className="flex flex-wrap items-start justify-end gap-2">

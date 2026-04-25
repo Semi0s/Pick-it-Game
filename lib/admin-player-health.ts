@@ -17,6 +17,7 @@ type UserRow = {
   id: string;
   name: string;
   email: string;
+  avatar_url?: string | null;
   role: UserRole;
   status?: UserStatus | null;
   username?: string | null;
@@ -50,10 +51,20 @@ type EmailJobRow = {
   created_at: string;
 };
 
+type GroupInviteStatusRow = {
+  normalized_email: string;
+  status: "pending" | "accepted" | "revoked" | "expired";
+};
+
+type GroupMembershipRow = {
+  user_id: string;
+};
+
 export type AdminPlayerHealthRow = {
   key: string;
   displayName: string;
   email: string;
+  avatarUrl?: string | null;
   roleLabel: string;
   totalPoints: number;
   appState: AdminAppState;
@@ -76,7 +87,12 @@ export type AdminPlayerHealthRow = {
   inviteLastError?: string | null;
   inviteDeliveryState: "not_sent" | "queued" | "sent" | "failed" | "unknown";
   emailConfirmedAt?: string | null;
+  confirmationSentAt?: string | null;
   lastSignInAt?: string | null;
+  hasProfile: boolean;
+  usernameSet: boolean;
+  groupInviteStatus: string;
+  groupMembershipCount: number;
   onboardingIncomplete: boolean;
   username?: string | null;
   troubleshootingNotes: string[];
@@ -85,8 +101,8 @@ export type AdminPlayerHealthRow = {
 export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow[]> {
   const adminSupabase = createAdminClient();
 
-  const [{ data: users, error: usersError }, { data: invites, error: invitesError }, { data: managerLimits, error: managerLimitsError }, { data: groups, error: groupsError }, emailJobsResult, authUsers] = await Promise.all([
-    adminSupabase.from("users").select("id,name,email,role,status,username,username_set_at,needs_profile_setup,total_points,created_at").order("created_at", { ascending: false }),
+  const [{ data: users, error: usersError }, { data: invites, error: invitesError }, { data: managerLimits, error: managerLimitsError }, { data: groups, error: groupsError }, emailJobsResult, groupInviteStatusesResult, groupMembershipsResult, authUsers] = await Promise.all([
+    adminSupabase.from("users").select("id,name,email,avatar_url,role,status,username,username_set_at,needs_profile_setup,total_points,created_at").order("created_at", { ascending: false }),
     adminSupabase
       .from("invites")
       .select("email,display_name,role,status,accepted_at,created_at,last_sent_at,send_attempts,last_error")
@@ -101,6 +117,8 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
       .select("email,status,created_at")
       .eq("kind", "access_email")
       .order("created_at", { ascending: false }),
+    adminSupabase.from("group_invites").select("normalized_email,status"),
+    adminSupabase.from("group_members").select("user_id"),
     fetchAllAuthUsers(adminSupabase)
   ]);
 
@@ -121,6 +139,12 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
   }
 
   const emailJobRows = !emailJobsResult.error ? ((emailJobsResult.data ?? []) as EmailJobRow[]) : [];
+  const groupInviteStatuses = !groupInviteStatusesResult.error
+    ? ((groupInviteStatusesResult.data ?? []) as GroupInviteStatusRow[])
+    : [];
+  const groupMemberships = !groupMembershipsResult.error
+    ? ((groupMembershipsResult.data ?? []) as GroupMembershipRow[])
+    : [];
 
   const rowsByKey = new Map<string, { appUser?: RawAdminAppUser; invite?: RawAdminInvite; authUser?: RawAdminAuthUser }>();
   const managerLimitsByUserId = new Map(
@@ -128,6 +152,8 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
   );
   const latestInviteJobByEmail = new Map<string, EmailJobRow>();
   const groupUsageByUserId = new Map<string, { currentGroupsUsed: number; currentMembersUsed: number }>();
+  const groupInviteStatusByEmail = new Map<string, string>();
+  const groupMembershipCountByUserId = new Map<string, number>();
 
   for (const emailJob of emailJobRows) {
     const normalizedEmail = normalizeEmail(emailJob.email);
@@ -136,6 +162,24 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
     }
 
     latestInviteJobByEmail.set(normalizedEmail, emailJob);
+  }
+
+  const inviteStatusCountsByEmail = new Map<string, Record<string, number>>();
+  for (const invite of groupInviteStatuses) {
+    const existing = inviteStatusCountsByEmail.get(invite.normalized_email) ?? {};
+    existing[invite.status] = (existing[invite.status] ?? 0) + 1;
+    inviteStatusCountsByEmail.set(invite.normalized_email, existing);
+  }
+
+  for (const [email, counts] of inviteStatusCountsByEmail.entries()) {
+    groupInviteStatusByEmail.set(email, summarizeGroupInviteStatuses(counts));
+  }
+
+  for (const membership of groupMemberships) {
+    groupMembershipCountByUserId.set(
+      membership.user_id,
+      (groupMembershipCountByUserId.get(membership.user_id) ?? 0) + 1
+    );
   }
 
   for (const group of (groups ?? []) as Array<{ owner_user_id: string | null; group_members?: Array<{ count: number | null }> | { count: number | null } | null }>) {
@@ -161,6 +205,7 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         id: user.id,
         name: user.name,
         email: user.email,
+        avatar_url: user.avatar_url ?? null,
         role: user.role,
         status: user.status ?? "active",
         username: user.username ?? null,
@@ -217,6 +262,7 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         key,
         displayName,
         email: health.email ?? value.invite?.email ?? "Unknown email",
+        avatarUrl: value.appUser?.avatar_url ?? null,
         roleLabel,
         totalPoints: value.appUser?.totalPoints ?? 0,
         appState: health.appState,
@@ -241,7 +287,12 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         inviteLastError: value.invite?.lastError ?? null,
         inviteDeliveryState,
         emailConfirmedAt: health.emailConfirmedAt ?? null,
+        confirmationSentAt: health.confirmationSentAt ?? null,
         lastSignInAt: health.lastSignInAt ?? null,
+        hasProfile: Boolean(value.appUser),
+        usernameSet: Boolean(value.appUser?.username?.trim()),
+        groupInviteStatus: groupInviteStatusByEmail.get(normalizeEmail(health.email) ?? "") ?? "None",
+        groupMembershipCount: health.appUserId ? (groupMembershipCountByUserId.get(health.appUserId) ?? 0) : 0,
         onboardingIncomplete: health.onboardingIncomplete,
         username: value.appUser?.username ?? null,
         troubleshootingNotes: health.troubleshootingNotes
@@ -255,6 +306,24 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
 
       return left.displayName.localeCompare(right.displayName);
     });
+}
+
+function summarizeGroupInviteStatuses(counts: Record<string, number>) {
+  const orderedStatuses: Array<{ key: keyof typeof counts; label: string }> = [
+    { key: "pending", label: "Pending" },
+    { key: "accepted", label: "Accepted" },
+    { key: "expired", label: "Expired" },
+    { key: "revoked", label: "Revoked" }
+  ];
+
+  const parts = orderedStatuses
+    .map(({ key, label }) => {
+      const count = counts[key];
+      return count ? `${label} (${count})` : null;
+    })
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join(" · ") : "None";
 }
 
 async function fetchAllAuthUsers(adminSupabase: ReturnType<typeof createAdminClient>): Promise<RawAdminAuthUser[]> {
@@ -276,6 +345,7 @@ async function fetchAllAuthUsers(adminSupabase: ReturnType<typeof createAdminCli
         id: user.id,
         email: user.email ?? null,
         emailConfirmedAt: user.email_confirmed_at ?? null,
+        confirmationSentAt: user.confirmation_sent_at ?? null,
         confirmedAt: user.confirmed_at ?? null,
         lastSignInAt: user.last_sign_in_at ?? null,
         createdAt: user.created_at ?? null

@@ -2,21 +2,29 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  deleteUserAndStartOverAction,
   fetchAdminPlayerHealthAction,
+  fetchLeaderboardFeatureSettingsAction,
   repairPendingInviteAction,
+  resendConfirmationOrOnboardingNudgeAction,
   removeManagerAccessAction,
+  resetOnboardingStateAction,
   resetUserAccess,
+  updateLeaderboardFeatureSettingAction,
   updateUserDisplayNameAction,
   upsertManagerLimitsAction
 } from "@/app/admin/actions";
 import type { AdminPlayerHealthRow } from "@/lib/admin-player-health";
+import type { LeaderboardFeatureSettingKey, LeaderboardFeatureSettings } from "@/lib/app-settings";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { AdminGroupsSection } from "@/components/admin/AdminGroupsClient";
 import { AdminInvitesSection, formatDate } from "@/components/admin/AdminInvitesClient";
+import { Avatar } from "@/components/Avatar";
 import {
   ActionButton,
   HierarchyPanel,
   InlineConfirmation,
+  InlineTextConfirmation,
   ManagementBadge,
   ManagementCard,
   ManagementDatum,
@@ -35,6 +43,7 @@ const FILTERS = [
 
 export function AdminPlayersClient() {
   const [players, setPlayers] = useState<AdminPlayerHealthRow[]>([]);
+  const [leaderboardSettings, setLeaderboardSettings] = useState<LeaderboardFeatureSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [sendingResetForUserId, setSendingResetForUserId] = useState<string | null>(null);
@@ -54,9 +63,15 @@ export function AdminPlayersClient() {
     confirmLabel: string;
     onConfirm: () => void;
   } | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{
+    key: string;
+    email: string;
+    displayName: string;
+  } | null>(null);
+  const [deleteConfirmationValue, setDeleteConfirmationValue] = useState("");
 
   useEffect(() => {
-    loadPlayers().finally(() => setIsLoading(false));
+    Promise.all([loadPlayers(), loadLeaderboardSettings()]).finally(() => setIsLoading(false));
   }, []);
 
   async function loadPlayers() {
@@ -67,6 +82,16 @@ export function AdminPlayersClient() {
     }
 
     setPlayers(result.players);
+  }
+
+  async function loadLeaderboardSettings() {
+    const result = await fetchLeaderboardFeatureSettingsAction();
+    if (!result.ok) {
+      setMessage({ tone: "error", text: result.message });
+      return;
+    }
+
+    setLeaderboardSettings(result.settings);
   }
 
   const filteredPlayers = useMemo(() => {
@@ -104,7 +129,7 @@ export function AdminPlayersClient() {
   async function refreshPlayers() {
     setMessage(null);
     setIsLoading(true);
-    await loadPlayers();
+    await Promise.all([loadPlayers(), loadLeaderboardSettings()]);
     setIsLoading(false);
   }
 
@@ -151,6 +176,66 @@ export function AdminPlayersClient() {
       />
       <HierarchyPanel />
       <AdminInvitesSection showHeader={false} showInviteList={false} />
+      <ManagementCard
+        title="Leaderboard highlights"
+        subtitle="Super-admin controls for tournament-time spotlight features."
+      >
+        <div className="space-y-3">
+          <p className="text-sm font-semibold text-gray-600">
+            These switches control what appears on the live leaderboard. All features stay off until you turn them on.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <LeaderboardSettingToggle
+              label="Daily Winner"
+              description="Show the top scorer or tied scorers for the current day."
+              settingKey="daily_winner_enabled"
+              settings={leaderboardSettings}
+              activeActionKey={activeActionKey}
+              onToggle={(enabled) => {
+                void withAction(`leaderboard-setting-daily_winner_enabled`, async () => {
+                  const result = await updateLeaderboardFeatureSettingAction("daily_winner_enabled", enabled);
+                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                  if (result.ok) {
+                    await loadLeaderboardSettings();
+                  }
+                });
+              }}
+            />
+            <LeaderboardSettingToggle
+              label="Perfect Pick"
+              description="Show the exact-score badge for qualifying leaderboard rows."
+              settingKey="perfect_pick_enabled"
+              settings={leaderboardSettings}
+              activeActionKey={activeActionKey}
+              onToggle={(enabled) => {
+                void withAction(`leaderboard-setting-perfect_pick_enabled`, async () => {
+                  const result = await updateLeaderboardFeatureSettingAction("perfect_pick_enabled", enabled);
+                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                  if (result.ok) {
+                    await loadLeaderboardSettings();
+                  }
+                });
+              }}
+            />
+            <LeaderboardSettingToggle
+              label="Leaderboard Activity"
+              description="Show rank movement arrows and point-change context."
+              settingKey="leaderboard_activity_enabled"
+              settings={leaderboardSettings}
+              activeActionKey={activeActionKey}
+              onToggle={(enabled) => {
+                void withAction(`leaderboard-setting-leaderboard_activity_enabled`, async () => {
+                  const result = await updateLeaderboardFeatureSettingAction("leaderboard_activity_enabled", enabled);
+                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                  if (result.ok) {
+                    await loadLeaderboardSettings();
+                  }
+                });
+              }}
+            />
+          </div>
+        </div>
+      </ManagementCard>
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
 
       {confirmation ? (
@@ -161,6 +246,35 @@ export function AdminPlayersClient() {
           onConfirm={confirmation.onConfirm}
           onCancel={() => setConfirmation(null)}
           isPending={activeActionKey === confirmation.key}
+        />
+      ) : null}
+
+      {deleteConfirmation ? (
+        <InlineTextConfirmation
+          title={`Delete ${deleteConfirmation.displayName} and start over?`}
+          description="This removes invite state, email jobs, group memberships, the app profile, and the auth user only when the account has no gameplay data. Predictions, scores, and leaderboard data are never deleted by this action."
+          confirmLabel="Delete and Start Over"
+          expectedValue="DELETE"
+          inputLabel="Type DELETE to confirm"
+          inputPlaceholder="DELETE"
+          value={deleteConfirmationValue}
+          onValueChange={setDeleteConfirmationValue}
+          onConfirm={() => {
+            void withAction(deleteConfirmation.key, async () => {
+              const result = await deleteUserAndStartOverAction(deleteConfirmation.email, deleteConfirmationValue);
+              setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+              if (result.ok) {
+                setDeleteConfirmation(null);
+                setDeleteConfirmationValue("");
+                await loadPlayers();
+              }
+            });
+          }}
+          onCancel={() => {
+            setDeleteConfirmation(null);
+            setDeleteConfirmationValue("");
+          }}
+          isPending={activeActionKey === deleteConfirmation.key}
         />
       ) : null}
 
@@ -197,7 +311,12 @@ export function AdminPlayersClient() {
               return (
               <ManagementCard
                 key={player.key}
-                title={player.displayName}
+                title={
+                  <div className="flex items-center gap-3">
+                    <Avatar name={player.displayName} avatarUrl={player.avatarUrl} size="md" />
+                    <p className="truncate text-base font-black text-gray-950">{player.displayName}</p>
+                  </div>
+                }
                 subtitle={player.email}
                 badges={
                   <>
@@ -283,8 +402,44 @@ export function AdminPlayersClient() {
                       onClick={() => void handleResetUserAccess(player)}
                       disabled={sendingResetForUserId === player.appUserId || !player.appUserId}
                     >
-                      {sendingResetForUserId === player.appUserId ? "Resetting..." : "Reset User Access"}
+                      {sendingResetForUserId === player.appUserId ? "Sending..." : "Send Password Reset"}
                     </ActionButton>
+                    {player.authUserId ? (
+                      <ActionButton
+                        onClick={() => {
+                          void withAction(`nudge-${player.email}`, async () => {
+                            const result = await resendConfirmationOrOnboardingNudgeAction(player.email);
+                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                            if (result.ok) {
+                              await loadPlayers();
+                            }
+                          });
+                        }}
+                        disabled={activeActionKey === `nudge-${player.email}`}
+                      >
+                        {activeActionKey === `nudge-${player.email}`
+                          ? "Sending..."
+                          : player.emailConfirmedAt
+                            ? "Send Onboarding Reminder"
+                            : "Resend Confirmation"}
+                      </ActionButton>
+                    ) : null}
+                    {player.appUserId ? (
+                      <ActionButton
+                        onClick={() => {
+                          void withAction(`reset-onboarding-${player.appUserId}`, async () => {
+                            const result = await resetOnboardingStateAction(player.appUserId!);
+                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                            if (result.ok) {
+                              await loadPlayers();
+                            }
+                          });
+                        }}
+                        disabled={activeActionKey === `reset-onboarding-${player.appUserId}`}
+                      >
+                        {activeActionKey === `reset-onboarding-${player.appUserId}` ? "Resetting..." : "Reset Profile Setup"}
+                      </ActionButton>
+                    ) : null}
                     {canRepairInvite(player) ? (
                       <ActionButton
                         onClick={() => {
@@ -305,15 +460,34 @@ export function AdminPlayersClient() {
                             : "Resend Invite"}
                       </ActionButton>
                     ) : null}
+                    <ActionButton
+                      tone="danger"
+                      onClick={() => {
+                        setDeleteConfirmation({
+                          key: `delete-start-over-${player.email}`,
+                          email: player.email,
+                          displayName: player.displayName
+                        });
+                        setDeleteConfirmationValue("");
+                      }}
+                      disabled={activeActionKey === `delete-start-over-${player.email}`}
+                    >
+                      {activeActionKey === `delete-start-over-${player.email}` ? "Deleting..." : "Delete and Start Over"}
+                    </ActionButton>
                   </>
                 }
               >
                 <ManagementGrid>
+                  <ManagementDatum label="Auth confirmed?" value={player.emailConfirmedAt ? "Yes" : "No"} />
+                  <ManagementDatum label="Profile exists?" value={player.hasProfile ? "Yes" : "No"} />
+                  <ManagementDatum label="Username set?" value={player.usernameSet ? "Yes" : "No"} />
                   <ManagementDatum label="App" value={`${formatStateLabel(player.appState)}${player.userStatus ? ` (${player.userStatus})` : ""}`} />
                   <ManagementDatum label="Auth" value={formatStateLabel(player.authState)} />
-                  <ManagementDatum label="Invite" value={formatStateLabel(player.inviteState)} />
+                  <ManagementDatum label="App invite status" value={formatStateLabel(player.inviteState)} />
+                  <ManagementDatum label="Group invite status" value={player.groupInviteStatus} />
                   <ManagementDatum label="Delivery" value={formatDeliveryState(player)} />
                   <ManagementDatum label="Onboarding" value={player.onboardingIncomplete ? "Incomplete" : player.appUserId ? "Complete" : "Waiting for auth"} />
+                  <ManagementDatum label="Group memberships" value={player.groupMembershipCount} />
                   <ManagementDatum
                     label="Manager status"
                     value={
@@ -329,6 +503,7 @@ export function AdminPlayersClient() {
                   <ManagementDatum label="Created" value={player.createdAt ? formatDate(player.createdAt) : "—"} />
                   <ManagementDatum label="Last sign in" value={player.lastSignInAt ? formatDate(player.lastSignInAt) : "Never"} />
                   <ManagementDatum label="Email confirmed" value={player.emailConfirmedAt ? formatDate(player.emailConfirmedAt) : "Not yet"} />
+                  <ManagementDatum label="Last confirmation sent" value={player.confirmationSentAt ? formatDate(player.confirmationSentAt) : "Not sent"} />
                   <ManagementDatum label="Username" value={player.username ?? "Not set"} />
                   <ManagementDatum label="Invite accepted" value={player.acceptedAt ? formatDate(player.acceptedAt) : "No"} />
                   <ManagementDatum label="Send attempts" value={player.inviteSendAttempts} />
@@ -449,7 +624,7 @@ export function AdminPlayersClient() {
       userId: player.appUserId,
       displayName: player.displayName,
       maxGroups: String(player.maxGroups ?? 3),
-      maxMembersPerGroup: String(player.maxMembersPerGroup ?? 15)
+      maxMembersPerGroup: String(player.maxMembersPerGroup ?? 4)
     });
   }
 }
@@ -512,4 +687,44 @@ function formatDeliveryState(player: AdminPlayerHealthRow) {
     default:
       return player.inviteState === "not_invited" ? "No invite" : "Awaiting update";
   }
+}
+
+function LeaderboardSettingToggle({
+  label,
+  description,
+  settingKey,
+  settings,
+  activeActionKey,
+  onToggle
+}: {
+  label: string;
+  description: string;
+  settingKey: LeaderboardFeatureSettingKey;
+  settings: LeaderboardFeatureSettings | null;
+  activeActionKey: string | null;
+  onToggle: (enabled: boolean) => void;
+}) {
+  const value = settings?.[settingKey] ?? false;
+  const isPending = activeActionKey === `leaderboard-setting-${settingKey}`;
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-base font-black text-gray-950">{label}</p>
+          <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">{description}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onToggle(!value)}
+          disabled={isPending}
+          className={`rounded-md px-3 py-2 text-sm font-bold ${
+            value ? "bg-accent text-white" : "bg-gray-100 text-gray-700"
+          } disabled:opacity-60`}
+        >
+          {isPending ? "Saving..." : value ? "On" : "Off"}
+        </button>
+      </div>
+    </div>
+  );
 }

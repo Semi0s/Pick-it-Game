@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 import { Trophy } from "lucide-react";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchPlayerPredictions, savePlayerPrediction } from "@/lib/player-predictions";
+import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
-import { isPredictionLocked } from "@/lib/scoring";
 import { fetchPredictionsForMatches, type SocialPrediction } from "@/lib/social-predictions";
 import { getMatchDateKey } from "@/lib/tournament-calendar";
 import type { MatchStage, MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
@@ -121,6 +121,7 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
       return currentPredictions.map((item, index) => (index === existingIndex ? savedPrediction : item));
     });
     fetchPredictionsForMatches(filteredMatches.map((match) => match.id)).then(setSocialPredictions);
+    return savedPrediction;
   }
 
   return (
@@ -129,8 +130,8 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Play</p>
         <h2 className="mt-2 text-3xl font-black leading-tight">Pick every match.</h2>
         <p className="mt-3 text-base leading-7 text-gray-600">
-          Choose the winner or call the draw. Exact scores are optional now, but they will matter once scoring
-          goes live.
+          Choose the winner or call the draw. Exact scores are optional now, and picks stay open only while a match is
+          scheduled.
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <div className="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
@@ -204,13 +205,18 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
                 </p>
               </div>
               <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold text-gray-600">
-                {dateMatches.filter((match) => !isPredictionLocked(match)).length} open
+                {dateMatches.filter((match) => canEditPrediction(match.status)).length} open
               </span>
             </div>
 
             <div className="space-y-3">
               {dateMatches.map((match) => (
                 <div key={match.id} className="space-y-2">
+                  <div className="flex items-center justify-end">
+                    <span className="rounded-md bg-gray-100 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-600">
+                      {getPredictionStateLabel(match.status)}
+                    </span>
+                  </div>
                   <GroupPredictionCard
                     match={match}
                     prediction={predictions.find((item) => item.matchId === match.id)}

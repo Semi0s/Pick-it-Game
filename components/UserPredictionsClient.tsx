@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { Avatar } from "@/components/Avatar";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
+import { getPredictionStateLabel } from "@/lib/prediction-state";
 import { getMatchDateKey, formatCalendarDate, tournamentCalendar } from "@/lib/tournament-calendar";
 import { fetchLeaderboardUsers, fetchPredictionsForUser, type SocialPrediction } from "@/lib/social-predictions";
 import type { MatchWithTeams, UserProfile } from "@/lib/types";
@@ -69,7 +71,10 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
     <div className="space-y-5">
       <section className="rounded-lg bg-gray-100 p-5">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Public picks</p>
-        <h2 className="mt-2 text-3xl font-black leading-tight">{profile?.name ?? "Player picks"}</h2>
+        <div className="mt-2 flex items-center gap-3">
+          <Avatar name={profile?.name ?? "Player"} avatarUrl={profile?.avatarUrl} size="lg" />
+          <h2 className="min-w-0 truncate text-3xl font-black leading-tight">{profile?.name ?? "Player picks"}</h2>
+        </div>
         <Link
           href="/leaderboard"
           className="mt-4 inline-flex w-full items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 sm:w-auto"
@@ -90,7 +95,7 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
 
       {!isLoading && !error && predictions.length === 0 ? (
         <p className="rounded-lg border border-gray-200 bg-white px-4 py-5 text-sm font-semibold text-gray-600">
-          No public picks are available yet. Picks appear here once matches are live or final.
+          No public picks are available yet. Picks appear here once matches lock or go final.
         </p>
       ) : null}
 
@@ -117,10 +122,15 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
 
                   return (
                     <div key={prediction.id} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                      <p className="mb-2 text-sm font-black text-gray-950">
-                        {match.homeTeam?.flagEmoji} {match.homeTeam?.shortName} vs {match.awayTeam?.flagEmoji}{" "}
-                        {match.awayTeam?.shortName}
-                      </p>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <p className="text-sm font-black text-gray-950">
+                          {match.homeTeam?.flagEmoji} {match.homeTeam?.shortName} vs {match.awayTeam?.flagEmoji}{" "}
+                          {match.awayTeam?.shortName}
+                        </p>
+                        <span className="rounded-md bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-600">
+                          {getPredictionStateLabel(match.status)}
+                        </span>
+                      </div>
                       <PredictionRow match={match} prediction={prediction} />
                     </div>
                   );

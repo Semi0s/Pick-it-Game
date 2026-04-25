@@ -85,7 +85,10 @@ type GroupMemberRecord = {
   user_id: string;
   role: GroupMemberRole;
   joined_at: string;
-  user?: { id: string; name: string; email: string } | Array<{ id: string; name: string; email: string }> | null;
+  user?:
+    | { id: string; name: string; email: string; avatar_url?: string | null }
+    | Array<{ id: string; name: string; email: string; avatar_url?: string | null }>
+    | null;
 };
 
 type EnqueueEmailJobResult =
@@ -172,6 +175,7 @@ export type ManagedGroupMember = {
   userId: string;
   name: string;
   email: string;
+  avatarUrl?: string | null;
   role: GroupMemberRole;
   joinedAt: string;
 };
@@ -1248,7 +1252,7 @@ async function fetchManagedGroupDetails(
   const [memberResult, inviteResult] = await Promise.all([
     adminSupabase
       .from("group_members")
-      .select("id,group_id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email)")
+      .select("id,group_id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email,avatar_url)")
       .in("group_id", groupIds)
       .order("joined_at", { ascending: true }),
     manageableGroupIds.length > 0
@@ -1277,6 +1281,7 @@ async function fetchManagedGroupDetails(
       userId: row.user_id,
       name: userRow?.name ?? "Player",
       email: userRow?.email ?? "",
+      avatarUrl: userRow?.avatar_url ?? null,
       role: row.role,
       joinedAt: row.joined_at
     });

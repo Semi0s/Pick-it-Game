@@ -15,6 +15,7 @@ type PredictionRow = {
   predicted_home_score?: number | null;
   predicted_away_score?: number | null;
   points_awarded?: number | null;
+  updated_at?: string | null;
 };
 
 export async function fetchPlayerPredictions(userId: string): Promise<Prediction[]> {
@@ -28,7 +29,7 @@ export async function fetchPlayerPredictions(userId: string): Promise<Prediction
   const { data, error } = await supabase
     .from("predictions")
     .select(
-      "id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded"
+      "id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded,updated_at"
     )
     .eq("user_id", userId);
 
@@ -60,8 +61,9 @@ export async function fetchPlayerPredictions(userId: string): Promise<Prediction
 
 export async function savePlayerPrediction(prediction: Prediction): Promise<Prediction> {
   if (!hasSupabaseConfig()) {
-    upsertStoredPrediction(prediction);
-    return prediction;
+    const localPrediction = { ...prediction, updatedAt: new Date().toISOString() };
+    upsertStoredPrediction(localPrediction);
+    return localPrediction;
   }
 
   const result = await saveGroupPredictionAction({
@@ -71,6 +73,11 @@ export async function savePlayerPrediction(prediction: Prediction): Promise<Pred
   });
 
   if (!result.ok) {
+    console.error("Failed to save prediction.", {
+      matchId: prediction.matchId,
+      userId: prediction.userId,
+      message: result.message
+    });
     throw new Error(result.message);
   }
 
@@ -104,6 +111,7 @@ function mapPredictionRow(row: PredictionRow): Prediction {
     predictedIsDraw: row.predicted_is_draw,
     predictedHomeScore: row.predicted_home_score ?? undefined,
     predictedAwayScore: row.predicted_away_score ?? undefined,
-    pointsAwarded: row.points_awarded ?? 0
+    pointsAwarded: row.points_awarded ?? 0,
+    updatedAt: row.updated_at ?? undefined
   };
 }

@@ -12,6 +12,7 @@ import {
   type AdminGroupSummary,
   type AdminManagerSummary
 } from "@/app/admin/actions";
+import { Avatar } from "@/components/Avatar";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import {
   ActionButton,
@@ -490,10 +491,13 @@ export function AdminGroupsSection({
                           key={member.membershipId}
                           className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3"
                         >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
-                            <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
-                            <p className="text-xs font-semibold text-gray-500">Joined {new Date(member.joinedAt).toLocaleDateString("en-US")}</p>
+                          <div className="min-w-0 flex items-center gap-3">
+                            <Avatar name={member.name} avatarUrl={member.avatarUrl} size="sm" />
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
+                              <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
+                              <p className="text-xs font-semibold text-gray-500">Joined {new Date(member.joinedAt).toLocaleDateString("en-US")}</p>
+                            </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
                             <ManagementBadge label={member.role} tone={member.role === "manager" ? "warning" : "neutral"} />

@@ -28,5 +28,12 @@ export function useCurrentUser() {
     };
   }, []);
 
-  return { user, isLoading };
+  async function refresh() {
+    setIsLoading(true);
+    const profile = await fetchCurrentProfile();
+    setUser(profile);
+    setIsLoading(false);
+  }
+
+  return { user, isLoading, refresh };
 }
