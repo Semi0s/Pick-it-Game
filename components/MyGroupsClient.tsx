@@ -20,6 +20,7 @@ import {
   type ListManagedGroupPlayersResult,
   type MyManagedGroup
 } from "@/app/my-groups/actions";
+import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
 import { AdminInvitesSection } from "@/components/admin/AdminInvitesClient";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { formatDate } from "@/components/admin/AdminInvitesClient";
@@ -54,6 +55,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   const [groupName, setGroupName] = useState("");
   const [membershipLimit, setMembershipLimit] = useState("");
   const [inviteForms, setInviteForms] = useState<Record<string, { email: string; suggestedDisplayName: string }>>({});
+  const [inviteSuggestions, setInviteSuggestions] = useState<Record<string, InviteAutocompleteOption[]>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
   const [submittingInviteForGroup, setSubmittingInviteForGroup] = useState<string | null>(null);
   const [actionKey, setActionKey] = useState<string | null>(null);
@@ -83,6 +85,10 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
   const [superAdminGroupQuery, setSuperAdminGroupQuery] = useState("");
   const [expandedGroupIds, setExpandedGroupIds] = useState<string[]>([]);
+  const [groupDirectoryState, setGroupDirectoryState] = useState<
+    Record<string, { search: string; filter: "all" | "members" | "pending" | "accepted" }>
+  >({});
+  const [expandedInviteEditorIds, setExpandedInviteEditorIds] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -131,6 +137,45 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
       })
       .finally(() => setIsLoadingInvitePreview(false));
   }, [inviteToken]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadSuggestions() {
+      const entries = Object.entries(inviteForms);
+      if (entries.length === 0) {
+        if (isActive) {
+          setInviteSuggestions({});
+        }
+        return;
+      }
+
+      const results = await Promise.all(
+        entries.map(async ([groupId, formState]) => {
+          const normalized = formState.email.trim().toLowerCase();
+          if (normalized.length < 2) {
+            return [groupId, []] as const;
+          }
+
+          return [groupId, await fetchInviteAutocompleteAction(normalized)] as const;
+        })
+      );
+
+      if (!isActive) {
+        return;
+      }
+
+      setInviteSuggestions(
+        Object.fromEntries(results)
+      );
+    }
+
+    void loadSuggestions();
+
+    return () => {
+      isActive = false;
+    };
+  }, [inviteForms]);
 
   const groups = useMemo(
     () => (managedGroupsResult?.ok ? managedGroupsResult.groups : []),
@@ -260,6 +305,12 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     );
   }
 
+  function toggleExpandedInviteEditor(inviteId: string) {
+    setExpandedInviteEditorIds((current) =>
+      current.includes(inviteId) ? current.filter((id) => id !== inviteId) : [...current, inviteId]
+    );
+  }
+
   const inviteLoginPath = inviteToken ? `/login?flow=invite&next=${encodeURIComponent(`/my-groups?invite=${inviteToken}`)}` : "/login";
   const inviteSignupPath = inviteToken
     ? `/login?mode=signup&flow=invite&next=${encodeURIComponent(`/my-groups?invite=${inviteToken}`)}`
@@ -385,7 +436,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
           actions={
             <>
               <Link href="/admin/players" className="inline-flex">
-                <ActionButton>Manage Players</ActionButton>
+                <ActionButton>Manage Players & Groups</ActionButton>
               </Link>
               <Link href="/admin/players" className="inline-flex">
                 <ActionButton>Manage Managers</ActionButton>
@@ -580,7 +631,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
               <ManagementCard
                 key={group.id}
                 title={group.name}
-                titleClassName="text-xl"
+                titleClassName="text-2xl"
                 subtitle={
                   group.canManage
                     ? `${group.memberCount} members · ${group.pendingInviteCount} pending invites`
@@ -662,9 +713,36 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                           }
                           className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                         />
+                        {(inviteSuggestions[group.id] ?? []).length > 0 ? (
+                          <div className="mt-2 space-y-2">
+                            <p className="text-xs font-semibold text-gray-500">
+                              Suggestions include existing players and previous app invites.
+                            </p>
+                            <div className="space-y-2 rounded-md border border-gray-200 bg-gray-50 p-2">
+                              {(inviteSuggestions[group.id] ?? []).map((suggestion) => (
+                                <button
+                                  key={suggestion.email}
+                                  type="button"
+                                  onClick={() =>
+                                    setInviteForms((current) => ({
+                                      ...current,
+                                      [group.id]: {
+                                        ...formState,
+                                        email: suggestion.email
+                                      }
+                                    }))
+                                  }
+                                  className="block w-full rounded-md bg-white px-3 py-2 text-left text-sm font-semibold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                                >
+                                  {suggestion.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                       </label>
                       <label className="block">
-                        <span className="text-sm font-bold text-gray-800">Suggested display name</span>
+                        <span className="text-sm font-bold text-gray-800">Suggested name (temporary)</span>
                         <input
                           value={formState.suggestedDisplayName}
                           onChange={(event) =>
@@ -678,6 +756,9 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                           }
                           className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                         />
+                        <p className="mt-2 text-xs font-semibold text-gray-500">
+                          This only helps identify the invite. Players still choose their own profile name during setup.
+                        </p>
                       </label>
                       <ActionButton type="submit" disabled={submittingInviteForGroup === group.id} fullWidth>
                         {submittingInviteForGroup === group.id ? "Sending invite..." : "Send Group Invite"}
@@ -693,165 +774,276 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                 ) : null}
 
                 {isExpanded ? (
-                <div className="space-y-2">
-                  <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Members</h4>
-                  {group.members.length === 0 ? (
-                    <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">No members yet.</p>
-                  ) : (
-                    group.members.map((member) => (
-                      <div key={member.membershipId} className="rounded-md border border-gray-200 px-3 py-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
-                            <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
-                            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                              {member.role} · Joined {formatDate(member.joinedAt)}
+                (() => {
+                  const directoryState = groupDirectoryState[group.id] ?? { search: "", filter: "all" as const };
+                  const normalizedQuery = directoryState.search.trim().toLowerCase();
+                  const filteredMembers = group.members.filter((member) => {
+                    const matchesSearch =
+                      !normalizedQuery ||
+                      member.name.toLowerCase().includes(normalizedQuery) ||
+                      member.email.toLowerCase().includes(normalizedQuery);
+
+                    if (!matchesSearch) {
+                      return false;
+                    }
+
+                    return directoryState.filter === "all" || directoryState.filter === "members";
+                  });
+                  const filteredInvites = group.invites.filter((invite) => {
+                    const inviteStatusLabel = invite.status === "revoked" ? "canceled" : invite.status;
+                    const matchesSearch =
+                      !normalizedQuery ||
+                      invite.email.toLowerCase().includes(normalizedQuery) ||
+                      (invite.suggestedDisplayName ?? "").toLowerCase().includes(normalizedQuery) ||
+                      (invite.invitedByLabel ?? "").toLowerCase().includes(normalizedQuery) ||
+                      inviteStatusLabel.toLowerCase().includes(normalizedQuery);
+
+                    if (!matchesSearch) {
+                      return false;
+                    }
+
+                    if (directoryState.filter === "members") {
+                      return false;
+                    }
+
+                    if (directoryState.filter === "pending") {
+                      return invite.status === "pending";
+                    }
+
+                    if (directoryState.filter === "accepted") {
+                      return invite.status === "accepted";
+                    }
+
+                    return true;
+                  });
+
+                  return (
+                    <div className="space-y-3">
+                      {(() => {
+                        const pendingInviteCount = group.invites.filter((invite) => invite.status === "pending").length;
+                        const acceptedInviteCount = group.invites.filter((invite) => invite.status === "accepted").length;
+                        const filterOptions = [
+                          { value: "all", label: `All (${group.members.length + group.invites.length})` },
+                          { value: "members", label: `Members (${group.members.length})` },
+                          { value: "pending", label: `Pending (${pendingInviteCount})` },
+                          { value: "accepted", label: `Accepted (${acceptedInviteCount})` }
+                        ] as const;
+
+                        return (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">People & invites</h4>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">
+                              {group.members.length} members · {group.invites.length} invites
                             </p>
                           </div>
-                          {group.canManage && member.role === "member" ? (
-                            <ActionButton
-                              tone="danger"
-                              disabled={actionKey === `remove-member-${member.membershipId}`}
-                              onClick={() => {
-                                setConfirmation({
-                                  key: `remove-member-${member.membershipId}`,
-                                  title: `Remove ${member.name} from ${group.name}?`,
-                                  description: "They will keep their account, invites, and predictions. This only removes them from this group.",
-                                  confirmLabel: "Remove Player",
-                                  onConfirm: () => {
-                                    void withAction(`remove-member-${member.membershipId}`, async () => {
-                                      const result = await removeGroupMemberAction(group.id, member.userId);
-                                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                                      if (result.ok) {
-                                        setConfirmation(null);
-                                        await load();
+                          <div className="flex flex-wrap gap-2">
+                            {filterOptions.map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                onClick={() =>
+                                  setGroupDirectoryState((current) => ({
+                                    ...current,
+                                    [group.id]: {
+                                      ...directoryState,
+                                      filter: option.value as "all" | "members" | "pending" | "accepted"
+                                    }
+                                  }))
+                                }
+                                className={`rounded-md px-3 py-2 text-xs font-bold ${
+                                  directoryState.filter === option.value
+                                    ? "bg-accent-light text-accent-dark"
+                                    : "bg-white text-gray-600"
+                                }`}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <label className="mt-3 block">
+                          <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Find person or invite</span>
+                          <input
+                            value={directoryState.search}
+                            onChange={(event) =>
+                              setGroupDirectoryState((current) => ({
+                                ...current,
+                                [group.id]: {
+                                  ...directoryState,
+                                  search: event.target.value
+                                }
+                              }))
+                            }
+                            placeholder="Search by name, email, or invite status"
+                            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                          />
+                        </label>
+                      </div>
+                        );
+                      })()}
+
+                      <div className="space-y-2">
+                        {filteredMembers.map((member) => (
+                          <div key={member.membershipId} className="rounded-md border border-gray-200 px-3 py-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
+                                <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
+                                <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                  {member.role} · Joined {formatDate(member.joinedAt)}
+                                </p>
+                              </div>
+                              {group.canManage && member.role === "member" ? (
+                                <ActionButton
+                                  tone="danger"
+                                  disabled={actionKey === `remove-member-${member.membershipId}`}
+                                  onClick={() => {
+                                    setConfirmation({
+                                      key: `remove-member-${member.membershipId}`,
+                                      title: `Remove ${member.name} from ${group.name}?`,
+                                      description: "They will keep their account, invites, and predictions. This only removes them from this group.",
+                                      confirmLabel: "Remove Player",
+                                      onConfirm: () => {
+                                        void withAction(`remove-member-${member.membershipId}`, async () => {
+                                          const result = await removeGroupMemberAction(group.id, member.userId);
+                                          setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                          if (result.ok) {
+                                            setConfirmation(null);
+                                            await load();
+                                          }
+                                        });
                                       }
                                     });
-                                  }
-                                });
-                              }}
-                            >
-                              Remove
-                            </ActionButton>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-                ) : null}
-
-                {isExpanded && group.canManage ? (
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Invites</h4>
-                    {group.invites.length === 0 ? (
-                      <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">No invites yet.</p>
-                    ) : (
-                      group.invites.map((invite) => {
-                      const inviteStatusLabel = invite.status === "revoked" ? "canceled" : invite.status;
-                      const editValue = editingInviteNames[invite.id] ?? invite.suggestedDisplayName ?? "";
-
-                      return (
-                        <div key={invite.id} className="space-y-3 rounded-md border border-gray-200 px-3 py-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-black text-gray-950">{invite.email}</p>
-                              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                {inviteStatusLabel}
-                                {invite.expiresAt ? ` · Expires ${formatDate(invite.expiresAt)}` : ""}
-                              </p>
-                              <p className="mt-1 text-xs font-semibold text-gray-500">
-                                {invite.invitedByLabel ? `Invited by ${invite.invitedByLabel}` : "Group invite"}
-                                {invite.lastSentAt ? ` · Last sent ${formatDate(invite.lastSentAt)}` : ""}
-                                {` · Send attempts ${invite.sendAttempts}`}
-                              </p>
-                              {invite.lastError ? (
-                                <p className="mt-1 text-xs font-semibold text-red-700">{invite.lastError}</p>
+                                  }}
+                                >
+                                  Remove
+                                </ActionButton>
                               ) : null}
                             </div>
-                            <div className="flex flex-col gap-2">
-                              {invite.status !== "accepted" ? (
-                                <>
+                          </div>
+                        ))}
+
+                        {filteredInvites.map((invite) => {
+                          const inviteStatusLabel = invite.status === "revoked" ? "canceled" : invite.status;
+                          const editValue = editingInviteNames[invite.id] ?? invite.suggestedDisplayName ?? "";
+                          const isInviteEditorExpanded = expandedInviteEditorIds.includes(invite.id);
+
+                          return (
+                            <div key={invite.id} className="space-y-3 rounded-md border border-gray-200 px-3 py-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black text-gray-950">{invite.email}</p>
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                    {inviteStatusLabel}
+                                    {invite.expiresAt ? ` · Expires ${formatDate(invite.expiresAt)}` : ""}
+                                  </p>
+                                  <p className="mt-1 text-xs font-semibold text-gray-500">
+                                    {invite.invitedByLabel ? `Invited by ${invite.invitedByLabel}` : "Group invite"}
+                                    {invite.lastSentAt ? ` · Last sent ${formatDate(invite.lastSentAt)}` : ""}
+                                    {` · Send attempts ${invite.sendAttempts}`}
+                                  </p>
+                                  {invite.lastError ? (
+                                    <p className="mt-1 text-xs font-semibold text-red-700">{invite.lastError}</p>
+                                  ) : null}
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                  {invite.status !== "accepted" ? (
+                                    <>
+                                      <ActionButton
+                                        disabled={actionKey === `resend-invite-${invite.id}`}
+                                        onClick={() =>
+                                          void withAction(`resend-invite-${invite.id}`, async () => {
+                                            const result = await resendGroupInviteAction(invite.id);
+                                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                            if (result.ok) {
+                                              await load();
+                                            }
+                                          })
+                                        }
+                                      >
+                                        Resend
+                                      </ActionButton>
+                                      <ActionButton
+                                        onClick={() => toggleExpandedInviteEditor(invite.id)}
+                                      >
+                                        {isInviteEditorExpanded ? "Hide Edit" : "Edit Invite"}
+                                      </ActionButton>
+                                      <ActionButton
+                                        tone="danger"
+                                        disabled={actionKey === `cancel-invite-${invite.id}`}
+                                        onClick={() => {
+                                          setConfirmation({
+                                            key: `cancel-invite-${invite.id}`,
+                                            title: `Cancel the invite for ${invite.email}?`,
+                                            description: "This only affects this group invite. It will not touch the user's account or any app-level invite.",
+                                            confirmLabel: "Cancel Invite",
+                                            onConfirm: () => {
+                                              void withAction(`cancel-invite-${invite.id}`, async () => {
+                                                const result = await cancelGroupInviteAction(invite.id);
+                                                setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                                if (result.ok) {
+                                                  setConfirmation(null);
+                                                  await load();
+                                                }
+                                              });
+                                            }
+                                          });
+                                        }}
+                                      >
+                                        Cancel
+                                      </ActionButton>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              {invite.status === "pending" && isInviteEditorExpanded ? (
+                                <div className="space-y-2 rounded-md bg-gray-50 p-3">
+                                  <label className="block">
+                                    <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Suggested name (temporary)</span>
+                                    <input
+                                      value={editValue}
+                                      onChange={(event) =>
+                                        setEditingInviteNames((current) => ({
+                                          ...current,
+                                          [invite.id]: event.target.value
+                                        }))
+                                      }
+                                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                    />
+                                  </label>
                                   <ActionButton
-                                    disabled={actionKey === `resend-invite-${invite.id}`}
+                                    disabled={actionKey === `update-invite-${invite.id}`}
                                     onClick={() =>
-                                      void withAction(`resend-invite-${invite.id}`, async () => {
-                                        const result = await resendGroupInviteAction(invite.id);
+                                      void withAction(`update-invite-${invite.id}`, async () => {
+                                        const result = await updateGroupInviteNameAction(invite.id, editValue);
                                         setMessage({ tone: result.ok ? "success" : "error", text: result.message });
                                         if (result.ok) {
                                           await load();
                                         }
                                       })
                                     }
+                                    fullWidth
                                   >
-                                    Resend
+                                    Save Suggested Name
                                   </ActionButton>
-                                  <ActionButton
-                                    tone="danger"
-                                    disabled={actionKey === `cancel-invite-${invite.id}`}
-                                    onClick={() => {
-                                      setConfirmation({
-                                        key: `cancel-invite-${invite.id}`,
-                                        title: `Cancel the invite for ${invite.email}?`,
-                                        description: "This only affects this group invite. It will not touch the user's account or any app-level invite.",
-                                        confirmLabel: "Cancel Invite",
-                                        onConfirm: () => {
-                                          void withAction(`cancel-invite-${invite.id}`, async () => {
-                                            const result = await cancelGroupInviteAction(invite.id);
-                                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                                            if (result.ok) {
-                                              setConfirmation(null);
-                                              await load();
-                                            }
-                                          });
-                                        }
-                                      });
-                                    }}
-                                  >
-                                    Cancel
-                                  </ActionButton>
-                                </>
+                                </div>
                               ) : null}
                             </div>
-                          </div>
+                          );
+                        })}
 
-                          {invite.status === "pending" ? (
-                            <div className="space-y-2">
-                              <label className="block">
-                                <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Suggested display name</span>
-                                <input
-                                  value={editValue}
-                                  onChange={(event) =>
-                                    setEditingInviteNames((current) => ({
-                                      ...current,
-                                      [invite.id]: event.target.value
-                                    }))
-                                  }
-                                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                                />
-                              </label>
-                              <ActionButton
-                                disabled={actionKey === `update-invite-${invite.id}`}
-                                onClick={() =>
-                                  void withAction(`update-invite-${invite.id}`, async () => {
-                                    const result = await updateGroupInviteNameAction(invite.id, editValue);
-                                    setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                                    if (result.ok) {
-                                      await load();
-                                    }
-                                  })
-                                }
-                                fullWidth
-                              >
-                                Save Suggested Name
-                              </ActionButton>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                      })
-                    )}
-                  </div>
+                        {filteredMembers.length === 0 && filteredInvites.length === 0 ? (
+                          <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">
+                            No members or invites match this search.
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })()
                 ) : null}
               </ManagementCard>
             );

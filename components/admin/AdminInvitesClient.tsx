@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { createAdminInviteAction } from "@/app/admin/actions";
+import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
 import { fetchAdminInvites, type AdminInvite } from "@/lib/admin-data";
 import type { UserRole } from "@/lib/types";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
@@ -34,6 +35,7 @@ export function AdminInvitesSection({
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [emailSuggestions, setEmailSuggestions] = useState<InviteAutocompleteOption[]>([]);
   const canInviteSuperAdmin = user?.role === "admin";
   const canInviteManager = user?.role === "admin";
   const accessLevelOptions: Array<{ value: InviteAccessLevel; label: string }> = [
@@ -45,6 +47,31 @@ export function AdminInvitesSection({
   useEffect(() => {
     loadInvites();
   }, []);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadSuggestions() {
+      const normalized = email.trim().toLowerCase();
+      if (normalized.length < 2) {
+        if (isActive) {
+          setEmailSuggestions([]);
+        }
+        return;
+      }
+
+      const results = await fetchInviteAutocompleteAction(normalized);
+      if (isActive) {
+        setEmailSuggestions(results);
+      }
+    }
+
+    void loadSuggestions();
+
+    return () => {
+      isActive = false;
+    };
+  }, [email]);
 
   async function loadInvites() {
     setIsLoading(true);
@@ -118,6 +145,23 @@ export function AdminInvitesSection({
               onChange={(event) => setEmail(event.target.value)}
               className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
             />
+            {emailSuggestions.length > 0 ? (
+              <div className="mt-2 space-y-2">
+                <p className="text-xs font-semibold text-gray-500">Suggestions include existing players and previous app invites.</p>
+                <div className="space-y-2 rounded-md border border-gray-200 bg-gray-50 p-2">
+                  {emailSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion.email}
+                      type="button"
+                      onClick={() => setEmail(suggestion.email)}
+                      className="block w-full rounded-md bg-white px-3 py-2 text-left text-sm font-semibold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                    >
+                      {suggestion.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </label>
           <label className="block">
             <span className="text-sm font-bold text-gray-800">Access level</span>

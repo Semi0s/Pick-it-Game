@@ -233,14 +233,12 @@ async function sendGroupInviteEmail(job: EmailJobRow) {
   const suggestedDisplayName = payload.suggestedDisplayName?.trim() || null;
   const inviterLabel = payload.inviterName?.trim() || payload.inviterEmail?.trim() || "A group manager";
   const claimUrl = payload.claimUrl;
-  const appName = "PICK-IT!";
 
   const escapedGroupName = escapeHtml(groupName);
   const escapedInvitedEmail = escapeHtml(invitedEmail);
   const escapedInviterLabel = escapeHtml(inviterLabel);
   const escapedSuggestedName = suggestedDisplayName ? escapeHtml(suggestedDisplayName) : null;
   const escapedClaimUrl = escapeHtml(claimUrl);
-  const escapedAppName = escapeHtml(appName);
 
   const introLine = escapedSuggestedName
     ? `${escapedInviterLabel} invited ${escapedSuggestedName} (${escapedInvitedEmail}) to join ${escapedGroupName}.`
@@ -248,7 +246,12 @@ async function sendGroupInviteEmail(job: EmailJobRow) {
 
   const html = `
     <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
-      <h1 style="font-size: 24px; margin-bottom: 16px;">Join ${escapedGroupName} on ${escapedAppName}</h1>
+      <h1 style="font-size: 24px; margin-bottom: 16px;">${escapedInviterLabel} invited you to join ${escapedGroupName}</h1>
+      <div style="margin-bottom: 16px; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px 14px; background: #f9fafb;">
+        <p style="margin: 0 0 6px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; font-weight: 700;">Invitation details</p>
+        <p style="margin: 0; font-weight: 700;">Group: ${escapedGroupName}</p>
+        <p style="margin: 4px 0 0 0; font-weight: 700;">Invited by: ${escapedInviterLabel}</p>
+      </div>
       <p style="margin-bottom: 12px;">${introLine}</p>
       <p style="margin-bottom: 12px;">
         Use the secure claim link below to sign in or create your account, then join the group with your global picks.
@@ -267,7 +270,10 @@ async function sendGroupInviteEmail(job: EmailJobRow) {
   `;
 
   const textLines = [
-    `Join ${groupName} on ${appName}`,
+    `${inviterLabel} invited you to join ${groupName}`,
+    "",
+    `Group: ${groupName}`,
+    `Invited by: ${inviterLabel}`,
     "",
     suggestedDisplayName
       ? `${inviterLabel} invited ${suggestedDisplayName} (${invitedEmail}) to join ${groupName}.`
@@ -289,7 +295,7 @@ async function sendGroupInviteEmail(job: EmailJobRow) {
   try {
     const result = await sendTransactionalEmail({
       to: invitedEmail,
-      subject: `You're invited to join ${groupName} on PICK-IT!`,
+      subject: `${inviterLabel} invited you to join ${groupName}`,
       html,
       text: textLines.join("\n"),
       replyTo: payload.inviterEmail?.trim() || undefined

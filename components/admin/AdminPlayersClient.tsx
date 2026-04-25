@@ -11,6 +11,7 @@ import {
 } from "@/app/admin/actions";
 import type { AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
+import { AdminGroupsSection } from "@/components/admin/AdminGroupsClient";
 import { AdminInvitesSection, formatDate } from "@/components/admin/AdminInvitesClient";
 import {
   ActionButton,
@@ -425,6 +426,16 @@ export function AdminPlayersClient() {
             );
             })
           : null}
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-xl font-black">Group management</h3>
+          <p className="mt-1 text-sm font-semibold text-gray-600">
+            Add existing players to groups, adjust group limits, and repair ownership without leaving this admin surface.
+          </p>
+        </div>
+        <AdminGroupsSection showIntro={false} showPlayerManagementLink={false} />
       </section>
     </div>
   );

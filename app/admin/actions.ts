@@ -51,6 +51,8 @@ type InviteLookupRow = {
 };
 
 type EmailJobKind = "access_email" | "password_recovery";
+type GroupMemberRole = "manager" | "member";
+type GroupStatus = "active" | "archived";
 
 type EmailJobPayload = {
   displayName?: string;
@@ -163,6 +165,59 @@ export type UpsertManagerLimitsResult =
 export type RemoveManagerAccessResult = ResetUserAccessResult;
 export type UpdateUserDisplayNameResult = ResetUserAccessResult;
 export type RepairPendingInviteResult = ResetUserAccessResult;
+export type UpdateManagerLimitsResult = UpsertManagerLimitsResult;
+
+export type AdminGroupSummary = {
+  id: string;
+  name: string;
+  status: GroupStatus;
+  ownerUserId: string | null;
+  ownerName: string | null;
+  ownerEmail: string | null;
+  membershipLimit: number;
+  memberCount: number;
+  members: Array<{
+    membershipId: string;
+    userId: string;
+    name: string;
+    email: string;
+    role: GroupMemberRole;
+    joinedAt: string;
+  }>;
+};
+
+export type AdminManagerSummary = {
+  userId: string;
+  name: string;
+  email: string;
+  maxGroups: number;
+  maxMembersPerGroup: number;
+  currentGroupsUsed: number;
+};
+
+export type FetchAdminGroupsResult =
+  | {
+      ok: true;
+      groups: AdminGroupSummary[];
+      managers: AdminManagerSummary[];
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type AddUserToGroupInput = {
+  userId: string;
+  groupId: string;
+  role?: GroupMemberRole;
+  overrideCapacity?: boolean;
+};
+
+export type AddUserToGroupResult = ResetUserAccessResult;
+export type RemoveUserFromGroupResult = ResetUserAccessResult;
+
+export type UpdateGroupLimitResult = ResetUserAccessResult;
+export type ChangeGroupOwnerResult = ResetUserAccessResult;
 
 export async function createAdminInviteAction(input: CreateInviteInput): Promise<CreateInviteResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
@@ -522,6 +577,399 @@ export async function upsertManagerLimitsAction(
       maxMembersPerGroup: data.max_members_per_group
     },
     message: "Manager limits updated."
+  };
+}
+
+export async function updateManagerLimitsAction(
+  userId: string,
+  maxGroups: number,
+  maxMembersPerGroup: number
+): Promise<UpdateManagerLimitsResult> {
+  return upsertManagerLimitsAction({
+    userId,
+    maxGroups,
+    maxMembersPerGroup
+  });
+}
+
+export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const adminSupabase = createAdminClient();
+  const [{ data: groups, error: groupsError }, { data: managerLimits, error: managerLimitsError }] = await Promise.all([
+    adminSupabase
+      .from("groups")
+      .select(
+        "id,name,status,owner_user_id,membership_limit,owner:users!groups_owner_user_id_fkey(id,name,email),members:group_members(id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email))"
+      )
+      .order("created_at", { ascending: false }),
+    adminSupabase
+      .from("manager_limits")
+      .select("user_id,max_groups,max_members_per_group,user:users!manager_limits_user_id_fkey(id,name,email)")
+      .order("created_at", { ascending: false })
+  ]);
+
+  if (groupsError) {
+    return { ok: false, message: groupsError.message };
+  }
+
+  if (managerLimitsError) {
+    return { ok: false, message: managerLimitsError.message };
+  }
+
+  const groupsList = ((groups ?? []) as Array<{
+    id: string;
+    name: string;
+    status: GroupStatus;
+    owner_user_id: string | null;
+    membership_limit: number;
+    owner?: { id: string; name: string; email: string } | Array<{ id: string; name: string; email: string }> | null;
+    members?: Array<{
+      id: string;
+      user_id: string;
+      role: GroupMemberRole;
+      joined_at: string;
+      user?: { id: string; name: string; email: string } | Array<{ id: string; name: string; email: string }> | null;
+    }> | null;
+  }>).map((group) => {
+    const owner = unwrapRelation(group.owner);
+    const members = (group.members ?? []).map((member) => {
+      const user = unwrapRelation(member.user);
+      return {
+        membershipId: member.id,
+        userId: member.user_id,
+        name: user?.name ?? "Unknown user",
+        email: user?.email ?? "Unknown email",
+        role: member.role,
+        joinedAt: member.joined_at
+      };
+    });
+
+    return {
+      id: group.id,
+      name: group.name,
+      status: group.status,
+      ownerUserId: group.owner_user_id,
+      ownerName: owner?.name ?? null,
+      ownerEmail: owner?.email ?? null,
+      membershipLimit: group.membership_limit,
+      memberCount: members.length,
+      members
+    } satisfies AdminGroupSummary;
+  });
+
+  const currentGroupsUsedByManager = new Map<string, number>();
+  for (const group of groupsList) {
+    if (!group.ownerUserId) {
+      continue;
+    }
+
+    currentGroupsUsedByManager.set(group.ownerUserId, (currentGroupsUsedByManager.get(group.ownerUserId) ?? 0) + 1);
+  }
+
+  const managers = ((managerLimits ?? []) as Array<{
+    user_id: string;
+    max_groups: number;
+    max_members_per_group: number;
+    user?: { id: string; name: string; email: string } | Array<{ id: string; name: string; email: string }> | null;
+  }>).map((row) => {
+    const user = unwrapRelation(row.user);
+    return {
+      userId: row.user_id,
+      name: user?.name ?? "Unknown user",
+      email: user?.email ?? "Unknown email",
+      maxGroups: row.max_groups,
+      maxMembersPerGroup: row.max_members_per_group,
+      currentGroupsUsed: currentGroupsUsedByManager.get(row.user_id) ?? 0
+    } satisfies AdminManagerSummary;
+  });
+
+  return { ok: true, groups: groupsList, managers };
+}
+
+export async function addUserToGroupAction(input: AddUserToGroupInput): Promise<AddUserToGroupResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const adminSupabase = createAdminClient();
+  const groupId = input.groupId.trim();
+  const userIdentifier = input.userId.trim();
+  const role = input.role ?? "member";
+  const overrideCapacity = input.overrideCapacity ?? false;
+
+  if (!groupId || !userIdentifier) {
+    return { ok: false, message: "A valid group and user are required." };
+  }
+
+  const targetUser = await findUserByIdOrEmail(adminSupabase, userIdentifier);
+  if (!targetUser) {
+    return { ok: false, message: "That user was not found." };
+  }
+
+  const { data: group, error: groupError } = await adminSupabase
+    .from("groups")
+    .select("id,name,membership_limit")
+    .eq("id", groupId)
+    .maybeSingle();
+
+  if (groupError) {
+    return { ok: false, message: groupError.message };
+  }
+
+  if (!group) {
+    return { ok: false, message: "That group was not found." };
+  }
+
+  const { data: existingMembership, error: membershipLookupError } = await adminSupabase
+    .from("group_members")
+    .select("id")
+    .eq("group_id", groupId)
+    .eq("user_id", targetUser.id)
+    .maybeSingle();
+
+  if (membershipLookupError) {
+    return { ok: false, message: membershipLookupError.message };
+  }
+
+  if (existingMembership) {
+    return { ok: false, message: `${targetUser.name} is already in ${group.name}.` };
+  }
+
+  const { count: memberCount, error: memberCountError } = await adminSupabase
+    .from("group_members")
+    .select("id", { count: "exact", head: true })
+    .eq("group_id", groupId);
+
+  if (memberCountError) {
+    return { ok: false, message: memberCountError.message };
+  }
+
+  if (!overrideCapacity && (memberCount ?? 0) >= group.membership_limit) {
+    return { ok: false, message: `${group.name} is already full. Use override to add this player anyway.` };
+  }
+
+  const { error: insertError } = await adminSupabase.from("group_members").insert({
+    group_id: groupId,
+    user_id: targetUser.id,
+    role
+  });
+
+  if (insertError) {
+    return { ok: false, message: insertError.message };
+  }
+
+  revalidatePath("/admin/groups");
+  revalidatePath("/my-groups");
+
+  return {
+    ok: true,
+    message: `${targetUser.name} was added to ${group.name}${overrideCapacity ? " with capacity override." : "."}`
+  };
+}
+
+export async function removeUserFromGroupAction(userId: string, groupId: string): Promise<RemoveUserFromGroupResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const adminSupabase = createAdminClient();
+  const trimmedUserId = userId.trim();
+  const trimmedGroupId = groupId.trim();
+
+  if (!trimmedUserId || !trimmedGroupId) {
+    return { ok: false, message: "A valid group and user are required." };
+  }
+
+  const [{ data: membership, error: membershipError }, { data: group, error: groupError }, { data: user, error: userError }] =
+    await Promise.all([
+      adminSupabase
+        .from("group_members")
+        .select("id,role")
+        .eq("group_id", trimmedGroupId)
+        .eq("user_id", trimmedUserId)
+        .maybeSingle(),
+      adminSupabase
+        .from("groups")
+        .select("id,name,owner_user_id")
+        .eq("id", trimmedGroupId)
+        .maybeSingle(),
+      adminSupabase
+        .from("users")
+        .select("id,name")
+        .eq("id", trimmedUserId)
+        .maybeSingle()
+    ]);
+
+  if (membershipError || groupError || userError) {
+    return { ok: false, message: membershipError?.message ?? groupError?.message ?? userError?.message ?? "Lookup failed." };
+  }
+
+  if (!membership || !group || !user) {
+    return { ok: false, message: "That group membership was not found." };
+  }
+
+  if (group.owner_user_id === trimmedUserId) {
+    return { ok: false, message: "Change the group owner first before removing this user from the group." };
+  }
+
+  if (membership.role === "manager") {
+    const { count: managerCount, error: managerCountError } = await adminSupabase
+      .from("group_members")
+      .select("id", { count: "exact", head: true })
+      .eq("group_id", trimmedGroupId)
+      .eq("role", "manager");
+
+    if (managerCountError) {
+      return { ok: false, message: managerCountError.message };
+    }
+
+    if ((managerCount ?? 0) <= 1) {
+      return { ok: false, message: "This is the only manager in the group. Add or assign another manager first." };
+    }
+  }
+
+  const { error: deleteError } = await adminSupabase
+    .from("group_members")
+    .delete()
+    .eq("group_id", trimmedGroupId)
+    .eq("user_id", trimmedUserId);
+
+  if (deleteError) {
+    return { ok: false, message: deleteError.message };
+  }
+
+  revalidatePath("/admin/groups");
+  revalidatePath("/my-groups");
+
+  return {
+    ok: true,
+    message: `${user.name} was removed from ${group.name}. Their account and predictions were left intact.`
+  };
+}
+
+export async function updateGroupLimitAction(groupId: string, membershipLimit: number): Promise<UpdateGroupLimitResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const trimmedGroupId = groupId.trim();
+  const nextLimit = Math.floor(membershipLimit);
+  if (!trimmedGroupId || nextLimit <= 0) {
+    return { ok: false, message: "A positive group limit is required." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const { error } = await adminSupabase
+    .from("groups")
+    .update({
+      membership_limit: nextLimit,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", trimmedGroupId);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/admin/groups");
+  revalidatePath("/my-groups");
+
+  return {
+    ok: true,
+    message: `Group limit updated to ${nextLimit}.`
+  };
+}
+
+export async function changeGroupOwnerAction(groupId: string, newOwnerUserId: string): Promise<ChangeGroupOwnerResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const adminSupabase = createAdminClient();
+  const trimmedGroupId = groupId.trim();
+  const ownerIdentifier = newOwnerUserId.trim();
+  if (!trimmedGroupId || !ownerIdentifier) {
+    return { ok: false, message: "A valid group and new owner are required." };
+  }
+
+  const nextOwner = await findUserByIdOrEmail(adminSupabase, ownerIdentifier);
+  if (!nextOwner) {
+    return { ok: false, message: "The new owner was not found." };
+  }
+
+  const { data: group, error: groupError } = await adminSupabase
+    .from("groups")
+    .select("id,name")
+    .eq("id", trimmedGroupId)
+    .maybeSingle();
+
+  if (groupError) {
+    return { ok: false, message: groupError.message };
+  }
+
+  if (!group) {
+    return { ok: false, message: "That group was not found." };
+  }
+
+  const { data: existingMembership, error: membershipLookupError } = await adminSupabase
+    .from("group_members")
+    .select("id,role")
+    .eq("group_id", trimmedGroupId)
+    .eq("user_id", nextOwner.id)
+    .maybeSingle();
+
+  if (membershipLookupError) {
+    return { ok: false, message: membershipLookupError.message };
+  }
+
+  if (!existingMembership) {
+    const { error: insertError } = await adminSupabase.from("group_members").insert({
+      group_id: trimmedGroupId,
+      user_id: nextOwner.id,
+      role: "manager"
+    });
+
+    if (insertError) {
+      return { ok: false, message: insertError.message };
+    }
+  } else if (existingMembership.role !== "manager") {
+    const { error: updateMembershipError } = await adminSupabase
+      .from("group_members")
+      .update({ role: "manager" })
+      .eq("group_id", trimmedGroupId)
+      .eq("user_id", nextOwner.id);
+
+    if (updateMembershipError) {
+      return { ok: false, message: updateMembershipError.message };
+    }
+  }
+
+  const { error: updateGroupError } = await adminSupabase
+    .from("groups")
+    .update({
+      owner_user_id: nextOwner.id,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", trimmedGroupId);
+
+  if (updateGroupError) {
+    return { ok: false, message: updateGroupError.message };
+  }
+
+  revalidatePath("/admin/groups");
+  revalidatePath("/my-groups");
+
+  return {
+    ok: true,
+    message: `${nextOwner.name} is now the owner of ${group.name}.`
   };
 }
 
@@ -1200,6 +1648,38 @@ function isMissingEmailJobsError(message: string) {
     (normalized.includes("email_jobs") && normalized.includes("does not exist")) ||
     isMissingRelationError(message, "public.email_jobs")
   );
+}
+
+function unwrapRelation<T>(value?: T | T[] | null): T | null {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return value ?? null;
+}
+
+async function findUserByIdOrEmail(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userIdentifier: string
+): Promise<{ id: string; name: string; email: string } | null> {
+  const trimmed = userIdentifier.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalizedEmail = trimmed.toLowerCase();
+  const isEmail = normalizedEmail.includes("@");
+  const query = adminSupabase.from("users").select("id,name,email");
+
+  const { data, error } = isEmail
+    ? await query.eq("email", normalizedEmail).maybeSingle()
+    : await query.eq("id", trimmed).maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data;
 }
 
 function derivePlaceholderDisplayName(normalizedEmail: string, displayName?: string | null) {

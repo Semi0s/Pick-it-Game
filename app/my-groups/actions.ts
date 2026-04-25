@@ -227,7 +227,9 @@ export type GroupInvitePreviewResult =
       invite: {
         groupId: string;
         groupName: string;
+        inviterLabel: string;
         email: string;
+        suggestedDisplayName?: string | null;
         status: GroupInviteStatus;
         expiresAt: string | null;
       };
@@ -870,7 +872,7 @@ export async function updateGroupInviteNameAction(inviteId: string, suggestedDis
     }
 
     revalidatePath("/my-groups");
-    return { ok: true, message: "Suggested display name updated." };
+    return { ok: true, message: "Suggested temporary invite name updated." };
   } catch (error) {
     return {
       ok: false,
@@ -980,7 +982,7 @@ export async function fetchGroupInvitePreviewAction(token: string): Promise<Grou
     const tokenHash = hashInviteToken(trimmedToken);
     const { data, error } = await adminSupabase
       .from("group_invites")
-      .select("group_id,email,status,expires_at,groups(name)")
+      .select("group_id,email,suggested_display_name,status,expires_at,groups(name),invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
       .eq("token_hash", tokenHash)
       .maybeSingle();
 
@@ -995,13 +997,17 @@ export async function fetchGroupInvitePreviewAction(token: string): Promise<Grou
     const groupName =
       Array.isArray(data.groups) ? data.groups[0]?.name :
       (data.groups as { name?: string } | null)?.name;
+    const invitedBy = Array.isArray(data.invited_by) ? data.invited_by[0] : data.invited_by;
+    const inviterLabel = invitedBy?.name?.trim() || invitedBy?.email?.trim() || "A group manager";
 
     return {
       ok: true,
       invite: {
         groupId: data.group_id,
         groupName: groupName ?? "Group",
+        inviterLabel,
         email: data.email,
+        suggestedDisplayName: data.suggested_display_name ?? null,
         status: data.status,
         expiresAt: data.expires_at ?? null
       }
@@ -1636,7 +1642,7 @@ async function sendGroupInviteEmailInline(input: {
   claimUrl: string;
 }) {
   const inviterLabel = input.inviterName?.trim() || input.inviterEmail?.trim() || "A group manager";
-  const subject = `You're invited to join ${input.groupName} on PICK-IT!`;
+  const subject = `${inviterLabel} invited you to join ${input.groupName}`;
   const introLine = input.suggestedDisplayName?.trim()
     ? `${inviterLabel} invited ${input.suggestedDisplayName.trim()} (${input.invitedEmail}) to join ${input.groupName}.`
     : `${inviterLabel} invited ${input.invitedEmail} to join ${input.groupName}.`;
@@ -1646,7 +1652,12 @@ async function sendGroupInviteEmailInline(input: {
     subject,
     html: `
       <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
-        <h1 style="font-size: 24px; margin-bottom: 16px;">Join ${input.groupName} on PICK-IT!</h1>
+        <h1 style="font-size: 24px; margin-bottom: 16px;">${inviterLabel} invited you to join ${input.groupName}</h1>
+        <div style="margin-bottom: 16px; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px 14px; background: #f9fafb;">
+          <p style="margin: 0 0 6px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; font-weight: 700;">Invitation details</p>
+          <p style="margin: 0; font-weight: 700;">Group: ${input.groupName}</p>
+          <p style="margin: 4px 0 0 0; font-weight: 700;">Invited by: ${inviterLabel}</p>
+        </div>
         <p style="margin-bottom: 12px;">${introLine}</p>
         <p style="margin-bottom: 12px;">Use the secure claim link below to sign in or create your account, then join the group.</p>
         <p style="margin: 24px 0;">
@@ -1658,7 +1669,10 @@ async function sendGroupInviteEmailInline(input: {
       </div>
     `,
     text: [
-      `Join ${input.groupName} on PICK-IT!`,
+      `${inviterLabel} invited you to join ${input.groupName}`,
+      "",
+      `Group: ${input.groupName}`,
+      `Invited by: ${inviterLabel}`,
       "",
       introLine,
       "",
