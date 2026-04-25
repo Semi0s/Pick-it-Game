@@ -147,67 +147,6 @@ export function AdminPlayersClient() {
       <AdminInvitesSection showHeader={false} showInviteList={false} />
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
 
-      {managerEditor ? (
-        <ManagementCard
-          title={`Manager access for ${managerEditor.displayName}`}
-          subtitle="Set the limits that will apply to this manager."
-          actions={
-            <>
-              <ActionButton
-                onClick={() => {
-                  void withAction(`manager-${managerEditor.userId}`, async () => {
-                    const result = await upsertManagerLimitsAction({
-                      userId: managerEditor.userId,
-                      maxGroups: Number(managerEditor.maxGroups),
-                      maxMembersPerGroup: Number(managerEditor.maxMembersPerGroup)
-                    });
-                    setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                    if (result.ok) {
-                      setManagerEditor(null);
-                      await loadPlayers();
-                    }
-                  });
-                }}
-                disabled={activeActionKey === `manager-${managerEditor.userId}`}
-                tone="accent"
-              >
-                {activeActionKey === `manager-${managerEditor.userId}` ? "Saving..." : "Save Manager Limits"}
-              </ActionButton>
-              <ActionButton onClick={() => setManagerEditor(null)} disabled={activeActionKey === `manager-${managerEditor.userId}`}>
-                Cancel
-              </ActionButton>
-            </>
-          }
-        >
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="text-sm font-bold text-gray-800">Max groups</span>
-              <input
-                type="number"
-                min={1}
-                value={managerEditor.maxGroups}
-                onChange={(event) =>
-                  setManagerEditor((current) => current ? { ...current, maxGroups: event.target.value } : current)
-                }
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm font-bold text-gray-800">Max members per group</span>
-              <input
-                type="number"
-                min={1}
-                value={managerEditor.maxMembersPerGroup}
-                onChange={(event) =>
-                  setManagerEditor((current) => current ? { ...current, maxMembersPerGroup: event.target.value } : current)
-                }
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-              />
-            </label>
-          </div>
-        </ManagementCard>
-      ) : null}
-
       {confirmation ? (
         <InlineConfirmation
           title={confirmation.title}
@@ -246,7 +185,10 @@ export function AdminPlayersClient() {
         ) : null}
 
         {!isLoading
-          ? filteredPlayers.map((player) => (
+          ? filteredPlayers.map((player) => {
+              const activeManagerEditor = managerEditor?.userId === player.appUserId ? managerEditor : null;
+
+              return (
               <ManagementCard
                 key={player.key}
                 title={player.displayName}
@@ -387,8 +329,73 @@ export function AdminPlayersClient() {
                     }
                   />
                 </ManagementGrid>
+                {activeManagerEditor ? (
+                  <div className="mt-4 rounded-lg border border-accent-light bg-accent-light/40 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-base font-black text-gray-950">Manager access for {activeManagerEditor.displayName}</p>
+                        <p className="mt-1 text-sm font-semibold text-gray-700">
+                          Update the limits below, then save to promote or edit this manager.
+                        </p>
+                      </div>
+                      <ManagementBadge label="editing manager access" tone="accent" />
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="text-sm font-bold text-gray-800">Max groups</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={activeManagerEditor.maxGroups}
+                          onChange={(event) =>
+                            setManagerEditor((current) => current ? { ...current, maxGroups: event.target.value } : current)
+                          }
+                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-sm font-bold text-gray-800">Max members per group</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={activeManagerEditor.maxMembersPerGroup}
+                          onChange={(event) =>
+                            setManagerEditor((current) => current ? { ...current, maxMembersPerGroup: event.target.value } : current)
+                          }
+                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <ActionButton
+                        onClick={() => {
+                          void withAction(`manager-${activeManagerEditor.userId}`, async () => {
+                            const result = await upsertManagerLimitsAction({
+                              userId: activeManagerEditor.userId,
+                              maxGroups: Number(activeManagerEditor.maxGroups),
+                              maxMembersPerGroup: Number(activeManagerEditor.maxMembersPerGroup)
+                            });
+                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                            if (result.ok) {
+                              setManagerEditor(null);
+                              await loadPlayers();
+                            }
+                          });
+                        }}
+                        disabled={activeActionKey === `manager-${activeManagerEditor.userId}`}
+                        tone="accent"
+                      >
+                        {activeActionKey === `manager-${activeManagerEditor.userId}` ? "Saving..." : "Save Manager Limits"}
+                      </ActionButton>
+                      <ActionButton onClick={() => setManagerEditor(null)} disabled={activeActionKey === `manager-${activeManagerEditor.userId}`}>
+                        Cancel
+                      </ActionButton>
+                    </div>
+                  </div>
+                ) : null}
               </ManagementCard>
-            ))
+            );
+            })
           : null}
       </section>
     </div>

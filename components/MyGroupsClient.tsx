@@ -81,6 +81,8 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   const [deleteConfirmationValue, setDeleteConfirmationValue] = useState("");
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
+  const [superAdminGroupQuery, setSuperAdminGroupQuery] = useState("");
+  const [expandedGroupIds, setExpandedGroupIds] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -145,6 +147,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
           ? "manager"
           : "player"
       : undefined;
+  const isSuperAdmin = summary?.ok && summary.currentUser.role === "admin";
   const managerGroupLimitReached = Boolean(
     summary?.ok &&
       summary.currentUser.role !== "admin" &&
@@ -155,6 +158,18 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   const canCreateGroups = summary?.ok && summary.currentUser.role === "admin"
     ? true
     : Boolean(summary?.ok && summary.managerAccess.enabled);
+  const filteredGroups = useMemo(() => {
+    if (!isSuperAdmin) {
+      return groups;
+    }
+
+    const query = superAdminGroupQuery.trim().toLowerCase();
+    if (!query) {
+      return groups;
+    }
+
+    return groups.filter((group) => group.name.toLowerCase().includes(query));
+  }, [groups, isSuperAdmin, superAdminGroupQuery]);
 
   async function handleCreateGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -237,6 +252,12 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
 
     setInviteEntryError(null);
     router.push(`/my-groups?invite=${encodeURIComponent(token)}`);
+  }
+
+  function toggleExpandedGroup(groupId: string) {
+    setExpandedGroupIds((current) =>
+      current.includes(groupId) ? current.filter((id) => id !== groupId) : [...current, groupId]
+    );
   }
 
   const inviteLoginPath = inviteToken ? `/login?flow=invite&next=${encodeURIComponent(`/my-groups?invite=${inviteToken}`)}` : "/login";
@@ -527,19 +548,33 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                 : "See the groups you belong to and who is in them."}
           </p>
         </div>
+        {isSuperAdmin ? (
+          <label className="block rounded-lg border border-gray-200 bg-white p-4">
+            <span className="text-sm font-bold text-gray-800">Find a group</span>
+            <input
+              value={superAdminGroupQuery}
+              onChange={(event) => setSuperAdminGroupQuery(event.target.value)}
+              placeholder="Search by group name"
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            />
+          </label>
+        ) : null}
         {isLoading ? (
           <ManagementEmptyState message="Loading groups..." />
-        ) : groups.length === 0 ? (
+        ) : filteredGroups.length === 0 ? (
           <ManagementEmptyState
             message={
-              summary?.ok && !summary.groupAccess.hasAnyGroups
+              isSuperAdmin && superAdminGroupQuery.trim()
+                ? "No groups match that search."
+                : summary?.ok && !summary.groupAccess.hasAnyGroups
                 ? "No managed groups yet. Use a new invite link or create a group if you have manager access."
-                : "No groups match the current search or filter."
+                : "No groups available right now."
             }
           />
         ) : (
-          groups.map((group) => {
+          filteredGroups.map((group) => {
             const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "" };
+            const isExpanded = !isSuperAdmin || expandedGroupIds.includes(group.id);
 
             return (
               <ManagementCard
@@ -580,8 +615,15 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                     }
                   />
                 </ManagementGrid>
+                {isSuperAdmin ? (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <ActionButton onClick={() => toggleExpandedGroup(group.id)}>
+                      {isExpanded ? "Hide Details" : "Open Group"}
+                    </ActionButton>
+                  </div>
+                ) : null}
 
-                {group.canManage ? (
+                {isExpanded && group.canManage ? (
                   <>
                     <div className="mt-4">
                       <ActionButton
@@ -642,14 +684,15 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                       </ActionButton>
                     </form>
                   </>
-                ) : (
+                ) : isExpanded ? (
                   <div className="mt-4 flex flex-wrap gap-2">
                     <Link href="/leaderboard" className="inline-flex">
                       <ActionButton>View Leaderboard</ActionButton>
                     </Link>
                   </div>
-                )}
+                ) : null}
 
+                {isExpanded ? (
                 <div className="space-y-2">
                   <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Members</h4>
                   {group.members.length === 0 ? (
@@ -696,8 +739,9 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                     ))
                   )}
                 </div>
+                ) : null}
 
-                {group.canManage ? (
+                {isExpanded && group.canManage ? (
                   <div className="space-y-2">
                     <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Invites</h4>
                     {group.invites.length === 0 ? (

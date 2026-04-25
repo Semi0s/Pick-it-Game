@@ -12,6 +12,9 @@ import {
   ManagementCard,
   ManagementEmptyState
 } from "@/components/player-management/Shared";
+import { useCurrentUser } from "@/lib/use-current-user";
+
+type InviteAccessLevel = "player" | "manager" | "super_admin";
 
 export function AdminInvitesClient() {
   return <AdminInvitesSection />;
@@ -24,13 +27,21 @@ export function AdminInvitesSection({
   showHeader?: boolean;
   showInviteList?: boolean;
 }) {
+  const { user } = useCurrentUser();
   const [invites, setInvites] = useState<AdminInvite[]>([]);
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [role, setRole] = useState<UserRole>("player");
+  const [accessLevel, setAccessLevel] = useState<InviteAccessLevel>("player");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const canInviteSuperAdmin = user?.role === "admin";
+  const canInviteManager = user?.role === "admin";
+  const accessLevelOptions: Array<{ value: InviteAccessLevel; label: string }> = [
+    { value: "player", label: "Player" },
+    ...(canInviteManager ? [{ value: "manager" as const, label: "Manager" }] : []),
+    ...(canInviteSuperAdmin ? [{ value: "super_admin" as const, label: "Super Admin" }] : [])
+  ];
 
   useEffect(() => {
     loadInvites();
@@ -53,13 +64,20 @@ export function AdminInvitesSection({
     setMessage(null);
 
     try {
-      const result = await createAdminInviteAction({ email, displayName, role });
+      const inviteRole: UserRole = accessLevel === "super_admin" ? "admin" : "player";
+      const result = await createAdminInviteAction({ email, displayName, role: inviteRole });
       setMessage({ tone: result.ok ? "success" : "error", text: result.message });
       if (result.ok) {
         setEmail("");
         setDisplayName("");
-        setRole("player");
+        setAccessLevel("player");
         await loadInvites();
+        if (accessLevel === "manager") {
+          setMessage({
+            tone: "success",
+            text: "Invite sent. This user will join as a player first, then you can appoint manager access after activation."
+          });
+        }
       }
     } catch (error) {
       setMessage({ tone: "error", text: (error as Error).message });
@@ -75,10 +93,24 @@ export function AdminInvitesSection({
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
 
       <ManagementCard
-        title="Invite player or admin"
-        subtitle="Use the same access workflow the rest of the management system uses."
+        title="Invite access level"
+        subtitle="Use the same role hierarchy the rest of the management system uses."
+        badges={
+          <>
+            <ManagementBadge label="Player" tone="neutral" />
+            <ManagementBadge label="Manager" tone="warning" />
+            <ManagementBadge label="Super Admin" tone="accent" />
+          </>
+        }
       >
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-700">
+            <p>Hierarchy:</p>
+            <p className="mt-1">Player {"->"} Manager {"->"} Super Admin</p>
+            <p className="mt-2 text-gray-600">
+              Invite as <span className="font-black text-gray-900">Player</span> for normal access or as <span className="font-black text-gray-900">Super Admin</span> for unlimited access. <span className="font-black text-gray-900">Managers</span> are appointed after activation by setting manager limits.
+            </p>
+          </div>
           <label className="block">
             <span className="text-sm font-bold text-gray-800">Email</span>
             <input
@@ -99,16 +131,36 @@ export function AdminInvitesSection({
             />
           </label>
           <label className="block">
-            <span className="text-sm font-bold text-gray-800">Role</span>
+            <span className="text-sm font-bold text-gray-800">Access level</span>
             <select
-              value={role}
-              onChange={(event) => setRole(event.target.value as UserRole)}
+              value={accessLevel}
+              onChange={(event) => setAccessLevel(event.target.value as InviteAccessLevel)}
               className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
             >
-              <option value="player">Player</option>
-              <option value="admin">Admin</option>
+              {accessLevelOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
+          <p className="text-sm font-semibold text-gray-500">
+            {accessLevel === "player"
+              ? "Player keeps the standard gameplay experience."
+              : accessLevel === "manager"
+                ? "Manager starts as a player, then gains manager access when a super admin assigns manager limits."
+                : "Super Admin gives this user unlimited administrative access."}
+          </p>
+          {accessLevel === "manager" ? (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+              Managers are invited in as players first, then promoted by assigning manager limits after they activate.
+            </p>
+          ) : null}
+          {accessLevel === "super_admin" ? (
+            <p className="rounded-md border border-accent-light bg-accent-light px-3 py-2 text-sm font-semibold text-accent-dark">
+              Super Admin gives this user unlimited administrative access.
+            </p>
+          ) : null}
           <ActionButton type="submit" disabled={isSubmitting} tone="accent" fullWidth>
             {isSubmitting ? "Sending..." : "Send Access Email"}
           </ActionButton>
