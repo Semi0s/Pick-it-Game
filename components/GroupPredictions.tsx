@@ -25,6 +25,7 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
   const [matches, setMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
   const [stageFilter, setStageFilter] = useState<"all" | MatchStage>("all");
   const [dateFilter, setDateFilter] = useState("all");
+  const [teamSearch, setTeamSearch] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -68,9 +69,11 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
 
   useEffect(() => {
     let isMounted = true;
+    const normalizedTeamSearch = teamSearch.trim().toLowerCase();
     const filteredMatchIds = matches
       .filter((match) => (stageFilter === "all" || match.stage === stageFilter))
       .filter((match) => dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter)
+      .filter((match) => matchesTeamSearch(match, normalizedTeamSearch))
       .map((match) => match.id);
 
     fetchPredictionsForMatches(filteredMatchIds).then((items) => {
@@ -82,13 +85,15 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
     return () => {
       isMounted = false;
     };
-  }, [matches, stageFilter, dateFilter]);
+  }, [matches, stageFilter, dateFilter, teamSearch]);
 
   const dateOptions = Array.from(new Set(matches.map((match) => getMatchDateKey(match.kickoffTime))));
+  const normalizedTeamSearch = teamSearch.trim().toLowerCase();
   const filteredMatches = matches.filter((match) => {
     const stageMatches = stageFilter === "all" || match.stage === stageFilter;
     const dateMatches = dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter;
-    return stageMatches && dateMatches;
+    const teamMatches = matchesTeamSearch(match, normalizedTeamSearch);
+    return stageMatches && dateMatches && teamMatches;
   });
   const filteredMatchesByDate = filteredMatches.reduce<Record<string, MatchWithTeams[]>>((groups, match) => {
     const dateKey = getMatchDateKey(match.kickoffTime);
@@ -141,7 +146,16 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
         </div>
       </section>
 
-      <section className="grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:grid-cols-2">
+      <section className="grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 lg:grid-cols-3">
+        <label>
+          <span className="text-sm font-bold text-gray-700">Find a team</span>
+          <input
+            value={teamSearch}
+            onChange={(event) => setTeamSearch(event.target.value)}
+            placeholder="Search by team name or code"
+            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+          />
+        </label>
         <label>
           <span className="text-sm font-bold text-gray-700">Stage</span>
           <select
@@ -237,4 +251,21 @@ function formatDateLabel(date: string) {
     day: "numeric",
     year: "numeric"
   }).format(new Date(`${date}T12:00:00Z`));
+}
+
+function matchesTeamSearch(match: MatchWithTeams, normalizedQuery: string) {
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  const searchableValues = [
+    match.homeTeam?.name,
+    match.homeTeam?.shortName,
+    match.awayTeam?.name,
+    match.awayTeam?.shortName
+  ]
+    .filter(Boolean)
+    .map((value) => value!.toLowerCase());
+
+  return searchableValues.some((value) => value.includes(normalizedQuery));
 }

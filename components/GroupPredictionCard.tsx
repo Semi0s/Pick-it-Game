@@ -72,19 +72,21 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
   return (
     <form
       onSubmit={handleSubmit}
-      className={`rounded-lg border bg-white p-4 shadow-sm ${
-        isFinal ? "border-gray-300 bg-gray-50" : "border-gray-200"
+      className={`rounded-lg border p-4 shadow-sm ${
+        isFinal ? "border-gray-300 bg-gray-100" : "border-gray-200 bg-gray-50"
       }`}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Your Pick</p>
-          <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
-            {formatKickoff(match.kickoffTime)}
-          </p>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Pick a score before:</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+              {formatKickoff(match.kickoffTime)}
+            </p>
+          </div>
           <h4 className="mt-1 text-lg font-black text-gray-950">
-            {match.homeTeam?.flagEmoji} {match.homeTeam?.shortName} vs {match.awayTeam?.flagEmoji}{" "}
-            {match.awayTeam?.shortName}
+            {match.homeTeam?.flagEmoji} {match.homeTeam?.name ?? match.homeTeam?.shortName} vs {match.awayTeam?.flagEmoji}{" "}
+            {match.awayTeam?.name ?? match.awayTeam?.shortName}
           </h4>
         </div>
         <span
@@ -110,21 +112,19 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
             {outcomeLabel}
           </span>
         </div>
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-2">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
           <ScoreInput
             flag={match.homeTeam?.flagEmoji}
             shortName={match.homeTeam?.shortName ?? "Home"}
-            name={match.homeTeam?.name ?? "Home"}
             value={homeScore}
             disabled={locked}
             isHighlighted={scoreOutcome === "home" || scoreOutcome === "draw"}
             onChange={(value) => handleScoreChange(value, awayScore)}
           />
-          <span className="pb-4 text-sm font-black text-gray-400">vs</span>
+          <span className="text-sm font-black text-gray-400">vs.</span>
           <ScoreInput
             flag={match.awayTeam?.flagEmoji}
             shortName={match.awayTeam?.shortName ?? "Away"}
-            name={match.awayTeam?.name ?? "Away"}
             value={awayScore}
             disabled={locked}
             isHighlighted={scoreOutcome === "away" || scoreOutcome === "draw"}
@@ -161,25 +161,25 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
 type ScoreInputProps = {
   flag?: string;
   shortName: string;
-  name: string;
   value: string;
   disabled: boolean;
   isHighlighted: boolean;
   onChange: (value: string) => void;
 };
 
-function ScoreInput({ flag, shortName, name, value, disabled, isHighlighted, onChange }: ScoreInputProps) {
+function ScoreInput({ flag, shortName, value, disabled, isHighlighted, onChange }: ScoreInputProps) {
   return (
-    <label className="block">
+    <label
+      className={`flex items-center gap-2 rounded-md border px-2 py-2 ${
+        isHighlighted ? "border-accent bg-white" : "border-gray-200 bg-white"
+      }`}
+    >
       <span
-        className={`block min-h-10 rounded-md px-1 text-center text-xs font-bold leading-5 ${
+        className={`min-w-0 truncate text-sm font-black ${
           isHighlighted ? "text-accent-dark" : "text-gray-700"
         }`}
       >
-        <span className="block truncate">
-          {flag} {shortName}
-        </span>
-        <span className="block truncate text-[11px] font-semibold text-gray-500">{name}</span>
+        {flag} {shortName}
       </span>
       <input
         type="number"
@@ -188,7 +188,7 @@ function ScoreInput({ flag, shortName, name, value, disabled, isHighlighted, onC
         disabled={disabled}
         value={value}
         onChange={(event) => onChange(event.target.value === "" ? "0" : event.target.value)}
-        className={`mt-2 w-full rounded-md border bg-white px-3 py-3 text-center text-xl font-black outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:bg-gray-100 ${
+        className={`ml-auto h-12 w-16 rounded-md border bg-white px-2 text-center text-xl font-black outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:bg-gray-100 ${
           isHighlighted ? "border-accent text-accent-dark" : "border-gray-300 text-gray-950"
         }`}
       />

@@ -216,8 +216,8 @@ export function DashboardOverview() {
       <section className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">Phase 1 scoring preview</h3>
         <p className="mt-2 text-sm leading-6 text-gray-600">
-          Group-stage picks will score 3 points for the correct outcome, plus 5 more for an exact score once
-          result entry arrives in Phase 2.
+          Group-stage picks score 3 points for the correct outcome, plus 1 more for the exact goal difference,
+          or 5 more for the exact score once results are entered.
         </p>
       </section>
     </div>

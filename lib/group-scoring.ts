@@ -1,5 +1,9 @@
 import type { MatchStage, MatchStatus } from "@/lib/types";
 
+const CORRECT_OUTCOME_POINTS = 3;
+const EXACT_GOAL_DIFFERENCE_BONUS = 1;
+const EXACT_SCORE_BONUS = 5;
+
 export type ScorableGroupMatch = {
   stage: MatchStage;
   status: MatchStatus;
@@ -54,13 +58,13 @@ export function scoreGroupStagePrediction(prediction: ScorablePrediction, match:
     prediction.predictedHomeScore === match.homeScore && prediction.predictedAwayScore === match.awayScore;
 
   if (hasExactScore) {
-    return 8;
+    return CORRECT_OUTCOME_POINTS + EXACT_SCORE_BONUS;
   }
 
   const hasExactGoalDifference =
     prediction.predictedHomeScore - prediction.predictedAwayScore === match.homeScore! - match.awayScore!;
 
-  return 3 + (hasExactGoalDifference ? 1 : 0);
+  return CORRECT_OUTCOME_POINTS + (hasExactGoalDifference ? EXACT_GOAL_DIFFERENCE_BONUS : 0);
 }
 
 function getOutcome(match: ScorableGroupMatch) {

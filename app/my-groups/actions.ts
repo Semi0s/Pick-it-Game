@@ -263,6 +263,7 @@ export type CancelGroupInviteResult = ResendGroupInviteResult;
 export type RemoveGroupMemberResult = ResendGroupInviteResult;
 export type UpdateGroupInviteNameResult = ResendGroupInviteResult;
 export type DeleteManagedGroupResult = ResendGroupInviteResult;
+export type UpdateManagedGroupLimitResult = ResendGroupInviteResult;
 
 export async function createGroupAction(input: CreateGroupInput): Promise<CreateGroupResult> {
   const currentUser = await getCurrentUserContext();
@@ -834,6 +835,92 @@ export async function removeGroupMemberAction(groupId: string, userId: string): 
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not remove that player."
+    };
+  }
+}
+
+export async function updateManagedGroupLimitAction(
+  groupId: string,
+  membershipLimit: number
+): Promise<UpdateManagedGroupLimitResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedGroupId = groupId.trim();
+  const nextLimit = Math.floor(membershipLimit);
+  if (!trimmedGroupId || nextLimit <= 0) {
+    return { ok: false, message: "Enter a valid group limit." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    const [memberCountResult, pendingInviteCountResult, managerLimits] = await Promise.all([
+      adminSupabase.from("group_members").select("id", { count: "exact", head: true }).eq("group_id", trimmedGroupId),
+      adminSupabase.from("group_invites").select("id", { count: "exact", head: true }).eq("group_id", trimmedGroupId).eq("status", "pending"),
+      currentUser.role === "admin" ? Promise.resolve(null) : getManagerLimits(adminSupabase, currentUser.userId)
+    ]);
+
+    if (memberCountResult.error || pendingInviteCountResult.error) {
+      return {
+        ok: false,
+        message:
+          memberCountResult.error?.message ??
+          pendingInviteCountResult.error?.message ??
+          "Could not check the current group capacity."
+      };
+    }
+
+    const usedSeats = (memberCountResult.count ?? 0) + (pendingInviteCountResult.count ?? 0);
+    if (nextLimit < usedSeats) {
+      return {
+        ok: false,
+        message: `This group is already using ${usedSeats} seats. Raise the limit to at least ${usedSeats}.`
+      };
+    }
+
+    if (currentUser.role !== "admin") {
+      if (!managerLimits) {
+        return { ok: false, message: "You are not entitled to update group limits." };
+      }
+
+      if (nextLimit > managerLimits.max_members_per_group) {
+        return {
+          ok: false,
+          message: `Your current manager allowance is ${managerLimits.max_members_per_group} members per group.`
+        };
+      }
+    }
+
+    const { error: updateError } = await adminSupabase
+      .from("groups")
+      .update({
+        membership_limit: nextLimit,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", trimmedGroupId);
+
+    if (updateError) {
+      return { ok: false, message: updateError.message };
+    }
+
+    revalidatePath("/my-groups");
+    revalidatePath("/dashboard");
+
+    return {
+      ok: true,
+      message: `Group limit updated to ${nextLimit} members.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update that group limit."
     };
   }
 }
