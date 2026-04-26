@@ -4,6 +4,7 @@ import {
   assertUserCanSeeLeaderboardEvent,
   getCurrentLeaderboardViewerId
 } from "@/lib/leaderboard-reactions";
+import { awardFirstReactionTrophy } from "@/lib/trophy-awards";
 
 const MAX_COMMENT_LENGTH = 280;
 
@@ -13,7 +14,10 @@ type LeaderboardEventCommentRow = {
   user_id: string;
   body: string;
   created_at: string;
-  user?: { id: string; name: string } | Array<{ id: string; name: string }> | null;
+  user?:
+    | { id: string; name: string; avatar_url?: string | null; home_team_id?: string | null }
+    | Array<{ id: string; name: string; avatar_url?: string | null; home_team_id?: string | null }>
+    | null;
 };
 
 type LeaderboardEventOwnerRow = {
@@ -27,6 +31,8 @@ export type LeaderboardEventComment = {
   id: string;
   userId: string;
   userName: string;
+  userAvatarUrl?: string | null;
+  userHomeTeamId?: string | null;
   body: string;
   createdAt: string;
   isOwn: boolean;
@@ -84,6 +90,8 @@ export async function addLeaderboardEventComment(
     return { ok: false, message: error.message };
   }
 
+  await awardFirstReactionTrophy(adminSupabase, userResult.userId);
+
   const leaderboardEvent = eventRow as LeaderboardEventOwnerRow | null;
   if (leaderboardEvent?.user_id && leaderboardEvent.user_id !== userResult.userId) {
     await createCommentNotification({
@@ -119,7 +127,7 @@ export async function fetchCommentsForEvents(
   const adminSupabase = createAdminClient();
   const { data, error } = await adminSupabase
     .from("leaderboard_event_comments")
-    .select("id,event_id,user_id,body,created_at,user:users!leaderboard_event_comments_user_id_fkey(id,name)")
+    .select("id,event_id,user_id,body,created_at,user:users!leaderboard_event_comments_user_id_fkey(id,name,avatar_url,home_team_id)")
     .in("event_id", uniqueEventIds)
     .order("created_at", { ascending: true });
 
@@ -141,6 +149,8 @@ export async function fetchCommentsForEvents(
       id: row.id,
       userId: row.user_id,
       userName: userRow?.name ?? "Player",
+      userAvatarUrl: userRow?.avatar_url ?? null,
+      userHomeTeamId: userRow?.home_team_id ?? null,
       body: row.body,
       createdAt: row.created_at,
       isOwn: viewerId === row.user_id

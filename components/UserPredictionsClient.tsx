@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/Avatar";
+import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { TrophyBadge } from "@/components/TrophyBadge";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
 import { getMatchDateKey, formatCalendarDate, tournamentCalendar } from "@/lib/tournament-calendar";
-import { fetchLeaderboardUsers, fetchPredictionsForUser, type SocialPrediction } from "@/lib/social-predictions";
-import type { MatchWithTeams, UserProfile } from "@/lib/types";
+import { fetchLeaderboardUsers, fetchPredictionsForUser, fetchTrophiesForUser, type SocialPrediction } from "@/lib/social-predictions";
+import type { MatchWithTeams, UserProfile, UserTrophy } from "@/lib/types";
 import { PredictionRow } from "@/components/SocialPredictionList";
 
 type UserPredictionsClientProps = {
@@ -17,6 +19,7 @@ type UserPredictionsClientProps = {
 export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [predictions, setPredictions] = useState<SocialPrediction[]>([]);
+  const [trophies, setTrophies] = useState<UserTrophy[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const matches = useMemo<MatchWithTeams[]>(
@@ -44,11 +47,12 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
   useEffect(() => {
     let isMounted = true;
 
-    Promise.all([fetchLeaderboardUsers(), fetchPredictionsForUser(userId)])
-      .then(([users, userPredictions]) => {
+    Promise.all([fetchLeaderboardUsers(), fetchPredictionsForUser(userId), fetchTrophiesForUser(userId)])
+      .then(([users, userPredictions, userTrophies]) => {
         if (isMounted) {
           setProfile(users.find((item) => item.id === userId) ?? userPredictions[0]?.user ?? null);
           setPredictions(userPredictions);
+          setTrophies(userTrophies);
           setError(null);
           setIsLoading(false);
         }
@@ -57,6 +61,7 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
         if (isMounted) {
           setProfile(null);
           setPredictions([]);
+          setTrophies([]);
           setError(caughtError.message);
           setIsLoading(false);
         }
@@ -73,7 +78,10 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Public picks</p>
         <div className="mt-2 flex items-center gap-3">
           <Avatar name={profile?.name ?? "Player"} avatarUrl={profile?.avatarUrl} size="lg" />
-          <h2 className="min-w-0 truncate text-3xl font-black leading-tight">{profile?.name ?? "Player picks"}</h2>
+          <div className="min-w-0">
+            <h2 className="truncate text-3xl font-black leading-tight">{profile?.name ?? "Player picks"}</h2>
+            {profile?.homeTeamId ? <div className="mt-2"><HomeTeamBadge teamId={profile.homeTeamId} /></div> : null}
+          </div>
         </div>
         <Link
           href="/leaderboard"
@@ -82,6 +90,23 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
           Back to Leaderboard
         </Link>
       </section>
+
+      {!isLoading && trophies.length > 0 ? (
+        <section className="rounded-lg border border-gray-200 bg-white p-4">
+          <h3 className="text-lg font-bold">Trophies</h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {trophies.map((trophy) => (
+              <div
+                key={`${trophy.id}-${trophy.awardedAt}`}
+                className="flex items-center gap-3 rounded-lg bg-gray-100 px-3 py-3"
+              >
+                <TrophyBadge icon={trophy.icon} tier={trophy.tier} size="md" />
+                <span className="truncate text-sm font-bold text-gray-800">{trophy.name}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {isLoading ? (
         <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">Loading picks...</p>

@@ -1,9 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { Trophy } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, Trophy, X } from "lucide-react";
+import {
+  awardManagedGroupTrophyAction,
+  listManagedGroupPlayersAction,
+  type ManagedGroupDetails
+} from "@/app/my-groups/actions";
 import { Avatar } from "@/components/Avatar";
+import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { TrophyCelebration } from "@/components/TrophyCelebration";
+import { TrophyBadge } from "@/components/TrophyBadge";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
   LeaderboardListItem,
@@ -21,6 +29,7 @@ const DEFAULT_SWITCHER_STATE = {
 };
 
 const LEADERBOARD_SWITCHER_STORAGE_KEY = "leaderboard-switcher-state";
+const LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY = "leaderboard-activity-disclosure";
 
 export function LeaderboardClient() {
   const { user } = useCurrentUser();
@@ -38,6 +47,16 @@ export function LeaderboardClient() {
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [activeCommentEventId, setActiveCommentEventId] = useState<string | null>(null);
   const [lastCommentAtByEvent, setLastCommentAtByEvent] = useState<Record<string, number>>({});
+  const [isActivityExpanded, setIsActivityExpanded] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [managedAwardGroup, setManagedAwardGroup] = useState<ManagedGroupDetails | null>(null);
+  const [managedTrophySheetTarget, setManagedTrophySheetTarget] = useState<{ groupId: string; userId: string } | null>(null);
+  const [activeManagedTrophyKey, setActiveManagedTrophyKey] = useState<string | null>(null);
+  const [celebrationTrophy, setCelebrationTrophy] = useState<{
+    name: string;
+    icon: string;
+    tier?: "bronze" | "silver" | "gold" | "special" | null;
+  } | null>(null);
 
   const requestUrl = useMemo(() => {
     const params = new URLSearchParams();
@@ -52,9 +71,23 @@ export function LeaderboardClient() {
     return `/api/leaderboard?${params.toString()}`;
   }, [activeView, selectedGroupId, selectedManagerId]);
 
-  useEffect(() => {
-    let isMounted = true;
+  const loadManagedAwardGroup = useCallback(async () => {
+    if (activeView !== "managed_groups" || !selectedGroupId) {
+      setManagedAwardGroup(null);
+      return;
+    }
 
+    const result = await listManagedGroupPlayersAction();
+    if (!result.ok) {
+      setManagedAwardGroup(null);
+      return;
+    }
+
+    const matchedGroup = result.groups.find((group) => group.id === selectedGroupId) ?? null;
+    setManagedAwardGroup(matchedGroup);
+  }, [activeView, selectedGroupId]);
+
+  useEffect(() => {
     try {
       const storedValue = window.sessionStorage.getItem(LEADERBOARD_SWITCHER_STORAGE_KEY);
       if (storedValue) {
@@ -72,6 +105,34 @@ export function LeaderboardClient() {
     } catch (caughtError) {
       console.warn("Could not restore leaderboard switcher state.", caughtError);
     }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const storedValue = window.localStorage.getItem(LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY);
+      if (!storedValue) {
+        return;
+      }
+
+      setIsActivityExpanded(storedValue === "open");
+    } catch (caughtError) {
+      console.warn("Could not restore leaderboard activity disclosure state.", caughtError);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY,
+        isActivityExpanded ? "open" : "closed"
+      );
+    } catch (caughtError) {
+      console.warn("Could not save leaderboard activity disclosure state.", caughtError);
+    }
+  }, [isActivityExpanded]);
+
+  useEffect(() => {
+    let isMounted = true;
 
     function loadLeaderboard(showLoading = false) {
       if (showLoading) {
@@ -129,7 +190,11 @@ export function LeaderboardClient() {
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [requestUrl]);
+  }, [requestUrl, refreshNonce]);
+
+  useEffect(() => {
+    void loadManagedAwardGroup();
+  }, [loadManagedAwardGroup, refreshNonce]);
 
   useEffect(() => {
     if (!switcher) {
@@ -178,6 +243,18 @@ export function LeaderboardClient() {
   const isGlobalView = activeView === "global";
   const isGroupView = shouldShowGroupSelector(activeView) && Boolean(selectedGroupId);
   const shouldRenderLeaderboardRows = isGlobalView || isGroupView;
+  const canAwardManagedTrophies = activeView === "managed_groups" && Boolean(managedAwardGroup);
+  const activeManagedTrophyMember = managedAwardGroup && managedTrophySheetTarget
+    ? managedAwardGroup.members.find((member) => member.userId === managedTrophySheetTarget.userId) ?? null
+    : null;
+  const availableManagedTrophies =
+    managedAwardGroup && activeManagedTrophyMember
+      ? managedAwardGroup.trophies.filter(
+          (trophy) =>
+            trophy.awardSource === "manager" &&
+            !activeManagedTrophyMember.trophies.some((awarded) => awarded.id === trophy.id)
+        )
+      : [];
 
   return (
     <div className="space-y-5">
@@ -206,54 +283,96 @@ export function LeaderboardClient() {
       </section>
 
       {!isLoading && !error && dailyWinners.length > 0 ? (
-        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-bold uppercase tracking-wide text-amber-700">🏆 Daily Winner</p>
-              <p className="mt-2 text-base font-black text-gray-950">{formatDailyWinners(dailyWinners)}</p>
-              <p className="mt-1 text-sm font-semibold text-gray-600">
-                {dailyWinners.length === 1 ? "Highest points scored today." : "Tied for the highest points scored today."}
-              </p>
+        <section className="relative overflow-hidden rounded-lg border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-amber-100 p-4 shadow-sm">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute right-3 top-3 text-xl text-amber-300/80"
+          >
+            ✦
+          </div>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute right-10 top-7 text-sm text-amber-300/70"
+          >
+            ✦
+          </div>
+          <div className="relative">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-bold uppercase tracking-wide text-amber-700">🏆 Daily Winner</p>
+                <p className="mt-2 text-base font-black text-gray-950">
+                  {dailyWinners.length === 1 ? "Today's standout pick-maker." : "Today's standout group of pick-makers."}
+                </p>
+                <p className="mt-1 text-sm font-semibold text-gray-600">
+                  {dailyWinners.length === 1 ? "Highest points scored today." : "Tied for the highest points scored today."}
+                </p>
+              </div>
+              {dailyWinners[0]?.eventId ? (
+                <a
+                  href={`#activity-${dailyWinners[0].eventId}`}
+                  className="shrink-0 text-xs font-bold text-amber-800 underline-offset-2 hover:underline"
+                >
+                  See in Recent Activity
+                </a>
+              ) : null}
             </div>
-            {user ? (
-              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+
+            <div className="mt-4 grid gap-3">
               {dailyWinners.map((winner) => {
                 const reactionKey = winner.eventId ? `${winner.eventId}:👏` : null;
                 return (
-                  <button
+                  <div
                     key={winner.userId}
-                    type="button"
-                    onClick={() => {
-                      void handleReactionToggle(
-                        winner.eventId ?? null,
-                        "👏",
-                        winner.congratulated ?? false
-                      );
-                    }}
-                    disabled={!winner.eventId || activeReactionKey === reactionKey}
-                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-bold transition ${
-                      winner.congratulated
-                        ? "border-amber-300 bg-white text-amber-800"
-                        : "border-amber-200 bg-white/80 text-gray-700 hover:border-amber-300 hover:bg-white"
-                    } disabled:cursor-not-allowed disabled:opacity-60`}
+                    className="rounded-lg border border-amber-200/80 bg-white/85 px-3 py-3"
                   >
-                    <span>👏</span>
-                    <span>{winner.congratulated ? "Congratulated" : `Congratulate ${winner.name}`}</span>
-                    {winner.congratulationsCount ? <span>{winner.congratulationsCount}</span> : null}
-                  </button>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex items-start gap-3">
+                        <Avatar
+                          name={winner.name}
+                          avatarUrl={winner.avatarUrl ?? undefined}
+                          size="md"
+                          className="border-amber-200"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-black text-gray-950">{winner.name}</p>
+                          <p className="mt-1 text-sm font-semibold text-amber-800">{winner.points} pts today</p>
+                          {winner.homeTeamId ? (
+                            <div className="mt-2">
+                              <HomeTeamBadge teamId={winner.homeTeamId} className="border-amber-200 bg-amber-50/80" />
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                      {user ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleReactionToggle(
+                              winner.eventId ?? null,
+                              "👏",
+                              winner.congratulated ?? false
+                            );
+                          }}
+                          disabled={!winner.eventId || activeReactionKey === reactionKey}
+                          className={`shrink-0 rounded-full border px-3 py-2 text-sm font-bold transition ${
+                            winner.congratulated
+                              ? "border-amber-300 bg-amber-100 text-amber-900"
+                              : "border-amber-200 bg-white text-gray-700 hover:border-amber-300 hover:bg-amber-50"
+                          } disabled:cursor-not-allowed disabled:opacity-60`}
+                        >
+                          <span className="inline-flex items-center gap-2">
+                            <span>👏</span>
+                            <span>{winner.congratulated ? "Congratulated" : "Congratulate"}</span>
+                            {winner.congratulationsCount ? <span>{winner.congratulationsCount}</span> : null}
+                          </span>
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
                 );
               })}
-              </div>
-            ) : null}
+            </div>
           </div>
-          {dailyWinners[0]?.eventId ? (
-            <a
-              href={`#activity-${dailyWinners[0].eventId}`}
-              className="mt-3 inline-flex text-xs font-bold text-amber-800 underline-offset-2 hover:underline"
-            >
-              See in Recent Activity
-            </a>
-          ) : null}
         </section>
       ) : null}
 
@@ -322,9 +441,27 @@ export function LeaderboardClient() {
 
       {!isLoading && !error && activityFeed.length > 0 ? (
         <section className="rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Recent Activity</p>
-          <div className="mt-3 space-y-2">
-            {activityFeed.map((event, index) => (
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Recent Activity</p>
+              <p className="mt-1 text-xs font-semibold text-gray-500">
+                {activityFeed.length} recent update{activityFeed.length === 1 ? "" : "s"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsActivityExpanded((current) => !current)}
+              className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
+              aria-expanded={isActivityExpanded}
+              aria-label={isActivityExpanded ? "Hide recent activity" : "Show recent activity"}
+            >
+              {isActivityExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
+              {isActivityExpanded ? "Hide" : "Open"}
+            </button>
+          </div>
+          {isActivityExpanded ? (
+            <div className="mt-3 space-y-2">
+              {activityFeed.map((event, index) => (
               <div
                 key={event.id}
                 id={event.eventId ? `activity-${event.eventId}` : undefined}
@@ -344,82 +481,134 @@ export function LeaderboardClient() {
                     {getActivityIcon(event.eventType)}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <span
-                        className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-black ${getActivityBadgeTone(
-                          event.eventType
-                        )}`}
-                      >
-                        {getActivityLabel(event.eventType)}
-                      </span>
-                      {event.canReact && user ? (
-                        <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                          {["🔥", "🎯", "👀", "👍"].map((emoji) => {
-                            const reaction = event.reactions.find((item) => item.emoji === emoji);
-                            const reactionKey = `${event.eventId}:${emoji}`;
-                            return (
-                              <button
-                                key={emoji}
-                                type="button"
-                                onClick={() => {
-                                  void handleReactionToggle(
-                                    event.eventId,
-                                    emoji,
-                                    reaction?.reacted ?? false
-                                  );
-                                }}
-                                disabled={!event.eventId || activeReactionKey === reactionKey}
-                                className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-bold transition ${
-                                  reaction?.reacted
-                                    ? "border-accent bg-accent-light text-accent-dark"
-                                    : "border-gray-200 bg-white text-gray-600 hover:border-accent-light hover:bg-gray-50"
-                                } disabled:cursor-not-allowed disabled:opacity-60`}
+                    {event.userName ? (
+                      <div className="mb-0.5 flex items-start gap-2">
+                        <Avatar name={event.userName} avatarUrl={event.userAvatarUrl ?? undefined} size="sm" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <p className={`min-w-0 flex-1 text-sm font-semibold ${index === 0 ? "text-gray-900" : "text-gray-800"}`}>
+                              {event.message}
+                            </p>
+                            <div className="flex shrink-0 flex-col items-end gap-2">
+                              <span
+                                className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-black ${getActivityBadgeTone(
+                                  event.eventType
+                                )}`}
                               >
-                                <span>{emoji}</span>
-                                {reaction?.count ? <span>{reaction.count}</span> : null}
-                              </button>
-                            );
-                          })}
+                                {getActivityLabel(event.eventType)}
+                              </span>
+                              {index === 0 ? (
+                                <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Newest</p>
+                              ) : null}
+                            </div>
+                          </div>
+                          {event.userHomeTeamId ? (
+                            <div className="mt-1">
+                              <HomeTeamBadge teamId={event.userHomeTeamId} label="" className="bg-white/75 py-0.5" />
+                            </div>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </div>
-                    <p className={`text-sm font-semibold ${index === 0 ? "text-gray-900" : "text-gray-800"}`}>
-                      {event.message}
-                    </p>
-                    {event.canComment && user ? (
-                      <div className="mt-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedComments((current) => ({
-                              ...current,
-                              [event.eventId!]: !current[event.eventId!]
-                            }))
-                          }
-                          className="text-xs font-bold text-gray-600 underline-offset-2 hover:text-accent-dark hover:underline"
-                        >
-                          💬 {event.comments.length > 0 ? `${event.comments.length} comments` : "Comment"}
-                        </button>
+                      </div>
+                    ) : null}
+                    {!event.userName ? (
+                      <div className="flex items-start justify-between gap-3">
+                        <p className={`min-w-0 flex-1 text-sm font-semibold ${index === 0 ? "text-gray-900" : "text-gray-800"}`}>
+                          {event.message}
+                        </p>
+                        <div className="flex shrink-0 flex-col items-end gap-2">
+                          <span
+                            className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-black ${getActivityBadgeTone(
+                              event.eventType
+                            )}`}
+                          >
+                            {getActivityLabel(event.eventType)}
+                          </span>
+                          {index === 0 ? (
+                            <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Newest</p>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                    {(event.canReact || event.canComment) && user ? (
+                      <div className="mt-1 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          {event.canComment ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedComments((current) => ({
+                                  ...current,
+                                  [event.eventId!]: !current[event.eventId!]
+                                }))
+                              }
+                              className="text-xs font-bold text-gray-600 underline-offset-2 hover:text-accent-dark hover:underline"
+                            >
+                              💬 {event.comments.length > 0 ? `${event.comments.length} comments` : "Comment"}
+                            </button>
+                          ) : null}
+                        </div>
+                        {event.canReact ? (
+                          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                            {["🔥", "🎯", "👀", "👍"].map((emoji) => {
+                              const reaction = event.reactions.find((item) => item.emoji === emoji);
+                              const reactionKey = `${event.eventId}:${emoji}`;
+                              return (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() => {
+                                    void handleReactionToggle(
+                                      event.eventId,
+                                      emoji,
+                                      reaction?.reacted ?? false
+                                    );
+                                  }}
+                                  disabled={!event.eventId || activeReactionKey === reactionKey}
+                                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-bold transition ${
+                                    reaction?.reacted
+                                      ? "border-accent bg-accent-light text-accent-dark"
+                                      : "border-gray-200 bg-white text-gray-600 hover:border-accent-light hover:bg-gray-50"
+                                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                                >
+                                  <span>{emoji}</span>
+                                  {reaction?.count ? <span>{reaction.count}</span> : null}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                     {event.canComment && event.eventId && expandedComments[event.eventId] ? (
-                      <div className="mt-3 space-y-3">
+                      <div className="mt-1 space-y-1.5">
                         {event.comments.length > 0 ? (
-                          <div className="space-y-2">
+                          <div className="space-y-1.5">
                             {event.comments.map((comment) => (
                               <div key={comment.id} className="rounded-md bg-white/70 px-3 py-2">
-                                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">
-                                  <span>{comment.userName}</span>
-                                  {comment.isOwn ? <span>You</span> : null}
+                                <div className="flex items-start gap-2.5">
+                                  <Avatar
+                                    name={comment.userName}
+                                    avatarUrl={comment.userAvatarUrl ?? undefined}
+                                    size="sm"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">
+                                      <span>{comment.userName}</span>
+                                      {comment.isOwn ? <span>You</span> : null}
+                                      {comment.userHomeTeamId ? (
+                                        <HomeTeamBadge teamId={comment.userHomeTeamId} label="" className="bg-white py-0.5" />
+                                      ) : null}
+                                    </div>
+                                    <p className="mt-0 text-sm font-semibold leading-5 text-gray-800">{comment.body}</p>
+                                  </div>
                                 </div>
-                                <p className="mt-1 text-sm font-semibold text-gray-800">{comment.body}</p>
                               </div>
                             ))}
                           </div>
                         ) : (
                           <p className="text-xs font-semibold text-gray-500">No comments yet.</p>
                         )}
-                        <div className="space-y-2">
+                        <div className="space-y-1.5">
                           <textarea
                             value={commentDrafts[event.eventId] ?? ""}
                             maxLength={280}
@@ -452,14 +641,12 @@ export function LeaderboardClient() {
                         </div>
                       </div>
                     ) : null}
-                    {index === 0 ? (
-                      <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-gray-500">Newest</p>
-                    ) : null}
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -478,12 +665,17 @@ export function LeaderboardClient() {
           ) : null}
 
           {users.map((profile, index) => (
-            <Link
+            <div
               key={profile.id}
-              href={`/leaderboard/${profile.id}`}
-              className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-4 ${
+              className={`rounded-lg border p-4 ${
                 profile.id === user?.id ? "border-emerald-800 bg-emerald-900" : "border-gray-200 bg-white"
               }`}
+            >
+              <Link
+                href={`/leaderboard/${profile.id}`}
+                className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 ${
+                  canAwardManagedTrophies ? "pr-12" : ""
+                }`}
               >
                 <span
                   className={`flex h-9 w-9 items-center justify-center rounded-md text-sm font-black ${
@@ -492,51 +684,89 @@ export function LeaderboardClient() {
                 >
                   {profile.rank ?? index + 1}
                 </span>
-              <span className="min-w-0 flex items-center gap-3">
-                <Avatar name={profile.name} avatarUrl={profile.avatarUrl} size="md" />
-                <span className="min-w-0">
-                <span className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={`min-w-0 truncate text-base font-black ${
-                      profile.id === user?.id ? "text-white" : "text-gray-950"
-                    }`}
-                  >
-                    {profile.name}
-                    {profile.id === user?.id ? " (You)" : ""}
-                  </span>
-                  {profile.hasPerfectPickHighlight ? (
-                    <span className="rounded-md bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">
-                      🎯 Perfect Pick
-                    </span>
-                  ) : null}
-                </span>
-                <span
-                  className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold ${
-                    profile.id === user?.id ? "text-emerald-100" : "text-gray-500"
-                  }`}
-                >
-                  <span>{isGlobalView ? "View public picks" : "Group standing"}</span>
-                  <span className={profile.id === user?.id ? "text-emerald-700" : "text-gray-300"}>•</span>
-                  <span className={getMovementTone(profile.rankDelta)}>{formatRankMovement(profile.rankDelta)}</span>
-                  {profile.pointsDelta && profile.pointsDelta > 0 ? (
-                    <>
-                      <span className={profile.id === user?.id ? "text-emerald-700" : "text-gray-300"}>•</span>
-                      <span className={profile.id === user?.id ? "text-emerald-100" : "text-accent-dark"}>
-                        +{profile.pointsDelta} pts
+                <span className="min-w-0 flex items-center gap-3">
+                  <Avatar name={profile.name} avatarUrl={profile.avatarUrl} size="md" />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-start justify-between gap-3">
+                      <span className="min-w-0 flex flex-wrap items-center gap-2">
+                        <span
+                          className={`min-w-0 truncate text-base font-black ${
+                            profile.id === user?.id ? "text-white" : "text-gray-950"
+                          }`}
+                        >
+                          {profile.name}
+                          {profile.id === user?.id ? " (You)" : ""}
+                        </span>
+                        {profile.hasPerfectPickHighlight ? (
+                          <span className="rounded-md bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">
+                            🎯 Perfect Pick
+                          </span>
+                        ) : null}
+                        {profile.trophies && profile.trophies.length > 0 ? (
+                          <span className="inline-flex items-center gap-1">
+                            {profile.trophies.slice(0, 2).map((trophy) => (
+                              <TrophyBadge
+                                key={`${profile.id}-${trophy.id}`}
+                                icon={trophy.icon}
+                                tier={trophy.tier}
+                                size="sm"
+                                className={profile.id === user?.id ? "border-emerald-700" : ""}
+                              />
+                            ))}
+                          </span>
+                        ) : null}
                       </span>
-                    </>
-                  ) : null}
+                      <span
+                        className={`shrink-0 rounded-md px-2 py-1 text-sm font-black ${
+                          profile.id === user?.id ? "bg-emerald-800 text-white" : "bg-accent-light text-accent-dark"
+                        }`}
+                      >
+                        {profile.totalPoints} points
+                      </span>
+                    </span>
+                    {profile.homeTeamId ? (
+                      <span className="mt-2 block">
+                        <HomeTeamBadge teamId={profile.homeTeamId} className="bg-white/70" />
+                      </span>
+                    ) : null}
+                    <span
+                      className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold ${
+                        profile.id === user?.id ? "text-emerald-100" : "text-gray-500"
+                      }`}
+                    >
+                      <span>{isGlobalView ? "View public picks" : "Group standing"}</span>
+                      <span className={profile.id === user?.id ? "text-emerald-700" : "text-gray-300"}>•</span>
+                      <span className={getMovementTone(profile.rankDelta)}>{formatRankMovement(profile.rankDelta)}</span>
+                      {profile.pointsDelta && profile.pointsDelta > 0 ? (
+                        <>
+                          <span className={profile.id === user?.id ? "text-emerald-700" : "text-gray-300"}>•</span>
+                          <span className={profile.id === user?.id ? "text-emerald-100" : "text-accent-dark"}>
+                            +{profile.pointsDelta} pts
+                          </span>
+                        </>
+                      ) : null}
+                    </span>
+                  </span>
                 </span>
-              </span>
-              </span>
-              <span
-                className={`rounded-md px-2 py-1 text-sm font-black ${
-                  profile.id === user?.id ? "bg-emerald-800 text-white" : "bg-accent-light text-accent-dark"
-                }`}
-              >
-                {profile.totalPoints}
-              </span>
-            </Link>
+              </Link>
+              <div className="mt-3 flex items-center justify-end gap-2">
+                {canAwardManagedTrophies ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!managedAwardGroup) {
+                        return;
+                      }
+                      setManagedTrophySheetTarget({ groupId: managedAwardGroup.id, userId: profile.id });
+                    }}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-base transition hover:border-accent hover:bg-accent-light"
+                    aria-label={`Award trophy to ${profile.name}`}
+                  >
+                    🏆
+                  </button>
+                ) : null}
+              </div>
+            </div>
           ))}
         </section>
       ) : (
@@ -546,6 +776,92 @@ export function LeaderboardClient() {
           selectedManagerLabel={selectedManagerLabel}
         />
       )}
+
+      {managedAwardGroup && activeManagedTrophyMember ? (
+        <div className="fixed inset-0 z-50 flex items-end bg-black/35">
+          <button
+            type="button"
+            aria-label="Close trophy sheet"
+            onClick={() => setManagedTrophySheetTarget(null)}
+            className="absolute inset-0"
+          />
+          <div className="relative w-full rounded-t-2xl bg-white p-4 shadow-2xl">
+            <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-gray-200" aria-hidden="true" />
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Award Trophy</p>
+                <div className="mt-2 flex items-start gap-3">
+                  <Avatar
+                    name={activeManagedTrophyMember.name}
+                    avatarUrl={activeManagedTrophyMember.avatarUrl}
+                    size="sm"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-base font-black text-gray-950">{activeManagedTrophyMember.name}</p>
+                    <p className="truncate text-sm font-semibold text-gray-600">{managedAwardGroup.name}</p>
+                    {activeManagedTrophyMember.homeTeamId ? (
+                      <div className="mt-2">
+                        <HomeTeamBadge teamId={activeManagedTrophyMember.homeTeamId} />
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setManagedTrophySheetTarget(null)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600"
+                aria-label="Close trophy sheet"
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
+
+            <div className="mt-4 max-h-[70vh] space-y-4 overflow-y-auto pr-1">
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Select Trophy</h4>
+                <Trophy className="h-4 w-4 text-accent-dark" aria-hidden />
+              </div>
+              {availableManagedTrophies.length > 0 ? (
+                <div className="grid gap-2">
+                  {availableManagedTrophies.map((trophy) => {
+                    const actionKey = `award-managed-leaderboard-${managedAwardGroup.id}:${activeManagedTrophyMember.userId}:${trophy.id}`;
+                    return (
+                      <button
+                        key={trophy.id}
+                        type="button"
+                        onClick={() => void handleManagedLeaderboardTrophyAward(managedAwardGroup.id, activeManagedTrophyMember.userId, trophy.id)}
+                        disabled={activeManagedTrophyKey === actionKey}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-left transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-gray-950">
+                            {trophy.icon} {trophy.name}
+                          </p>
+                          <p className="mt-1 text-xs font-semibold text-gray-500">
+                            {trophy.description || "Preset manager trophy"}
+                          </p>
+                        </div>
+                        <TrophyBadge icon={trophy.icon} tier={trophy.tier} size="sm" />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">
+                  This player already has all preset manager trophies.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <TrophyCelebration
+        open={Boolean(celebrationTrophy)}
+        trophy={celebrationTrophy}
+        onDismiss={() => setCelebrationTrophy(null)}
+      />
     </div>
   );
 
@@ -658,14 +974,30 @@ export function LeaderboardClient() {
       setActiveCommentEventId(null);
     }
   }
-}
 
-function formatDailyWinners(dailyWinners: Array<{ name: string; points: number }>) {
-  if (dailyWinners.length === 1) {
-    return `${dailyWinners[0]?.name} · ${dailyWinners[0]?.points} pts`;
+  async function handleManagedLeaderboardTrophyAward(groupId: string, userId: string, trophyId: string) {
+    const actionKey = `award-managed-leaderboard-${groupId}:${userId}:${trophyId}`;
+    setActiveManagedTrophyKey(actionKey);
+
+    try {
+      const result = await awardManagedGroupTrophyAction(groupId, userId, trophyId);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+
+      if (!result.alreadyAwarded && result.trophy) {
+        setCelebrationTrophy(result.trophy);
+      }
+
+      setManagedTrophySheetTarget(null);
+      setRefreshNonce((current) => current + 1);
+    } catch (caughtError) {
+      console.error("Failed to award managed leaderboard trophy.", caughtError);
+      setError(caughtError instanceof Error ? caughtError.message : "Could not award that trophy.");
+    } finally {
+      setActiveManagedTrophyKey(null);
+    }
   }
-
-  return `${dailyWinners.map((winner) => winner.name).join(", ")} · ${dailyWinners[0]?.points ?? 0} pts each`;
 }
 
 function LeaderboardPlaceholder({
@@ -792,6 +1124,10 @@ function getActivityLabel(eventType: LeaderboardActivityItem["eventType"]) {
     return "Daily Winner";
   }
 
+  if (eventType === "trophy_awarded") {
+    return "Trophy";
+  }
+
   if (eventType === "rank_moved_up") {
     return "Rank Up";
   }
@@ -812,6 +1148,10 @@ function getActivityCardTone(eventType: LeaderboardActivityItem["eventType"]) {
     return "border-amber-200 bg-amber-50";
   }
 
+  if (eventType === "trophy_awarded") {
+    return "border-violet-200 bg-violet-50";
+  }
+
   if (eventType === "rank_moved_up" || eventType === "rank_moved_down") {
     return "border-emerald-200 bg-emerald-50";
   }
@@ -828,6 +1168,10 @@ function getActivityBadgeTone(eventType: LeaderboardActivityItem["eventType"]) {
     return "bg-amber-100 text-amber-700";
   }
 
+  if (eventType === "trophy_awarded") {
+    return "bg-violet-100 text-violet-700";
+  }
+
   if (eventType === "rank_moved_up" || eventType === "rank_moved_down") {
     return "bg-emerald-100 text-emerald-700";
   }
@@ -842,6 +1186,10 @@ function getActivityIcon(eventType: LeaderboardActivityItem["eventType"]) {
 
   if (eventType === "daily_winner") {
     return "🏆";
+  }
+
+  if (eventType === "trophy_awarded") {
+    return "🏅";
   }
 
   if (eventType === "rank_moved_up") {
@@ -862,6 +1210,10 @@ function getActivityIconTone(eventType: LeaderboardActivityItem["eventType"]) {
 
   if (eventType === "daily_winner") {
     return "bg-amber-100 text-amber-700";
+  }
+
+  if (eventType === "trophy_awarded") {
+    return "bg-violet-100 text-violet-700";
   }
 
   if (eventType === "rank_moved_up" || eventType === "rank_moved_down") {

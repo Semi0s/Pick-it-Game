@@ -4,13 +4,14 @@ import { demoUsers } from "@/lib/mock-data";
 import { getAllStoredPredictions } from "@/lib/prediction-store";
 import { createClient } from "@/lib/supabase/client";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
-import type { Prediction, UserProfile } from "@/lib/types";
+import type { Prediction, UserProfile, UserTrophy } from "@/lib/types";
 
 type UserRow = {
   id: string;
   name: string;
   email: string;
   avatar_url?: string | null;
+  home_team_id?: string | null;
   role: UserProfile["role"];
   total_points: number;
 };
@@ -30,6 +31,28 @@ type LeaderboardEntryRow = {
   user_id: string;
   total_points: number;
   rank: number;
+};
+
+type UserTrophyRow = {
+  awarded_at: string;
+  trophies:
+    | {
+        id: string;
+        key: string;
+        name: string;
+        description: string;
+        icon: string;
+        tier?: "bronze" | "silver" | "gold" | "special" | null;
+      }
+    | {
+        id: string;
+        key: string;
+        name: string;
+        description: string;
+        icon: string;
+        tier?: "bronze" | "silver" | "gold" | "special" | null;
+      }[]
+    | null;
 };
 
 export type SocialPrediction = Prediction & {
@@ -117,7 +140,7 @@ export async function fetchLeaderboardUsers(): Promise<UserProfile[]> {
 
     const { data, error } = await supabase
       .from("users")
-      .select("id,name,email,avatar_url,role,total_points")
+      .select("id,name,email,avatar_url,home_team_id,role,total_points")
       .order("total_points", { ascending: false })
       .order("name", { ascending: true });
 
@@ -129,6 +152,44 @@ export async function fetchLeaderboardUsers(): Promise<UserProfile[]> {
   } catch (error) {
     console.error("Failed to load leaderboard users.", error);
     throw error;
+  }
+}
+
+export async function fetchTrophiesForUser(userId: string): Promise<UserTrophy[]> {
+  if (!hasSupabaseConfig() || !userId.trim()) {
+    return [];
+  }
+
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("user_trophies")
+      .select("awarded_at,trophies(id,key,name,description,icon,tier)")
+      .eq("user_id", userId)
+      .order("awarded_at", { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    return ((data as UserTrophyRow[] | null) ?? [])
+      .map((row) => ({
+        ...row,
+        trophies: Array.isArray(row.trophies) ? (row.trophies[0] ?? null) : row.trophies
+      }))
+      .filter((row) => row.trophies)
+      .map((row) => ({
+        id: row.trophies!.id,
+        key: row.trophies!.key,
+        name: row.trophies!.name,
+        description: row.trophies!.description,
+        icon: row.trophies!.icon,
+        tier: row.trophies!.tier ?? "special",
+        awardedAt: row.awarded_at
+      }));
+  } catch (error) {
+    console.error(`Failed to load trophies for user ${userId}.`, error);
+    return [];
   }
 }
 
@@ -183,7 +244,7 @@ async function fetchUsersByIds(
 
   const { data, error } = await supabase
     .from("users")
-    .select("id,name,email,avatar_url,role,total_points")
+    .select("id,name,email,avatar_url,home_team_id,role,total_points")
     .in("id", uniqueIds);
 
   if (error) {
@@ -199,6 +260,7 @@ function mapUserRow(row: UserRow): UserProfile {
     name: row.name,
     email: row.email,
     avatarUrl: row.avatar_url ?? undefined,
+    homeTeamId: row.home_team_id ?? null,
     role: row.role,
     totalPoints: row.total_points
   };

@@ -11,6 +11,8 @@ export type UserProfile = {
   name: string;
   email: string;
   avatarUrl?: string;
+  homeTeamId?: string | null;
+  trophies?: UserTrophy[];
   role: UserRole;
   accessLevel?: AccessLevel;
   username?: string | null;
@@ -28,6 +30,16 @@ export type UserProfile = {
   } | null;
   status?: UserStatus;
   totalPoints: number;
+};
+
+export type UserTrophy = {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  icon: string;
+  tier?: "bronze" | "silver" | "gold" | "special" | null;
+  awardedAt: string;
 };
 
 export type Team = {

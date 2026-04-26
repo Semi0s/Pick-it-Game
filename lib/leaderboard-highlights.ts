@@ -15,6 +15,8 @@ type PredictionScoreRow = {
 type UserRow = {
   id: string;
   name: string;
+  avatar_url?: string | null;
+  home_team_id?: string | null;
 };
 
 type LeaderboardEventRow = {
@@ -30,10 +32,16 @@ type LeaderboardEventRow = {
   metadata?: Record<string, unknown> | null;
 };
 
+type TrophyRow = {
+  id: string;
+};
+
 export type DailyWinner = {
   eventId?: string | null;
   userId: string;
   name: string;
+  avatarUrl?: string | null;
+  homeTeamId?: string | null;
   points: number;
   congratulationsCount?: number;
   congratulated?: boolean;
@@ -178,7 +186,7 @@ export async function fetchDailyWinners(groupId?: string): Promise<DailyWinner[]
 
   const { data: users, error: usersError } = await adminSupabase
     .from("users")
-    .select("id,name")
+    .select("id,name,avatar_url,home_team_id")
     .in("id", winnerIds);
 
   if (usersError) {
@@ -196,6 +204,8 @@ export async function fetchDailyWinners(groupId?: string): Promise<DailyWinner[]
       return {
         userId,
         name: user.name,
+        avatarUrl: user.avatar_url ?? null,
+        homeTeamId: user.home_team_id ?? null,
         points: highestPoints
       };
     })
@@ -312,6 +322,7 @@ async function syncDailyWinnerEvents({
   }
 
   await createNotificationsForLeaderboardEvents(adminSupabase, existingEvents);
+  await awardDailyWinnerTrophy(adminSupabase, winners);
 
   const eventIds = existingEvents.map((event) => event.id);
   const reactionsByEventId = await fetchLeaderboardEventReactions(eventIds);
@@ -345,6 +356,67 @@ function getDateParts(date: Date, timeZone: string) {
     month: parts.find((part) => part.type === "month")?.value ?? "01",
     day: parts.find((part) => part.type === "day")?.value ?? "01"
   };
+}
+
+async function awardDailyWinnerTrophy(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  winners: DailyWinner[]
+) {
+  const winnerUserIds = Array.from(new Set(winners.map((winner) => winner.userId)));
+  if (winnerUserIds.length === 0) {
+    return;
+  }
+
+  const { data: trophy, error: trophyError } = await adminSupabase
+    .from("trophies")
+    .select("id")
+    .eq("key", "daily_winner")
+    .maybeSingle();
+
+  if (trophyError) {
+    if (isMissingTrophiesTableError(trophyError.message)) {
+      return;
+    }
+
+    throw new Error(trophyError.message);
+  }
+
+  if (!(trophy as TrophyRow | null)?.id) {
+    return;
+  }
+
+  const { error: awardError } = await adminSupabase.from("user_trophies").upsert(
+    winnerUserIds.map((userId) => ({
+      user_id: userId,
+      trophy_id: (trophy as TrophyRow).id,
+      awarded_at: new Date().toISOString()
+    })),
+    { onConflict: "user_id,trophy_id" }
+  );
+
+  if (awardError) {
+    if (isMissingTrophiesTableError(awardError.message)) {
+      return;
+    }
+
+    throw new Error(awardError.message);
+  }
+}
+
+function isMissingTrophiesTableError(message?: string) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return (
+    (normalized.includes("user_trophies") || normalized.includes("trophies")) &&
+    (
+      normalized.includes("schema cache") ||
+      normalized.includes("does not exist") ||
+      normalized.includes("could not find the table")
+    )
+  );
 }
 
 function getOffsetString(date: Date, timeZone: string) {

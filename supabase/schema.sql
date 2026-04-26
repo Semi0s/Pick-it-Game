@@ -43,6 +43,7 @@ create table public.users (
   username_set_at timestamptz,
   needs_profile_setup boolean not null default false,
   avatar_url text,
+  home_team_id text references public.teams(id),
   role public.user_role not null default 'player',
   status text not null default 'active',
   total_points integer not null default 0,
@@ -905,6 +906,123 @@ on public.user_legal_acceptances for all
 to authenticated
 using (public.is_super_admin(auth.uid()))
 with check (public.is_super_admin(auth.uid()));
+
+create table if not exists public.trophies (
+  id uuid primary key default gen_random_uuid(),
+  key text not null unique,
+  name text not null,
+  description text not null,
+  icon text not null,
+  tier text not null default 'special' check (tier in ('bronze', 'silver', 'gold', 'special')),
+  award_source text not null default 'system' check (award_source in ('system', 'manager')),
+  created_by uuid references public.users(id) on delete set null,
+  group_id uuid references public.groups(id) on delete set null,
+  constraint trophies_award_source_group_scope_chk check (
+    (award_source = 'system' and group_id is null)
+    or award_source = 'manager'
+  ),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.user_trophies (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  trophy_id uuid not null references public.trophies(id) on delete cascade,
+  awarded_at timestamptz not null default now()
+);
+
+create unique index if not exists user_trophies_user_trophy_unique_idx
+  on public.user_trophies (user_id, trophy_id);
+
+insert into public.trophies (key, name, description, icon, tier, award_source)
+values
+  (
+    'perfect_pick_first',
+    'First Perfect Pick',
+    'Awarded for landing your first exact score.',
+    '🎯',
+    'bronze',
+    'system'
+  ),
+  (
+    'perfect_pick_3',
+    'Perfect Pick Hat Trick',
+    'Awarded for reaching three exact-score predictions.',
+    '🎯',
+    'gold',
+    'system'
+  ),
+  (
+    'big_climb',
+    'Big Climb',
+    'Awarded for a major jump up the leaderboard.',
+    '📈',
+    'silver',
+    'system'
+  ),
+  (
+    'daily_winner',
+    'Daily Winner',
+    'Awarded for finishing the day on top.',
+    '🏆',
+    'gold',
+    'system'
+  ),
+  (
+    'first_reaction',
+    'First Reaction',
+    'Awarded for joining the social activity feed with your first reaction.',
+    '🔥',
+    'special',
+    'system'
+  ),
+  (
+    'lucky_guess',
+    'Lucky Guess',
+    'Got it right... somehow.',
+    '🎲',
+    'special',
+    'manager'
+  ),
+  (
+    'heartbreaker',
+    'Heartbreaker',
+    'Always one goal off.',
+    '💔',
+    'special',
+    'manager'
+  ),
+  (
+    'chaos_agent',
+    'Chaos Agent',
+    'Wild, unpredictable picks.',
+    '🤯',
+    'special',
+    'manager'
+  ),
+  (
+    'the_oracle',
+    'The Oracle',
+    'Somehow always right.',
+    '😎',
+    'special',
+    'manager'
+  ),
+  (
+    'against_the_grain',
+    'Against the Grain',
+    'Picks against the crowd.',
+    '🙃',
+    'special',
+    'manager'
+  )
+on conflict (key) do update
+set
+  name = excluded.name,
+  description = excluded.description,
+  icon = excluded.icon,
+  tier = excluded.tier,
+  award_source = excluded.award_source;
 
 create policy "Users can read own push tokens"
 on public.push_tokens for select

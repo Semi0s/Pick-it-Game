@@ -1,12 +1,13 @@
 "use client";
 
 import { DEFAULT_LEGAL_DOCUMENT_TYPE } from "@/lib/legal";
+import { teams } from "@/lib/mock-data";
 import { getPublicWebPushVapidKey } from "@/lib/push-config";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { getSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/client";
 import { demoSignIn, demoSignOut, demoSignUp, getDemoCurrentUser } from "@/lib/demo-auth-fallback";
-import type { UserProfile } from "@/lib/types";
+import type { UserProfile, UserTrophy } from "@/lib/types";
 
 type AuthMode = "login" | "signup";
 
@@ -30,6 +31,7 @@ type UserRow = {
   name: string;
   email: string;
   avatar_url?: string | null;
+  home_team_id?: string | null;
   role: UserProfile["role"];
   username?: string | null;
   username_set_at?: string | null;
@@ -48,6 +50,28 @@ type UserSettingsRow = {
 
 type PushTokenRow = {
   id: string;
+};
+
+type UserTrophyRow = {
+  awarded_at: string;
+  trophies:
+    | {
+        id: string;
+        key: string;
+        name: string;
+        description: string;
+        icon: string;
+        tier?: "bronze" | "silver" | "gold" | "special" | null;
+      }
+    | {
+        id: string;
+        key: string;
+        name: string;
+        description: string;
+        icon: string;
+        tier?: "bronze" | "silver" | "gold" | "special" | null;
+      }[]
+    | null;
 };
 
 type LegalDocumentRow = {
@@ -153,7 +177,7 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
   const [{ data: profile }, { data: managerLimits }, userSettingsResult, pushTokensResult, legalDocumentResult, legalAcceptanceResult] = await Promise.all([
     supabase
       .from("users")
-      .select("id,name,email,avatar_url,role,username,username_set_at,needs_profile_setup,total_points")
+      .select("id,name,email,avatar_url,home_team_id,role,username,username_set_at,needs_profile_setup,total_points")
       .eq("id", session.user.id)
       .single(),
     supabase
@@ -224,6 +248,7 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
     id: session.user.id,
     name: session.user.email?.split("@")[0] ?? "Player",
     email: session.user.email ?? "",
+    homeTeamId: null,
     role: "player",
     accessLevel: managerLimits ? "manager" : "player",
     username: null,
@@ -296,6 +321,53 @@ export async function sendCurrentUserPasswordReset(email: string): Promise<AuthR
   };
 }
 
+export async function fetchCurrentUserTrophies(): Promise<UserTrophy[]> {
+  if (!hasSupabaseConfig()) {
+    return [];
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("user_trophies")
+    .select("awarded_at,trophies(id,key,name,description,icon,tier)")
+    .eq("user_id", user.id)
+    .order("awarded_at", { ascending: false });
+
+  if (error) {
+    if (isMissingTrophiesTableError(error.message)) {
+      return [];
+    }
+
+    console.error("Could not load current user trophies.", error);
+    return [];
+  }
+
+  return ((data as unknown as UserTrophyRow[] | null) ?? [])
+    .map((row) => ({
+      ...row,
+      trophies: Array.isArray(row.trophies) ? (row.trophies[0] ?? null) : row.trophies
+    }))
+    .filter((row) => row.trophies)
+    .map((row) => ({
+      id: row.trophies!.id,
+      key: row.trophies!.key,
+      name: row.trophies!.name,
+      description: row.trophies!.description,
+      icon: row.trophies!.icon,
+      tier: row.trophies!.tier ?? "special",
+      awardedAt: row.awarded_at
+    }));
+}
+
 export async function uploadCurrentUserAvatar(file: File): Promise<AvatarUploadResult> {
   if (!hasSupabaseConfig()) {
     return { ok: false, message: "Avatar uploads need a configured Supabase project." };
@@ -345,6 +417,41 @@ export async function uploadCurrentUserAvatar(file: File): Promise<AvatarUploadR
   };
 }
 
+export async function updateCurrentUserHomeTeam(homeTeamId: string | null): Promise<AuthResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Home team selection needs a configured Supabase project." };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to update your home team." };
+  }
+
+  const normalizedTeamId = homeTeamId?.trim() || null;
+  if (normalizedTeamId && !teams.some((team) => team.id === normalizedTeamId)) {
+    return { ok: false, message: "Choose a valid home team." };
+  }
+
+  const { error } = await supabase
+    .from("users")
+    .update({ home_team_id: normalizedTeamId })
+    .eq("id", user.id);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  return {
+    ok: true,
+    message: normalizedTeamId ? "Home team updated." : "Home team cleared."
+  };
+}
+
 export function isUsingDemoAuthFallback() {
   return !hasSupabaseConfig();
 }
@@ -366,6 +473,7 @@ function mapUserRow(
     name: row.name,
     email: row.email,
     avatarUrl: row.avatar_url ?? undefined,
+    homeTeamId: row.home_team_id ?? null,
     role: row.role,
     accessLevel: row.role === "admin" ? "super_admin" : managerLimits ? "manager" : "player",
     username: row.username ?? null,
@@ -553,6 +661,22 @@ function isMissingPushTokensTableError(message?: string) {
     normalized.includes("relation \"public.push_tokens\" does not exist") ||
     normalized.includes("relation \"push_tokens\" does not exist") ||
     (normalized.includes("push_tokens") && normalized.includes("schema cache"))
+  );
+}
+
+function isMissingTrophiesTableError(message?: string) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return (
+    (normalized.includes("user_trophies") || normalized.includes("trophies")) &&
+    (
+      normalized.includes("schema cache") ||
+      normalized.includes("does not exist") ||
+      normalized.includes("could not find the table")
+    )
   );
 }
 

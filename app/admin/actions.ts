@@ -81,6 +81,9 @@ type LeaderboardEventInsert = {
 };
 
 type InsertedLeaderboardEventRow = NotificationEventSeed;
+type TrophyRow = {
+  id: string;
+};
 
 type InviteLookupRow = {
   email: string;
@@ -1675,6 +1678,11 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
     if (predictionScoresError) {
       return { ok: false, message: predictionScoresError.message };
     }
+
+    const trophyResult = await awardPerfectPickFirstTrophy(adminSupabase, scoredPredictions);
+    if (!trophyResult.ok) {
+      return trophyResult;
+    }
   }
 
   const leaderboardResult = await recalculateLeaderboard(adminSupabase, matchId);
@@ -1696,6 +1704,8 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
   revalidatePath("/leaderboard");
   revalidatePath("/predictions");
   revalidatePath("/admin/matches");
+  revalidatePath("/profile");
+  revalidatePath("/trophies");
 
   return {
     ok: true,
@@ -1706,6 +1716,84 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
         ? `Match saved as final, but no Supabase prediction rows were found for match ${matchId}.`
         : `Match saved and ${predictionRows.length} predictions scored.`
   };
+}
+
+async function awardPerfectPickFirstTrophy(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  scoredPredictions: ScoredPrediction[]
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const qualifyingUserIds = Array.from(
+    new Set(
+      scoredPredictions
+        .filter((prediction) => prediction.scoreBreakdown.exact_score_points > 0)
+        .map((prediction) => prediction.userId)
+    )
+  );
+
+  if (qualifyingUserIds.length === 0) {
+    return { ok: true };
+  }
+
+  const { data: trophy, error: trophyError } = await adminSupabase
+    .from("trophies")
+    .select("id")
+    .eq("key", "perfect_pick_first")
+    .maybeSingle();
+
+  if (trophyError) {
+    if (isMissingTrophiesError(trophyError.message)) {
+      return { ok: true };
+    }
+
+    return { ok: false, message: trophyError.message };
+  }
+
+  if (!(trophy as TrophyRow | null)?.id) {
+    return { ok: true };
+  }
+
+  const { data: exactScoreRows, error: exactScoreRowsError } = await adminSupabase
+    .from("prediction_scores")
+    .select("user_id")
+    .in("user_id", qualifyingUserIds)
+    .gt("exact_score_points", 0);
+
+  if (exactScoreRowsError) {
+    if (isMissingTrophiesError(exactScoreRowsError.message)) {
+      return { ok: true };
+    }
+
+    return { ok: false, message: exactScoreRowsError.message };
+  }
+
+  const exactScoreCounts = new Map<string, number>();
+  for (const row of ((exactScoreRows ?? []) as Array<{ user_id: string }>)) {
+    exactScoreCounts.set(row.user_id, (exactScoreCounts.get(row.user_id) ?? 0) + 1);
+  }
+
+  const firstPerfectPickUserIds = qualifyingUserIds.filter((userId) => (exactScoreCounts.get(userId) ?? 0) === 1);
+  if (firstPerfectPickUserIds.length === 0) {
+    return { ok: true };
+  }
+
+  const { error: awardError } = await adminSupabase.from("user_trophies").upsert(
+    firstPerfectPickUserIds.map((userId) => ({
+      user_id: userId,
+      trophy_id: (trophy as TrophyRow).id,
+      awarded_at: new Date().toISOString()
+    })),
+    { onConflict: "user_id,trophy_id" }
+  );
+
+  if (awardError) {
+    if (isMissingTrophiesError(awardError.message)) {
+      return { ok: true };
+    }
+
+    return { ok: false, message: awardError.message };
+  }
+
+  return { ok: true };
 }
 
 async function assertCurrentUserIsAdmin(): Promise<{ ok: true; userId: string } | { ok: false; message: string }> {
@@ -2719,6 +2807,18 @@ function isMissingEmailJobsError(message: string) {
     (normalized.includes("email_jobs") && normalized.includes("schema cache")) ||
     (normalized.includes("email_jobs") && normalized.includes("does not exist")) ||
     isMissingRelationError(message, "public.email_jobs")
+  );
+}
+
+function isMissingTrophiesError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    (normalized.includes("user_trophies") || normalized.includes("trophies")) &&
+    (
+      normalized.includes("schema cache") ||
+      normalized.includes("does not exist") ||
+      normalized.includes("could not find the table")
+    )
   );
 }
 

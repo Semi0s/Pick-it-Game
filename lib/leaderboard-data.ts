@@ -15,13 +15,14 @@ import {
   fetchPerfectPickUserIdsForLatestFinalizedMatch,
   type DailyWinner
 } from "@/lib/leaderboard-highlights";
-import type { UserProfile } from "@/lib/types";
+import type { UserProfile, UserTrophy } from "@/lib/types";
 
 type UserRow = {
   id: string;
   name: string;
   email: string;
   avatar_url?: string | null;
+  home_team_id?: string | null;
   role: UserProfile["role"];
   total_points: number;
 };
@@ -51,6 +52,29 @@ type GroupMemberRow = {
 
 type ManagerLimitRow = {
   user_id: string;
+};
+
+type UserTrophyRow = {
+  user_id: string;
+  awarded_at: string;
+  trophies:
+    | {
+        id: string;
+        key: string;
+        name: string;
+        description: string;
+        icon: string;
+        tier?: "bronze" | "silver" | "gold" | "special" | null;
+      }
+    | Array<{
+        id: string;
+        key: string;
+        name: string;
+        description: string;
+        icon: string;
+        tier?: "bronze" | "silver" | "gold" | "special" | null;
+      }>
+    | null;
 };
 
 export type LeaderboardListItem = UserProfile & {
@@ -175,7 +199,7 @@ async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<
   }
 
   const latestMatchId = await fetchLatestGlobalSnapshotMatchId(adminSupabase);
-  const [usersById, movementByUserId, perfectPickUserIds] = await Promise.all([
+  const [usersById, movementByUserId, perfectPickUserIds, trophiesByUserId] = await Promise.all([
     fetchUsersByIds(
       adminSupabase,
       leaderboardEntries.map((entry) => entry.user_id)
@@ -190,7 +214,11 @@ async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<
           )
         )
       : Promise.resolve(new Map<string, { rankDelta: number | null; pointsDelta: number | null }>()),
-    perfectPickEnabled ? fetchPerfectPickUserIdsForLatestFinalizedMatch() : Promise.resolve(new Set<string>())
+    perfectPickEnabled ? fetchPerfectPickUserIdsForLatestFinalizedMatch() : Promise.resolve(new Set<string>()),
+    fetchTrophiesByUserIds(
+      adminSupabase,
+      leaderboardEntries.map((entry) => entry.user_id)
+    )
   ]);
 
   return leaderboardEntries
@@ -207,6 +235,7 @@ async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<
 
         return {
           ...mapUserRow(joinedUser),
+          trophies: trophiesByUserId.get(entry.user_id) ?? [],
           totalPoints: entry.total_points,
           rank: entry.rank,
           rankDelta: movement.rankDelta,
@@ -257,7 +286,7 @@ async function fetchGroupLeaderboardRows(
 
   const rankedEntries = assignRanks(groupLeaderboardEntries);
   const latestMatchId = await fetchLatestSnapshotMatchId(adminSupabase, { scopeType: "group", groupId });
-  const [usersById, movementByUserId, perfectPickUserIds] = await Promise.all([
+  const [usersById, movementByUserId, perfectPickUserIds, trophiesByUserId] = await Promise.all([
     fetchUsersByIds(adminSupabase, rankedEntries.map((entry) => entry.user_id)),
     latestMatchId
       ? Promise.resolve(
@@ -269,7 +298,8 @@ async function fetchGroupLeaderboardRows(
           )
         )
       : Promise.resolve(new Map<string, { rankDelta: number | null; pointsDelta: number | null }>()),
-    perfectPickEnabled ? fetchPerfectPickUserIdsForLatestFinalizedMatch(groupId) : Promise.resolve(new Set<string>())
+    perfectPickEnabled ? fetchPerfectPickUserIdsForLatestFinalizedMatch(groupId) : Promise.resolve(new Set<string>()),
+    fetchTrophiesByUserIds(adminSupabase, rankedEntries.map((entry) => entry.user_id))
   ]);
 
   return rankedEntries
@@ -286,6 +316,7 @@ async function fetchGroupLeaderboardRows(
 
       return {
         ...mapUserRow(joinedUser),
+        trophies: trophiesByUserId.get(entry.user_id) ?? [],
         totalPoints: entry.total_points,
         rank: entry.rank,
         rankDelta: movement.rankDelta,
@@ -478,7 +509,7 @@ async function fetchUsersByIds(
 
   const { data, error } = await adminSupabase
     .from("users")
-    .select("id,name,email,avatar_url,role,total_points")
+    .select("id,name,email,avatar_url,home_team_id,role,total_points")
     .in("id", uniqueIds);
 
   if (error) {
@@ -488,12 +519,63 @@ async function fetchUsersByIds(
   return new Map((((data as UserRow[] | null) ?? []).map((user) => [user.id, user])));
 }
 
+async function fetchTrophiesByUserIds(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userIds: string[]
+): Promise<Map<string, UserTrophy[]>> {
+  const uniqueIds = Array.from(new Set(userIds)).filter(Boolean);
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+
+  const { data, error } = await adminSupabase
+    .from("user_trophies")
+    .select("user_id,awarded_at,trophies(id,key,name,description,icon,tier)")
+    .in("user_id", uniqueIds)
+    .order("awarded_at", { ascending: false });
+
+  if (error) {
+    const normalized = error.message.toLowerCase();
+    if (
+      (normalized.includes("user_trophies") || normalized.includes("trophies")) &&
+      (normalized.includes("schema cache") || normalized.includes("does not exist") || normalized.includes("could not find the table"))
+    ) {
+      return new Map();
+    }
+
+    throw new Error(error.message);
+  }
+
+  const grouped = new Map<string, UserTrophy[]>();
+  for (const row of ((data as UserTrophyRow[] | null) ?? [])) {
+    const trophy = Array.isArray(row.trophies) ? (row.trophies[0] ?? null) : row.trophies;
+    if (!trophy) {
+      continue;
+    }
+
+    const list = grouped.get(row.user_id) ?? [];
+    list.push({
+      id: trophy.id,
+      key: trophy.key,
+      name: trophy.name,
+      description: trophy.description,
+      icon: trophy.icon,
+      tier: trophy.tier ?? "special",
+      awardedAt: row.awarded_at
+    });
+    grouped.set(row.user_id, list);
+  }
+
+  return grouped;
+}
+
 function mapUserRow(row: UserRow): UserProfile {
   return {
     id: row.id,
     name: row.name,
     email: row.email,
     avatarUrl: row.avatar_url ?? undefined,
+    homeTeamId: row.home_team_id ?? null,
     role: row.role,
     totalPoints: row.total_points
   };

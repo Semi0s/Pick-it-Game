@@ -1,14 +1,20 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/Avatar";
+import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { TrophyBadge } from "@/components/TrophyBadge";
 import {
+  fetchCurrentUserTrophies,
   registerCurrentBrowserPushNotifications,
   sendCurrentUserPasswordReset,
+  updateCurrentUserHomeTeam,
   updateCurrentUserNotificationPreferences,
   uploadCurrentUserAvatar
 } from "@/lib/auth-client";
 import { getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-levels";
+import { teams } from "@/lib/mock-data";
+import type { UserTrophy } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 export function ProfileSummary() {
@@ -21,7 +27,29 @@ export function ProfileSummary() {
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isUpdatingNotifications, setIsUpdatingNotifications] = useState(false);
   const [isRegisteringPush, setIsRegisteringPush] = useState(false);
+  const [isUpdatingHomeTeam, setIsUpdatingHomeTeam] = useState(false);
+  const [trophies, setTrophies] = useState<UserTrophy[]>([]);
+  const [isLoadingTrophies, setIsLoadingTrophies] = useState(true);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTrophies() {
+      setIsLoadingTrophies(true);
+      const earnedTrophies = await fetchCurrentUserTrophies();
+      if (isMounted) {
+        setTrophies(earnedTrophies);
+        setIsLoadingTrophies(false);
+      }
+    }
+
+    void loadTrophies();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
 
   if (isLoading || !user) {
     return (
@@ -51,6 +79,13 @@ export function ProfileSummary() {
               {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
             </p>
             <p className="truncate text-sm font-medium text-gray-600">{user.email}</p>
+            <div className="mt-2">
+              {user.homeTeamId ? (
+                <HomeTeamBadge teamId={user.homeTeamId} />
+              ) : (
+                <p className="text-sm font-semibold text-gray-500">No home team selected</p>
+              )}
+            </div>
           </div>
         </div>
         <div className="mt-4">
@@ -95,6 +130,55 @@ export function ProfileSummary() {
           Your invite gets you in the door. After that, your display name and username belong to you. Super admins can
           still make corrections later if something needs cleanup.
         </p>
+        <label className="mt-4 block">
+          <span className="text-sm font-bold text-gray-800">Home Team</span>
+          <p className="mt-1 text-sm font-semibold text-gray-500">Choose the team you&apos;re backing.</p>
+          <select
+            value={user.homeTeamId ?? ""}
+            disabled={isUpdatingHomeTeam}
+            onChange={async (event) => {
+              setIsUpdatingHomeTeam(true);
+              setNotificationMessage(null);
+              const result = await updateCurrentUserHomeTeam(event.target.value || null);
+              setNotificationMessage({
+                tone: result.ok ? "success" : "error",
+                text: result.message ?? "Something went wrong."
+              });
+              if (result.ok) {
+                await refresh();
+              }
+              setIsUpdatingHomeTeam(false);
+            }}
+            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+          >
+            <option value="">No home team selected</option>
+            {teams.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.flagEmoji} {team.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="rounded-lg border border-gray-200 p-4">
+        <h3 className="text-lg font-bold">Trophies</h3>
+        {isLoadingTrophies ? (
+          <p className="mt-2 text-sm leading-6 text-gray-600">Loading trophies...</p>
+        ) : trophies.length === 0 ? (
+          <p className="mt-2 text-sm leading-6 text-gray-600">No trophies yet</p>
+        ) : (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {trophies.map((trophy) => (
+              <div key={`${trophy.id}-${trophy.awardedAt}`} className="flex items-center gap-3 rounded-lg bg-gray-100 px-3 py-3">
+                <TrophyBadge icon={trophy.icon} tier={trophy.tier} size="md" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-black text-gray-950">{trophy.name}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg border border-gray-200 p-4">

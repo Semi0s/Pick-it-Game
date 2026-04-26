@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect } from "react";
-import { CircleUserRound, Gamepad2, ListOrdered, UsersRound } from "lucide-react";
+import { CircleUserRound, SquareCheckBig, UsersRound } from "lucide-react";
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { signOutCurrentUser } from "@/lib/auth-client";
@@ -15,10 +15,10 @@ type AppShellProps = {
 };
 
 const navItems = [
-  { href: "/groups", label: "Play", ariaLabel: "Play", icon: Gamepad2 },
-  { href: "/my-groups", label: "Groups", ariaLabel: "Groups", icon: UsersRound },
-  { href: "/leaderboard", label: "Leaderboard", ariaLabel: "Leaderboard", icon: ListOrdered },
-  { href: "/profile", label: "Profile", ariaLabel: "Profile", icon: CircleUserRound }
+  { href: "/groups", label: "My Picks", ariaLabel: "My Picks", icon: SquareCheckBig },
+  { href: "/my-groups", label: "My Groups", ariaLabel: "My Groups", icon: UsersRound },
+  { href: "/leaderboard", label: "The Arena", ariaLabel: "The Arena", icon: ArenaIcon },
+  { href: "/profile", label: "My Profile", ariaLabel: "My Profile", icon: CircleUserRound }
 ];
 
 export function AppShell({ children }: AppShellProps) {
@@ -110,5 +110,32 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       </nav>
     </div>
+  );
+}
+
+function ArenaIcon({ className, ...props }: { className?: string; "aria-hidden"?: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      {...props}
+    >
+      <rect x="2.75" y="2.75" width="18.5" height="18.5" rx="5.5" />
+      <rect x="5" y="5" width="14" height="14" rx="3.5" />
+      <rect x="7" y="8" width="10" height="8" rx="1.5" />
+      <path d="M12 8v8" />
+      <circle cx="12" cy="12" r="1.75" />
+      <path d="M7 6.5h10" />
+      <path d="M7 17.5h10" />
+      <path d="M6.5 7v10" />
+      <path d="M17.5 7v10" />
+      <path d="M7 10h1.5v4H7" />
+      <path d="M17 10h-1.5v4H17" />
+    </svg>
   );
 }

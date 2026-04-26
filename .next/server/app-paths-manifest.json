@@ -1,11 +1,8 @@
 {
   "/api/leaderboard/route": "app/api/leaderboard/route.js",
-  "/api/auth/reconcile/route": "app/api/auth/reconcile/route.js",
   "/api/notifications/route": "app/api/notifications/route.js",
-  "/login/page": "app/login/page.js",
-  "/dashboard/page": "app/dashboard/page.js",
-  "/my-groups/page": "app/my-groups/page.js",
-  "/groups/page": "app/groups/page.js",
-  "/trophies/page": "app/trophies/page.js",
-  "/leaderboard/page": "app/leaderboard/page.js"
+  "/leaderboard/page": "app/leaderboard/page.js",
+  "/admin/matches/page": "app/admin/matches/page.js",
+  "/profile/page": "app/profile/page.js",
+  "/groups/page": "app/groups/page.js"
 }

@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
+import { awardFirstReactionTrophy } from "@/lib/trophy-awards";
 
 export const LEADERBOARD_REACTION_EMOJIS = ["🔥", "🎯", "👀", "👍", "👏"] as const;
 
@@ -61,6 +62,8 @@ export async function addLeaderboardEventReaction(
   if (error) {
     return { ok: false, message: error.message };
   }
+
+  await awardFirstReactionTrophy(adminSupabase, userResult.userId);
 
   const grouped = await fetchLeaderboardEventReactions([eventId], userResult.userId);
   return { ok: true, reactions: grouped.get(eventId) ?? [] };
