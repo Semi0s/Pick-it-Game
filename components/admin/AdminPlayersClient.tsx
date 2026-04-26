@@ -5,6 +5,8 @@ import {
   deleteUserAndStartOverAction,
   fetchAdminPlayerHealthAction,
   fetchLeaderboardFeatureSettingsAction,
+  fetchRequiredLegalDocumentAction,
+  forceLegalReacceptanceAction,
   repairPendingInviteAction,
   resendConfirmationOrOnboardingNudgeAction,
   removeManagerAccessAction,
@@ -16,6 +18,7 @@ import {
 } from "@/app/admin/actions";
 import type { AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import type { LeaderboardFeatureSettingKey, LeaderboardFeatureSettings } from "@/lib/app-settings";
+import type { LegalDocument } from "@/lib/legal";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { AdminGroupsSection } from "@/components/admin/AdminGroupsClient";
 import { AdminInvitesSection, formatDate } from "@/components/admin/AdminInvitesClient";
@@ -44,6 +47,7 @@ const FILTERS = [
 export function AdminPlayersClient() {
   const [players, setPlayers] = useState<AdminPlayerHealthRow[]>([]);
   const [leaderboardSettings, setLeaderboardSettings] = useState<LeaderboardFeatureSettings | null>(null);
+  const [legalDocument, setLegalDocument] = useState<LegalDocument | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [sendingResetForUserId, setSendingResetForUserId] = useState<string | null>(null);
@@ -69,9 +73,15 @@ export function AdminPlayersClient() {
     displayName: string;
   } | null>(null);
   const [deleteConfirmationValue, setDeleteConfirmationValue] = useState("");
+  const [legalEditor, setLegalEditor] = useState({
+    documentType: "eula",
+    requiredVersion: "2026-04-26-v1",
+    title: "PICK-IT! Terms of Use",
+    body: ""
+  });
 
   useEffect(() => {
-    Promise.all([loadPlayers(), loadLeaderboardSettings()]).finally(() => setIsLoading(false));
+    Promise.all([loadPlayers(), loadLeaderboardSettings(), loadLegalDocument()]).finally(() => setIsLoading(false));
   }, []);
 
   async function loadPlayers() {
@@ -92,6 +102,24 @@ export function AdminPlayersClient() {
     }
 
     setLeaderboardSettings(result.settings);
+  }
+
+  async function loadLegalDocument() {
+    const result = await fetchRequiredLegalDocumentAction();
+    if (!result.ok) {
+      setMessage({ tone: "error", text: result.message });
+      return;
+    }
+
+    setLegalDocument(result.document);
+    if (result.document) {
+      setLegalEditor({
+        documentType: result.document.documentType,
+        requiredVersion: result.document.requiredVersion,
+        title: result.document.title,
+        body: result.document.body
+      });
+    }
   }
 
   const filteredPlayers = useMemo(() => {
@@ -129,7 +157,7 @@ export function AdminPlayersClient() {
   async function refreshPlayers() {
     setMessage(null);
     setIsLoading(true);
-    await Promise.all([loadPlayers(), loadLeaderboardSettings()]);
+    await Promise.all([loadPlayers(), loadLeaderboardSettings(), loadLegalDocument()]);
     setIsLoading(false);
   }
 
@@ -176,6 +204,74 @@ export function AdminPlayersClient() {
       />
       <HierarchyPanel />
       <AdminInvitesSection showHeader={false} showInviteList={false} />
+      <ManagementCard
+        title="Legal / Terms"
+        subtitle="Update the required EULA version and require everyone to accept it before using the app again."
+      >
+        <div className="space-y-4">
+          <p className="text-sm font-semibold text-gray-600">
+            This will require all users to accept the new terms before using the app again. Active sessions will be
+            revoked where supported.
+          </p>
+          <ManagementGrid>
+            <ManagementDatum label="Current version" value={legalDocument?.requiredVersion ?? "Not configured"} />
+            <ManagementDatum label="Last updated" value={legalDocument?.updatedAt ? formatDate(legalDocument.updatedAt) : "—"} />
+          </ManagementGrid>
+          <label className="block">
+            <span className="text-sm font-bold text-gray-800">Document type</span>
+            <input
+              value={legalEditor.documentType}
+              onChange={(event) => setLegalEditor((current) => ({ ...current, documentType: event.target.value }))}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-gray-800">Required version</span>
+            <input
+              value={legalEditor.requiredVersion}
+              onChange={(event) => setLegalEditor((current) => ({ ...current, requiredVersion: event.target.value }))}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-gray-800">Title</span>
+            <input
+              value={legalEditor.title}
+              onChange={(event) => setLegalEditor((current) => ({ ...current, title: event.target.value }))}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-gray-800">Body</span>
+            <textarea
+              value={legalEditor.body}
+              onChange={(event) => setLegalEditor((current) => ({ ...current, body: event.target.value }))}
+              rows={10}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            />
+          </label>
+          <ActionButton
+            tone="accent"
+            disabled={activeActionKey === "force-legal-reacceptance"}
+            onClick={() => {
+              void withAction("force-legal-reacceptance", async () => {
+                const result = await forceLegalReacceptanceAction(
+                  legalEditor.documentType,
+                  legalEditor.requiredVersion,
+                  legalEditor.title,
+                  legalEditor.body
+                );
+                setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                if (result.ok) {
+                  await loadLegalDocument();
+                }
+              });
+            }}
+          >
+            {activeActionKey === "force-legal-reacceptance" ? "Updating..." : "Require everyone to accept this version"}
+          </ActionButton>
+        </div>
+      </ManagementCard>
       <ManagementCard
         title="Leaderboard highlights"
         subtitle="Super-admin controls for tournament-time spotlight features."

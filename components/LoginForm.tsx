@@ -54,6 +54,12 @@ export function LoginForm({
       return;
     }
 
+    if (result.user?.needsLegalAcceptance) {
+      router.replace(`/legal/accept${nextPath?.startsWith("/") ? `?next=${encodeURIComponent(nextPath)}` : ""}`);
+      router.refresh();
+      return;
+    }
+
     if (result.user?.needsProfileSetup) {
       router.replace("/profile-setup");
       router.refresh();

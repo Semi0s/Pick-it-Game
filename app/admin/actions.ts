@@ -9,9 +9,16 @@ import {
   type LeaderboardFeatureSettingKey,
   type LeaderboardFeatureSettings
 } from "@/lib/app-settings";
+import {
+  DEFAULT_LEGAL_DOCUMENT_TYPE,
+  getRequiredLegalDocument,
+  upsertRequiredLegalDocument,
+  type LegalDocument
+} from "@/lib/legal";
 import { fetchAdminPlayerHealthRows, type AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import { escapeHtml, sendTransactionalEmail } from "@/lib/email-sender";
 import { fetchGlobalLeaderboardRankMovement, fetchGroupLeaderboardRankMovement } from "@/lib/leaderboard-movement";
+import { fetchDailyWinners } from "@/lib/leaderboard-highlights";
 import { createNotificationsForLeaderboardEvents, type NotificationEventSeed } from "@/lib/notifications";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { getSiteUrl } from "@/lib/site-url";
@@ -193,6 +200,16 @@ export type FetchLeaderboardFeatureSettingsResult =
       message: string;
     };
 export type UpdateLeaderboardFeatureSettingResult = ResetUserAccessResult;
+export type FetchRequiredLegalDocumentResult =
+  | {
+      ok: true;
+      document: LegalDocument | null;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+export type ForceLegalReacceptanceResult = ResetUserAccessResult;
 
 export type UpsertManagerLimitsInput = {
   userId: string;
@@ -856,6 +873,134 @@ export async function updateLeaderboardFeatureSettingAction(
       message: error instanceof Error ? error.message : "Could not update leaderboard feature settings."
     };
   }
+}
+
+export async function fetchRequiredLegalDocumentAction(
+  documentType = DEFAULT_LEGAL_DOCUMENT_TYPE
+): Promise<FetchRequiredLegalDocumentResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  try {
+    const document = await getRequiredLegalDocument(documentType);
+    return { ok: true, document };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load the current legal document."
+    };
+  }
+}
+
+export async function forceLegalReacceptanceAction(
+  documentType: string,
+  newRequiredVersion: string,
+  newTitle?: string,
+  newBody?: string
+): Promise<ForceLegalReacceptanceResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const normalizedDocumentType = documentType.trim().toLowerCase();
+  const normalizedVersion = newRequiredVersion.trim();
+  const normalizedTitle = newTitle?.trim() ?? "";
+  const normalizedBody = newBody?.trim() ?? "";
+
+  if (!normalizedDocumentType) {
+    return { ok: false, message: "A legal document type is required." };
+  }
+
+  if (!normalizedVersion) {
+    return { ok: false, message: "A required version is required." };
+  }
+
+  if (!normalizedTitle) {
+    return { ok: false, message: "A title is required." };
+  }
+
+  if (!normalizedBody) {
+    return { ok: false, message: "Body text is required." };
+  }
+
+  try {
+    await upsertRequiredLegalDocument({
+      documentType: normalizedDocumentType,
+      requiredVersion: normalizedVersion,
+      title: normalizedTitle,
+      body: normalizedBody,
+      isActive: true
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update the required legal document."
+    };
+  }
+
+  const adminSupabase = createAdminClient();
+  let revokedUsers = 0;
+  let revokeFailed = false;
+  let page = 1;
+  const perPage = 200;
+
+  while (true) {
+    const { data, error } = await adminSupabase.auth.admin.listUsers({
+      page,
+      perPage
+    });
+
+    if (error) {
+      revokeFailed = true;
+      break;
+    }
+
+    const users = data?.users ?? [];
+    if (users.length === 0) {
+      break;
+    }
+
+    for (const authUser of users) {
+      try {
+        // Supabase Admin session revocation support can vary by SDK version and backend behavior.
+        // Even if this call fails, the server-side legal gate still blocks normal app usage until
+        // the user accepts the new required version.
+        const { error: signOutError } = await adminSupabase.auth.admin.signOut(authUser.id);
+        if (signOutError) {
+          revokeFailed = true;
+          continue;
+        }
+
+        revokedUsers += 1;
+      } catch {
+        revokeFailed = true;
+      }
+    }
+
+    if (users.length < perPage) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  revalidatePath("/admin/players");
+  revalidatePath("/profile");
+  revalidatePath("/legal/accept");
+  revalidatePath("/dashboard");
+  revalidatePath("/groups");
+  revalidatePath("/my-groups");
+  revalidatePath("/leaderboard");
+
+  return {
+    ok: true,
+    message: revokeFailed
+      ? `Required ${normalizedDocumentType.toUpperCase()} version ${normalizedVersion}. Some sessions could not be revoked automatically, but the server-side legal gate will still require re-acceptance.`
+      : `Required ${normalizedDocumentType.toUpperCase()} version ${normalizedVersion} and revoked ${revokedUsers} active session${revokedUsers === 1 ? "" : "s"}.`
+  };
 }
 
 export async function upsertManagerLimitsAction(
@@ -2062,6 +2207,31 @@ async function resetGroupMatchScoring(
   adminSupabase: ReturnType<typeof createAdminClient>,
   matchId: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  const [{ data: affectedPredictions, error: affectedPredictionsError }, { data: groupMemberships, error: groupMembershipsError }] =
+    await Promise.all([
+      adminSupabase.from("predictions").select("user_id").eq("match_id", matchId),
+      adminSupabase.from("group_members").select("group_id,user_id")
+    ]);
+
+  if (affectedPredictionsError) {
+    return { ok: false, message: affectedPredictionsError.message };
+  }
+
+  if (groupMembershipsError) {
+    return { ok: false, message: groupMembershipsError.message };
+  }
+
+  const affectedUserIds = new Set(
+    (((affectedPredictions as Array<{ user_id: string }> | null) ?? []).map((prediction) => prediction.user_id))
+  );
+  const affectedGroupIds = Array.from(
+    new Set(
+      (((groupMemberships as Array<{ group_id: string; user_id: string }> | null) ?? [])
+        .filter((membership) => affectedUserIds.has(membership.user_id))
+        .map((membership) => membership.group_id))
+    )
+  );
+
   const [
     predictionResetResult,
     predictionScoresDeleteResult,
@@ -2093,7 +2263,15 @@ async function resetGroupMatchScoring(
     return { ok: false, message: eventsDeleteResult.error.message };
   }
 
-  return recalculateLeaderboard(adminSupabase);
+  const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+  if (!leaderboardResult.ok) {
+    return leaderboardResult;
+  }
+
+  await fetchDailyWinners();
+  await Promise.all(affectedGroupIds.map((groupId) => fetchDailyWinners(groupId)));
+
+  return { ok: true };
 }
 
 function assignRanks(totals: LeaderboardTotal[]) {

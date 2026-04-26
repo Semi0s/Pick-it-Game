@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { Trophy } from "lucide-react";
 import { Avatar } from "@/components/Avatar";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
@@ -187,6 +188,21 @@ export function LeaderboardClient() {
           A quick snapshot of your current rank, total points, and recent movement across global and group
           leaderboards.
         </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Link
+            href="/groups?focus=next"
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Next Pick
+          </Link>
+          <Link
+            href="/trophies"
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            <Trophy aria-hidden className="h-4 w-4 text-accent-dark" />
+            Trophies
+          </Link>
+        </div>
       </section>
 
       {!isLoading && !error && dailyWinners.length > 0 ? (

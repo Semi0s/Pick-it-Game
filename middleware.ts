@@ -2,7 +2,8 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 
-const protectedRoutes = ["/dashboard", "/groups", "/my-groups", "/leaderboard", "/profile", "/profile-setup", "/admin"];
+const protectedRoutes = ["/dashboard", "/groups", "/my-groups", "/leaderboard", "/profile", "/profile-setup", "/admin", "/legal/accept"];
+const LEGAL_ACCEPT_PATH = "/legal/accept";
 
 export async function middleware(request: NextRequest) {
   if (!hasSupabaseConfig()) {
@@ -67,6 +68,17 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
+  if (isProtectedRoute && user) {
+    const legalStatus = await getLegalGateStatus(supabase, user.id);
+
+    if (legalStatus.needsAcceptance && request.nextUrl.pathname !== LEGAL_ACCEPT_PATH) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = LEGAL_ACCEPT_PATH;
+      redirectUrl.searchParams.set("next", `${request.nextUrl.pathname}${request.nextUrl.search}`);
+      return NextResponse.redirect(redirectUrl);
+    }
+  }
+
   const isAdminRoute = request.nextUrl.pathname === "/admin" || request.nextUrl.pathname.startsWith("/admin/");
 
   if (isAdminRoute && user) {
@@ -82,6 +94,17 @@ export async function middleware(request: NextRequest) {
 
   if (request.nextUrl.pathname === "/login" && user) {
     const requestedNext = request.nextUrl.searchParams.get("next");
+    const legalStatus = await getLegalGateStatus(supabase, user.id);
+    if (legalStatus.needsAcceptance) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = LEGAL_ACCEPT_PATH;
+      redirectUrl.search = "";
+      if (requestedNext && requestedNext.startsWith("/")) {
+        redirectUrl.searchParams.set("next", requestedNext);
+      }
+      return NextResponse.redirect(redirectUrl);
+    }
+
     if (requestedNext && requestedNext.startsWith("/")) {
       return NextResponse.redirect(new URL(requestedNext, request.url));
     }
@@ -134,8 +157,57 @@ export const config = {
     "/groups/:path*",
     "/my-groups/:path*",
     "/leaderboard/:path*",
+    "/legal/:path*",
     "/profile/:path*",
     "/profile-setup/:path*",
     "/login"
   ]
 };
+
+async function getLegalGateStatus(
+  supabase: ReturnType<typeof createServerClient>,
+  userId: string
+) {
+  const [{ data: document, error: documentError }, { data: acceptance, error: acceptanceError }] = await Promise.all([
+    supabase
+      .from("legal_documents")
+      .select("required_version")
+      .eq("document_type", "eula")
+      .eq("is_active", true)
+      .maybeSingle(),
+    supabase
+      .from("user_legal_acceptances")
+      .select("document_version")
+      .eq("user_id", userId)
+      .eq("document_type", "eula")
+      .order("accepted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  ]);
+
+  if (isMissingLegalTableError(documentError?.message) || isMissingLegalTableError(acceptanceError?.message)) {
+    return { needsAcceptance: false };
+  }
+
+  const requiredVersion = (document as { required_version?: string } | null)?.required_version ?? null;
+  const acceptedVersion = (acceptance as { document_version?: string } | null)?.document_version ?? null;
+  return {
+    needsAcceptance: Boolean(requiredVersion && acceptedVersion !== requiredVersion)
+  };
+}
+
+function isMissingLegalTableError(message?: string | null) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return (
+    (normalized.includes("legal_documents") || normalized.includes("user_legal_acceptances")) &&
+    (
+      normalized.includes("schema cache") ||
+      normalized.includes("does not exist") ||
+      normalized.includes("could not find the table")
+    )
+  );
+}

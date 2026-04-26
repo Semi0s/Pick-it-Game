@@ -53,21 +53,33 @@ export function HierarchyPanel({
   return (
     <section className="grid gap-3 md:grid-cols-3">
       <HierarchyCard
-        title="Super Admin"
+        title={
+          <>
+            Super Admin {activeLevel === "super_admin" ? <span className="text-sm font-black text-accent-dark">(YOU)</span> : null}
+          </>
+        }
         badge="Unlimited access"
         copy="Full system control. Can create and manage groups, players, managers, limits, invites, and match administration."
         tone="accent"
         isActive={activeLevel === "super_admin"}
       />
       <HierarchyCard
-        title="Manager"
+        title={
+          <>
+            Manager {activeLevel === "manager" ? <span className="text-sm font-black text-amber-700">(YOU)</span> : null}
+          </>
+        }
         badge="Limited by assigned permissions"
         copy="Can manage assigned groups only. Can invite players and manage membership within the limits set by a super admin."
         tone="warning"
         isActive={activeLevel === "manager"}
       />
       <HierarchyCard
-        title="Player"
+        title={
+          <>
+            Player {activeLevel === "player" ? <span className="text-sm font-black text-green-700">(YOU)</span> : null}
+          </>
+        }
         badge="Participant"
         copy="Can join groups, make predictions, and view scores and leaderboards."
         tone="success"
@@ -129,7 +141,8 @@ export function ManagementCard({
   children,
   actions,
   titleClassName,
-  headerActions
+  headerActions,
+  className
 }: {
   title: ReactNode;
   subtitle?: ReactNode;
@@ -138,9 +151,10 @@ export function ManagementCard({
   actions?: ReactNode;
   titleClassName?: string;
   headerActions?: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
+    <div className={`rounded-lg border border-gray-200 p-4 ${className ?? "bg-white"}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className={titleClassName ?? "text-base"}>{title}</div>
@@ -385,7 +399,7 @@ function HierarchyCard({
   tone,
   isActive = false
 }: {
-  title: string;
+  title: ReactNode;
   badge: string;
   copy: string;
   tone: "accent" | "warning" | "success";

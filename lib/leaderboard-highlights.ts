@@ -128,7 +128,13 @@ export async function fetchDailyWinners(groupId?: string): Promise<DailyWinner[]
     );
 
     if (memberUserIds.length === 0) {
-      return [];
+      return await syncDailyWinnerEvents({
+        adminSupabase,
+        winners: [],
+        dateKey,
+        scopeType: "group",
+        groupId: trimmedGroupId
+      });
     }
 
     dailyWinnerQuery = dailyWinnerQuery.in("user_id", memberUserIds);
@@ -147,7 +153,13 @@ export async function fetchDailyWinners(groupId?: string): Promise<DailyWinner[]
 
   const highestPoints = Math.max(0, ...totalsByUser.values());
   if (highestPoints <= 0) {
-    return [];
+    return await syncDailyWinnerEvents({
+      adminSupabase,
+      winners: [],
+      dateKey,
+      scopeType: trimmedGroupId ? "group" : "global",
+      groupId: trimmedGroupId ?? null
+    });
   }
 
   const winnerIds = Array.from(totalsByUser.entries())
@@ -155,7 +167,13 @@ export async function fetchDailyWinners(groupId?: string): Promise<DailyWinner[]
     .map(([userId]) => userId);
 
   if (winnerIds.length === 0) {
-    return [];
+    return await syncDailyWinnerEvents({
+      adminSupabase,
+      winners: [],
+      dateKey,
+      scopeType: trimmedGroupId ? "group" : "global",
+      groupId: trimmedGroupId ?? null
+    });
   }
 
   const { data: users, error: usersError } = await adminSupabase

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Info } from "lucide-react";
 import {
   acceptGroupInviteAction,
@@ -47,6 +47,8 @@ type MyGroupsClientProps = {
 
 type ToastState = { tone: "success" | "error"; text: string } | null;
 const GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-expanded-groups";
+const GROUP_LIMIT_SECTION_STORAGE_KEY = "my-groups-expanded-group-limit-sections";
+const GROUP_PEOPLE_SECTION_STORAGE_KEY = "my-groups-expanded-group-people-sections";
 
 export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   const router = useRouter();
@@ -93,6 +95,8 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     Record<string, { search: string; filter: "all" | "members" | "pending" | "accepted" }>
   >({});
   const [expandedInviteEditorIds, setExpandedInviteEditorIds] = useState<string[]>([]);
+  const [expandedGroupLimitIds, setExpandedGroupLimitIds] = useState<string[]>([]);
+  const [expandedPeopleInviteIds, setExpandedPeopleInviteIds] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -150,6 +154,54 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
       console.warn("Could not save group disclosure state.", error);
     }
   }, [expandedGroupIds]);
+
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem(GROUP_LIMIT_SECTION_STORAGE_KEY);
+      if (!stored) {
+        return;
+      }
+
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        setExpandedGroupLimitIds(parsed.filter((value): value is string => typeof value === "string"));
+      }
+    } catch (error) {
+      console.warn("Could not restore saved group limit disclosure state.", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(GROUP_LIMIT_SECTION_STORAGE_KEY, JSON.stringify(expandedGroupLimitIds));
+    } catch (error) {
+      console.warn("Could not save group limit disclosure state.", error);
+    }
+  }, [expandedGroupLimitIds]);
+
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem(GROUP_PEOPLE_SECTION_STORAGE_KEY);
+      if (!stored) {
+        return;
+      }
+
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        setExpandedPeopleInviteIds(parsed.filter((value): value is string => typeof value === "string"));
+      }
+    } catch (error) {
+      console.warn("Could not restore saved people disclosure state.", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(GROUP_PEOPLE_SECTION_STORAGE_KEY, JSON.stringify(expandedPeopleInviteIds));
+    } catch (error) {
+      console.warn("Could not save people disclosure state.", error);
+    }
+  }, [expandedPeopleInviteIds]);
 
   useEffect(() => {
     if (!inviteToken) {
@@ -347,6 +399,15 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     );
   }
 
+  function toggleExpandedSection(
+    id: string,
+    setExpanded: Dispatch<SetStateAction<string[]>>
+  ) {
+    setExpanded((current) =>
+      current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]
+    );
+  }
+
   const inviteLoginPath = inviteToken ? `/login?flow=invite&next=${encodeURIComponent(`/my-groups?invite=${inviteToken}`)}` : "/login";
   const inviteSignupPath = inviteToken
     ? `/login?mode=signup&flow=invite&next=${encodeURIComponent(`/my-groups?invite=${inviteToken}`)}`
@@ -359,7 +420,6 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
         title="Play in groups and manage them"
         description="Players see the groups they belong to. Managers get group controls. Super admins get an elevated control layer at the top."
       />
-      <HierarchyPanel activeLevel={activeHierarchyLevel} />
 
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
 
@@ -489,60 +549,6 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
         </ManagementCard>
       ) : null}
 
-      <ManagementCard
-        title="Your access"
-        subtitle={
-          summary?.ok && summary.currentUser.role === "admin"
-            ? "Unlimited controls inside Groups."
-            : summary?.ok && summary.managerAccess.enabled
-              ? "Your manager limits and current usage."
-              : "Your current group access."
-        }
-      >
-        {isLoading ? (
-          <p className="mt-3 text-sm font-semibold text-gray-600">Loading your access...</p>
-        ) : summary?.ok ? (
-          <ManagementGrid>
-            <ManagementDatum
-              label="Joined groups"
-              value={`${summary.groupAccess.joinedGroupCount}`}
-            />
-            <ManagementDatum
-              label="Managed groups"
-              value={
-                summary.currentUser.role === "admin"
-                  ? "Unlimited"
-                  : summary.managerAccess.enabled
-                    ? `${summary.groupAccess.managedGroupCount} / ${summary.managerAccess.maxGroups}`
-                    : "None"
-              }
-            />
-            <ManagementDatum
-              label="New group limit"
-              value={
-                summary.currentUser.role === "admin"
-                  ? "Unlimited"
-                  : summary.managerAccess.enabled
-                    ? `${summary.managerAccess.maxMembersPerGroup} members`
-                    : "Not enabled"
-              }
-            />
-            <ManagementDatum
-              label="Scope"
-              value={
-                summary.currentUser.role === "admin"
-                  ? "All groups"
-                  : summary.managerAccess.enabled
-                    ? "Assigned groups only"
-                    : "Joined groups only"
-              }
-            />
-          </ManagementGrid>
-        ) : (
-          <p className="mt-3 text-sm font-semibold text-gray-600">{summary?.message ?? "Sign in to manage groups."}</p>
-        )}
-      </ManagementCard>
-
       {summary?.ok && !hasAnyGroups ? (
         <ManagementCard
           title="You are not in any groups right now."
@@ -664,12 +670,15 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
             const groupLimitFormValue = groupLimitForms[group.id] ?? String(group.membershipLimit);
             const usesDisclosure = group.canManage || isSuperAdmin;
             const isExpanded = usesDisclosure ? expandedGroupIds.includes(group.id) : true;
+            const isGroupLimitExpanded = expandedGroupLimitIds.includes(group.id);
+            const isPeopleInvitesExpanded = expandedPeopleInviteIds.includes(group.id);
 
             return (
               <ManagementCard
                 key={group.id}
                 title={group.name}
                 titleClassName="text-2xl"
+                className="bg-gray-50"
                 subtitle={
                   group.canManage
                     ? `${group.memberCount} members · ${group.pendingInviteCount} pending invites`
@@ -703,87 +712,87 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                   ) : null
                 }
               >
-                <ManagementGrid>
-                  <ManagementDatum label="Capacity" value={`${group.memberCount + group.pendingInviteCount} / ${group.membershipLimit} seats used`} />
-                  <ManagementDatum label="Group limit" value={`${group.membershipLimit} members`} />
-                  <ManagementDatum label="Members" value={group.memberCount} />
-                  <ManagementDatum label="Pending invites" value={group.canManage ? group.pendingInviteCount : "Manager only"} />
-                  <ManagementDatum
-                    label="Your access"
-                    value={
-                      group.userRole === "super_admin"
-                        ? "Super Admin"
-                        : group.userRole === "manager"
-                          ? "Manager"
-                          : "Player"
-                    }
-                  />
-                </ManagementGrid>
-
-                {isExpanded && group.canManage ? (
+                {isExpanded ? (
                   <>
-                    <form
-                      className="mt-4 space-y-3 rounded-md border border-gray-200 bg-gray-50 p-3"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void withAction(`update-group-limit-${group.id}`, async () => {
-                          const result = await updateManagedGroupLimitAction(group.id, Number(groupLimitFormValue));
-                          setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                          if (result.ok) {
-                            await load();
-                          }
-                        });
-                      }}
-                    >
-                      <div>
-                        <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group limit</h4>
-                        <p className="mt-1 text-xs font-semibold text-gray-500">
-                          {isSuperAdmin
-                            ? "Adjust this group directly with unlimited super admin access."
-                            : `Your current manager allowance is ${summary?.ok ? summary.managerAccess.maxMembersPerGroup : group.membershipLimit} members per group.`}
-                        </p>
-                      </div>
-                      <label className="block">
-                        <span className="text-sm font-bold text-gray-800">Seats for this group</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={groupLimitFormValue}
-                          onChange={(event) =>
-                            setGroupLimitForms((current) => ({
-                              ...current,
-                              [group.id]: event.target.value
-                            }))
-                          }
-                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                        />
-                      </label>
-                      <ActionButton
-                        type="submit"
-                        disabled={actionKey === `update-group-limit-${group.id}`}
-                        fullWidth
-                      >
-                        {actionKey === `update-group-limit-${group.id}` ? "Saving limit..." : "Save Group Limit"}
-                      </ActionButton>
-                    </form>
+                    <ManagementGrid>
+                      <ManagementDatum label="Capacity" value={`${group.memberCount + group.pendingInviteCount} / ${group.membershipLimit} seats used`} />
+                      <ManagementDatum label="Group limit" value={`${group.membershipLimit} members`} />
+                      <ManagementDatum label="Members" value={group.memberCount} />
+                      <ManagementDatum label="Pending invites" value={group.canManage ? group.pendingInviteCount : "Manager only"} />
+                      <ManagementDatum
+                        label="Your access"
+                        value={
+                          group.userRole === "super_admin"
+                            ? "Super Admin"
+                            : group.userRole === "manager"
+                              ? "Manager"
+                              : "Player"
+                        }
+                      />
+                    </ManagementGrid>
 
-                    <div className="mt-4">
-                      <ActionButton
-                        tone="danger"
-                        disabled={actionKey === `delete-group-${group.id}`}
-                        onClick={() => {
-                          setConfirmation(null);
-                          setDeleteConfirmation({
-                            key: `delete-group-${group.id}`,
-                            groupId: group.id,
-                            groupName: group.name
-                          });
-                          setDeleteConfirmationValue("");
-                        }}
-                        fullWidth
-                      >
-                        Delete Group
-                      </ActionButton>
+                    {group.canManage ? (
+                    <>
+                    <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group limit</h4>
+                          <p className="mt-1 text-xs font-semibold text-gray-500">
+                            {isSuperAdmin
+                              ? "Adjust this group directly with unlimited super admin access."
+                              : `Your current manager allowance is ${summary?.ok ? summary.managerAccess.maxMembersPerGroup : group.membershipLimit} members per group.`}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleExpandedSection(group.id, setExpandedGroupLimitIds)}
+                          className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                          aria-expanded={isGroupLimitExpanded}
+                          aria-label={isGroupLimitExpanded ? `Hide ${group.name} group limit` : `Open ${group.name} group limit`}
+                        >
+                          {isGroupLimitExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
+                          {isGroupLimitExpanded ? "Hide" : "Open"}
+                        </button>
+                      </div>
+
+                      {isGroupLimitExpanded ? (
+                        <form
+                          className="mt-3 space-y-3"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void withAction(`update-group-limit-${group.id}`, async () => {
+                              const result = await updateManagedGroupLimitAction(group.id, Number(groupLimitFormValue));
+                              setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                              if (result.ok) {
+                                await load();
+                              }
+                            });
+                          }}
+                        >
+                          <label className="block">
+                            <span className="text-sm font-bold text-gray-800">Seats for this group</span>
+                            <input
+                              type="number"
+                              min={1}
+                              value={groupLimitFormValue}
+                              onChange={(event) =>
+                                setGroupLimitForms((current) => ({
+                                  ...current,
+                                  [group.id]: event.target.value
+                                }))
+                              }
+                              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                            />
+                          </label>
+                          <ActionButton
+                            type="submit"
+                            disabled={actionKey === `update-group-limit-${group.id}`}
+                            fullWidth
+                          >
+                            {actionKey === `update-group-limit-${group.id}` ? "Saving limit..." : "Save Group Limit"}
+                          </ActionButton>
+                        </form>
+                      ) : null}
                     </div>
 
                     <form className="mt-4 space-y-3" onSubmit={(event) => handleCreateInvite(event, group)}>
@@ -855,17 +864,17 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                         {submittingInviteForGroup === group.id ? "Sending invite..." : "Send Group Invite"}
                       </ActionButton>
                     </form>
-                  </>
-                ) : isExpanded ? (
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Link href="/leaderboard" className="inline-flex">
-                      <ActionButton>View Leaderboard</ActionButton>
-                    </Link>
-                  </div>
-                ) : null}
+                    <div className="h-2" aria-hidden />
+                    </>
+                    ) : (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Link href="/leaderboard" className="inline-flex">
+                          <ActionButton>View Leaderboard</ActionButton>
+                        </Link>
+                      </div>
+                    )}
 
-                {isExpanded ? (
-                (() => {
+                    {(() => {
                   const directoryState = groupDirectoryState[group.id] ?? { search: "", filter: "all" as const };
                   const normalizedQuery = directoryState.search.trim().toLowerCase();
                   const filteredMembers = group.members.filter((member) => {
@@ -910,6 +919,28 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
 
                   return (
                     <div className="space-y-3">
+                      <div className="rounded-lg border border-gray-200 bg-white p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">People & invites</h4>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">
+                              {group.members.length} members · {group.invites.length} invites
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandedSection(group.id, setExpandedPeopleInviteIds)}
+                            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                            aria-expanded={isPeopleInvitesExpanded}
+                            aria-label={isPeopleInvitesExpanded ? `Hide ${group.name} people and invites` : `Open ${group.name} people and invites`}
+                          >
+                            {isPeopleInvitesExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
+                            {isPeopleInvitesExpanded ? "Hide" : "Open"}
+                          </button>
+                        </div>
+
+                        {isPeopleInvitesExpanded ? (
+                          <>
                       {(() => {
                         const pendingInviteCount = group.invites.filter((invite) => invite.status === "pending").length;
                         const acceptedInviteCount = group.invites.filter((invite) => invite.status === "accepted").length;
@@ -921,14 +952,8 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                         ] as const;
 
                         return (
-                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">People & invites</h4>
-                            <p className="mt-1 text-xs font-semibold text-gray-500">
-                              {group.members.length} members · {group.invites.length} invites
-                            </p>
-                          </div>
                           <div className="flex flex-wrap gap-2">
                             {filterOptions.map((option) => (
                               <button
@@ -975,7 +1000,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                         );
                       })()}
 
-                      <div className="space-y-2">
+                      <div className="mt-3 space-y-2">
                         {filteredMembers.map((member) => (
                           <div key={member.membershipId} className="rounded-md border border-gray-200 px-3 py-3">
                             <div className="flex items-start justify-between gap-3">
@@ -1135,14 +1160,97 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                           </p>
                         ) : null}
                       </div>
+                          </>
+                        ) : null}
+                      </div>
                     </div>
                   );
-                })()
+                })()}
+
+                    {group.canManage ? (
+                      <div className="mt-4">
+                        <ActionButton
+                          tone="danger"
+                          disabled={actionKey === `delete-group-${group.id}`}
+                          onClick={() => {
+                            setConfirmation(null);
+                            setDeleteConfirmation({
+                              key: `delete-group-${group.id}`,
+                              groupId: group.id,
+                              groupName: group.name
+                            });
+                            setDeleteConfirmationValue("");
+                          }}
+                          fullWidth
+                        >
+                          Delete Group
+                        </ActionButton>
+                      </div>
+                    ) : null}
+                  </>
                 ) : null}
               </ManagementCard>
             );
           })
         )}
+      </section>
+
+      <section className="space-y-3">
+        <HierarchyPanel activeLevel={activeHierarchyLevel} />
+
+        <ManagementCard
+          title="Your access"
+          subtitle={
+            summary?.ok && summary.currentUser.role === "admin"
+              ? "Unlimited controls inside Groups."
+              : summary?.ok && summary.managerAccess.enabled
+                ? "Your manager limits and current usage."
+                : "Your current group access."
+          }
+        >
+          {isLoading ? (
+            <p className="mt-3 text-sm font-semibold text-gray-600">Loading your access...</p>
+          ) : summary?.ok ? (
+            <ManagementGrid>
+              <ManagementDatum
+                label="Joined groups"
+                value={`${summary.groupAccess.joinedGroupCount}`}
+              />
+              <ManagementDatum
+                label="Managed groups"
+                value={
+                  summary.currentUser.role === "admin"
+                    ? "Unlimited"
+                    : summary.managerAccess.enabled
+                      ? `${summary.groupAccess.managedGroupCount} / ${summary.managerAccess.maxGroups}`
+                      : "None"
+                }
+              />
+              <ManagementDatum
+                label="New group limit"
+                value={
+                  summary.currentUser.role === "admin"
+                    ? "Unlimited"
+                    : summary.managerAccess.enabled
+                      ? `${summary.managerAccess.maxMembersPerGroup} members`
+                      : "Not enabled"
+                }
+              />
+              <ManagementDatum
+                label="Scope"
+                value={
+                  summary.currentUser.role === "admin"
+                    ? "All groups"
+                    : summary.managerAccess.enabled
+                      ? "Assigned groups only"
+                      : "Joined groups only"
+                }
+              />
+            </ManagementGrid>
+          ) : (
+            <p className="mt-3 text-sm font-semibold text-gray-600">{summary?.message ?? "Sign in to manage groups."}</p>
+          )}
+        </ManagementCard>
       </section>
     </section>
   );

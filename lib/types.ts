@@ -18,6 +18,10 @@ export type UserProfile = {
   needsProfileSetup?: boolean;
   notificationsEnabled?: boolean;
   pushNotificationsEnabled?: boolean;
+  needsLegalAcceptance?: boolean;
+  requiredEulaVersion?: string | null;
+  acceptedEulaVersion?: string | null;
+  acceptedEulaAt?: string | null;
   managerLimits?: {
     maxGroups: number;
     maxMembersPerGroup: number;

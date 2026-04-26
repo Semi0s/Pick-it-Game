@@ -31,6 +31,14 @@ export function ProfileSummary() {
     );
   }
 
+  const acceptedTermsLabel = user.acceptedEulaAt
+    ? new Intl.DateTimeFormat("en-US", {
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZoneName: "short"
+      }).format(new Date(user.acceptedEulaAt))
+    : "Not accepted yet";
+
   return (
     <section className="space-y-5">
       <div className="rounded-lg bg-gray-100 p-5">
@@ -87,6 +95,25 @@ export function ProfileSummary() {
           Your invite gets you in the door. After that, your display name and username belong to you. Super admins can
           still make corrections later if something needs cleanup.
         </p>
+      </div>
+
+      <div className="rounded-lg border border-gray-200 p-4">
+        <h3 className="text-lg font-bold">Terms of Use</h3>
+        <p className="mt-2 text-sm leading-6 text-gray-600">
+          Current required version: <span className="font-bold text-gray-900">{user.requiredEulaVersion ?? "Not configured"}</span>
+        </p>
+        <p className="mt-2 text-sm leading-6 text-gray-600">
+          Accepted version: <span className="font-bold text-gray-900">{user.acceptedEulaVersion ?? "Not accepted yet"}</span>
+        </p>
+        <p className="mt-2 text-sm leading-6 text-gray-600">
+          Accepted on: <span className="font-bold text-gray-900">{acceptedTermsLabel}</span>
+        </p>
+        <a
+          href="/legal/accept"
+          className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+        >
+          View Current Terms
+        </a>
       </div>
 
       {user.role === "admin" ? (

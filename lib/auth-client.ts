@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_LEGAL_DOCUMENT_TYPE } from "@/lib/legal";
 import { getPublicWebPushVapidKey } from "@/lib/push-config";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { getSiteUrl } from "@/lib/site-url";
@@ -47,6 +48,15 @@ type UserSettingsRow = {
 
 type PushTokenRow = {
   id: string;
+};
+
+type LegalDocumentRow = {
+  required_version: string;
+};
+
+type UserLegalAcceptanceRow = {
+  document_version: string;
+  accepted_at: string;
 };
 
 export async function authenticateWithEmail(
@@ -140,7 +150,7 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
     return null;
   }
 
-  const [{ data: profile }, { data: managerLimits }, userSettingsResult, pushTokensResult] = await Promise.all([
+  const [{ data: profile }, { data: managerLimits }, userSettingsResult, pushTokensResult, legalDocumentResult, legalAcceptanceResult] = await Promise.all([
     supabase
       .from("users")
       .select("id,name,email,avatar_url,role,username,username_set_at,needs_profile_setup,total_points")
@@ -161,6 +171,20 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
       .select("id")
       .eq("user_id", session.user.id)
       .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("legal_documents")
+      .select("required_version")
+      .eq("document_type", DEFAULT_LEGAL_DOCUMENT_TYPE)
+      .eq("is_active", true)
+      .maybeSingle(),
+    supabase
+      .from("user_legal_acceptances")
+      .select("document_version,accepted_at")
+      .eq("user_id", session.user.id)
+      .eq("document_type", DEFAULT_LEGAL_DOCUMENT_TYPE)
+      .order("accepted_at", { ascending: false })
+      .limit(1)
       .maybeSingle()
   ]);
 
@@ -170,13 +194,29 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
   const pushNotificationsEnabled = isMissingPushTokensTableError(pushTokensResult.error?.message)
     ? false
     : Boolean((pushTokensResult.data as PushTokenRow | null)?.id);
+  const requiredEulaVersion = isMissingLegalTablesError(legalDocumentResult.error?.message)
+    ? null
+    : ((legalDocumentResult.data as LegalDocumentRow | null)?.required_version ?? null);
+  const latestLegalAcceptance = isMissingLegalTablesError(legalAcceptanceResult.error?.message)
+    ? null
+    : ((legalAcceptanceResult.data as UserLegalAcceptanceRow | null) ?? null);
+  const needsLegalAcceptance = Boolean(
+    requiredEulaVersion &&
+      (!latestLegalAcceptance || latestLegalAcceptance.document_version !== requiredEulaVersion)
+  );
 
   if (profile) {
     return mapUserRow(
       profile as UserRow,
       (managerLimits as ManagerLimitsRow | null) ?? null,
       notificationsEnabled,
-      pushNotificationsEnabled
+      pushNotificationsEnabled,
+      {
+        needsLegalAcceptance,
+        requiredEulaVersion,
+        acceptedEulaVersion: latestLegalAcceptance?.document_version ?? null,
+        acceptedEulaAt: latestLegalAcceptance?.accepted_at ?? null
+      }
     );
   }
 
@@ -191,6 +231,10 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
     needsProfileSetup: false,
     notificationsEnabled,
     pushNotificationsEnabled,
+    needsLegalAcceptance,
+    requiredEulaVersion,
+    acceptedEulaVersion: latestLegalAcceptance?.document_version ?? null,
+    acceptedEulaAt: latestLegalAcceptance?.accepted_at ?? null,
     managerLimits: managerLimits
       ? {
           maxGroups: managerLimits.max_groups,
@@ -309,7 +353,13 @@ function mapUserRow(
   row: UserRow,
   managerLimits: ManagerLimitsRow | null,
   notificationsEnabled: boolean,
-  pushNotificationsEnabled: boolean
+  pushNotificationsEnabled: boolean,
+  legalStatus?: {
+    needsLegalAcceptance: boolean;
+    requiredEulaVersion: string | null;
+    acceptedEulaVersion: string | null;
+    acceptedEulaAt: string | null;
+  }
 ): UserProfile {
   return {
     id: row.id,
@@ -323,6 +373,10 @@ function mapUserRow(
     needsProfileSetup: row.needs_profile_setup ?? false,
     notificationsEnabled,
     pushNotificationsEnabled,
+    needsLegalAcceptance: legalStatus?.needsLegalAcceptance ?? false,
+    requiredEulaVersion: legalStatus?.requiredEulaVersion ?? null,
+    acceptedEulaVersion: legalStatus?.acceptedEulaVersion ?? null,
+    acceptedEulaAt: legalStatus?.acceptedEulaAt ?? null,
     managerLimits: managerLimits
       ? {
           maxGroups: managerLimits.max_groups,
@@ -499,6 +553,22 @@ function isMissingPushTokensTableError(message?: string) {
     normalized.includes("relation \"public.push_tokens\" does not exist") ||
     normalized.includes("relation \"push_tokens\" does not exist") ||
     (normalized.includes("push_tokens") && normalized.includes("schema cache"))
+  );
+}
+
+function isMissingLegalTablesError(message?: string) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return (
+    (normalized.includes("legal_documents") || normalized.includes("user_legal_acceptances")) &&
+    (
+      normalized.includes("schema cache") ||
+      normalized.includes("does not exist") ||
+      normalized.includes("could not find the table")
+    )
   );
 }
 

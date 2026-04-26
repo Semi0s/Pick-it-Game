@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Trophy } from "lucide-react";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchPlayerPredictions, savePlayerPrediction } from "@/lib/player-predictions";
@@ -20,12 +21,15 @@ type GroupPredictionsProps = {
 const stages: ("all" | MatchStage)[] = ["all", "group"];
 
 export function GroupPredictions({ user }: GroupPredictionsProps) {
+  const searchParams = useSearchParams();
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [socialPredictions, setSocialPredictions] = useState<SocialPrediction[]>([]);
   const [matches, setMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
   const [stageFilter, setStageFilter] = useState<"all" | MatchStage>("all");
   const [dateFilter, setDateFilter] = useState("all");
   const [teamSearch, setTeamSearch] = useState("");
+  const [pendingScrollMatchId, setPendingScrollMatchId] = useState<string | null>(null);
+  const matchCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     let isMounted = true;
@@ -106,6 +110,38 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
   const savedCount = matches.filter((match) =>
     predictions.some((prediction) => prediction.matchId === match.id)
   ).length;
+  const nextPredictionMatchId = useMemo(() => {
+    const savedMatchIds = new Set(predictions.map((prediction) => prediction.matchId));
+    const nextUnsavedOpenMatch = matches.find(
+      (match) => canEditPrediction(match.status) && !savedMatchIds.has(match.id)
+    );
+
+    if (nextUnsavedOpenMatch) {
+      return nextUnsavedOpenMatch.id;
+    }
+
+    return matches.find((match) => canEditPrediction(match.status))?.id ?? null;
+  }, [matches, predictions]);
+
+  useEffect(() => {
+    if (searchParams.get("focus") === "next" && nextPredictionMatchId) {
+      jumpToMatch(nextPredictionMatchId);
+    }
+  }, [nextPredictionMatchId, searchParams]);
+
+  useEffect(() => {
+    if (!pendingScrollMatchId) {
+      return;
+    }
+
+    const targetNode = matchCardRefs.current[pendingScrollMatchId];
+    if (!targetNode) {
+      return;
+    }
+
+    targetNode.scrollIntoView({ behavior: "smooth", block: "start" });
+    setPendingScrollMatchId(null);
+  }, [filteredMatches, pendingScrollMatchId]);
 
   async function handleSave(prediction: Prediction) {
     const savedPrediction = await savePlayerPrediction(prediction);
@@ -124,6 +160,13 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
     return savedPrediction;
   }
 
+  function jumpToMatch(matchId: string) {
+    setStageFilter("all");
+    setDateFilter("all");
+    setTeamSearch("");
+    setPendingScrollMatchId(matchId);
+  }
+
   return (
     <div className="space-y-6">
       <section className="rounded-lg bg-gray-100 p-5">
@@ -133,17 +176,28 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
           Choose the winner or call the draw. Exact scores are optional now, and picks stay open only while a match is
           scheduled.
         </p>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
           <div className="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
             {savedCount} of {matches.length} picks saved
           </div>
-          <Link
-            href="/trophies"
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-          >
-            <Trophy aria-hidden className="h-4 w-4 text-accent-dark" />
-            Trophies
-          </Link>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            {nextPredictionMatchId ? (
+              <button
+                type="button"
+                onClick={() => jumpToMatch(nextPredictionMatchId)}
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+              >
+                Next Pick
+              </button>
+            ) : null}
+            <Link
+              href="/trophies"
+              className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+            >
+              <Trophy aria-hidden className="h-4 w-4 text-accent-dark" />
+              Trophies
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -211,7 +265,13 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
 
             <div className="space-y-3">
               {dateMatches.map((match) => (
-                <div key={match.id} className="space-y-2">
+                <div
+                  key={match.id}
+                  className="space-y-2"
+                  ref={(node) => {
+                    matchCardRefs.current[match.id] = node;
+                  }}
+                >
                   <div className="flex items-center justify-end">
                     <span className="rounded-md bg-gray-100 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-600">
                       {getPredictionStateLabel(match.status)}

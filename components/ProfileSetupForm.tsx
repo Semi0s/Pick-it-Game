@@ -28,12 +28,18 @@ export function ProfileSetupForm() {
   }, [isLoading, router, user]);
 
   useEffect(() => {
-    if (!isLoading && user && !user.needsProfileSetup) {
+    if (!isLoading && user?.needsLegalAcceptance) {
+      router.replace("/legal/accept?next=/profile-setup");
+    }
+  }, [isLoading, router, user]);
+
+  useEffect(() => {
+    if (!isLoading && user && !user.needsLegalAcceptance && !user.needsProfileSetup) {
       router.replace("/groups");
     }
   }, [isLoading, router, user]);
 
-  if (isLoading || !user) {
+  if (isLoading || !user || user.needsLegalAcceptance) {
     return (
       <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
         Loading profile setup...

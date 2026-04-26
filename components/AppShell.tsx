@@ -33,12 +33,19 @@ export function AppShell({ children }: AppShellProps) {
   }, [isLoading, router, user]);
 
   useEffect(() => {
-    if (!isLoading && user?.needsProfileSetup) {
+    if (!isLoading && user?.needsLegalAcceptance) {
+      const nextPath = pathname?.startsWith("/") ? pathname : "/dashboard";
+      router.replace(`/legal/accept?next=${encodeURIComponent(nextPath)}`);
+    }
+  }, [isLoading, pathname, router, user]);
+
+  useEffect(() => {
+    if (!isLoading && user && !user.needsLegalAcceptance && user.needsProfileSetup) {
       router.replace("/profile-setup");
     }
   }, [isLoading, router, user]);
 
-  if (isLoading || !user || user.needsProfileSetup) {
+  if (isLoading || !user || user.needsProfileSetup || user.needsLegalAcceptance) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-white px-5">
         <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
