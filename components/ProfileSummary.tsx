@@ -5,6 +5,7 @@ import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import {
+  clearCurrentUserAvatar,
   fetchCurrentUserTrophies,
   registerCurrentBrowserPushNotifications,
   sendCurrentUserPasswordReset,
@@ -16,6 +17,8 @@ import { getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-lev
 import { teams } from "@/lib/mock-data";
 import type { UserTrophy } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
+
+const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 
 export function ProfileSummary() {
   const { user, isLoading, refresh } = useCurrentUser();
@@ -35,8 +38,10 @@ export function ProfileSummary() {
   useEffect(() => {
     let isMounted = true;
 
-    async function loadTrophies() {
-      setIsLoadingTrophies(true);
+    async function loadTrophies(showLoading = true) {
+      if (showLoading) {
+        setIsLoadingTrophies(true);
+      }
       const earnedTrophies = await fetchCurrentUserTrophies();
       if (isMounted) {
         setTrophies(earnedTrophies);
@@ -46,8 +51,25 @@ export function ProfileSummary() {
 
     void loadTrophies();
 
+    const refreshTrophies = () => {
+      void loadTrophies(false);
+    };
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        refreshTrophies();
+      }
+    };
+
+    window.addEventListener(TROPHY_STATE_CHANGED_EVENT, refreshTrophies as EventListener);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
     return () => {
       isMounted = false;
+      window.removeEventListener(TROPHY_STATE_CHANGED_EVENT, refreshTrophies as EventListener);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [user?.id]);
 
@@ -112,14 +134,39 @@ export function ProfileSummary() {
               event.target.value = "";
             }}
           />
-          <button
-            type="button"
-            disabled={isUploadingAvatar}
-            onClick={() => avatarInputRef.current?.click()}
-            className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
-          >
-            {isUploadingAvatar ? "Uploading..." : user.avatarUrl ? "Update Avatar" : "Upload Avatar"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={isUploadingAvatar}
+              onClick={() => avatarInputRef.current?.click()}
+              className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+            >
+              {isUploadingAvatar ? "Uploading..." : user.avatarUrl ? "Update Avatar" : "Upload Avatar"}
+            </button>
+            {user.avatarUrl ? (
+              <button
+                type="button"
+                disabled={isUploadingAvatar}
+                onClick={async () => {
+                  setIsUploadingAvatar(true);
+                  setPasswordMessage(null);
+                  setNotificationMessage(null);
+                  const result = await clearCurrentUserAvatar();
+                  setPasswordMessage({
+                    tone: result.ok ? "success" : "error",
+                    text: result.message ?? "Avatar updated."
+                  });
+                  if (result.ok) {
+                    await refresh();
+                  }
+                  setIsUploadingAvatar(false);
+                }}
+                className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+              >
+                {isUploadingAvatar ? "Working..." : "Remove Avatar"}
+              </button>
+            ) : null}
+          </div>
           <p className="mt-2 text-xs font-semibold text-gray-500">Optional. If upload fails, your initials stay in place.</p>
         </div>
       </div>

@@ -4,6 +4,7 @@ import {
   assertUserCanSeeLeaderboardEvent,
   getCurrentLeaderboardViewerId
 } from "@/lib/leaderboard-reactions";
+import { isMissingRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { awardFirstReactionTrophy } from "@/lib/trophy-awards";
 
 const MAX_COMMENT_LENGTH = 280;
@@ -133,6 +134,11 @@ export async function fetchCommentsForEvents(
 
   if (error) {
     if (isMissingCommentsTableError(error.message)) {
+      warnOptionalFeatureOnce(
+        "leaderboard-comments-missing",
+        "Leaderboard comments are unavailable until the comments migration is applied.",
+        error.message
+      );
       return new Map();
     }
 
@@ -171,5 +177,5 @@ function normalizeCommentBody(value: string) {
 }
 
 function isMissingCommentsTableError(message: string) {
-  return message.includes("leaderboard_event_comments") && message.includes("schema cache");
+  return isMissingRelationError(message, "leaderboard_event_comments");
 }

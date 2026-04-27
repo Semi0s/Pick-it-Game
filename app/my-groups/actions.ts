@@ -2,10 +2,12 @@
 
 import { createHash, randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
+import { fetchBooleanAppSetting } from "@/lib/app-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendTransactionalEmail } from "@/lib/email-sender";
+import { createTrophyEarnedNotifications } from "@/lib/notifications";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
-import { getSiteUrl } from "@/lib/site-url";
+import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 
 const DEFAULT_GROUP_MEMBERSHIP_LIMIT = 15;
 const DEFAULT_INVITE_EXPIRY_DAYS = 14;
@@ -281,6 +283,7 @@ export type ListManagedGroupPlayersResult =
   | {
       ok: true;
       groups: ManagedGroupDetails[];
+      managerCustomTrophiesEnabled: boolean;
     }
   | {
       ok: false;
@@ -695,8 +698,11 @@ export async function listManagedGroupPlayersAction(): Promise<ListManagedGroupP
 
   try {
     const adminSupabase = createAdminClient();
-    const groups = await fetchManagedGroupDetails(adminSupabase, currentUser.userId, currentUser.role);
-    return { ok: true, groups };
+    const [groups, managerCustomTrophiesEnabled] = await Promise.all([
+      fetchManagedGroupDetails(adminSupabase, currentUser.userId, currentUser.role),
+      fetchBooleanAppSetting("manager_custom_trophies_enabled", false)
+    ]);
+    return { ok: true, groups, managerCustomTrophiesEnabled };
   } catch (error) {
     return {
       ok: false,
@@ -728,9 +734,42 @@ export async function createManagedGroupTrophyAction(
 
   try {
     const adminSupabase = createAdminClient();
+    const managerCustomTrophiesEnabled = await fetchBooleanAppSetting("manager_custom_trophies_enabled", false);
     const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
     if (!managedGroup) {
       return { ok: false, message: "You do not manage that group." };
+    }
+
+    if (currentUser.role !== "admin" && !managerCustomTrophiesEnabled) {
+      return { ok: false, message: "Custom group trophies are not enabled right now." };
+    }
+
+    const normalizedName = name.toLowerCase();
+    const { data: existingTrophies, error: existingTrophiesError } = await adminSupabase
+      .from("trophies")
+      .select("id,name,group_id,award_source")
+      .eq("award_source", "manager")
+      .or(`group_id.is.null,group_id.eq.${trimmedGroupId}`);
+
+    if (existingTrophiesError) {
+      return { ok: false, message: existingTrophiesError.message };
+    }
+
+    const conflictingTrophy = ((existingTrophies ?? []) as Array<{
+      id: string;
+      name: string;
+      group_id: string | null;
+      award_source: "manager";
+    }>).find((trophy) => trophy.name.trim().toLowerCase() === normalizedName);
+
+    if (conflictingTrophy) {
+      return {
+        ok: false,
+        message:
+          conflictingTrophy.group_id === null
+            ? "That name is already used by a core trophy. Try a more specific custom name."
+            : "This group already has a trophy with that name."
+      };
     }
 
     const { error } = await adminSupabase.from("trophies").insert({
@@ -782,12 +821,21 @@ export async function awardManagedGroupTrophyAction(
 
   try {
     const adminSupabase = createAdminClient();
-    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
-    if (!managedGroup) {
-      return { ok: false, message: "You do not manage that group." };
+    const visibleGroup = await getVisibleGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+    if (!visibleGroup) {
+      return { ok: false, message: "You are not part of that group." };
     }
 
-    const [{ data: membership, error: membershipError }, { data: trophy, error: trophyError }, { data: existingAward, error: existingAwardError }] = await Promise.all([
+    if (trimmedUserId === currentUser.userId && currentUser.role !== "admin") {
+      return { ok: false, message: "You cannot award a trophy to yourself." };
+    }
+
+    const [
+      { data: membership, error: membershipError },
+      { data: trophy, error: trophyError },
+      { data: existingAward, error: existingAwardError },
+      awarderLabel
+    ] = await Promise.all([
       adminSupabase
         .from("group_members")
         .select("id,user:users!group_members_user_id_fkey(name)")
@@ -804,7 +852,8 @@ export async function awardManagedGroupTrophyAction(
         .select("id")
         .eq("user_id", trimmedUserId)
         .eq("trophy_id", trimmedTrophyId)
-        .maybeSingle()
+        .maybeSingle(),
+      getUserLabel(adminSupabase, currentUser.userId)
     ]);
 
     if (membershipError) {
@@ -833,11 +882,7 @@ export async function awardManagedGroupTrophyAction(
       return { ok: false, message: "System trophies are awarded automatically by the app." };
     }
 
-    if (currentUser.role !== "admin" && trophyGroupId && trophyGroupId !== trimmedGroupId) {
-      return { ok: false, message: "Managers can only award trophies created for their own group." };
-    }
-
-    if (currentUser.role === "admin" && trophyGroupId && trophyGroupId !== trimmedGroupId) {
+    if (trophyGroupId && trophyGroupId !== trimmedGroupId) {
       return { ok: false, message: "That trophy belongs to a different group." };
     }
 
@@ -878,6 +923,55 @@ export async function awardManagedGroupTrophyAction(
       icon: string;
       tier?: "bronze" | "silver" | "gold" | "special" | null;
     };
+    const awardedAt = new Date().toISOString();
+    const todayWindow = getGroupActivityDayWindow();
+    const awarderName = awarderLabel.name?.trim() || awarderLabel.email?.trim() || "A player";
+
+    const { data: existingAwardEvent, error: existingAwardEventError } = await adminSupabase
+      .from("leaderboard_events")
+      .select("id")
+      .eq("event_type", "trophy_awarded")
+      .eq("scope_type", "group")
+      .eq("group_id", trimmedGroupId)
+      .eq("user_id", trimmedUserId)
+      .eq("related_user_id", currentUser.userId)
+      .contains("metadata", { trophy_id: awardedTrophy.id })
+      .gte("created_at", todayWindow.start)
+      .lt("created_at", todayWindow.end)
+      .maybeSingle();
+
+    if (existingAwardEventError) {
+      return { ok: false, message: existingAwardEventError.message };
+    }
+
+    if (existingAwardEvent) {
+      return {
+        ok: true,
+        alreadyAwarded: true,
+        trophy: {
+          id: awardedTrophy.id,
+          name: awardedTrophy.name,
+          icon: awardedTrophy.icon,
+          tier: awardedTrophy.tier ?? "special"
+        },
+        message: `${awardedTrophy.name} was already awarded by you today.`
+      };
+    }
+
+    await createTrophyEarnedNotifications({
+      adminSupabase,
+      awards: [
+        {
+          userId: trimmedUserId,
+          trophyId: awardedTrophy.id,
+          trophyName: awardedTrophy.name,
+          trophyIcon: awardedTrophy.icon,
+          trophyTier: awardedTrophy.tier ?? "special",
+          trophyDescription: null,
+          awardedAt
+        }
+      ]
+    });
 
     const { error: eventError } = await adminSupabase.from("leaderboard_events").insert({
       event_type: "trophy_awarded",
@@ -888,11 +982,14 @@ export async function awardManagedGroupTrophyAction(
       related_user_id: currentUser.userId,
       points_delta: null,
       rank_delta: null,
-      message: `${awardedPlayerName} earned ${awardedTrophy.icon} ${awardedTrophy.name}`,
+      message: `${awardedPlayerName} earned ${awardedTrophy.icon} ${awardedTrophy.name} from ${awarderName}`,
       metadata: {
         trophy_id: awardedTrophy.id,
         trophy_name: awardedTrophy.name,
-        trophy_icon: awardedTrophy.icon
+        trophy_icon: awardedTrophy.icon,
+        awarded_by_user_id: currentUser.userId,
+        awarded_by_name: awarderName,
+        awarded_on: todayWindow.dateKey
       }
     });
 
@@ -1544,11 +1641,11 @@ async function fetchManagedGroupDetails(
           .select("id,key,name,description,icon,tier,award_source,created_by,group_id")
           .or(`group_id.in.(${groupIds.join(",")}),group_id.is.null`)
           .order("created_at", { ascending: true })
-      : manageableGroupIds.length > 0
+      : groupIds.length > 0
         ? adminSupabase
             .from("trophies")
             .select("id,key,name,description,icon,tier,award_source,created_by,group_id")
-            .or(`group_id.in.(${manageableGroupIds.join(",")}),group_id.is.null`)
+            .or(`group_id.in.(${groupIds.join(",")}),group_id.is.null`)
             .order("created_at", { ascending: true })
         : Promise.resolve({ data: [], error: null })
   ]);
@@ -1883,6 +1980,44 @@ async function getManagedGroup(
   return membership ? (data as GroupRow) : null;
 }
 
+async function getVisibleGroup(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupId: string,
+  userId: string,
+  role: PlatformRole
+) {
+  const { data, error } = await adminSupabase
+    .from("groups")
+    .select("id,name,owner_user_id,membership_limit,status")
+    .eq("id", groupId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  if (role === "admin" || data.owner_user_id === userId) {
+    return data as GroupRow;
+  }
+
+  const { data: membership, error: membershipError } = await adminSupabase
+    .from("group_members")
+    .select("id")
+    .eq("group_id", groupId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (membershipError) {
+    throw new Error(membershipError.message);
+  }
+
+  return membership ? (data as GroupRow) : null;
+}
+
 async function ensureGroupHasOpenSeat(
   adminSupabase: ReturnType<typeof createAdminClient>,
   groupId: string,
@@ -1962,6 +2097,26 @@ function buildCustomTrophyKey(groupId: string | null, name: string) {
     .slice(0, 32) || "trophy";
   const scopePrefix = groupId ? `group_${groupId.slice(0, 8)}` : "global";
   return `${scopePrefix}_${normalizedName}_${randomBytes(4).toString("hex")}`;
+}
+
+function getGroupActivityDayWindow() {
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+
+  const dateKey = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(now);
+
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    dateKey
+  };
 }
 
 async function getManagedGroupInvite(
@@ -2203,5 +2358,5 @@ function hashInviteToken(token: string) {
 }
 
 function buildGroupInviteClaimUrl(token: string) {
-  return `${getSiteUrl()}/my-groups?invite=${token}`;
+  return `${getPublicSiteUrl()}/my-groups?invite=${token}`;
 }

@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createTrophyEarnedNotifications } from "@/lib/notifications";
 
 type TrophyRow = {
   id: string;
@@ -45,18 +46,56 @@ export async function awardFirstReactionTrophy(adminSupabase: ReturnType<typeof 
       return;
     }
 
+    const { data: existingAward, error: existingAwardError } = await adminSupabase
+      .from("user_trophies")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("trophy_id", trophyId)
+      .maybeSingle();
+
+    if (existingAwardError) {
+      if (isMissingTrophiesTableError(existingAwardError.message)) {
+        return;
+      }
+
+      console.error("Could not check first_reaction trophy state.", existingAwardError);
+      return;
+    }
+
+    if (existingAward) {
+      return;
+    }
+
+    const awardedAt = new Date().toISOString();
+
     const { error: awardError } = await adminSupabase.from("user_trophies").upsert(
       {
         user_id: userId,
         trophy_id: trophyId,
-        awarded_at: new Date().toISOString()
+        awarded_at: awardedAt
       },
       { onConflict: "user_id,trophy_id" }
     );
 
     if (awardError && !isMissingTrophiesTableError(awardError.message)) {
       console.error("Could not award first_reaction trophy.", awardError);
+      return;
     }
+
+    await createTrophyEarnedNotifications({
+      adminSupabase,
+      awards: [
+        {
+          userId,
+          trophyId,
+          trophyName: "First Reaction",
+          trophyIcon: "🔥",
+          trophyTier: "special",
+          trophyDescription: "Awarded for joining the social activity feed with your first reaction.",
+          awardedAt
+        }
+      ]
+    });
   } catch (error) {
     console.error("Unexpected first_reaction trophy award failure.", error);
   }

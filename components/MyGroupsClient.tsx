@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Info, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Info } from "lucide-react";
 import {
   acceptGroupInviteAction,
   awardManagedGroupTrophyAction,
   cancelGroupInviteAction,
   createGroupAction,
   createGroupInviteAction,
+  createManagedGroupTrophyAction,
   deleteManagedGroupAction,
   fetchGroupInvitePreviewAction,
   fetchMyGroupsAction,
@@ -24,6 +25,7 @@ import {
 } from "@/app/my-groups/actions";
 import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
 import { Avatar } from "@/components/Avatar";
+import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { AdminInvitesSection } from "@/components/admin/AdminInvitesClient";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { formatDate } from "@/components/admin/AdminInvitesClient";
@@ -53,6 +55,13 @@ const GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-expanded-groups";
 const GROUP_LIMIT_SECTION_STORAGE_KEY = "my-groups-expanded-group-limit-sections";
 const GROUP_PEOPLE_SECTION_STORAGE_KEY = "my-groups-expanded-group-people-sections";
 const GROUP_TROPHY_SECTION_STORAGE_KEY = "my-groups-expanded-group-trophy-sections";
+const GROUP_INFO_SECTION_STORAGE_KEY = "my-groups-expanded-group-info-sections";
+const TROPHY_PROMPTS = [
+  { name: "Office Oracle", icon: "🧠", description: "Sees the result before the rest of the room does." },
+  { name: "The Messi of Marketing", icon: "🐐", description: "Turns bold calls into highlight reels." },
+  { name: "Data Wizard", icon: "📊", description: "Backs every pick with suspiciously good logic." },
+  { name: "Drama King", icon: "🎭", description: "Never met a chaotic scoreline they didn't love." }
+] as const;
 
 export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   const router = useRouter();
@@ -102,9 +111,11 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   const [expandedGroupLimitIds, setExpandedGroupLimitIds] = useState<string[]>([]);
   const [expandedPeopleInviteIds, setExpandedPeopleInviteIds] = useState<string[]>([]);
   const [expandedTrophyIds, setExpandedTrophyIds] = useState<string[]>([]);
+  const [expandedGroupInfoIds, setExpandedGroupInfoIds] = useState<string[]>([]);
   const [groupTrophyAwardSelections, setGroupTrophyAwardSelections] = useState<Record<string, Record<string, string>>>(
     {}
   );
+  const [groupTrophyDrafts, setGroupTrophyDrafts] = useState<Record<string, { name: string; icon: string; description: string }>>({});
   const [trophySheetTarget, setTrophySheetTarget] = useState<{ groupId: string; userId: string } | null>(null);
   const [celebrationTrophy, setCelebrationTrophy] = useState<{
     name: string;
@@ -242,6 +253,30 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   }, [expandedTrophyIds]);
 
   useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem(GROUP_INFO_SECTION_STORAGE_KEY);
+      if (!stored) {
+        return;
+      }
+
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        setExpandedGroupInfoIds(parsed.filter((value): value is string => typeof value === "string"));
+      }
+    } catch (error) {
+      console.warn("Could not restore saved group info disclosure state.", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(GROUP_INFO_SECTION_STORAGE_KEY, JSON.stringify(expandedGroupInfoIds));
+    } catch (error) {
+      console.warn("Could not save group info disclosure state.", error);
+    }
+  }, [expandedGroupInfoIds]);
+
+  useEffect(() => {
     if (!inviteToken) {
       return;
     }
@@ -307,6 +342,11 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     () => (managedGroupsResult?.ok ? managedGroupsResult.groups : []),
     [managedGroupsResult]
   );
+  const managerCustomTrophiesEnabled = managedGroupsResult?.ok
+    ? managedGroupsResult.managerCustomTrophiesEnabled
+    : false;
+  const currentUserId = summary?.ok ? summary.currentUser.userId : null;
+  const canSelfAwardTrophies = summary?.ok ? summary.currentUser.role === "admin" : false;
   const currentUser = summary?.ok ? summary.currentUser : null;
   const isSignedIn = Boolean(currentUser);
   const hasAnyGroups = summary?.ok ? summary.groupAccess.hasAnyGroups : false;
@@ -452,6 +492,27 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
             ...(current[groupId] ?? {}),
             [trophyId]: ""
           }
+        }));
+        await load();
+      }
+    });
+  }
+
+  async function handleCreateManagedTrophy(groupId: string) {
+    const draft = groupTrophyDrafts[groupId] ?? { name: "", icon: "", description: "" };
+
+    await withAction(`create-trophy-${groupId}`, async () => {
+      const result = await createManagedGroupTrophyAction({
+        groupId,
+        name: draft.name,
+        icon: draft.icon,
+        description: draft.description
+      });
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        setGroupTrophyDrafts((current) => ({
+          ...current,
+          [groupId]: { name: "", icon: "", description: "" }
         }));
         await load();
       }
@@ -668,48 +729,47 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
       ) : null}
 
       {canCreateGroups ? (
-        <form
-          onSubmit={handleCreateGroup}
-          className={`space-y-4 rounded-lg border p-4 transition-colors ${
-            managerGroupLimitReached ? "border-gray-200 bg-gray-100" : "border-green-200 bg-green-50"
-          }`}
-        >
-          <h3 className="text-lg font-bold">{summary?.ok && summary.currentUser.role === "admin" ? "Create a group (Unlimited)" : "Create a group"}</h3>
-          {managerGroupLimitReached ? (
-            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+        managerGroupLimitReached ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <div className="flex items-start gap-2 text-sm font-semibold text-amber-800">
               <Info aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
               <p>
                 You are already using all {summary?.ok ? summary.managerAccess.maxGroups : 0} of your available groups.
                 Ask a super admin if you need a higher group limit.
               </p>
             </div>
-          ) : null}
-          <label className="block">
-            <span className="text-sm font-bold text-gray-800">Group name</span>
-            <input
-              required
-              value={groupName}
-              onChange={(event) => setGroupName(event.target.value)}
-              disabled={managerGroupLimitReached}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-500"
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-bold text-gray-800">Membership limit</span>
-            <input
-              type="number"
-              min={1}
-              value={membershipLimit}
-              onChange={(event) => setMembershipLimit(event.target.value)}
-              disabled={managerGroupLimitReached}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-500"
-              placeholder="Leave blank for the default"
-            />
-          </label>
-          <ActionButton type="submit" disabled={isCreatingGroup || managerGroupLimitReached} tone="accent" fullWidth>
-            {managerGroupLimitReached ? "Group limit reached" : isCreatingGroup ? "Creating..." : "Create Group"}
-          </ActionButton>
-        </form>
+          </div>
+        ) : (
+          <form
+            onSubmit={handleCreateGroup}
+            className="space-y-4 rounded-lg border border-green-200 bg-green-50 p-4 transition-colors"
+          >
+            <h3 className="text-lg font-bold">{summary?.ok && summary.currentUser.role === "admin" ? "Create a group (Unlimited)" : "Create a group"}</h3>
+            <label className="block">
+              <span className="text-sm font-bold text-gray-800">Group name</span>
+              <input
+                required
+                value={groupName}
+                onChange={(event) => setGroupName(event.target.value)}
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-bold text-gray-800">Membership limit</span>
+              <input
+                type="number"
+                min={1}
+                value={membershipLimit}
+                onChange={(event) => setMembershipLimit(event.target.value)}
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                placeholder="Leave blank for the default"
+              />
+            </label>
+            <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
+              {isCreatingGroup ? "Creating..." : "Create Group"}
+            </ActionButton>
+          </form>
+        )
       ) : null}
 
       <section className="space-y-3">
@@ -749,15 +809,19 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
         ) : (
           filteredGroups.map((group) => {
             const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "" };
+            const trophyDraft = groupTrophyDrafts[group.id] ?? { name: "", icon: "", description: "" };
             const groupLimitFormValue = groupLimitForms[group.id] ?? String(group.membershipLimit);
             const usesDisclosure = group.canManage || isSuperAdmin;
             const isExpanded = usesDisclosure ? expandedGroupIds.includes(group.id) : true;
             const isGroupLimitExpanded = expandedGroupLimitIds.includes(group.id);
             const isPeopleInvitesExpanded = expandedPeopleInviteIds.includes(group.id);
             const isTrophyExpanded = expandedTrophyIds.includes(group.id);
+            const isGroupInfoExpanded = expandedGroupInfoIds.includes(group.id);
             const managerTrophies = group.trophies.filter(
               (trophy) => trophy.awardSource === "manager" && trophy.scope === "group"
             );
+            const coreTrophies = managerTrophies.filter((trophy) => !trophy.key.startsWith(`group_${group.id}_`));
+            const customTrophies = managerTrophies.filter((trophy) => trophy.key.startsWith(`group_${group.id}_`));
             const activeMembers = group.members.filter((member) => member.role === "member");
 
             return (
@@ -801,87 +865,8 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
               >
                 {isExpanded ? (
                   <>
-                    <ManagementGrid>
-                      <ManagementDatum label="Capacity" value={`${group.memberCount + group.pendingInviteCount} / ${group.membershipLimit} seats used`} />
-                      <ManagementDatum label="Group limit" value={`${group.membershipLimit} members`} />
-                      <ManagementDatum label="Members" value={group.memberCount} />
-                      <ManagementDatum label="Pending invites" value={group.canManage ? group.pendingInviteCount : "Manager only"} />
-                      <ManagementDatum
-                        label="Your access"
-                        value={
-                          group.userRole === "super_admin"
-                            ? "Super Admin"
-                            : group.userRole === "manager"
-                              ? "Manager"
-                              : "Player"
-                        }
-                      />
-                    </ManagementGrid>
-
                     {group.canManage ? (
                     <>
-                    <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group limit</h4>
-                          <p className="mt-1 text-xs font-semibold text-gray-500">
-                            {isSuperAdmin
-                              ? "Adjust this group directly with unlimited super admin access."
-                              : `Your current manager allowance is ${summary?.ok ? summary.managerAccess.maxMembersPerGroup : group.membershipLimit} members per group.`}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => toggleExpandedSection(group.id, setExpandedGroupLimitIds)}
-                          className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                          aria-expanded={isGroupLimitExpanded}
-                          aria-label={isGroupLimitExpanded ? `Hide ${group.name} group limit` : `Open ${group.name} group limit`}
-                        >
-                          {isGroupLimitExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-                          {isGroupLimitExpanded ? "Hide" : "Open"}
-                        </button>
-                      </div>
-
-                      {isGroupLimitExpanded ? (
-                        <form
-                          className="mt-3 space-y-3"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            void withAction(`update-group-limit-${group.id}`, async () => {
-                              const result = await updateManagedGroupLimitAction(group.id, Number(groupLimitFormValue));
-                              setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                              if (result.ok) {
-                                await load();
-                              }
-                            });
-                          }}
-                        >
-                          <label className="block">
-                            <span className="text-sm font-bold text-gray-800">Seats for this group</span>
-                            <input
-                              type="number"
-                              min={1}
-                              value={groupLimitFormValue}
-                              onChange={(event) =>
-                                setGroupLimitForms((current) => ({
-                                  ...current,
-                                  [group.id]: event.target.value
-                                }))
-                              }
-                              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                            />
-                          </label>
-                          <ActionButton
-                            type="submit"
-                            disabled={actionKey === `update-group-limit-${group.id}`}
-                            fullWidth
-                          >
-                            {actionKey === `update-group-limit-${group.id}` ? "Saving limit..." : "Save Group Limit"}
-                          </ActionButton>
-                        </form>
-                      ) : null}
-                    </div>
-
                     <form className="mt-4 space-y-3" onSubmit={(event) => handleCreateInvite(event, group)}>
                       <label className="block">
                         <span className="text-sm font-bold text-gray-800">Invite by email</span>
@@ -960,128 +945,6 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                         </Link>
                       </div>
                     )}
-
-                    {group.canManage ? (
-                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Trophies</h4>
-                            <p className="mt-1 text-xs font-semibold text-gray-500">
-                              {managerTrophies.length} custom trophies for this group
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => toggleExpandedSection(group.id, setExpandedTrophyIds)}
-                            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                            aria-expanded={isTrophyExpanded}
-                            aria-label={isTrophyExpanded ? `Hide ${group.name} trophies` : `Open ${group.name} trophies`}
-                          >
-                            {isTrophyExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-                            {isTrophyExpanded ? "Hide" : "Open"}
-                          </button>
-                        </div>
-
-                        {isTrophyExpanded ? (
-                          <>
-                            <div className="mt-3 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
-                              <p className="font-black text-gray-900">Select Trophy</p>
-                              <p className="mt-1 text-xs text-gray-500">
-                                Pick from the preset manager trophies below, then choose a player to award one fast.
-                              </p>
-                            </div>
-
-                            <div className="mt-4 space-y-2">
-                              {managerTrophies.length > 0 ? (
-                                managerTrophies.map((trophy) => {
-                                  const selectedUserId = groupTrophyAwardSelections[group.id]?.[trophy.id] ?? "";
-                                  const alreadyAwardedUserIds = new Set(
-                                    group.members
-                                      .filter((member) => member.trophies.some((awarded) => awarded.id === trophy.id))
-                                      .map((member) => member.userId)
-                                  );
-                                  const eligibleMembers = activeMembers.filter(
-                                    (member) => !alreadyAwardedUserIds.has(member.userId)
-                                  );
-
-                                  return (
-                                    <div key={trophy.id} className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                          <p className="truncate text-sm font-black text-gray-950">
-                                            {trophy.icon} {trophy.name}
-                                          </p>
-                                          <p className="mt-1 text-sm font-semibold text-gray-600">
-                                            {trophy.description || "Custom recognition trophy"}
-                                          </p>
-                                        </div>
-                                        <div className="flex flex-col items-end gap-2">
-                                          <ManagementBadge label="group" tone="neutral" />
-                                          <span className="text-xs font-semibold text-gray-500">
-                                            Awarded {trophy.awardedCount} time{trophy.awardedCount === 1 ? "" : "s"}
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                                        <label className="min-w-0 flex-1">
-                                          <span className="sr-only">Select player to award {trophy.name}</span>
-                                          <select
-                                            value={selectedUserId}
-                                            onChange={(event) =>
-                                              setGroupTrophyAwardSelections((current) => ({
-                                                ...current,
-                                                [group.id]: {
-                                                  ...(current[group.id] ?? {}),
-                                                  [trophy.id]: event.target.value
-                                                }
-                                              }))
-                                            }
-                                            className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                                          >
-                                            <option value="">
-                                              {eligibleMembers.length > 0 ? "Choose a player to award" : "Everyone already has this trophy"}
-                                            </option>
-                                            {eligibleMembers.map((member) => (
-                                              <option key={member.userId} value={member.userId}>
-                                                {member.name}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        </label>
-                                        <ActionButton
-                                          type="button"
-                                          disabled={
-                                            !selectedUserId ||
-                                            eligibleMembers.length === 0 ||
-                                            actionKey === `award-trophy-${group.id}:${selectedUserId}:${trophy.id}`
-                                          }
-                                          onClick={() => void handleAwardTrophyFromList(group.id, trophy.id)}
-                                        >
-                                          {actionKey === `award-trophy-${group.id}:${selectedUserId}:${trophy.id}`
-                                            ? "Awarding..."
-                                            : "Award"}
-                                        </ActionButton>
-                                      </div>
-                                    </div>
-                                  );
-                                })
-                              ) : (
-                                <div className="rounded-md bg-gray-100 px-3 py-3 text-sm font-semibold text-gray-600">
-                                  <p>No custom trophies yet</p>
-                                  <p className="mt-1 text-xs text-gray-500">
-                                    Create one to recognize a player in this group.
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                            <div className="mt-4 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
-                              Want the fastest path? Open a player row and tap <span className="font-black text-gray-900">🏆</span> for quick awarding.
-                            </div>
-                          </>
-                        ) : null}
-                      </div>
-                    ) : null}
 
                     {(() => {
                   const directoryState = groupDirectoryState[group.id] ?? { search: "", filter: "all" as const };
@@ -1242,10 +1105,10 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                                   </p>
                                 </div>
                               </div>
-                              {group.canManage ? (
-                                <div className="flex flex-col items-end gap-2">
-                                  <button
-                                    type="button"
+                                  {group.canManage && (member.userId !== currentUserId || canSelfAwardTrophies) ? (
+                                    <div className="flex flex-col items-end gap-2">
+                                      <button
+                                        type="button"
                                       onClick={() => {
                                         setTrophySheetTarget({ groupId: group.id, userId: member.userId });
                                     }}
@@ -1410,23 +1273,347 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                 })()}
 
                     {group.canManage ? (
-                      <div className="mt-4">
-                        <ActionButton
-                          tone="danger"
-                          disabled={actionKey === `delete-group-${group.id}`}
-                          onClick={() => {
-                            setConfirmation(null);
-                            setDeleteConfirmation({
-                              key: `delete-group-${group.id}`,
-                              groupId: group.id,
-                              groupName: group.name
-                            });
-                            setDeleteConfirmationValue("");
-                          }}
-                          fullWidth
-                        >
-                          Delete Group
-                        </ActionButton>
+                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group limit</h4>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">
+                              {isSuperAdmin
+                                ? "Adjust this group directly with unlimited super admin access."
+                                : `Your current manager allowance is ${summary?.ok ? summary.managerAccess.maxMembersPerGroup : group.membershipLimit} members per group.`}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandedSection(group.id, setExpandedGroupLimitIds)}
+                            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                            aria-expanded={isGroupLimitExpanded}
+                            aria-label={isGroupLimitExpanded ? `Hide ${group.name} group limit` : `Open ${group.name} group limit`}
+                          >
+                            {isGroupLimitExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
+                            {isGroupLimitExpanded ? "Hide" : "Open"}
+                          </button>
+                        </div>
+
+                        {isGroupLimitExpanded ? (
+                          <form
+                            className="mt-3 space-y-3"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              void withAction(`update-group-limit-${group.id}`, async () => {
+                                const result = await updateManagedGroupLimitAction(group.id, Number(groupLimitFormValue));
+                                setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                if (result.ok) {
+                                  await load();
+                                }
+                              });
+                            }}
+                          >
+                            <label className="block">
+                              <span className="text-sm font-bold text-gray-800">Seats for this group</span>
+                              <input
+                                type="number"
+                                min={1}
+                                value={groupLimitFormValue}
+                                onChange={(event) =>
+                                  setGroupLimitForms((current) => ({
+                                    ...current,
+                                    [group.id]: event.target.value
+                                  }))
+                                }
+                                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                              />
+                            </label>
+                            <ActionButton
+                              type="submit"
+                              disabled={actionKey === `update-group-limit-${group.id}`}
+                              fullWidth
+                            >
+                              {actionKey === `update-group-limit-${group.id}` ? "Saving limit..." : "Save Group Limit"}
+                            </ActionButton>
+                          </form>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {group.canManage ? (
+                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Trophies</h4>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">
+                              {coreTrophies.length} core · {customTrophies.length} custom
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandedSection(group.id, setExpandedTrophyIds)}
+                            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                            aria-expanded={isTrophyExpanded}
+                            aria-label={isTrophyExpanded ? `Hide ${group.name} trophies` : `Open ${group.name} trophies`}
+                          >
+                            {isTrophyExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
+                            {isTrophyExpanded ? "Hide" : "Open"}
+                          </button>
+                        </div>
+
+                        {isTrophyExpanded ? (
+                          <>
+                            {group.userRole === "super_admin" || managerCustomTrophiesEnabled ? (
+                              <div className="mt-3 space-y-3 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                                <div>
+                                  <p className="font-black text-gray-900">Create Trophy</p>
+                                  <p className="mt-1 text-xs text-gray-500">
+                                    Core trophies stay consistent. Use a custom trophy when this group deserves its own running joke.
+                                  </p>
+                                </div>
+                                <div className="grid gap-3 sm:grid-cols-[96px_minmax(0,1fr)]">
+                                  <label className="block">
+                                    <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Emoji</span>
+                                    <input
+                                      value={trophyDraft.icon}
+                                      onChange={(event) =>
+                                        setGroupTrophyDrafts((current) => ({
+                                          ...current,
+                                          [group.id]: {
+                                            ...(current[group.id] ?? { name: "", icon: "", description: "" }),
+                                            icon: event.target.value
+                                          }
+                                        }))
+                                      }
+                                      placeholder="🏅"
+                                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-lg outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                    />
+                                  </label>
+                                  <label className="block">
+                                    <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Name</span>
+                                    <input
+                                      value={trophyDraft.name}
+                                      onChange={(event) =>
+                                        setGroupTrophyDrafts((current) => ({
+                                          ...current,
+                                          [group.id]: {
+                                            ...(current[group.id] ?? { name: "", icon: "", description: "" }),
+                                            name: event.target.value
+                                          }
+                                        }))
+                                      }
+                                      placeholder="Late Night Legend"
+                                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                    />
+                                  </label>
+                                </div>
+                                <label className="block">
+                                  <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Description</span>
+                                  <textarea
+                                    value={trophyDraft.description}
+                                    onChange={(event) =>
+                                      setGroupTrophyDrafts((current) => ({
+                                        ...current,
+                                        [group.id]: {
+                                          ...(current[group.id] ?? { name: "", icon: "", description: "" }),
+                                          description: event.target.value
+                                        }
+                                      }))
+                                    }
+                                    rows={2}
+                                    placeholder="What makes this trophy fun?"
+                                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                  />
+                                </label>
+                                <div className="space-y-2">
+                                  <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Need ideas?</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {TROPHY_PROMPTS.map((prompt) => (
+                                      <button
+                                        key={prompt.name}
+                                        type="button"
+                                        onClick={() =>
+                                          setGroupTrophyDrafts((current) => ({
+                                            ...current,
+                                            [group.id]: {
+                                              name: prompt.name,
+                                              icon: prompt.icon,
+                                              description: prompt.description
+                                            }
+                                          }))
+                                        }
+                                        className="rounded-md border border-gray-200 bg-white px-3 py-2 text-left text-xs font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                                      >
+                                        {prompt.icon} {prompt.name}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                <ActionButton
+                                  type="button"
+                                  disabled={actionKey === `create-trophy-${group.id}` || !trophyDraft.name.trim() || !trophyDraft.icon.trim()}
+                                  onClick={() => void handleCreateManagedTrophy(group.id)}
+                                  fullWidth
+                                >
+                                  {actionKey === `create-trophy-${group.id}` ? "Saving Trophy..." : "Save Custom Trophy"}
+                                </ActionButton>
+                              </div>
+                            ) : (
+                              <div className="mt-3 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                                Custom trophy creation is manager-only and currently turned off.
+                              </div>
+                            )}
+
+                            <div className="mt-4 space-y-2">
+                              {managerTrophies.length > 0 ? (
+                                managerTrophies.map((trophy) => {
+                                  const selectedUserId = groupTrophyAwardSelections[group.id]?.[trophy.id] ?? "";
+                                  const alreadyAwardedUserIds = new Set(
+                                    group.members
+                                      .filter((member) => member.trophies.some((awarded) => awarded.id === trophy.id))
+                                      .map((member) => member.userId)
+                                  );
+                                  const eligibleMembers = activeMembers.filter(
+                                    (member) =>
+                                      (canSelfAwardTrophies || member.userId !== currentUserId) &&
+                                      !alreadyAwardedUserIds.has(member.userId)
+                                  );
+
+                                  return (
+                                    <div key={trophy.id} className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <p className="truncate text-sm font-black text-gray-950">
+                                            {trophy.icon} {trophy.name}
+                                          </p>
+                                          <p className="mt-1 text-sm font-semibold text-gray-600">
+                                            {trophy.description || "Group recognition trophy"}
+                                          </p>
+                                        </div>
+                                        <div className="flex flex-col items-end gap-2">
+                                          <ManagementBadge
+                                            label={trophy.key.startsWith(`group_${group.id}_`) ? "custom" : "core"}
+                                            tone={trophy.key.startsWith(`group_${group.id}_`) ? "neutral" : "accent"}
+                                          />
+                                          <span className="text-xs font-semibold text-gray-500">
+                                            Awarded {trophy.awardedCount} time{trophy.awardedCount === 1 ? "" : "s"}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                                        <label className="min-w-0 flex-1">
+                                          <span className="sr-only">Select player to award {trophy.name}</span>
+                                          <select
+                                            value={selectedUserId}
+                                            onChange={(event) =>
+                                              setGroupTrophyAwardSelections((current) => ({
+                                                ...current,
+                                                [group.id]: {
+                                                  ...(current[group.id] ?? {}),
+                                                  [trophy.id]: event.target.value
+                                                }
+                                              }))
+                                            }
+                                            className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                          >
+                                            <option value="">
+                                              {eligibleMembers.length > 0 ? "Choose a player to award" : "Everyone already has this trophy"}
+                                            </option>
+                                            {eligibleMembers.map((member) => (
+                                              <option key={member.userId} value={member.userId}>
+                                                {member.name}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </label>
+                                        <ActionButton
+                                          type="button"
+                                          disabled={
+                                            !selectedUserId ||
+                                            eligibleMembers.length === 0 ||
+                                            actionKey === `award-trophy-${group.id}:${selectedUserId}:${trophy.id}`
+                                          }
+                                          onClick={() => void handleAwardTrophyFromList(group.id, trophy.id)}
+                                        >
+                                          {actionKey === `award-trophy-${group.id}:${selectedUserId}:${trophy.id}`
+                                            ? "Awarding..."
+                                            : "Award"}
+                                        </ActionButton>
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              ) : (
+                                <div className="rounded-md bg-gray-100 px-3 py-3 text-sm font-semibold text-gray-600">
+                                  <p>No trophies available yet</p>
+                                  <p className="mt-1 text-xs text-gray-500">
+                                    Save a custom trophy to recognize a player in this group.
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                            <div className="mt-4 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                              Want the fastest path? Open a player row and tap <span className="font-black text-gray-900">🏆</span> for quick awarding.
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {group.canManage ? (
+                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Details</h4>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">
+                              Capacity, access, and delete controls.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandedSection(group.id, setExpandedGroupInfoIds)}
+                            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                            aria-expanded={isGroupInfoExpanded}
+                            aria-label={isGroupInfoExpanded ? `Hide ${group.name} details` : `Open ${group.name} details`}
+                          >
+                            {isGroupInfoExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
+                            {isGroupInfoExpanded ? "Hide" : "Open"}
+                          </button>
+                        </div>
+
+                        {isGroupInfoExpanded ? (
+                          <div className="mt-3 space-y-4">
+                            <ManagementGrid>
+                              <ManagementDatum label="Capacity" value={`${group.memberCount + group.pendingInviteCount} / ${group.membershipLimit} seats used`} />
+                              <ManagementDatum label="Group limit" value={`${group.membershipLimit} members`} />
+                              <ManagementDatum label="Members" value={group.memberCount} />
+                              <ManagementDatum label="Pending invites" value={group.pendingInviteCount} />
+                              <ManagementDatum
+                                label="Your access"
+                                value={
+                                  group.userRole === "super_admin"
+                                    ? "Super Admin"
+                                    : group.userRole === "manager"
+                                      ? "Manager"
+                                      : "Player"
+                                }
+                              />
+                            </ManagementGrid>
+                            <ActionButton
+                              tone="danger"
+                              disabled={actionKey === `delete-group-${group.id}`}
+                              onClick={() => {
+                                setConfirmation(null);
+                                setDeleteConfirmation({
+                                  key: `delete-group-${group.id}`,
+                                  groupId: group.id,
+                                  groupName: group.name
+                                });
+                                setDeleteConfirmationValue("");
+                              }}
+                              fullWidth
+                            >
+                              Delete Group
+                            </ActionButton>
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                   </>
@@ -1495,127 +1682,21 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
         </ManagementCard>
       </section>
 
-      {activeTrophyGroup && activeTrophyMember ? (
-        (() => {
-          const availableTrophies = activeTrophyGroup.trophies.filter(
-            (trophy) =>
-              trophy.awardSource === "manager" &&
-              !activeTrophyMember.trophies.some((awarded) => awarded.id === trophy.id)
-          );
-          const quickTrophies = availableTrophies.slice(0, 3);
-          const customTrophies = availableTrophies.slice(3);
+      <ManagedTrophyAwardSheet
+        open={Boolean(activeTrophyGroup && activeTrophyMember)}
+        groupName={activeTrophyGroup?.name ?? ""}
+        member={activeTrophyMember}
+        trophies={activeTrophyGroup?.trophies ?? []}
+        pendingTrophyId={activeTrophyGroup && activeTrophyMember ? getPendingTrophyId(actionKey, activeTrophyGroup.id, activeTrophyMember.userId) : null}
+        onAward={(trophyId) => {
+          if (!activeTrophyGroup || !activeTrophyMember) {
+            return;
+          }
 
-          return (
-            <div className="fixed inset-0 z-50 flex items-end bg-black/35">
-                <button
-                  type="button"
-                  aria-label="Close trophy sheet"
-                onClick={() => {
-                  setTrophySheetTarget(null);
-                }}
-                className="absolute inset-0"
-              />
-              <div className="relative w-full rounded-t-2xl bg-white p-4 shadow-2xl">
-                <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-gray-200" aria-hidden="true" />
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Award Trophy</p>
-                    <div className="mt-2 flex items-start gap-3">
-                      <Avatar name={activeTrophyMember.name} avatarUrl={activeTrophyMember.avatarUrl} size="sm" />
-                      <div className="min-w-0">
-                        <p className="truncate text-base font-black text-gray-950">{activeTrophyMember.name}</p>
-                        <p className="truncate text-sm font-semibold text-gray-600">{activeTrophyGroup.name}</p>
-                        {activeTrophyMember.homeTeamId ? (
-                          <div className="mt-2">
-                            <HomeTeamBadge teamId={activeTrophyMember.homeTeamId} />
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTrophySheetTarget(null);
-                    }}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600"
-                    aria-label="Close trophy sheet"
-                  >
-                    <X className="h-4 w-4" aria-hidden />
-                  </button>
-                </div>
-
-                    <div className="mt-4 max-h-[70vh] space-y-4 overflow-y-auto pr-1">
-                      <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Select Trophy</h4>
-                      <ManagementBadge label="preset" tone="accent" />
-                    </div>
-                    {quickTrophies.length > 0 ? (
-                      <div className="grid gap-2">
-                        {quickTrophies.map((trophy) => (
-                          <button
-                            key={trophy.id}
-                            type="button"
-                            onClick={() => void handleAwardTrophyFromSheet(activeTrophyGroup.id, activeTrophyMember.userId, trophy.id)}
-                            disabled={actionKey === `award-trophy-${activeTrophyGroup.id}:${activeTrophyMember.userId}:${trophy.id}`}
-                            className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-left transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-black text-gray-950">
-                                {trophy.icon} {trophy.name}
-                              </p>
-                              <p className="mt-1 text-xs font-semibold text-gray-500">
-                                {trophy.description || "Quick recognition trophy"}
-                              </p>
-                            </div>
-                            <ManagementBadge label="quick" tone="accent" />
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">
-                        No preset trophies are available right now.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">More Preset Trophies</h4>
-                    {customTrophies.length > 0 ? (
-                      <div className="grid gap-2">
-                        {customTrophies.map((trophy) => (
-                          <button
-                            key={trophy.id}
-                            type="button"
-                            onClick={() => void handleAwardTrophyFromSheet(activeTrophyGroup.id, activeTrophyMember.userId, trophy.id)}
-                            disabled={actionKey === `award-trophy-${activeTrophyGroup.id}:${activeTrophyMember.userId}:${trophy.id}`}
-                            className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-3 py-3 text-left transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-black text-gray-950">
-                                {trophy.icon} {trophy.name}
-                              </p>
-                              <p className="mt-1 text-xs font-semibold text-gray-500">
-                                {trophy.description || "Custom group recognition trophy"}
-                              </p>
-                            </div>
-                            <ManagementBadge label="group" tone="neutral" />
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">
-                        No additional preset trophies yet.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })()
-      ) : null}
+          void handleAwardTrophyFromSheet(activeTrophyGroup.id, activeTrophyMember.userId, trophyId);
+        }}
+        onClose={() => setTrophySheetTarget(null)}
+      />
 
       <TrophyCelebration
         open={Boolean(celebrationTrophy)}
@@ -1624,4 +1705,13 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
       />
     </section>
   );
+}
+
+function getPendingTrophyId(activeActionKey: string | null, groupId: string, userId: string) {
+  const prefix = `award-trophy-${groupId}:${userId}:`;
+  if (!activeActionKey?.startsWith(prefix)) {
+    return null;
+  }
+
+  return activeActionKey.slice(prefix.length) || null;
 }

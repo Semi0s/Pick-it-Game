@@ -19,9 +19,9 @@ import { fetchAdminPlayerHealthRows, type AdminPlayerHealthRow } from "@/lib/adm
 import { escapeHtml, sendTransactionalEmail } from "@/lib/email-sender";
 import { fetchGlobalLeaderboardRankMovement, fetchGroupLeaderboardRankMovement } from "@/lib/leaderboard-movement";
 import { fetchDailyWinners } from "@/lib/leaderboard-highlights";
-import { createNotificationsForLeaderboardEvents, type NotificationEventSeed } from "@/lib/notifications";
+import { createNotificationsForLeaderboardEvents, createTrophyEarnedNotifications, type NotificationEventSeed } from "@/lib/notifications";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
-import { getSiteUrl } from "@/lib/site-url";
+import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 import type { UserRole } from "@/lib/types";
 
 type MatchRow = {
@@ -213,6 +213,7 @@ export type FetchRequiredLegalDocumentResult =
       message: string;
     };
 export type ForceLegalReacceptanceResult = ResetUserAccessResult;
+export type ResetTestingSocialStateResult = ResetUserAccessResult;
 
 export type UpsertManagerLimitsInput = {
   userId: string;
@@ -255,6 +256,7 @@ export type AdminGroupSummary = {
     name: string;
     email: string;
     avatarUrl?: string | null;
+    homeTeamId?: string | null;
     role: GroupMemberRole;
     joinedAt: string;
   }>;
@@ -603,8 +605,8 @@ export async function resendConfirmationOrOnboardingNudgeAction(
   const isConfirmed = Boolean(authUser.emailConfirmedAt);
   const needsProfileSetup = Boolean(appUser?.needs_profile_setup || !appUser?.username?.trim());
   const redirectTo = isConfirmed
-    ? `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/profile-setup")}`
-    : `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`;
+    ? `${getPublicSiteUrl()}/auth/callback?next=${encodeURIComponent("/profile-setup")}`
+    : `${getPublicSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`;
   const { data: linkData, error: linkError } = isConfirmed
     ? await adminSupabase.auth.admin.generateLink({
         type: "magiclink",
@@ -1006,6 +1008,81 @@ export async function forceLegalReacceptanceAction(
   };
 }
 
+export async function resetTestingSocialStateAction(): Promise<ResetTestingSocialStateResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const adminSupabase = createAdminClient();
+
+  const deleteCommentsResult = await adminSupabase
+    .from("leaderboard_event_comments")
+    .delete()
+    .not("id", "is", null);
+  if (deleteCommentsResult.error && !isMissingSocialResetTableError(deleteCommentsResult.error.message)) {
+    return { ok: false, message: deleteCommentsResult.error.message };
+  }
+
+  const deleteReactionsResult = await adminSupabase
+    .from("leaderboard_event_reactions")
+    .delete()
+    .not("id", "is", null);
+  if (deleteReactionsResult.error && !isMissingSocialResetTableError(deleteReactionsResult.error.message)) {
+    return { ok: false, message: deleteReactionsResult.error.message };
+  }
+
+  const deleteNotificationsResult = await adminSupabase
+    .from("user_notifications")
+    .delete()
+    .not("id", "is", null);
+  if (deleteNotificationsResult.error && !isMissingSocialResetTableError(deleteNotificationsResult.error.message)) {
+    return { ok: false, message: deleteNotificationsResult.error.message };
+  }
+
+  const deleteLeaderboardEventsResult = await adminSupabase
+    .from("leaderboard_events")
+    .delete()
+    .not("id", "is", null);
+  if (
+    deleteLeaderboardEventsResult.error &&
+    !isMissingSocialResetTableError(deleteLeaderboardEventsResult.error.message)
+  ) {
+    return { ok: false, message: deleteLeaderboardEventsResult.error.message };
+  }
+
+  const deleteUserTrophiesResult = await adminSupabase
+    .from("user_trophies")
+    .delete()
+    .not("id", "is", null);
+  if (deleteUserTrophiesResult.error && !isMissingSocialResetTableError(deleteUserTrophiesResult.error.message)) {
+    return { ok: false, message: deleteUserTrophiesResult.error.message };
+  }
+
+  const deleteLeaderboardSnapshotsResult = await adminSupabase
+    .from("leaderboard_snapshots")
+    .delete()
+    .not("id", "is", null);
+  if (
+    deleteLeaderboardSnapshotsResult.error &&
+    !isMissingSocialResetTableError(deleteLeaderboardSnapshotsResult.error.message)
+  ) {
+    return { ok: false, message: deleteLeaderboardSnapshotsResult.error.message };
+  }
+
+  revalidatePath("/dashboard");
+  revalidatePath("/leaderboard");
+  revalidatePath("/my-groups");
+  revalidatePath("/profile");
+  revalidatePath("/trophies");
+  revalidatePath("/admin/players");
+
+  return {
+    ok: true,
+    message: "Testing notifications, leaderboard events, trophies, and movement history were cleared."
+  };
+}
+
 export async function upsertManagerLimitsAction(
   input: UpsertManagerLimitsInput
 ): Promise<UpsertManagerLimitsResult> {
@@ -1095,7 +1172,7 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
     adminSupabase
       .from("groups")
       .select(
-        "id,name,status,owner_user_id,membership_limit,owner:users!groups_owner_user_id_fkey(id,name,email),members:group_members(id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email,avatar_url))"
+        "id,name,status,owner_user_id,membership_limit,owner:users!groups_owner_user_id_fkey(id,name,email),members:group_members(id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email,avatar_url,home_team_id))"
       )
       .order("created_at", { ascending: false }),
     adminSupabase
@@ -1125,8 +1202,8 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
       role: GroupMemberRole;
       joined_at: string;
       user?:
-        | { id: string; name: string; email: string; avatar_url?: string | null }
-        | Array<{ id: string; name: string; email: string; avatar_url?: string | null }>
+        | { id: string; name: string; email: string; avatar_url?: string | null; home_team_id?: string | null }
+        | Array<{ id: string; name: string; email: string; avatar_url?: string | null; home_team_id?: string | null }>
         | null;
     }> | null;
   }>).map((group) => {
@@ -1139,6 +1216,7 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
         name: user?.name ?? "Unknown user",
         email: user?.email ?? "Unknown email",
         avatarUrl: user?.avatar_url ?? null,
+        homeTeamId: user?.home_team_id ?? null,
         role: member.role,
         joinedAt: member.joined_at
       };
@@ -1776,11 +1854,33 @@ async function awardPerfectPickFirstTrophy(
     return { ok: true };
   }
 
+  const { data: existingAwards, error: existingAwardsError } = await adminSupabase
+    .from("user_trophies")
+    .select("user_id")
+    .eq("trophy_id", (trophy as TrophyRow).id)
+    .in("user_id", firstPerfectPickUserIds);
+
+  if (existingAwardsError) {
+    if (isMissingTrophiesError(existingAwardsError.message)) {
+      return { ok: true };
+    }
+
+    return { ok: false, message: existingAwardsError.message };
+  }
+
+  const existingAwardUserIds = new Set(((existingAwards ?? []) as Array<{ user_id: string }>).map((row) => row.user_id));
+  const newlyAwardedUserIds = firstPerfectPickUserIds.filter((userId) => !existingAwardUserIds.has(userId));
+  if (newlyAwardedUserIds.length === 0) {
+    return { ok: true };
+  }
+
+  const awardedAt = new Date().toISOString();
+
   const { error: awardError } = await adminSupabase.from("user_trophies").upsert(
-    firstPerfectPickUserIds.map((userId) => ({
+    newlyAwardedUserIds.map((userId) => ({
       user_id: userId,
       trophy_id: (trophy as TrophyRow).id,
-      awarded_at: new Date().toISOString()
+      awarded_at: awardedAt
     })),
     { onConflict: "user_id,trophy_id" }
   );
@@ -1792,6 +1892,19 @@ async function awardPerfectPickFirstTrophy(
 
     return { ok: false, message: awardError.message };
   }
+
+  await createTrophyEarnedNotifications({
+    adminSupabase,
+    awards: newlyAwardedUserIds.map((userId) => ({
+      userId,
+      trophyId: (trophy as TrophyRow).id,
+      trophyName: "First Perfect Pick",
+      trophyIcon: "🎯",
+      trophyTier: "bronze",
+      trophyDescription: "Awarded for landing your first exact score.",
+      awardedAt
+    }))
+  });
 
   return { ok: true };
 }
@@ -2755,7 +2868,7 @@ async function sendAdminEmailInline(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (input.kind === "access_email") {
     const { error } = await adminSupabase.auth.admin.inviteUserByEmail(input.email, {
-      redirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`
+      redirectTo: `${getPublicSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`
     });
 
     if (error) {
@@ -2766,7 +2879,7 @@ async function sendAdminEmailInline(
   }
 
   const { error } = await adminSupabase.auth.resetPasswordForEmail(input.email, {
-    redirectTo: `${getSiteUrl()}/auth/confirm?next=/reset-password`
+    redirectTo: `${getPublicSiteUrl()}/auth/confirm?next=/reset-password`
   });
 
   if (error) {
@@ -2819,6 +2932,21 @@ function isMissingTrophiesError(message: string) {
       normalized.includes("does not exist") ||
       normalized.includes("could not find the table")
     )
+  );
+}
+
+function isMissingSocialResetTableError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("schema cache") ||
+    normalized.includes("does not exist") ||
+    normalized.includes("could not find the table")
+  ) && (
+    normalized.includes("leaderboard_event_comments") ||
+    normalized.includes("leaderboard_event_reactions") ||
+    normalized.includes("leaderboard_events") ||
+    normalized.includes("user_notifications") ||
+    normalized.includes("user_trophies")
   );
 }
 

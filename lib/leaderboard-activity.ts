@@ -2,8 +2,13 @@ import {
   fetchCommentsForEvents,
   type LeaderboardEventComment
 } from "@/lib/leaderboard-comments";
-import { fetchDailyWinners } from "@/lib/leaderboard-highlights";
+import {
+  fetchDailyWinners,
+  LEADERBOARD_HIGHLIGHT_TIME_ZONE,
+  type DailyWinner
+} from "@/lib/leaderboard-highlights";
 import { fetchLeaderboardEventReactions, type LeaderboardReactionSummary } from "@/lib/leaderboard-reactions";
+import { isMissingRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type LeaderboardEventRow = {
@@ -44,22 +49,36 @@ const RECENT_EVENT_LIMIT = 10;
 
 export async function fetchRecentGlobalLeaderboardActivity(options?: {
   includeDailyWinner?: boolean;
+  dailyWinnersFallback?: DailyWinner[];
 }): Promise<LeaderboardActivityItem[]> {
-  return fetchRecentLeaderboardActivity({ scopeType: "global", includeDailyWinner: options?.includeDailyWinner });
+  return fetchRecentLeaderboardActivity({
+    scopeType: "global",
+    includeDailyWinner: options?.includeDailyWinner,
+    dailyWinnersFallback: options?.dailyWinnersFallback
+  });
 }
 
-export async function fetchGroupLeaderboardActivity(groupId: string): Promise<LeaderboardActivityItem[]> {
+export async function fetchGroupLeaderboardActivity(
+  groupId: string,
+  options?: { includeDailyWinner?: boolean; dailyWinnersFallback?: DailyWinner[] }
+): Promise<LeaderboardActivityItem[]> {
   if (!groupId.trim()) {
     return [];
   }
 
-  return fetchRecentLeaderboardActivity({ scopeType: "group", groupId });
+  return fetchRecentLeaderboardActivity({
+    scopeType: "group",
+    groupId,
+    includeDailyWinner: options?.includeDailyWinner,
+    dailyWinnersFallback: options?.dailyWinnersFallback
+  });
 }
 
 async function fetchRecentLeaderboardActivity(options: {
   scopeType: "global" | "group";
   groupId?: string;
   includeDailyWinner?: boolean;
+  dailyWinnersFallback?: DailyWinner[];
 }): Promise<LeaderboardActivityItem[]> {
   const adminSupabase = createAdminClient();
   const includeDailyWinner = options.includeDailyWinner ?? false;
@@ -79,7 +98,14 @@ async function fetchRecentLeaderboardActivity(options: {
 
   if (error) {
     if (isMissingLeaderboardEventsTableError(error.message)) {
-      return includeDailyWinner ? await buildDailyWinnerActivityItems() : [];
+      warnOptionalFeatureOnce(
+        `leaderboard-events-missing:${options.scopeType}`,
+        "Leaderboard events are unavailable; falling back to minimal activity.",
+        error.message
+      );
+      return includeDailyWinner
+        ? buildDailyWinnerActivityItems(options.dailyWinnersFallback ?? (await fetchDailyWinners(options.groupId)))
+        : [];
     }
 
     throw new Error(error.message);
@@ -117,23 +143,24 @@ async function fetchRecentLeaderboardActivity(options: {
     return pinDailyWinnerToTop(persistedItems);
   }
 
-  const dailyWinnerItems = await buildDailyWinnerActivityItems();
+  const dailyWinnerItems = buildDailyWinnerActivityItems(
+    options.dailyWinnersFallback ?? (await fetchDailyWinners(options.groupId))
+  );
   return pinDailyWinnerToTop([...dailyWinnerItems, ...persistedItems]).slice(0, RECENT_EVENT_LIMIT);
 }
 
-async function buildDailyWinnerActivityItems(): Promise<LeaderboardActivityItem[]> {
-  const winners = await fetchDailyWinners();
-  const createdAt = new Date().toISOString();
-
+function buildDailyWinnerActivityItems(winners: DailyWinner[]): LeaderboardActivityItem[] {
+  const dateKey = getCurrentDateKey(LEADERBOARD_HIGHLIGHT_TIME_ZONE);
+  const createdAt = `${dateKey}T23:59:59.000Z`;
   return winners.map((winner) => ({
-    id: `daily_winner:${winner.userId}:${createdAt}`,
+    id: `daily_winner:${winner.userId}:${dateKey}`,
     eventId: null,
     eventType: "daily_winner",
     message: `${winner.name} is today's Daily Winner`,
     createdAt,
     userName: winner.name,
-    userAvatarUrl: null,
-    userHomeTeamId: null,
+    userAvatarUrl: winner.avatarUrl ?? null,
+    userHomeTeamId: winner.homeTeamId ?? null,
     reactions: [],
     comments: [],
     canReact: false,
@@ -166,7 +193,7 @@ function formatFallbackMessage(event: LeaderboardEventRow) {
 }
 
 function isMissingLeaderboardEventsTableError(message: string) {
-  return message.includes("leaderboard_events") && message.includes("schema cache");
+  return isMissingRelationError(message, "leaderboard_events");
 }
 
 function pinDailyWinnerToTop(items: LeaderboardActivityItem[]) {
@@ -179,6 +206,51 @@ function pinDailyWinnerToTop(items: LeaderboardActivityItem[]) {
       return 1;
     }
 
+    const leftIsTodayTrophy = left.eventType === "trophy_awarded" && isTodayActivityItem(left);
+    const rightIsTodayTrophy = right.eventType === "trophy_awarded" && isTodayActivityItem(right);
+
+    if (leftIsTodayTrophy && !rightIsTodayTrophy) {
+      return -1;
+    }
+
+    if (!leftIsTodayTrophy && rightIsTodayTrophy) {
+      return 1;
+    }
+
     return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
   });
+}
+
+function isTodayActivityItem(item: LeaderboardActivityItem) {
+  return getCurrentDateKey(LEADERBOARD_HIGHLIGHT_TIME_ZONE) === getDateKeyForTimestamp(item.createdAt);
+}
+
+function getDateKeyForTimestamp(timestamp: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: LEADERBOARD_HIGHLIGHT_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+
+  const parts = formatter.formatToParts(new Date(timestamp));
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentDateKey(timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
 }

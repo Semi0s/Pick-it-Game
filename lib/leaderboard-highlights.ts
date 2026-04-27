@@ -1,5 +1,6 @@
-import { createNotificationsForLeaderboardEvents } from "@/lib/notifications";
+import { createNotificationsForLeaderboardEvents, createTrophyEarnedNotifications } from "@/lib/notifications";
 import { fetchLeaderboardEventReactions } from "@/lib/leaderboard-reactions";
+import { isMissingAnyRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type SnapshotMatchRow = {
@@ -375,6 +376,11 @@ async function awardDailyWinnerTrophy(
 
   if (trophyError) {
     if (isMissingTrophiesTableError(trophyError.message)) {
+      warnOptionalFeatureOnce(
+        "daily-winner-trophies-missing",
+        "Daily Winner trophies are unavailable until the trophies migrations are applied.",
+        trophyError.message
+      );
       return;
     }
 
@@ -385,11 +391,33 @@ async function awardDailyWinnerTrophy(
     return;
   }
 
+  const { data: existingAwards, error: existingAwardsError } = await adminSupabase
+    .from("user_trophies")
+    .select("user_id")
+    .eq("trophy_id", (trophy as TrophyRow).id)
+    .in("user_id", winnerUserIds);
+
+  if (existingAwardsError) {
+    if (isMissingTrophiesTableError(existingAwardsError.message)) {
+      return;
+    }
+
+    throw new Error(existingAwardsError.message);
+  }
+
+  const existingAwardUserIds = new Set(((existingAwards ?? []) as Array<{ user_id: string }>).map((row) => row.user_id));
+  const newlyAwardedUserIds = winnerUserIds.filter((userId) => !existingAwardUserIds.has(userId));
+  if (newlyAwardedUserIds.length === 0) {
+    return;
+  }
+
+  const awardedAt = new Date().toISOString();
+
   const { error: awardError } = await adminSupabase.from("user_trophies").upsert(
-    winnerUserIds.map((userId) => ({
+    newlyAwardedUserIds.map((userId) => ({
       user_id: userId,
       trophy_id: (trophy as TrophyRow).id,
-      awarded_at: new Date().toISOString()
+      awarded_at: awardedAt
     })),
     { onConflict: "user_id,trophy_id" }
   );
@@ -401,22 +429,23 @@ async function awardDailyWinnerTrophy(
 
     throw new Error(awardError.message);
   }
+
+  await createTrophyEarnedNotifications({
+    adminSupabase,
+    awards: newlyAwardedUserIds.map((userId) => ({
+      userId,
+      trophyId: (trophy as TrophyRow).id,
+      trophyName: "Daily Winner",
+      trophyIcon: "🏆",
+      trophyTier: "gold",
+      trophyDescription: "Awarded for finishing the day on top.",
+      awardedAt
+    }))
+  });
 }
 
 function isMissingTrophiesTableError(message?: string) {
-  if (!message) {
-    return false;
-  }
-
-  const normalized = message.toLowerCase();
-  return (
-    (normalized.includes("user_trophies") || normalized.includes("trophies")) &&
-    (
-      normalized.includes("schema cache") ||
-      normalized.includes("does not exist") ||
-      normalized.includes("could not find the table")
-    )
-  );
+  return isMissingAnyRelationError(message, ["user_trophies", "trophies"]);
 }
 
 function getOffsetString(date: Date, timeZone: string) {

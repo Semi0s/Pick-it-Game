@@ -3,6 +3,12 @@
 import { DEFAULT_LEGAL_DOCUMENT_TYPE } from "@/lib/legal";
 import { teams } from "@/lib/mock-data";
 import { getPublicWebPushVapidKey } from "@/lib/push-config";
+import {
+  isMissingAnyRelationError,
+  isMissingRelationError,
+  isMissingStorageBucketError,
+  warnOptionalFeatureOnce
+} from "@/lib/schema-safety";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { getSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/client";
@@ -74,6 +80,12 @@ type UserTrophyRow = {
     | null;
 };
 
+type TrophyNotificationRow = {
+  id: string;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+};
+
 type LegalDocumentRow = {
   required_version: string;
 };
@@ -81,6 +93,16 @@ type LegalDocumentRow = {
 type UserLegalAcceptanceRow = {
   document_version: string;
   accepted_at: string;
+};
+
+const MAX_AVATAR_FILE_BYTES = 5 * 1024 * 1024;
+const AVATAR_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/avif": "avif"
 };
 
 export async function authenticateWithEmail(
@@ -368,6 +390,76 @@ export async function fetchCurrentUserTrophies(): Promise<UserTrophy[]> {
     }));
 }
 
+export type PendingTrophyCelebration = UserTrophy & {
+  notificationId: string;
+};
+
+export async function fetchPendingTrophyCelebrations(): Promise<PendingTrophyCelebration[]> {
+  if (!hasSupabaseConfig()) {
+    return [];
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("user_notifications")
+    .select("id,payload,created_at")
+    .eq("user_id", user.id)
+    .eq("type", "trophy_earned")
+    .is("read_at", null)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    if (isMissingUserNotificationsTableError(error.message)) {
+      return [];
+    }
+
+    console.error("Could not load pending trophy celebrations.", error);
+    return [];
+  }
+
+  return (((data as TrophyNotificationRow[] | null) ?? [])
+    .map((row) => mapPendingTrophyCelebration(row))
+    .filter((row): row is PendingTrophyCelebration => Boolean(row)));
+}
+
+export async function markTrophyCelebrationRead(notificationId: string): Promise<boolean> {
+  if (!hasSupabaseConfig()) {
+    return false;
+  }
+
+  const trimmedNotificationId = notificationId.trim();
+  if (!trimmedNotificationId) {
+    return false;
+  }
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("user_notifications")
+    .update({ read_at: new Date().toISOString() })
+    .eq("id", trimmedNotificationId)
+    .is("read_at", null);
+
+  if (error) {
+    if (isMissingUserNotificationsTableError(error.message)) {
+      return false;
+    }
+
+    console.error("Could not mark trophy celebration as read.", error);
+    return false;
+  }
+
+  return true;
+}
+
 export async function uploadCurrentUserAvatar(file: File): Promise<AvatarUploadResult> {
   if (!hasSupabaseConfig()) {
     return { ok: false, message: "Avatar uploads need a configured Supabase project." };
@@ -387,14 +479,27 @@ export async function uploadCurrentUserAvatar(file: File): Promise<AvatarUploadR
     return { ok: false, message: "Choose an image file for your avatar." };
   }
 
-  const objectPath = `${user.id}.jpg`;
+  if (file.size > MAX_AVATAR_FILE_BYTES) {
+    return { ok: false, message: "Choose an image smaller than 5 MB for your avatar." };
+  }
+
+  const extension = getAvatarExtension(file.type);
+  if (!extension) {
+    return { ok: false, message: "Use a JPG, PNG, WEBP, GIF, or AVIF image for your avatar." };
+  }
+
+  const objectPath = `${user.id}.${extension}`;
+  await removeKnownAvatarObjects(supabase, user.id);
   const { error: uploadError } = await supabase.storage.from("avatars").upload(objectPath, file, {
     upsert: true,
-    contentType: file.type || "image/jpeg",
+    contentType: file.type,
     cacheControl: "3600"
   });
 
   if (uploadError) {
+    if (isMissingStorageBucketError(uploadError.message, "avatars")) {
+      return { ok: false, message: "Avatar uploads are not available yet. Apply the avatar storage migration first." };
+    }
     return { ok: false, message: uploadError.message };
   }
 
@@ -414,6 +519,38 @@ export async function uploadCurrentUserAvatar(file: File): Promise<AvatarUploadR
     ok: true,
     avatarUrl,
     message: "Avatar updated."
+  };
+}
+
+export async function clearCurrentUserAvatar(): Promise<AuthResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Avatar editing needs a configured Supabase project." };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to update your avatar." };
+  }
+
+  await removeKnownAvatarObjects(supabase, user.id);
+
+  const { error } = await supabase
+    .from("users")
+    .update({ avatar_url: null })
+    .eq("id", user.id);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  return {
+    ok: true,
+    message: "Avatar removed."
   };
 }
 
@@ -493,6 +630,22 @@ function mapUserRow(
       : null,
     totalPoints: row.total_points
   };
+}
+
+function getAvatarExtension(mimeType: string) {
+  return AVATAR_EXTENSION_BY_MIME_TYPE[mimeType.toLowerCase()] ?? null;
+}
+
+async function removeKnownAvatarObjects(
+  supabase: ReturnType<typeof createClient>,
+  userId: string
+) {
+  const paths = Object.values(AVATAR_EXTENSION_BY_MIME_TYPE).map((extension) => `${userId}.${extension}`);
+  const uniquePaths = Array.from(new Set(paths));
+  const { error } = await supabase.storage.from("avatars").remove(uniquePaths);
+  if (error && !error.message.toLowerCase().includes("not found") && !isMissingStorageBucketError(error.message, "avatars")) {
+    console.warn("Could not clear previous avatar objects.", error.message);
+  }
 }
 
 export async function updateCurrentUserNotificationPreferences(enabled: boolean): Promise<AuthResult> {
@@ -637,63 +790,32 @@ function isInvalidRefreshTokenError(message: string) {
 }
 
 function isMissingUserSettingsTableError(message?: string) {
-  if (!message) {
-    return false;
-  }
-
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("could not find the table 'public.user_settings'") ||
-    normalized.includes("relation \"public.user_settings\" does not exist") ||
-    normalized.includes("relation \"user_settings\" does not exist") ||
-    (normalized.includes("user_settings") && normalized.includes("schema cache"))
-  );
+  return isMissingRelationError(message, "user_settings");
 }
 
 function isMissingPushTokensTableError(message?: string) {
-  if (!message) {
-    return false;
-  }
+  return isMissingRelationError(message, "push_tokens");
+}
 
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("could not find the table 'public.push_tokens'") ||
-    normalized.includes("relation \"public.push_tokens\" does not exist") ||
-    normalized.includes("relation \"push_tokens\" does not exist") ||
-    (normalized.includes("push_tokens") && normalized.includes("schema cache"))
-  );
+function isMissingUserNotificationsTableError(message?: string) {
+  return isMissingRelationError(message, "user_notifications");
 }
 
 function isMissingTrophiesTableError(message?: string) {
-  if (!message) {
-    return false;
+  if (isMissingAnyRelationError(message, ["user_trophies", "trophies"])) {
+    warnOptionalFeatureOnce(
+      "current-user-trophies-missing",
+      "Current-user trophies are unavailable until the trophies migrations are applied.",
+      message ?? undefined
+    );
+    return true;
   }
 
-  const normalized = message.toLowerCase();
-  return (
-    (normalized.includes("user_trophies") || normalized.includes("trophies")) &&
-    (
-      normalized.includes("schema cache") ||
-      normalized.includes("does not exist") ||
-      normalized.includes("could not find the table")
-    )
-  );
+  return false;
 }
 
 function isMissingLegalTablesError(message?: string) {
-  if (!message) {
-    return false;
-  }
-
-  const normalized = message.toLowerCase();
-  return (
-    (normalized.includes("legal_documents") || normalized.includes("user_legal_acceptances")) &&
-    (
-      normalized.includes("schema cache") ||
-      normalized.includes("does not exist") ||
-      normalized.includes("could not find the table")
-    )
-  );
+  return isMissingAnyRelationError(message, ["legal_documents", "user_legal_acceptances"]);
 }
 
 function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; flow?: string }) {
@@ -716,4 +838,30 @@ function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; f
 
   const query = params.toString();
   return query ? `/login?${query}` : "/login";
+}
+
+function mapPendingTrophyCelebration(row: TrophyNotificationRow): PendingTrophyCelebration | null {
+  const payload = row.payload ?? {};
+  const trophyId = typeof payload.trophyId === "string" ? payload.trophyId : null;
+  const trophyName = typeof payload.trophyName === "string" ? payload.trophyName : null;
+  const trophyIcon = typeof payload.trophyIcon === "string" ? payload.trophyIcon : null;
+
+  if (!trophyId || !trophyName || !trophyIcon) {
+    return null;
+  }
+
+  const tier = payload.trophyTier;
+  return {
+    notificationId: row.id,
+    id: trophyId,
+    key: typeof payload.trophyKey === "string" ? payload.trophyKey : trophyId,
+    name: trophyName,
+    description: typeof payload.trophyDescription === "string" ? payload.trophyDescription : "",
+    icon: trophyIcon,
+    tier: tier === "bronze" || tier === "silver" || tier === "gold" || tier === "special" ? tier : "special",
+    awardedAt:
+      typeof payload.awardedAt === "string" && payload.awardedAt.trim()
+        ? payload.awardedAt
+        : row.created_at
+  };
 }

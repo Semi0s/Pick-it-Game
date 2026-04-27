@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Trophy, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Trophy } from "lucide-react";
 import {
   awardManagedGroupTrophyAction,
   listManagedGroupPlayersAction,
@@ -10,6 +10,7 @@ import {
 } from "@/app/my-groups/actions";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
@@ -30,6 +31,13 @@ const DEFAULT_SWITCHER_STATE = {
 
 const LEADERBOARD_SWITCHER_STORAGE_KEY = "leaderboard-switcher-state";
 const LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY = "leaderboard-activity-disclosure";
+const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
+const TWO_LINE_CLAMP_STYLE = {
+  display: "-webkit-box",
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: "vertical" as const,
+  overflow: "hidden"
+};
 
 export function LeaderboardClient() {
   const { user } = useCurrentUser();
@@ -72,7 +80,7 @@ export function LeaderboardClient() {
   }, [activeView, selectedGroupId, selectedManagerId]);
 
   const loadManagedAwardGroup = useCallback(async () => {
-    if (activeView !== "managed_groups" || !selectedGroupId) {
+    if (!shouldShowGroupSelector(activeView) || !selectedGroupId) {
       setManagedAwardGroup(null);
       return;
     }
@@ -193,6 +201,18 @@ export function LeaderboardClient() {
   }, [requestUrl, refreshNonce]);
 
   useEffect(() => {
+    const refreshForTrophyChange = () => {
+      setRefreshNonce((current) => current + 1);
+    };
+
+    window.addEventListener(TROPHY_STATE_CHANGED_EVENT, refreshForTrophyChange as EventListener);
+
+    return () => {
+      window.removeEventListener(TROPHY_STATE_CHANGED_EVENT, refreshForTrophyChange as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
     void loadManagedAwardGroup();
   }, [loadManagedAwardGroup, refreshNonce]);
 
@@ -243,18 +263,11 @@ export function LeaderboardClient() {
   const isGlobalView = activeView === "global";
   const isGroupView = shouldShowGroupSelector(activeView) && Boolean(selectedGroupId);
   const shouldRenderLeaderboardRows = isGlobalView || isGroupView;
-  const canAwardManagedTrophies = activeView === "managed_groups" && Boolean(managedAwardGroup);
+  const canAwardManagedTrophies = isGroupView && Boolean(managedAwardGroup);
+  const canSelfAwardTrophies = user?.role === "admin";
   const activeManagedTrophyMember = managedAwardGroup && managedTrophySheetTarget
     ? managedAwardGroup.members.find((member) => member.userId === managedTrophySheetTarget.userId) ?? null
     : null;
-  const availableManagedTrophies =
-    managedAwardGroup && activeManagedTrophyMember
-      ? managedAwardGroup.trophies.filter(
-          (trophy) =>
-            trophy.awardSource === "manager" &&
-            !activeManagedTrophyMember.trophies.some((awarded) => awarded.id === trophy.id)
-        )
-      : [];
 
   return (
     <div className="space-y-5">
@@ -482,11 +495,14 @@ export function LeaderboardClient() {
                   </span>
                   <div className="min-w-0 flex-1">
                     {event.userName ? (
-                      <div className="mb-0.5 flex items-start gap-2">
+                      <div className="mb-1 flex items-start gap-2">
                         <Avatar name={event.userName} avatarUrl={event.userAvatarUrl ?? undefined} size="sm" />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-3">
-                            <p className={`min-w-0 flex-1 text-sm font-semibold ${index === 0 ? "text-gray-900" : "text-gray-800"}`}>
+                            <p
+                              style={TWO_LINE_CLAMP_STYLE}
+                              className={`min-w-0 flex-1 text-sm font-semibold leading-5 ${index === 0 ? "text-gray-900" : "text-gray-800"}`}
+                            >
                               {event.message}
                             </p>
                             <div className="flex shrink-0 flex-col items-end gap-2">
@@ -512,7 +528,10 @@ export function LeaderboardClient() {
                     ) : null}
                     {!event.userName ? (
                       <div className="flex items-start justify-between gap-3">
-                        <p className={`min-w-0 flex-1 text-sm font-semibold ${index === 0 ? "text-gray-900" : "text-gray-800"}`}>
+                        <p
+                          style={TWO_LINE_CLAMP_STYLE}
+                          className={`min-w-0 flex-1 text-sm font-semibold leading-5 ${index === 0 ? "text-gray-900" : "text-gray-800"}`}
+                        >
                           {event.message}
                         </p>
                         <div className="flex shrink-0 flex-col items-end gap-2">
@@ -530,7 +549,7 @@ export function LeaderboardClient() {
                       </div>
                     ) : null}
                     {(event.canReact || event.canComment) && user ? (
-                      <div className="mt-1 flex items-center justify-between gap-3">
+                      <div className="mt-2 flex items-center justify-between gap-3">
                         <div className="min-w-0">
                           {event.canComment ? (
                             <button
@@ -541,9 +560,20 @@ export function LeaderboardClient() {
                                   [event.eventId!]: !current[event.eventId!]
                                 }))
                               }
-                              className="text-xs font-bold text-gray-600 underline-offset-2 hover:text-accent-dark hover:underline"
+                              className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white/80 px-3 py-2 text-xs font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                              aria-expanded={Boolean(event.eventId && expandedComments[event.eventId])}
+                              aria-label={
+                                event.eventId && expandedComments[event.eventId]
+                                  ? `Hide comments for ${event.message}`
+                                  : `Open comments for ${event.message}`
+                              }
                             >
-                              💬 {event.comments.length > 0 ? `${event.comments.length} comments` : "Comment"}
+                              {event.eventId && expandedComments[event.eventId] ? (
+                                <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                              ) : (
+                                <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                              )}
+                              <span>💬 {event.comments.length > 0 ? `${event.comments.length} comments` : "Comments"}</span>
                             </button>
                           ) : null}
                         </div>
@@ -580,7 +610,7 @@ export function LeaderboardClient() {
                       </div>
                     ) : null}
                     {event.canComment && event.eventId && expandedComments[event.eventId] ? (
-                      <div className="mt-1 space-y-1.5">
+                      <div className="mt-2 space-y-2 rounded-md border border-gray-200 bg-white/60 p-3">
                         {event.comments.length > 0 ? (
                           <div className="space-y-1.5">
                             {event.comments.map((comment) => (
@@ -599,7 +629,7 @@ export function LeaderboardClient() {
                                         <HomeTeamBadge teamId={comment.userHomeTeamId} label="" className="bg-white py-0.5" />
                                       ) : null}
                                     </div>
-                                    <p className="mt-0 text-sm font-semibold leading-5 text-gray-800">{comment.body}</p>
+                                    <p className="mt-0.5 text-sm font-semibold leading-5 text-gray-800">{comment.body}</p>
                                   </div>
                                 </div>
                               </div>
@@ -652,6 +682,9 @@ export function LeaderboardClient() {
 
       {shouldRenderLeaderboardRows ? (
         <section className="space-y-2">
+          <div className="px-1 pt-1">
+            <h3 className="text-base font-black text-gray-950">Leaderboard</h3>
+          </div>
           {isLoading ? (
             <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
               Loading leaderboard...
@@ -668,89 +701,111 @@ export function LeaderboardClient() {
             <div
               key={profile.id}
               className={`rounded-lg border p-4 ${
-                profile.id === user?.id ? "border-emerald-800 bg-emerald-900" : "border-gray-200 bg-white"
+                index === 0
+                  ? "border-amber-200 bg-amber-50"
+                  : profile.id === user?.id
+                    ? "border-accent bg-accent-light"
+                    : "border-gray-200 bg-white"
               }`}
             >
               <Link
                 href={`/leaderboard/${profile.id}`}
-                className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 ${
+                className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-3 ${
                   canAwardManagedTrophies ? "pr-12" : ""
                 }`}
               >
                 <span
-                  className={`flex h-9 w-9 items-center justify-center rounded-md text-sm font-black ${
-                    profile.id === user?.id ? "bg-emerald-800 text-white" : "bg-gray-100 text-gray-700"
+                  className={`flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md px-2 py-1 text-center ${
+                    index === 0
+                      ? "bg-white text-amber-800"
+                      : profile.id === user?.id
+                        ? "bg-white text-accent-dark"
+                        : "bg-gray-100 text-gray-700"
                   }`}
                 >
-                  {profile.rank ?? index + 1}
+                  <span className="text-sm font-black leading-none">{profile.rank ?? index + 1}</span>
+                  <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">Place</span>
                 </span>
-                <span className="min-w-0 flex items-center gap-3">
-                  <Avatar name={profile.name} avatarUrl={profile.avatarUrl} size="md" />
+                <span className="min-w-0 flex items-start gap-3">
+                  <Avatar
+                    name={profile.name}
+                    avatarUrl={profile.avatarUrl}
+                    size={index === 0 ? "lg" : "md"}
+                    className={index === 0 ? "border-amber-200 bg-amber-100" : undefined}
+                  />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-start justify-between gap-3">
-                      <span className="min-w-0 flex flex-wrap items-center gap-2">
+                      <span className="min-w-0">
+                        {index === 0 ? (
+                          <span className="mb-1 block text-[11px] font-black uppercase tracking-wide text-amber-700">
+                            Leading the board
+                          </span>
+                        ) : null}
                         <span
-                          className={`min-w-0 truncate text-base font-black ${
-                            profile.id === user?.id ? "text-white" : "text-gray-950"
+                          className={`min-w-0 truncate font-black text-gray-950 ${
+                            index === 0 ? "text-lg" : "text-base"
                           }`}
                         >
                           {profile.name}
                           {profile.id === user?.id ? " (You)" : ""}
                         </span>
-                        {profile.hasPerfectPickHighlight ? (
-                          <span className="rounded-md bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">
-                            🎯 Perfect Pick
-                          </span>
-                        ) : null}
-                        {profile.trophies && profile.trophies.length > 0 ? (
-                          <span className="inline-flex items-center gap-1">
-                            {profile.trophies.slice(0, 2).map((trophy) => (
-                              <TrophyBadge
-                                key={`${profile.id}-${trophy.id}`}
-                                icon={trophy.icon}
-                                tier={trophy.tier}
-                                size="sm"
-                                className={profile.id === user?.id ? "border-emerald-700" : ""}
-                              />
-                            ))}
-                          </span>
-                        ) : null}
                       </span>
-                      <span
-                        className={`shrink-0 rounded-md px-2 py-1 text-sm font-black ${
-                          profile.id === user?.id ? "bg-emerald-800 text-white" : "bg-accent-light text-accent-dark"
-                        }`}
-                      >
-                        {profile.totalPoints} points
-                      </span>
-                    </span>
-                    {profile.homeTeamId ? (
-                      <span className="mt-2 block">
-                        <HomeTeamBadge teamId={profile.homeTeamId} className="bg-white/70" />
-                      </span>
-                    ) : null}
-                    <span
-                      className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold ${
-                        profile.id === user?.id ? "text-emerald-100" : "text-gray-500"
-                      }`}
-                    >
-                      <span>{isGlobalView ? "View public picks" : "Group standing"}</span>
-                      <span className={profile.id === user?.id ? "text-emerald-700" : "text-gray-300"}>•</span>
-                      <span className={getMovementTone(profile.rankDelta)}>{formatRankMovement(profile.rankDelta)}</span>
-                      {profile.pointsDelta && profile.pointsDelta > 0 ? (
-                        <>
-                          <span className={profile.id === user?.id ? "text-emerald-700" : "text-gray-300"}>•</span>
-                          <span className={profile.id === user?.id ? "text-emerald-100" : "text-accent-dark"}>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {profile.pointsDelta && profile.pointsDelta > 0 ? (
+                          <span className="text-xs font-black text-accent-dark">
                             +{profile.pointsDelta} pts
                           </span>
-                        </>
+                        ) : null}
+                        {profile.rankDelta ? (
+                          <span className={`text-xs font-black ${getMovementTone(profile.rankDelta)}`}>
+                            {formatRankMovement(profile.rankDelta)}
+                          </span>
+                        ) : null}
+                        <span
+                          className={`rounded-md px-2 py-1 text-sm font-black ${
+                            index === 0
+                              ? "bg-white text-amber-800"
+                              : profile.id === user?.id
+                                ? "bg-white text-accent-dark"
+                                : "bg-accent-light text-accent-dark"
+                          }`}
+                        >
+                          {profile.totalPoints} points
+                        </span>
+                      </span>
+                    </span>
+                    <span
+                      className={`mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold ${
+                        index === 0 ? "text-amber-800" : profile.id === user?.id ? "text-gray-600" : "text-gray-500"
+                      }`}
+                    >
+                      {profile.hasPerfectPickHighlight ? (
+                        <span className="rounded-md bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">
+                          🎯 Perfect Pick
+                        </span>
+                      ) : null}
+                      {profile.trophies && profile.trophies.length > 0 ? (
+                        <span className="inline-flex items-center gap-1">
+                          {profile.trophies.slice(0, 2).map((trophy) => (
+                            <TrophyBadge
+                              key={`${profile.id}-${trophy.id}`}
+                              icon={trophy.icon}
+                              tier={trophy.tier}
+                              size="sm"
+                              className={index === 0 ? "border-amber-200" : profile.id === user?.id ? "border-accent/40" : ""}
+                            />
+                          ))}
+                        </span>
+                      ) : null}
+                      {profile.homeTeamId ? (
+                        <HomeTeamBadge teamId={profile.homeTeamId} className={index === 0 ? "border-amber-200 bg-white/90" : "bg-white/70"} />
                       ) : null}
                     </span>
                   </span>
                 </span>
               </Link>
               <div className="mt-3 flex items-center justify-end gap-2">
-                {canAwardManagedTrophies ? (
+                {canAwardManagedTrophies && (profile.id !== user?.id || canSelfAwardTrophies) ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -777,85 +832,21 @@ export function LeaderboardClient() {
         />
       )}
 
-      {managedAwardGroup && activeManagedTrophyMember ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-black/35">
-          <button
-            type="button"
-            aria-label="Close trophy sheet"
-            onClick={() => setManagedTrophySheetTarget(null)}
-            className="absolute inset-0"
-          />
-          <div className="relative w-full rounded-t-2xl bg-white p-4 shadow-2xl">
-            <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-gray-200" aria-hidden="true" />
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Award Trophy</p>
-                <div className="mt-2 flex items-start gap-3">
-                  <Avatar
-                    name={activeManagedTrophyMember.name}
-                    avatarUrl={activeManagedTrophyMember.avatarUrl}
-                    size="sm"
-                  />
-                  <div className="min-w-0">
-                    <p className="truncate text-base font-black text-gray-950">{activeManagedTrophyMember.name}</p>
-                    <p className="truncate text-sm font-semibold text-gray-600">{managedAwardGroup.name}</p>
-                    {activeManagedTrophyMember.homeTeamId ? (
-                      <div className="mt-2">
-                        <HomeTeamBadge teamId={activeManagedTrophyMember.homeTeamId} />
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setManagedTrophySheetTarget(null)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600"
-                aria-label="Close trophy sheet"
-              >
-                <X className="h-4 w-4" aria-hidden />
-              </button>
-            </div>
+      <ManagedTrophyAwardSheet
+        open={Boolean(managedAwardGroup && activeManagedTrophyMember)}
+        groupName={managedAwardGroup?.name ?? ""}
+        member={activeManagedTrophyMember}
+        trophies={managedAwardGroup?.trophies ?? []}
+        pendingTrophyId={managedAwardGroup && activeManagedTrophyMember ? getPendingManagedTrophyId(activeManagedTrophyKey, managedAwardGroup.id, activeManagedTrophyMember.userId) : null}
+        onAward={(trophyId) => {
+          if (!managedAwardGroup || !activeManagedTrophyMember) {
+            return;
+          }
 
-            <div className="mt-4 max-h-[70vh] space-y-4 overflow-y-auto pr-1">
-              <div className="flex items-center justify-between gap-3">
-                <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Select Trophy</h4>
-                <Trophy className="h-4 w-4 text-accent-dark" aria-hidden />
-              </div>
-              {availableManagedTrophies.length > 0 ? (
-                <div className="grid gap-2">
-                  {availableManagedTrophies.map((trophy) => {
-                    const actionKey = `award-managed-leaderboard-${managedAwardGroup.id}:${activeManagedTrophyMember.userId}:${trophy.id}`;
-                    return (
-                      <button
-                        key={trophy.id}
-                        type="button"
-                        onClick={() => void handleManagedLeaderboardTrophyAward(managedAwardGroup.id, activeManagedTrophyMember.userId, trophy.id)}
-                        disabled={activeManagedTrophyKey === actionKey}
-                        className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-left transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-black text-gray-950">
-                            {trophy.icon} {trophy.name}
-                          </p>
-                          <p className="mt-1 text-xs font-semibold text-gray-500">
-                            {trophy.description || "Preset manager trophy"}
-                          </p>
-                        </div>
-                        <TrophyBadge icon={trophy.icon} tier={trophy.tier} size="sm" />
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">
-                  This player already has all preset manager trophies.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
+          void handleManagedLeaderboardTrophyAward(managedAwardGroup.id, activeManagedTrophyMember.userId, trophyId);
+        }}
+        onClose={() => setManagedTrophySheetTarget(null)}
+      />
 
       <TrophyCelebration
         open={Boolean(celebrationTrophy)}
@@ -1221,4 +1212,17 @@ function getActivityIconTone(eventType: LeaderboardActivityItem["eventType"]) {
   }
 
   return "bg-sky-100 text-sky-700";
+}
+
+function getPendingManagedTrophyId(
+  activeActionKey: string | null,
+  groupId: string,
+  userId: string
+) {
+  const prefix = `award-managed-leaderboard-${groupId}:${userId}:`;
+  if (!activeActionKey?.startsWith(prefix)) {
+    return null;
+  }
+
+  return activeActionKey.slice(prefix.length) || null;
 }

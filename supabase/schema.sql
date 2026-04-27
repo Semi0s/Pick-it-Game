@@ -255,6 +255,16 @@ create unique index user_notifications_user_event_type_unique_idx
 create index user_notifications_user_created_idx
   on public.user_notifications (user_id, created_at desc);
 
+create unique index user_notifications_trophy_earned_unique_idx
+  on public.user_notifications (
+    user_id,
+    type,
+    (payload->>'trophyId')
+  )
+  where type = 'trophy_earned'
+    and payload ? 'trophyId'
+    and coalesce(payload->>'trophyId', '') <> '';
+
 create unique index push_tokens_user_token_unique_idx
   on public.push_tokens (user_id, token);
 
@@ -997,6 +1007,30 @@ values
     'Chaos Agent',
     'Wild, unpredictable picks.',
     '🤯',
+    'special',
+    'manager'
+  ),
+  (
+    'the_loyalist',
+    'The Loyalist',
+    'Backs their favorites no matter what.',
+    '🫡',
+    'special',
+    'manager'
+  ),
+  (
+    'hot_streak',
+    'Hot Streak',
+    'Making the right calls and making it look easy.',
+    '🔥',
+    'special',
+    'manager'
+  ),
+  (
+    'group_legend',
+    'Group Legend',
+    'The name this group keeps coming back to.',
+    '🌟',
     'special',
     'manager'
   ),

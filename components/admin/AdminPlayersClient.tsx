@@ -8,6 +8,7 @@ import {
   fetchRequiredLegalDocumentAction,
   forceLegalReacceptanceAction,
   repairPendingInviteAction,
+  resetTestingSocialStateAction,
   resendConfirmationOrOnboardingNudgeAction,
   removeManagerAccessAction,
   resetOnboardingStateAction,
@@ -19,6 +20,7 @@ import {
 import type { AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import type { LeaderboardFeatureSettingKey, LeaderboardFeatureSettings } from "@/lib/app-settings";
 import type { LegalDocument } from "@/lib/legal";
+import type { SystemReadinessReport } from "@/lib/system-readiness";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { AdminGroupsSection } from "@/components/admin/AdminGroupsClient";
 import { AdminInvitesSection, formatDate } from "@/components/admin/AdminInvitesClient";
@@ -48,6 +50,7 @@ export function AdminPlayersClient() {
   const [players, setPlayers] = useState<AdminPlayerHealthRow[]>([]);
   const [leaderboardSettings, setLeaderboardSettings] = useState<LeaderboardFeatureSettings | null>(null);
   const [legalDocument, setLegalDocument] = useState<LegalDocument | null>(null);
+  const [systemReadiness, setSystemReadiness] = useState<SystemReadinessReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [sendingResetForUserId, setSendingResetForUserId] = useState<string | null>(null);
@@ -81,7 +84,9 @@ export function AdminPlayersClient() {
   });
 
   useEffect(() => {
-    Promise.all([loadPlayers(), loadLeaderboardSettings(), loadLegalDocument()]).finally(() => setIsLoading(false));
+    Promise.all([loadPlayers(), loadLeaderboardSettings(), loadLegalDocument(), loadSystemReadiness()]).finally(() =>
+      setIsLoading(false)
+    );
   }, []);
 
   async function loadPlayers() {
@@ -122,6 +127,23 @@ export function AdminPlayersClient() {
     }
   }
 
+  async function loadSystemReadiness() {
+    const response = await fetch("/api/admin/system-readiness", { cache: "no-store" });
+    const result = (await response.json()) as
+      | { ok: true; report: SystemReadinessReport }
+      | { ok: false; message?: string };
+
+    if (!response.ok || !result.ok) {
+      setMessage({
+        tone: "error",
+        text: result.ok ? "Could not load the system readiness report." : result.message ?? "Could not load the system readiness report."
+      });
+      return;
+    }
+
+    setSystemReadiness(result.report);
+  }
+
   const filteredPlayers = useMemo(() => {
     const query = searchValue.trim().toLowerCase();
     return players.filter((player) => {
@@ -157,7 +179,7 @@ export function AdminPlayersClient() {
   async function refreshPlayers() {
     setMessage(null);
     setIsLoading(true);
-    await Promise.all([loadPlayers(), loadLeaderboardSettings(), loadLegalDocument()]);
+    await Promise.all([loadPlayers(), loadLeaderboardSettings(), loadLegalDocument(), loadSystemReadiness()]);
     setIsLoading(false);
   }
 
@@ -204,6 +226,62 @@ export function AdminPlayersClient() {
       />
       <HierarchyPanel />
       <AdminInvitesSection showHeader={false} showInviteList={false} />
+      <ManagementCard
+        title="System readiness"
+        subtitle="Read-only diagnostic checks for schema, storage, and feature readiness."
+      >
+        <div className="space-y-4">
+          {systemReadiness ? (
+            <>
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Checked {formatDate(systemReadiness.checkedAt)}
+              </p>
+
+              <ReadinessGroup
+                title="Missing schema"
+                emptyCopy="No missing tables or columns detected."
+                items={systemReadiness.missingSchema.map((issue) => ({
+                  key: issue.key,
+                  label: issue.label,
+                  detail: issue.detail
+                }))}
+              />
+
+              <ReadinessGroup
+                title="Storage / config issues"
+                emptyCopy="No storage or config issues detected."
+                items={systemReadiness.storageConfigIssues.map((issue) => ({
+                  key: issue.key,
+                  label: issue.label,
+                  detail: issue.detail
+                }))}
+              />
+
+              <div className="space-y-2">
+                <p className="text-sm font-black text-gray-900">Feature readiness</p>
+                <div className="space-y-2">
+                  {systemReadiness.featureReadiness.map((item) => (
+                    <div key={item.key} className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-black text-gray-950">{item.label}</p>
+                          <p className="mt-1 text-sm font-semibold text-gray-600">{item.detail}</p>
+                        </div>
+                        <ManagementBadge
+                          label={item.status}
+                          tone={item.status === "ready" ? "accent" : item.status === "degraded" ? "warning" : "neutral"}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm font-semibold text-gray-600">Loading diagnostics...</p>
+          )}
+        </div>
+      </ManagementCard>
       <ManagementCard
         title="Legal / Terms"
         subtitle="Update the required EULA version and require everyone to accept it before using the app again."
@@ -330,6 +408,42 @@ export function AdminPlayersClient() {
               }}
             />
           </div>
+        </div>
+      </ManagementCard>
+      <ManagementCard
+        title="Testing reset"
+        subtitle="Clear social/testing artifacts, notifications, and leaderboard movement history without touching scoring or predictions."
+      >
+        <div className="space-y-4">
+          <p className="text-sm font-semibold text-gray-600">
+            This clears leaderboard comments, reactions, congratulates, notifications, leaderboard events, manually
+            awarded trophies, and leaderboard snapshot history created during testing. Match scores, predictions, and
+            leaderboard totals stay untouched.
+          </p>
+          <ActionButton
+            tone="danger"
+            disabled={activeActionKey === "reset-testing-social-state"}
+            onClick={() =>
+              setConfirmation({
+                key: "reset-testing-social-state",
+                title: "Reset testing social data?",
+                description:
+                  "This will remove comments, reactions, congratulates, notifications, leaderboard events, manually awarded trophies, and leaderboard movement history across the app. Scoring and predictions will not change.",
+                confirmLabel: "Clear Testing Social + Movement Data",
+                onConfirm: () => {
+                  void withAction("reset-testing-social-state", async () => {
+                    const result = await resetTestingSocialStateAction();
+                    setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                    if (result.ok) {
+                      setConfirmation(null);
+                    }
+                  });
+                }
+              })
+            }
+          >
+            {activeActionKey === "reset-testing-social-state" ? "Clearing..." : "Clear Testing Social + Movement Data"}
+          </ActionButton>
         </div>
       </ManagementCard>
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
@@ -783,6 +897,36 @@ function formatDeliveryState(player: AdminPlayerHealthRow) {
     default:
       return player.inviteState === "not_invited" ? "No invite" : "Awaiting update";
   }
+}
+
+function ReadinessGroup({
+  title,
+  emptyCopy,
+  items
+}: {
+  title: string;
+  emptyCopy: string;
+  items: Array<{ key: string; label: string; detail: string }>;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-black text-gray-900">{title}</p>
+      {items.length > 0 ? (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <div key={item.key} className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+              <p className="text-sm font-black text-gray-950">{item.label}</p>
+              <p className="mt-1 text-sm font-semibold text-gray-600">{item.detail}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+          {emptyCopy}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function LeaderboardSettingToggle({

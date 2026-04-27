@@ -1,8 +1,7 @@
 {
-  "/api/leaderboard/route": "app/api/leaderboard/route.js",
   "/api/notifications/route": "app/api/notifications/route.js",
-  "/leaderboard/page": "app/leaderboard/page.js",
-  "/admin/matches/page": "app/admin/matches/page.js",
-  "/profile/page": "app/profile/page.js",
-  "/groups/page": "app/groups/page.js"
+  "/api/leaderboard/route": "app/api/leaderboard/route.js",
+  "/groups/page": "app/groups/page.js",
+  "/my-groups/page": "app/my-groups/page.js",
+  "/leaderboard/page": "app/leaderboard/page.js"
 }

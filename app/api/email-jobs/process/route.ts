@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { escapeHtml, sendTransactionalEmail } from "@/lib/email-sender";
-import { getSiteUrl } from "@/lib/site-url";
+import { getPublicSiteUrl } from "@/lib/site-url";
 import type { UserRole } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -212,7 +212,7 @@ async function sendAccessEmail(
   }
 
   const { error } = await adminSupabase.auth.admin.inviteUserByEmail(normalizedEmail, {
-    redirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`
+    redirectTo: `${getPublicSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`
   });
 
   if (error) {
@@ -321,7 +321,7 @@ async function sendGroupInviteEmail(job: EmailJobRow) {
 
 async function sendPasswordRecovery(adminSupabase: ReturnType<typeof createAdminClient>, email: string) {
   const { error } = await adminSupabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${getSiteUrl()}/auth/confirm?next=/reset-password`
+    redirectTo: `${getPublicSiteUrl()}/auth/confirm?next=/reset-password`
   });
 
   if (error) {

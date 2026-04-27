@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isMissingRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 
 export const LEADERBOARD_FEATURE_SETTING_KEYS = [
   "daily_winner_enabled",
@@ -30,6 +31,11 @@ export async function fetchLeaderboardFeatureSettings(): Promise<LeaderboardFeat
 
   if (error) {
     if (isMissingAppSettingsTableError(error.message)) {
+      warnOptionalFeatureOnce(
+        "app-settings-missing",
+        "Leaderboard feature settings are unavailable; defaulting all leaderboard highlights off.",
+        error.message
+      );
       return { ...DEFAULT_LEADERBOARD_FEATURE_SETTINGS };
     }
 
@@ -68,11 +74,34 @@ export async function updateLeaderboardFeatureSetting(
   return fetchLeaderboardFeatureSettings();
 }
 
+export async function fetchBooleanAppSetting(
+  key: string,
+  defaultValue = false
+): Promise<boolean> {
+  const adminSupabase = createAdminClient();
+  const { data, error } = await adminSupabase
+    .from("app_settings")
+    .select("key,boolean_value")
+    .eq("key", key)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingAppSettingsTableError(error.message)) {
+      warnOptionalFeatureOnce(
+        `app-settings-missing:${key}`,
+        `App setting ${key} is unavailable; defaulting to ${defaultValue ? "on" : "off"}.`,
+        error.message
+      );
+      return defaultValue;
+    }
+
+    throw new Error(error.message);
+  }
+
+  const row = data as AppSettingRow | null;
+  return row?.boolean_value ?? defaultValue;
+}
+
 function isMissingAppSettingsTableError(message: string) {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("could not find the table 'public.app_settings'") ||
-    normalized.includes("relation \"public.app_settings\" does not exist") ||
-    normalized.includes("relation \"app_settings\" does not exist")
-  );
+  return isMissingRelationError(message, "app_settings");
 }

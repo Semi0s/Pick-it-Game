@@ -93,6 +93,13 @@ export function LoginForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {!isDemoFallback ? (
+        <div className="rounded-md border border-accent-light bg-white px-3 py-3 text-accent-dark">
+          <p className="text-base font-black uppercase tracking-wide">Invite-only access</p>
+          <p className="mt-1 text-sm font-medium">Sign up with the email that was invited to the pool.</p>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-2 gap-2 rounded-lg bg-white p-1">
         <ModeButton label="Sign in" isActive={mode === "login"} onClick={() => setMode("login")} />
         <ModeButton label="Sign up" isActive={mode === "signup"} onClick={() => setMode("signup")} />
@@ -180,12 +187,12 @@ export function LoginForm({
       >
         {isSubmitting ? "Working..." : mode === "login" ? "Sign in" : "Create account"}
       </button>
-
-      <p className="text-sm leading-6 text-gray-600">
-        {isDemoFallback
-          ? "Supabase env vars are missing, so demo auth is active. Try alex@example.com, jamie@example.com, morgan@example.com, or admin@example.com with any 6+ character password."
-          : "Invite-only access. Sign up with the email that was invited to the pool."}
-      </p>
+      {isDemoFallback ? (
+        <p className="text-sm leading-6 text-gray-600">
+          Supabase env vars are missing, so demo auth is active. Try alex@example.com, jamie@example.com,
+          morgan@example.com, or admin@example.com with any 6+ character password.
+        </p>
+      ) : null}
     </form>
   );
 }

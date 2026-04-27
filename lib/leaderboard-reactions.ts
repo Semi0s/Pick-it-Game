@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isMissingRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { awardFirstReactionTrophy } from "@/lib/trophy-awards";
 
@@ -126,6 +127,11 @@ export async function fetchLeaderboardEventReactions(
 
   if (error) {
     if (isMissingReactionsTableError(error.message)) {
+      warnOptionalFeatureOnce(
+        "leaderboard-reactions-missing",
+        "Leaderboard reactions are unavailable until the reactions migration is applied.",
+        error.message
+      );
       return new Map();
     }
 
@@ -233,5 +239,5 @@ function normalizeEmoji(emoji: string): AllowedReactionEmoji | null {
 }
 
 function isMissingReactionsTableError(message: string) {
-  return message.includes("leaderboard_event_reactions") && message.includes("schema cache");
+  return isMissingRelationError(message, "leaderboard_event_reactions");
 }

@@ -15,6 +15,7 @@ import {
   fetchPerfectPickUserIdsForLatestFinalizedMatch,
   type DailyWinner
 } from "@/lib/leaderboard-highlights";
+import { isMissingAnyRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import type { UserProfile, UserTrophy } from "@/lib/types";
 
 type UserRow = {
@@ -145,27 +146,36 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
   const [settings, switcher] = await Promise.all([fetchLeaderboardFeatureSettings(), fetchLeaderboardSwitcherContext()]);
   const activeView = resolveAllowedView(request?.view, switcher);
   const selectedGroupId = resolveAllowedGroupId(request?.groupId, switcher, activeView);
-  const [leaderboard, dailyWinners, activityFeed] = await Promise.all([
+  const leaderboardPromise =
     activeView === "global"
       ? fetchGlobalLeaderboardRows(settings.perfect_pick_enabled)
       : selectedGroupId
         ? fetchGroupLeaderboardRows(selectedGroupId, settings.perfect_pick_enabled)
-        : Promise.resolve([]),
+        : Promise.resolve([]);
+  const dailyWinnersPromise =
     settings.daily_winner_enabled
       ? activeView === "global"
         ? fetchDailyWinners()
         : selectedGroupId
           ? fetchDailyWinners(selectedGroupId)
           : Promise.resolve([])
-      : Promise.resolve([]),
+      : Promise.resolve([]);
+
+  const [leaderboard, dailyWinners] = await Promise.all([leaderboardPromise, dailyWinnersPromise]);
+  const activityFeed =
     settings.leaderboard_activity_enabled
       ? activeView === "global"
-        ? fetchRecentGlobalLeaderboardActivity({ includeDailyWinner: settings.daily_winner_enabled })
+        ? await fetchRecentGlobalLeaderboardActivity({
+            includeDailyWinner: settings.daily_winner_enabled,
+            dailyWinnersFallback: dailyWinners
+          })
         : selectedGroupId
-          ? fetchGroupLeaderboardActivity(selectedGroupId)
-          : Promise.resolve([])
-      : Promise.resolve([])
-  ]);
+          ? await fetchGroupLeaderboardActivity(selectedGroupId, {
+              includeDailyWinner: settings.daily_winner_enabled,
+              dailyWinnersFallback: dailyWinners
+            })
+          : []
+      : [];
 
   return {
     leaderboard: leaderboard.map((item) => ({
@@ -535,11 +545,12 @@ async function fetchTrophiesByUserIds(
     .order("awarded_at", { ascending: false });
 
   if (error) {
-    const normalized = error.message.toLowerCase();
-    if (
-      (normalized.includes("user_trophies") || normalized.includes("trophies")) &&
-      (normalized.includes("schema cache") || normalized.includes("does not exist") || normalized.includes("could not find the table"))
-    ) {
+    if (isMissingAnyRelationError(error.message, ["user_trophies", "trophies"])) {
+      warnOptionalFeatureOnce(
+        "leaderboard-trophies-missing",
+        "Trophies are unavailable on leaderboard rows until the trophies migrations are applied.",
+        error.message
+      );
       return new Map();
     }
 

@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Trophy } from "lucide-react";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchPlayerPredictions, savePlayerPrediction } from "@/lib/player-predictions";
-import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
+import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
 import { fetchPredictionsForMatches, type SocialPrediction } from "@/lib/social-predictions";
 import { getMatchDateKey } from "@/lib/tournament-calendar";
@@ -28,6 +28,7 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
   const [stageFilter, setStageFilter] = useState<"all" | MatchStage>("all");
   const [dateFilter, setDateFilter] = useState("all");
   const [teamSearch, setTeamSearch] = useState("");
+  const [matchWindowStart, setMatchWindowStart] = useState(0);
   const [pendingScrollMatchId, setPendingScrollMatchId] = useState<string | null>(null);
   const matchCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -78,6 +79,7 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
       .filter((match) => (stageFilter === "all" || match.stage === stageFilter))
       .filter((match) => dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter)
       .filter((match) => matchesTeamSearch(match, normalizedTeamSearch))
+      .sort(sortMatchesByKickoff)
       .map((match) => match.id);
 
     fetchPredictionsForMatches(filteredMatchIds).then((items) => {
@@ -91,15 +93,36 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
     };
   }, [matches, stageFilter, dateFilter, teamSearch]);
 
-  const dateOptions = Array.from(new Set(matches.map((match) => getMatchDateKey(match.kickoffTime))));
+  const dateOptions = useMemo(
+    () => Array.from(new Set(matches.map((match) => getMatchDateKey(match.kickoffTime)))).sort(),
+    [matches]
+  );
   const normalizedTeamSearch = teamSearch.trim().toLowerCase();
-  const filteredMatches = matches.filter((match) => {
-    const stageMatches = stageFilter === "all" || match.stage === stageFilter;
-    const dateMatches = dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter;
-    const teamMatches = matchesTeamSearch(match, normalizedTeamSearch);
-    return stageMatches && dateMatches && teamMatches;
-  });
-  const filteredMatchesByDate = filteredMatches.reduce<Record<string, MatchWithTeams[]>>((groups, match) => {
+  const filteredMatches = useMemo(
+    () =>
+      matches
+        .filter((match) => {
+          const stageMatches = stageFilter === "all" || match.stage === stageFilter;
+          const dateMatches = dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter;
+          const teamMatches = matchesTeamSearch(match, normalizedTeamSearch);
+          return stageMatches && dateMatches && teamMatches;
+        })
+        .sort(sortMatchesByKickoff),
+    [matches, normalizedTeamSearch, stageFilter, dateFilter]
+  );
+  const filterSignature = `${stageFilter}|${dateFilter}|${normalizedTeamSearch}`;
+  useEffect(() => {
+    setMatchWindowStart(getDefaultWindowStart(filteredMatches));
+  }, [filteredMatches, filterSignature]);
+
+  useEffect(() => {
+    setMatchWindowStart((current) => Math.max(0, Math.min(current, Math.max(filteredMatches.length - 10, 0))));
+  }, [filteredMatches.length]);
+
+  const visibleMatches = filteredMatches.slice(matchWindowStart, matchWindowStart + 10);
+  const hasEarlierMatches = matchWindowStart > 0;
+  const hasLaterMatches = matchWindowStart + visibleMatches.length < filteredMatches.length;
+  const filteredMatchesByDate = visibleMatches.reduce<Record<string, MatchWithTeams[]>>((groups, match) => {
     const dateKey = getMatchDateKey(match.kickoffTime);
     groups[dateKey] = groups[dateKey] ?? [];
     groups[dateKey].push(match);
@@ -107,9 +130,7 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
   }, {});
   const filteredDates = Object.keys(filteredMatchesByDate).sort();
 
-  const savedCount = matches.filter((match) =>
-    predictions.some((prediction) => prediction.matchId === match.id)
-  ).length;
+  const savedCount = matches.filter((match) => predictions.some((prediction) => prediction.matchId === match.id)).length;
   const nextPredictionMatchId = useMemo(() => {
     const savedMatchIds = new Set(predictions.map((prediction) => prediction.matchId));
     const nextUnsavedOpenMatch = matches.find(
@@ -123,11 +144,22 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
     return matches.find((match) => canEditPrediction(match.status))?.id ?? null;
   }, [matches, predictions]);
 
+  const jumpToMatch = useCallback(
+    (matchId: string) => {
+      setStageFilter("all");
+      setDateFilter("all");
+      setTeamSearch("");
+      setMatchWindowStart(getWindowStartForMatch([...matches].sort(sortMatchesByKickoff), matchId));
+      setPendingScrollMatchId(matchId);
+    },
+    [matches]
+  );
+
   useEffect(() => {
     if (searchParams.get("focus") === "next" && nextPredictionMatchId) {
       jumpToMatch(nextPredictionMatchId);
     }
-  }, [nextPredictionMatchId, searchParams]);
+  }, [jumpToMatch, nextPredictionMatchId, searchParams]);
 
   useEffect(() => {
     if (!pendingScrollMatchId) {
@@ -141,7 +173,7 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
 
     targetNode.scrollIntoView({ behavior: "smooth", block: "start" });
     setPendingScrollMatchId(null);
-  }, [filteredMatches, pendingScrollMatchId]);
+  }, [visibleMatches, pendingScrollMatchId]);
 
   async function handleSave(prediction: Prediction) {
     const savedPrediction = await savePlayerPrediction(prediction);
@@ -158,13 +190,6 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
     });
     fetchPredictionsForMatches(filteredMatches.map((match) => match.id)).then(setSocialPredictions);
     return savedPrediction;
-  }
-
-  function jumpToMatch(matchId: string) {
-    setStageFilter("all");
-    setDateFilter("all");
-    setTeamSearch("");
-    setPendingScrollMatchId(matchId);
   }
 
   return (
@@ -187,7 +212,7 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
                 onClick={() => jumpToMatch(nextPredictionMatchId)}
                 className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
               >
-                Next Pick
+                Your Next Pick
               </button>
             ) : null}
             <Link
@@ -243,8 +268,42 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
       </section>
 
       <p className="rounded-lg bg-gray-100 px-4 py-3 text-center text-sm font-semibold text-gray-700">
-        Showing {filteredMatches.length} of {matches.length} group-stage matches.
+        Showing {visibleMatches.length} of {filteredMatches.length} matches
+        {filteredMatches.length !== matches.length ? ` (${matches.length} total in the schedule)` : ""}.
       </p>
+
+      {filteredMatches.length > 0 ? (
+        <section className="rounded-lg border border-gray-200 bg-white p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-black text-gray-900">
+                Matches {matchWindowStart + 1}-{matchWindowStart + visibleMatches.length}
+              </p>
+              <p className="text-xs font-semibold text-gray-500">
+                Starting {formatDateLabel(getMatchDateKey(visibleMatches[0].kickoffTime))}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setMatchWindowStart((current) => Math.max(0, current - 10))}
+                disabled={!hasEarlierMatches}
+                className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Earlier
+              </button>
+              <button
+                type="button"
+                onClick={() => setMatchWindowStart((current) => Math.min(Math.max(filteredMatches.length - 10, 0), current + 10))}
+                disabled={!hasLaterMatches}
+                className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Later
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {filteredDates.map((date) => {
         const dateMatches = filteredMatchesByDate[date] ?? [];
@@ -258,9 +317,11 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
                   {dateMatches.length} match{dateMatches.length === 1 ? "" : "es"}
                 </p>
               </div>
-              <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold text-gray-600">
-                {dateMatches.filter((match) => canEditPrediction(match.status)).length} open
-              </span>
+              {dateMatches.length > 1 ? (
+                <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold text-gray-600">
+                  {dateMatches.filter((match) => canEditPrediction(match.status)).length} open
+                </span>
+              ) : null}
             </div>
 
             <div className="space-y-3">
@@ -272,11 +333,6 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
                     matchCardRefs.current[match.id] = node;
                   }}
                 >
-                  <div className="flex items-center justify-end">
-                    <span className="rounded-md bg-gray-100 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-600">
-                      {getPredictionStateLabel(match.status)}
-                    </span>
-                  </div>
                   <GroupPredictionCard
                     match={match}
                     prediction={predictions.find((item) => item.matchId === match.id)}
@@ -302,6 +358,38 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
       ) : null}
     </div>
   );
+}
+
+function getTodayDateKey() {
+  return new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+}
+
+function getDefaultWindowStart(matches: MatchWithTeams[]) {
+  if (matches.length <= 10) {
+    return 0;
+  }
+
+  const todayKey = getTodayDateKey();
+  const nextMatchIndex = matches.findIndex((match) => getMatchDateKey(match.kickoffTime) >= todayKey);
+
+  if (nextMatchIndex >= 0) {
+    return nextMatchIndex;
+  }
+
+  return Math.max(matches.length - 10, 0);
+}
+
+function getWindowStartForMatch(matches: MatchWithTeams[], matchId: string) {
+  const targetIndex = matches.findIndex((match) => match.id === matchId);
+  return targetIndex >= 0 ? targetIndex : getDefaultWindowStart(matches);
+}
+
+function sortMatchesByKickoff(a: MatchWithTeams, b: MatchWithTeams) {
+  return a.kickoffTime.localeCompare(b.kickoffTime);
 }
 
 function formatStage(stage: MatchStage) {

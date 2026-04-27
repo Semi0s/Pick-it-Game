@@ -1,36 +1,56 @@
 const PRODUCTION_SITE_URL = "https://pick-it-game2026.vercel.app";
 
 export function getSiteUrl() {
-  // 1. Explicit env override (BEST)
-  if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return normalize(process.env.NEXT_PUBLIC_SITE_URL);
+  const publicSiteUrl = resolveConfiguredPublicSiteUrl();
+  if (publicSiteUrl) {
+    return publicSiteUrl;
   }
 
-  // 2. App URL fallback
-  if (process.env.NEXT_PUBLIC_APP_URL) {
-    return normalize(process.env.NEXT_PUBLIC_APP_URL);
+  if (typeof window !== "undefined") {
+    return normalize(window.location.origin);
   }
 
-  // 3. Vercel URL (auto-provided)
-  if (process.env.NEXT_PUBLIC_VERCEL_URL) {
-    return normalize(`https://${process.env.NEXT_PUBLIC_VERCEL_URL}`);
+  return "http://localhost:3000";
+}
+
+export function getPublicSiteUrl() {
+  const publicSiteUrl = resolveConfiguredPublicSiteUrl();
+  if (publicSiteUrl) {
+    return publicSiteUrl;
   }
 
-  // 4. Force production fallback (VERY IMPORTANT)
-  if (process.env.NODE_ENV === "production") {
-    return PRODUCTION_SITE_URL;
-  }
-
-  // 5. Browser fallback (only if NOT localhost)
   if (typeof window !== "undefined") {
     const origin = normalize(window.location.origin);
-    if (!origin.includes("localhost")) {
+    if (!isLocalOrigin(origin)) {
       return origin;
     }
   }
 
-  // 6. Final fallback (dev only)
-  return "http://localhost:3000";
+  return PRODUCTION_SITE_URL;
+}
+
+function resolveConfiguredPublicSiteUrl() {
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    return normalize(process.env.NEXT_PUBLIC_SITE_URL);
+  }
+
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return normalize(process.env.NEXT_PUBLIC_APP_URL);
+  }
+
+  if (process.env.NEXT_PUBLIC_VERCEL_URL) {
+    return normalize(`https://${process.env.NEXT_PUBLIC_VERCEL_URL}`);
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    return PRODUCTION_SITE_URL;
+  }
+
+  return null;
+}
+
+function isLocalOrigin(origin: string) {
+  return origin.includes("localhost") || origin.includes("127.0.0.1");
 }
 
 function normalize(url: string) {

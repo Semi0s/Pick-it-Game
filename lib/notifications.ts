@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendPushNotification } from "@/lib/push-notifications";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
-export type NotificationType = "perfect_pick" | "daily_winner" | "big_rank_movement" | "event_comment";
+export type NotificationType = "perfect_pick" | "daily_winner" | "big_rank_movement" | "event_comment" | "trophy_earned";
 
 type NotificationSettingRow = {
   user_id: string;
@@ -269,6 +269,38 @@ export async function createCommentNotification(input: {
   ]);
 }
 
+export async function createTrophyEarnedNotifications(input: {
+  adminSupabase: ReturnType<typeof createAdminClient>;
+  awards: Array<{
+    userId: string;
+    trophyId: string;
+    trophyName: string;
+    trophyIcon: string;
+    trophyTier?: "bronze" | "silver" | "gold" | "special" | null;
+    trophyDescription?: string | null;
+    awardedAt: string;
+  }>;
+}) {
+  const inserts: NotificationInsert[] = input.awards.map((award) => ({
+    user_id: award.userId,
+    event_id: null,
+    type: "trophy_earned",
+    read_at: null,
+    payload: {
+      title: "🏆 Trophy Earned",
+      body: "Trophy earned",
+      trophyId: award.trophyId,
+      trophyName: award.trophyName,
+      trophyIcon: award.trophyIcon,
+      trophyTier: award.trophyTier ?? "special",
+      trophyDescription: award.trophyDescription ?? "",
+      awardedAt: award.awardedAt
+    }
+  }));
+
+  await insertNotificationBatch(input.adminSupabase, inserts, { requireNotificationsEnabled: false });
+}
+
 function selectPreferredNotificationEvents(events: NotificationEventSeed[]) {
   const bestByKey = new Map<string, NotificationEventSeed>();
 
@@ -339,19 +371,26 @@ export async function fetchNotificationsEnabledForUser(
 
 async function insertNotificationBatch(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  inserts: NotificationInsert[]
+  inserts: NotificationInsert[],
+  options?: { requireNotificationsEnabled?: boolean }
 ) {
   const uniqueInserts = dedupeNotificationInserts(inserts);
   if (uniqueInserts.length === 0) {
     return;
   }
 
-  const enabledUserIds = await fetchEnabledNotificationUserIds(
-    adminSupabase,
-    uniqueInserts.map((item) => item.user_id)
-  );
+  const requireNotificationsEnabled = options?.requireNotificationsEnabled ?? true;
+  let allowedInserts = uniqueInserts;
 
-  const allowedInserts = uniqueInserts.filter((item) => enabledUserIds.has(item.user_id));
+  if (requireNotificationsEnabled) {
+    const enabledUserIds = await fetchEnabledNotificationUserIds(
+      adminSupabase,
+      uniqueInserts.map((item) => item.user_id)
+    );
+
+    allowedInserts = uniqueInserts.filter((item) => enabledUserIds.has(item.user_id));
+  }
+
   if (allowedInserts.length === 0) {
     return;
   }
@@ -468,8 +507,17 @@ async function fetchExistingNotificationKeys(
   );
 }
 
-function notificationInsertKey(insert: Pick<NotificationInsert, "user_id" | "event_id" | "type">) {
-  return `${insert.user_id}:${insert.event_id ?? "none"}:${insert.type}`;
+function notificationInsertKey(insert: {
+  user_id: string;
+  event_id: string | null;
+  type: NotificationType;
+  payload?: Record<string, unknown>;
+}) {
+  const trophyId =
+    insert.type === "trophy_earned" && "payload" in insert && typeof insert.payload?.trophyId === "string"
+      ? insert.payload.trophyId
+      : "none";
+  return `${insert.user_id}:${insert.event_id ?? "none"}:${insert.type}:${trophyId}`;
 }
 
 function mapNotificationRow(row: NotificationRow): UserNotification {
@@ -499,6 +547,8 @@ function fallbackTitle(type: NotificationType) {
       return "📈 Big Rank Movement";
     case "event_comment":
       return "💬 New Comment";
+    case "trophy_earned":
+      return "🏆 Trophy Earned";
     default:
       return "Leaderboard update";
   }
