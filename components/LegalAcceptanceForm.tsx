@@ -112,7 +112,7 @@ export function LegalAcceptanceForm({
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(
     alreadyAccepted ? { tone: "success", text: "You already accepted the current version." } : null
   );
-  const hasOpenedBothVersions = hasOpenedEnglish && hasOpenedSpanish;
+  const hasOpenedAtLeastOneVersion = hasOpenedEnglish || hasOpenedSpanish;
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -175,8 +175,8 @@ export function LegalAcceptanceForm({
           className="space-y-4 rounded-lg border border-gray-200 bg-white p-5"
           onSubmit={async (event) => {
             event.preventDefault();
-            if (!hasOpenedBothVersions) {
-              setMessage({ tone: "error", text: "Open both language cards before continuing." });
+            if (!hasOpenedAtLeastOneVersion) {
+              setMessage({ tone: "error", text: "Open at least one language card before continuing." });
               return;
             }
             setIsSubmitting(true);
@@ -205,15 +205,15 @@ export function LegalAcceptanceForm({
             </span>
           </label>
 
-          {!hasOpenedBothVersions ? (
+          {!hasOpenedAtLeastOneVersion ? (
             <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
-              Open both the English and Spanish cards before accepting.
+              Open either the English or Spanish card before accepting.
             </p>
           ) : null}
 
           <button
             type="submit"
-            disabled={!checked || !hasOpenedBothVersions || isSubmitting}
+            disabled={!checked || !hasOpenedAtLeastOneVersion || isSubmitting}
             className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white shadow-soft disabled:cursor-not-allowed disabled:bg-gray-300"
           >
             {isSubmitting ? "Saving..." : "Accept and Continue"}
