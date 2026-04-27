@@ -11,6 +11,7 @@ import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 
 const DEFAULT_GROUP_MEMBERSHIP_LIMIT = 15;
 const DEFAULT_INVITE_EXPIRY_DAYS = 14;
+const MAX_CUSTOM_TROPHIES_PER_GROUP = 10;
 
 type GroupStatus = "active" | "archived";
 type GroupMemberRole = "manager" | "member";
@@ -769,6 +770,20 @@ export async function createManagedGroupTrophyAction(
           conflictingTrophy.group_id === null
             ? "That name is already used by a core trophy. Try a more specific custom name."
             : "This group already has a trophy with that name."
+      };
+    }
+
+    const customTrophyCount = ((existingTrophies ?? []) as Array<{
+      id: string;
+      name: string;
+      group_id: string | null;
+      award_source: "manager";
+    }>).filter((trophy) => trophy.group_id === trimmedGroupId).length;
+
+    if (customTrophyCount >= MAX_CUSTOM_TROPHIES_PER_GROUP) {
+      return {
+        ok: false,
+        message: `This group already has ${MAX_CUSTOM_TROPHIES_PER_GROUP} custom trophies.`
       };
     }
 

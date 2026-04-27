@@ -822,6 +822,17 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
             );
             const coreTrophies = managerTrophies.filter((trophy) => !trophy.key.startsWith(`group_${group.id}_`));
             const customTrophies = managerTrophies.filter((trophy) => trophy.key.startsWith(`group_${group.id}_`));
+            const orderedManagerTrophies = [...managerTrophies].sort((left, right) => {
+              const leftIsCustom = left.key.startsWith(`group_${group.id}_`);
+              const rightIsCustom = right.key.startsWith(`group_${group.id}_`);
+
+              if (leftIsCustom !== rightIsCustom) {
+                return leftIsCustom ? -1 : 1;
+              }
+
+              return left.name.localeCompare(right.name);
+            });
+            const hasReachedCustomTrophyLimit = customTrophies.length >= 10;
             const activeMembers = group.members.filter((member) => member.role === "member");
 
             return (
@@ -1342,7 +1353,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                           <div>
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Trophies</h4>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
-                              {coreTrophies.length} core · {customTrophies.length} custom
+                              {coreTrophies.length} core · {customTrophies.length} of 10 custom
                             </p>
                           </div>
                           <button
@@ -1366,6 +1377,11 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                                   <p className="mt-1 text-xs text-gray-500">
                                     Core trophies stay consistent. Use a custom trophy when this group deserves its own running joke.
                                   </p>
+                                  {hasReachedCustomTrophyLimit ? (
+                                    <p className="mt-2 text-xs font-bold text-amber-800">
+                                      This group has reached the 10 custom trophy limit.
+                                    </p>
+                                  ) : null}
                                 </div>
                                 <div className="grid gap-3 sm:grid-cols-[96px_minmax(0,1fr)]">
                                   <label className="block">
@@ -1447,7 +1463,12 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                                 </div>
                                 <ActionButton
                                   type="button"
-                                  disabled={actionKey === `create-trophy-${group.id}` || !trophyDraft.name.trim() || !trophyDraft.icon.trim()}
+                                  disabled={
+                                    hasReachedCustomTrophyLimit ||
+                                    actionKey === `create-trophy-${group.id}` ||
+                                    !trophyDraft.name.trim() ||
+                                    !trophyDraft.icon.trim()
+                                  }
                                   onClick={() => void handleCreateManagedTrophy(group.id)}
                                   fullWidth
                                 >
@@ -1461,8 +1482,8 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                             )}
 
                             <div className="mt-4 space-y-2">
-                              {managerTrophies.length > 0 ? (
-                                managerTrophies.map((trophy) => {
+                              {orderedManagerTrophies.length > 0 ? (
+                                orderedManagerTrophies.map((trophy) => {
                                   const selectedUserId = groupTrophyAwardSelections[group.id]?.[trophy.id] ?? "";
                                   const alreadyAwardedUserIds = new Set(
                                     group.members

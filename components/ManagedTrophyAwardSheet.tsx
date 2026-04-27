@@ -7,6 +7,7 @@ import { TrophyBadge } from "@/components/TrophyBadge";
 
 type AwardableTrophy = {
   id: string;
+  key: string;
   name: string;
   description: string;
   icon: string;
@@ -50,6 +51,16 @@ export function ManagedTrophyAwardSheet({
       trophy.awardSource === "manager" &&
       !member.trophies.some((awardedTrophy) => awardedTrophy.id === trophy.id)
   );
+  const sortedAvailableTrophies = [...availableTrophies].sort((left, right) => {
+    const leftIsCustom = isCustomGroupTrophy(left.key);
+    const rightIsCustom = isCustomGroupTrophy(right.key);
+
+    if (leftIsCustom !== rightIsCustom) {
+      return leftIsCustom ? -1 : 1;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-black/35 md:items-center md:justify-center md:p-6">
@@ -90,7 +101,7 @@ export function ManagedTrophyAwardSheet({
 
           <TrophyAwardSection
             emptyState="No preset trophies are available right now."
-            trophies={availableTrophies}
+            trophies={sortedAvailableTrophies}
             pendingTrophyId={pendingTrophyId}
             onAward={onAward}
           />
@@ -98,6 +109,10 @@ export function ManagedTrophyAwardSheet({
       </div>
     </div>
   );
+}
+
+function isCustomGroupTrophy(key: string) {
+  return key.startsWith("group_");
 }
 
 function TrophyAwardSection({
