@@ -339,11 +339,13 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
                     userId={user.id}
                     onSave={handleSave}
                   />
-                  <SocialPredictionList
-                    match={match}
-                    predictions={socialPredictions.filter((item) => item.matchId === match.id)}
-                    currentUserId={user.id}
-                  />
+                  {match.status !== "scheduled" ? (
+                    <SocialPredictionList
+                      match={match}
+                      predictions={socialPredictions.filter((item) => item.matchId === match.id)}
+                      currentUserId={user.id}
+                    />
+                  ) : null}
                 </div>
               ))}
             </div>

@@ -26,7 +26,6 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
   const [saveError, setSaveError] = useState("");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(prediction?.updatedAt ?? null);
   const scoreOutcome = getOutcomeFromScore(homeScore, awayScore);
-  const outcomeLabel = getOutcomeLabel(scoreOutcome, match);
   const hasUnsavedScoreChange =
     Boolean(prediction) &&
     (homeScore !== getInitialScore(prediction?.predictedHomeScore) ||
@@ -131,35 +130,7 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
         </p>
       ) : null}
 
-      <div
-        className={`mt-4 rounded-md border p-3 ${
-          isFinal
-            ? "border-gray-700 bg-gray-800"
-            : isLive
-              ? "border-amber-200 bg-amber-50"
-              : "border-gray-200 bg-gray-50"
-        }`}
-      >
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <p
-            className={`text-xs font-bold uppercase tracking-wide ${
-              isFinal ? "text-gray-300" : isLive ? "text-amber-800" : "text-gray-500"
-            }`}
-          >
-            Score prediction
-          </p>
-          <span
-            className={`rounded-md px-2 py-1 text-xs font-bold ${
-              isFinal
-                ? "bg-gray-700 text-gray-100"
-                : isLive
-                  ? "bg-amber-100 text-amber-800"
-                  : "bg-accent-light text-accent-dark"
-            }`}
-          >
-            {outcomeLabel}
-          </span>
-        </div>
+      <div className="mt-4">
         <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
           <ScoreInput
             flag={match.homeTeam?.flagEmoji}
@@ -190,18 +161,20 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
       <button
         type="submit"
         disabled={!canEdit || isSaving}
-        className={`mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-base font-bold disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-600 ${
-          usePrimaryButton ? "bg-accent text-white" : "bg-accent-light text-accent-dark"
+        className={`mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-3 text-base font-bold transition disabled:cursor-not-allowed disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600 ${
+          usePrimaryButton
+            ? "border-accent bg-accent text-white hover:border-accent-dark hover:bg-accent-dark"
+            : "border-gray-300 bg-transparent text-gray-700 hover:border-accent hover:bg-accent-light hover:text-accent-dark"
         }`}
       >
-        {!isSaving && !saveError && lastSavedAt ? <Check aria-hidden className="h-5 w-5" /> : null}
+        {!isSaving && !saveError && lastSavedAt && !hasUnsavedScoreChange ? <Check aria-hidden className="h-5 w-5" /> : null}
         {!canEdit
           ? "Predictions locked"
           : isSaving
             ? "Saving..."
             : saveError
               ? "Failed to save"
-              : lastSavedAt
+              : lastSavedAt && !hasUnsavedScoreChange
               ? "Saved"
               : prediction
                 ? "Update pick"
@@ -220,7 +193,7 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
         <p className="mt-3 rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
           Predictions locked.
         </p>
-      ) : lastSavedAt ? (
+      ) : lastSavedAt && !hasUnsavedScoreChange ? (
         <p className="mt-3 rounded-md bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">
           Saved · Last saved {formatSavedAt(lastSavedAt)}
         </p>
@@ -320,18 +293,6 @@ function getOutcomeFromScore(homeScore: string, awayScore: string): ScoreOutcome
   }
 
   return "draw";
-}
-
-function getOutcomeLabel(outcome: ScoreOutcome, match: MatchWithTeams) {
-  if (outcome === "draw") {
-    return "Draw";
-  }
-
-  if (outcome === "home") {
-    return `${match.homeTeam?.shortName ?? "Home"} wins`;
-  }
-
-  return `${match.awayTeam?.shortName ?? "Away"} wins`;
 }
 
 function formatKickoff(value: string) {

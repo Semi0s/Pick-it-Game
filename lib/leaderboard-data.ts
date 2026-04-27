@@ -44,11 +44,20 @@ type GroupRow = {
   name: string;
   status?: "active" | "archived";
   owner_user_id?: string | null;
+  owner?:
+    | { id: string; name: string; email: string }
+    | Array<{ id: string; name: string; email: string }>
+    | null;
 };
 
 type GroupMemberRow = {
   group_id: string;
   role: "manager" | "member";
+  user_id: string;
+  user?:
+    | { id: string; name: string; email: string; total_points: number }
+    | Array<{ id: string; name: string; email: string; total_points: number }>
+    | null;
 };
 
 type ManagerLimitRow = {
@@ -104,10 +113,24 @@ export type LeaderboardSwitcherContext = {
 
 export type LeaderboardPageData = {
   leaderboard: LeaderboardListItem[];
+  groupStandings: GroupStandingItem[];
   switcher: LeaderboardSwitcherContext;
   dailyWinners: DailyWinner[];
   activityFeed: LeaderboardActivityItem[];
   settings: LeaderboardFeatureSettings;
+};
+
+export type GroupStandingItem = {
+  id: string;
+  rank: number;
+  name: string;
+  managerName: string;
+  totalPoints: number;
+  avgPoints: number;
+  playerCount: number;
+  topPlayerName: string;
+  perfectPickCount: number | null;
+  tag: string | null;
 };
 
 export type LeaderboardPageRequest = {
@@ -128,6 +151,7 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
           pointsDelta: null,
           hasPerfectPickHighlight: false
         })),
+      groupStandings: [],
       dailyWinners: [],
       activityFeed: [],
       settings: await fetchLeaderboardFeatureSettings(),
@@ -146,6 +170,9 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
   const [settings, switcher] = await Promise.all([fetchLeaderboardFeatureSettings(), fetchLeaderboardSwitcherContext()]);
   const activeView = resolveAllowedView(request?.view, switcher);
   const selectedGroupId = resolveAllowedGroupId(request?.groupId, switcher, activeView);
+  const groupStandingsPromise = activeView === "groups"
+    ? fetchAllGroupStandings(settings.perfect_pick_enabled)
+    : Promise.resolve([]);
   const leaderboardPromise =
     activeView === "global"
       ? fetchGlobalLeaderboardRows(settings.perfect_pick_enabled)
@@ -161,7 +188,11 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
           : Promise.resolve([])
       : Promise.resolve([]);
 
-  const [leaderboard, dailyWinners] = await Promise.all([leaderboardPromise, dailyWinnersPromise]);
+  const [leaderboard, dailyWinners, groupStandings] = await Promise.all([
+    leaderboardPromise,
+    dailyWinnersPromise,
+    groupStandingsPromise
+  ]);
   const activityFeed =
     settings.leaderboard_activity_enabled
       ? activeView === "global"
@@ -184,11 +215,110 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
       pointsDelta: settings.leaderboard_activity_enabled ? item.pointsDelta : null,
       hasPerfectPickHighlight: settings.perfect_pick_enabled ? item.hasPerfectPickHighlight : false
     })),
+    groupStandings,
     dailyWinners: settings.daily_winner_enabled ? dailyWinners : [],
     activityFeed: settings.leaderboard_activity_enabled ? activityFeed : [],
     settings,
     switcher
   };
+}
+
+async function fetchAllGroupStandings(perfectPickEnabled: boolean): Promise<GroupStandingItem[]> {
+  const adminSupabase = createAdminClient();
+  const [{ data: groupsData, error: groupsError }, { data: membershipsData, error: membershipsError }] = await Promise.all([
+    adminSupabase
+      .from("groups")
+      .select("id,name,status,owner_user_id,owner:users!groups_owner_user_id_fkey(id,name,email)")
+      .order("name", { ascending: true }),
+    adminSupabase
+      .from("group_members")
+      .select("group_id,user_id,role,user:users!group_members_user_id_fkey(id,name,email,total_points)")
+  ]);
+
+  if (groupsError) {
+    throw new Error(groupsError.message);
+  }
+
+  if (membershipsError) {
+    throw new Error(membershipsError.message);
+  }
+
+  const groups = (groupsData as GroupRow[] | null) ?? [];
+  const memberships = (membershipsData as GroupMemberRow[] | null) ?? [];
+
+  if (groups.length === 0 || memberships.length === 0) {
+    return [];
+  }
+
+  const membersByGroupId = new Map<
+    string,
+    Array<{ userId: string; name: string; totalPoints: number }>
+  >();
+
+  for (const membership of memberships) {
+    const user = Array.isArray(membership.user) ? membership.user[0] : membership.user;
+    if (!user) {
+      continue;
+    }
+
+    const list = membersByGroupId.get(membership.group_id) ?? [];
+    list.push({
+      userId: membership.user_id,
+      name: user.name,
+      totalPoints: user.total_points
+    });
+    membersByGroupId.set(membership.group_id, list);
+  }
+
+  const perfectPickCountsByGroupId = new Map<string, number>();
+  if (perfectPickEnabled) {
+    await Promise.all(
+      groups.map(async (group) => {
+        const winnerIds = await fetchPerfectPickUserIdsForLatestFinalizedMatch(group.id);
+        perfectPickCountsByGroupId.set(group.id, winnerIds.size);
+      })
+    );
+  }
+
+  return groups
+    .map((group) => {
+      const owner = Array.isArray(group.owner) ? group.owner[0] : group.owner;
+      const members = membersByGroupId.get(group.id) ?? [];
+      if (members.length === 0) {
+        return null;
+      }
+
+      const totalPoints = members.reduce((sum, member) => sum + member.totalPoints, 0);
+      const playerCount = members.length;
+      const avgPoints = totalPoints / playerCount;
+      const topPlayer = [...members].sort(
+        (left, right) => right.totalPoints - left.totalPoints || left.name.localeCompare(right.name)
+      )[0];
+      const perfectPickCount = perfectPickEnabled ? (perfectPickCountsByGroupId.get(group.id) ?? 0) : null;
+
+      return {
+        id: group.id,
+        rank: 0,
+        name: group.status === "archived" ? `${group.name} (Archived)` : group.name,
+        managerName: owner?.name ?? "Group manager",
+        totalPoints,
+        avgPoints,
+        playerCount,
+        topPlayerName: topPlayer?.name ?? "No top player yet",
+        perfectPickCount,
+        tag: deriveGroupStandingTag({ avgPoints, playerCount, perfectPickCount })
+      } satisfies GroupStandingItem;
+    })
+    .filter(Boolean)
+    .sort((left, right) =>
+      (right?.avgPoints ?? 0) - (left?.avgPoints ?? 0) ||
+      (right?.totalPoints ?? 0) - (left?.totalPoints ?? 0) ||
+      (left?.name ?? "").localeCompare(right?.name ?? "")
+    )
+    .map((group, index) => ({
+      ...(group as GroupStandingItem),
+      rank: index + 1
+    }));
 }
 
 async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<LeaderboardListItem[]> {
@@ -608,7 +738,7 @@ function resolveAllowedGroupId(
   switcher: LeaderboardSwitcherContext,
   activeView: LeaderboardSwitcherView
 ) {
-  if (!["my_groups", "managed_groups", "groups"].includes(activeView)) {
+  if (!["my_groups", "managed_groups"].includes(activeView)) {
     return "";
   }
 
@@ -634,4 +764,28 @@ function assignRanks(entries: Array<{ user_id: string; total_points: number }>) 
       rank: currentRank
     };
   });
+}
+
+function deriveGroupStandingTag(input: {
+  avgPoints: number;
+  playerCount: number;
+  perfectPickCount: number | null;
+}) {
+  if ((input.perfectPickCount ?? 0) >= 2) {
+    return "Snipers";
+  }
+
+  if (input.avgPoints >= 18) {
+    return "Hot Group";
+  }
+
+  if (input.playerCount >= 8) {
+    return "Deep Bench";
+  }
+
+  if (input.avgPoints >= 12) {
+    return "In Form";
+  }
+
+  return null;
 }

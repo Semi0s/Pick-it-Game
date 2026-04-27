@@ -15,6 +15,7 @@ import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
+  GroupStandingItem,
   LeaderboardListItem,
   LeaderboardPageData,
   LeaderboardSwitcherContext,
@@ -42,6 +43,7 @@ const TWO_LINE_CLAMP_STYLE = {
 export function LeaderboardClient() {
   const { user } = useCurrentUser();
   const [users, setUsers] = useState<LeaderboardListItem[]>([]);
+  const [groupStandings, setGroupStandings] = useState<GroupStandingItem[]>([]);
   const [switcher, setSwitcher] = useState<LeaderboardSwitcherContext | null>(null);
   const [dailyWinners, setDailyWinners] = useState<DailyWinner[]>([]);
   const [activityFeed, setActivityFeed] = useState<LeaderboardActivityItem[]>([]);
@@ -165,6 +167,7 @@ export function LeaderboardClient() {
           }
 
           setUsers(result.leaderboard);
+          setGroupStandings(result.groupStandings);
           setSwitcher(result.switcher);
           setDailyWinners(result.dailyWinners);
           setActivityFeed(result.activityFeed);
@@ -174,6 +177,7 @@ export function LeaderboardClient() {
         .catch((caughtError: Error) => {
           if (isMounted) {
             setUsers([]);
+            setGroupStandings([]);
             setSwitcher(null);
             setDailyWinners([]);
             setActivityFeed([]);
@@ -262,7 +266,9 @@ export function LeaderboardClient() {
 
   const isGlobalView = activeView === "global";
   const isGroupView = shouldShowGroupSelector(activeView) && Boolean(selectedGroupId);
+  const isGroupStandingsView = activeView === "groups";
   const shouldRenderLeaderboardRows = isGlobalView || isGroupView;
+  const shouldShowPlayerSocialIndicators = !isGlobalView;
   const canAwardManagedTrophies = isGroupView && Boolean(managedAwardGroup);
   const canSelfAwardTrophies = user?.role === "admin";
   const activeManagedTrophyMember = managedAwardGroup && managedTrophySheetTarget
@@ -750,17 +756,7 @@ export function LeaderboardClient() {
                           {profile.id === user?.id ? " (You)" : ""}
                         </span>
                       </span>
-                      <span className="flex shrink-0 items-center gap-2">
-                        {profile.pointsDelta && profile.pointsDelta > 0 ? (
-                          <span className="text-xs font-black text-accent-dark">
-                            +{profile.pointsDelta} pts
-                          </span>
-                        ) : null}
-                        {profile.rankDelta ? (
-                          <span className={`text-xs font-black ${getMovementTone(profile.rankDelta)}`}>
-                            {formatRankMovement(profile.rankDelta)}
-                          </span>
-                        ) : null}
+                      <span className="flex shrink-0 flex-col items-end gap-1">
                         <span
                           className={`rounded-md px-2 py-1 text-sm font-black ${
                             index === 0
@@ -772,35 +768,50 @@ export function LeaderboardClient() {
                         >
                           {profile.totalPoints} points
                         </span>
+                        {profile.pointsDelta && profile.pointsDelta > 0 ? (
+                          <span className="text-xs font-black text-accent-dark">
+                            +{profile.pointsDelta} pts
+                          </span>
+                        ) : null}
+                        {profile.rankDelta ? (
+                          <span className={`text-xs font-black ${getMovementTone(profile.rankDelta)}`}>
+                            {formatRankMovement(profile.rankDelta)}
+                          </span>
+                        ) : null}
                       </span>
                     </span>
-                    <span
-                      className={`mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold ${
-                        index === 0 ? "text-amber-800" : profile.id === user?.id ? "text-gray-600" : "text-gray-500"
-                      }`}
-                    >
-                      {profile.hasPerfectPickHighlight ? (
-                        <span className="rounded-md bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">
-                          🎯 Perfect Pick
-                        </span>
-                      ) : null}
-                      {profile.trophies && profile.trophies.length > 0 ? (
-                        <span className="inline-flex items-center gap-1">
-                          {profile.trophies.slice(0, 2).map((trophy) => (
-                            <TrophyBadge
-                              key={`${profile.id}-${trophy.id}`}
-                              icon={trophy.icon}
-                              tier={trophy.tier}
-                              size="sm"
-                              className={index === 0 ? "border-amber-200" : profile.id === user?.id ? "border-accent/40" : ""}
-                            />
-                          ))}
-                        </span>
-                      ) : null}
-                      {profile.homeTeamId ? (
-                        <HomeTeamBadge teamId={profile.homeTeamId} className={index === 0 ? "border-amber-200 bg-white/90" : "bg-white/70"} />
-                      ) : null}
-                    </span>
+                    {shouldShowPlayerSocialIndicators ? (
+                      <span
+                        className={`mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold ${
+                          index === 0 ? "text-amber-800" : profile.id === user?.id ? "text-gray-600" : "text-gray-500"
+                        }`}
+                      >
+                        {profile.hasPerfectPickHighlight ? (
+                          <span className="rounded-md bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">
+                            🎯 Perfect Pick
+                          </span>
+                        ) : null}
+                        {profile.trophies && profile.trophies.length > 0 ? (
+                          <span className="inline-flex items-center gap-1">
+                            {profile.trophies.slice(0, 2).map((trophy) => (
+                              <TrophyBadge
+                                key={`${profile.id}-${trophy.id}`}
+                                icon={trophy.icon}
+                                tier={trophy.tier}
+                                size="sm"
+                                className={index === 0 ? "border-amber-200" : profile.id === user?.id ? "border-accent/40" : ""}
+                              />
+                            ))}
+                          </span>
+                        ) : null}
+                        {profile.homeTeamId ? (
+                          <HomeTeamBadge
+                            teamId={profile.homeTeamId}
+                            className={index === 0 ? "border-amber-200 bg-white/90" : "bg-white/70"}
+                          />
+                        ) : null}
+                      </span>
+                    ) : null}
                   </span>
                 </span>
               </Link>
@@ -824,6 +835,8 @@ export function LeaderboardClient() {
             </div>
           ))}
         </section>
+      ) : isGroupStandingsView ? (
+        <GroupStandingsSection groups={groupStandings} isLoading={isLoading} error={error} />
       ) : (
         <LeaderboardPlaceholder
           activeView={activeView}
@@ -1018,7 +1031,7 @@ function LeaderboardPlaceholder({
 }
 
 function shouldShowGroupSelector(activeView: LeaderboardSwitcherView) {
-  return activeView === "my_groups" || activeView === "managed_groups" || activeView === "groups";
+  return activeView === "my_groups" || activeView === "managed_groups";
 }
 
 function shouldShowManagerSelector(activeView: LeaderboardSwitcherView) {
@@ -1084,6 +1097,103 @@ function getPlaceholderCopy(
   }
 
   return "Global leaderboard is ready now.";
+}
+
+function GroupStandingsSection({
+  groups,
+  isLoading,
+  error
+}: {
+  groups: GroupStandingItem[];
+  isLoading: boolean;
+  error: string | null;
+}) {
+  const topAverage = groups[0]?.avgPoints ?? 0;
+
+  return (
+    <section className="space-y-2">
+      <div className="px-1 pt-1">
+        <h3 className="text-base font-black text-gray-950">Group Standings</h3>
+      </div>
+
+      {isLoading ? (
+        <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
+          Loading group standings...
+        </p>
+      ) : null}
+
+      {!isLoading && error ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          Could not load group standings right now: {error}
+        </p>
+      ) : null}
+
+      {!isLoading && !error && groups.length === 0 ? (
+        <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
+          No group standings are ready yet.
+        </p>
+      ) : null}
+
+      {!isLoading && !error
+        ? groups.map((group) => {
+            const barWidth = topAverage > 0 ? Math.max(12, Math.round((group.avgPoints / topAverage) * 100)) : 12;
+
+            return (
+              <div key={group.id} className="rounded-lg border border-gray-200 bg-white p-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-center text-gray-700">
+                    <span className="text-sm font-black leading-none">{group.rank}</span>
+                    <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">Rank</span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-base font-black text-gray-950">{group.name}</p>
+                        <p className="mt-1 truncate text-sm font-semibold text-gray-600">{group.managerName}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-lg font-black text-accent-dark">{formatAveragePoints(group.avgPoints)}</p>
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Avg points</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-gray-100">
+                      <div
+                        className="h-full rounded-full bg-accent"
+                        style={{ width: `${barWidth}%` }}
+                      />
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-gray-600">
+                      <span>{group.playerCount} players</span>
+                      <span>•</span>
+                      <span>{group.totalPoints} total pts</span>
+                      <span>•</span>
+                      <span>Top player: {group.topPlayerName}</span>
+                      {group.perfectPickCount !== null ? (
+                        <>
+                          <span>•</span>
+                          <span>{group.perfectPickCount} perfect picks</span>
+                        </>
+                      ) : null}
+                      {group.tag ? (
+                        <span className="rounded-md bg-accent-light px-2 py-1 text-[11px] font-black text-accent-dark">
+                          {group.tag}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        : null}
+    </section>
+  );
+}
+
+function formatAveragePoints(value: number) {
+  return value % 1 === 0 ? `${value}` : value.toFixed(1);
 }
 
 function formatRankMovement(rankDelta: number | null) {
