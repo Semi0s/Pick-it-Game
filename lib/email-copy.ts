@@ -6,6 +6,7 @@ export function buildGroupInviteEmailCopy(input: {
   groupName: string;
   invitedEmail: string;
   suggestedDisplayName?: string | null;
+  customMessage?: string | null;
   inviterLabel?: string | null;
   claimUrl: string;
 }) {
@@ -19,6 +20,7 @@ export function buildGroupInviteEmailCopy(input: {
   const escapedGroupName = escapeHtml(input.groupName);
   const escapedInviterLabel = escapeHtml(inviterLabel);
   const escapedIntroLine = escapeHtml(introLine);
+  const escapedCustomMessage = input.customMessage?.trim() ? escapeHtml(input.customMessage.trim()) : null;
   const escapedClaimUrl = escapeHtml(input.claimUrl);
 
   return {
@@ -32,6 +34,14 @@ export function buildGroupInviteEmailCopy(input: {
           <p style="margin: 4px 0 0 0; font-weight: 700;">${escapeHtml(copy.invitedByLabel)}: ${escapedInviterLabel}</p>
         </div>
         <p style="margin-bottom: 12px;">${escapedIntroLine}</p>
+        ${
+          escapedCustomMessage
+            ? `<div style="margin-bottom: 16px; border-left: 4px solid #d1d5db; border-radius: 6px; padding: 12px 14px; background: #ffffff;">
+                <p style="margin: 0 0 6px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; font-weight: 700;">${escapeHtml(copy.customMessageLabel)}</p>
+                <p style="margin: 0; white-space: pre-wrap;">${escapedCustomMessage}</p>
+              </div>`
+            : ""
+        }
         <p style="margin-bottom: 12px;">${escapeHtml(copy.actionIntro)}</p>
         <p style="margin-bottom: 12px;">${escapeHtml(copy.aboutPickIt)}</p>
         <p style="margin-bottom: 12px; font-weight: 600;">${escapeHtml(copy.freeToPlay)}</p>
@@ -52,6 +62,9 @@ export function buildGroupInviteEmailCopy(input: {
       "",
       introLine,
       "",
+      ...(input.customMessage?.trim()
+        ? [copy.customMessageLabel, input.customMessage.trim(), ""]
+        : []),
       copy.actionIntro,
       copy.aboutPickIt,
       copy.freeToPlay,
@@ -113,6 +126,7 @@ type GroupInviteCopy = {
   intro: (inviterLabel: string, invitedEmail: string, groupName: string) => string;
   introWithSuggestedName: (inviterLabel: string, suggestedName: string, invitedEmail: string, groupName: string) => string;
   actionIntro: string;
+  customMessageLabel: string;
   aboutPickIt: string;
   freeToPlay: string;
   actionLabel: string;
@@ -131,6 +145,7 @@ const GROUP_INVITE_COPY: Record<SupportedLanguage, GroupInviteCopy> = {
     introWithSuggestedName: (inviterLabel, suggestedName, invitedEmail, groupName) =>
       `${inviterLabel} invited ${suggestedName} (${invitedEmail}) to join ${groupName}.`,
     actionIntro: "Use this secure link to sign in or create your account, then join the group.",
+    customMessageLabel: "Message from your group manager",
     aboutPickIt: "PICK-IT! is a free-to-play World Cup prediction game where friends and groups make picks, compare scores, and climb the leaderboard together.",
     freeToPlay: "Free to play. No download required.",
     actionLabel: "Join PICK-IT!",
@@ -148,6 +163,7 @@ const GROUP_INVITE_COPY: Record<SupportedLanguage, GroupInviteCopy> = {
     introWithSuggestedName: (inviterLabel, suggestedName, invitedEmail, groupName) =>
       `${inviterLabel} invitó a ${suggestedName} (${invitedEmail}) a unirse a ${groupName}.`,
     actionIntro: "Usa este enlace seguro para iniciar sesión o crear tu cuenta y luego unirte al grupo.",
+    customMessageLabel: "Mensaje de tu administrador del grupo",
     aboutPickIt: "PICK-IT! es un juego gratuito de predicciones del Mundial donde amigos y grupos hacen picks, comparan puntajes y suben en la clasificación juntos.",
     freeToPlay: "Gratis para jugar. No requiere descarga.",
     actionLabel: "Únete a PICK-IT!",

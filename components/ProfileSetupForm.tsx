@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { completeProfileSetupAction } from "@/app/profile-setup/actions";
+import { showAppToast } from "@/lib/app-toast";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 export function ProfileSetupForm() {
@@ -38,6 +39,12 @@ export function ProfileSetupForm() {
       router.replace("/groups");
     }
   }, [isLoading, router, user]);
+
+  useEffect(() => {
+    if (message) {
+      showAppToast(message);
+    }
+  }, [message]);
 
   if (isLoading || !user || user.needsLegalAcceptance) {
     return (

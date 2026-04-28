@@ -104,6 +104,11 @@ export type CurrentLegalDocument = {
   body: string;
 };
 
+export type CurrentBracketScoreSummary = {
+  bracketPoints: number;
+  correctPicks: number;
+};
+
 type UserLegalAcceptanceRow = {
   language: string;
   document_version: string;
@@ -481,6 +486,42 @@ export async function fetchCurrentLegalDocumentForProfile(
     rows[0] ??
     null
   );
+}
+
+export async function fetchCurrentBracketScoreSummary(): Promise<CurrentBracketScoreSummary> {
+  if (!hasSupabaseConfig()) {
+    return { bracketPoints: 0, correctPicks: 0 };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { bracketPoints: 0, correctPicks: 0 };
+  }
+
+  const { data, error } = await supabase
+    .from("bracket_scores")
+    .select("points,is_correct")
+    .eq("user_id", user.id);
+
+  if (error) {
+    if (isMissingBracketScoresTableError(error.message)) {
+      return { bracketPoints: 0, correctPicks: 0 };
+    }
+
+    console.error("Could not load current bracket score summary.", error);
+    return { bracketPoints: 0, correctPicks: 0 };
+  }
+
+  const rows = (data ?? []) as Array<{ points: number | null; is_correct: boolean | null }>;
+  return {
+    bracketPoints: rows.reduce((sum, row) => sum + (row.points ?? 0), 0),
+    correctPicks: rows.filter((row) => row.is_correct).length
+  };
 }
 
 export async function markTrophyCelebrationRead(notificationId: string): Promise<boolean> {
@@ -955,6 +996,10 @@ function isMissingTrophiesTableError(message?: string) {
 
 function isMissingLegalTablesError(message?: string) {
   return isMissingAnyRelationError(message, ["legal_documents", "user_legal_acceptances"]);
+}
+
+function isMissingBracketScoresTableError(message?: string) {
+  return isMissingRelationError(message, "bracket_scores");
 }
 
 function isMissingPreferredLanguageColumnError(message?: string) {

@@ -11,30 +11,15 @@
       "static/chunks/main-app.js",
       "static/chunks/app/my-groups/page.js"
     ],
-    "/api/notifications/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/notifications/route.js"
-    ],
     "/api/admin/system-readiness/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/admin/system-readiness/route.js"
     ],
-    "/leaderboard/page": [
+    "/api/notifications/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/leaderboard/page.js"
-    ],
-    "/api/leaderboard/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/leaderboard/route.js"
-    ],
-    "/profile/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/profile/page.js"
+      "static/chunks/app/api/notifications/route.js"
     ],
     "/groups/page": [
       "static/chunks/webpack.js",

@@ -6,6 +6,7 @@ import { createAdminInviteAction } from "@/app/admin/actions";
 import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
 import { fetchAdminInvites, type AdminInvite } from "@/lib/admin-data";
 import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
+import { showAppToast } from "@/lib/app-toast";
 import type { UserRole } from "@/lib/types";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import {
@@ -49,6 +50,12 @@ export function AdminInvitesSection({
   useEffect(() => {
     loadInvites();
   }, []);
+
+  useEffect(() => {
+    if (message) {
+      showAppToast(message);
+    }
+  }, [message]);
 
   useEffect(() => {
     if (user?.preferredLanguage) {

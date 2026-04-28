@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { acceptCurrentLegalDocumentAction } from "@/app/legal/actions";
+import { showAppToast } from "@/lib/app-toast";
 import { getLanguageLabel, getStrings } from "@/lib/strings";
 import type { SupportedLanguage } from "@/lib/i18n";
 
@@ -51,6 +52,12 @@ export function LegalAcceptanceForm({
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, []);
+
+  useEffect(() => {
+    if (message) {
+      showAppToast(message);
+    }
+  }, [message]);
 
   return (
     <section className="space-y-5">

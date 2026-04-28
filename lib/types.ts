@@ -107,6 +107,20 @@ export type BracketPrediction = {
   updatedAt: string;
 };
 
+export type BracketScore = {
+  id: string;
+  userId: string;
+  matchId: string;
+  stage: MatchStage;
+  predictedWinnerTeamId: string;
+  actualWinnerTeamId: string;
+  roundPoints: number;
+  championPoints: number;
+  points: number;
+  isCorrect: boolean;
+  scoredAt: string;
+};
+
 export type Invite = {
   email: string;
   displayName: string;

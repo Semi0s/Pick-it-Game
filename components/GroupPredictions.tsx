@@ -238,8 +238,8 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
             <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Play</p>
             <h2 className="mt-2 text-3xl font-black leading-tight">Pick every match.</h2>
             <p className="mt-3 text-base leading-7 text-gray-600">
-              Choose the winner or call the draw. Exact scores are optional now, and picks stay open only while a match
-              is scheduled.
+              Make your score predictions when you are ready. Matches stay open until kickoff. Players picks become public
+              then.
             </p>
           </div>
         </div>
@@ -269,7 +269,7 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
               className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
             >
               <Network aria-hidden className="h-4 w-4 text-accent-dark" />
-              Knockout Picks
+              My Knockout Picks
             </Link>
             <Link
               href="/trophies"
@@ -279,7 +279,7 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
                 <Trophy aria-hidden className="h-4 w-4" />
                 <SquareCheckBig aria-hidden className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-[2px] bg-white" />
               </span>
-              Side Picks
+              My Side Picks
             </Link>
           </div>
         </div>

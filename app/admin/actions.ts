@@ -23,6 +23,11 @@ import { appendLanguageToPath, normalizeLanguage } from "@/lib/i18n";
 import { fetchGlobalLeaderboardRankMovement, fetchGroupLeaderboardRankMovement } from "@/lib/leaderboard-movement";
 import { fetchDailyWinners } from "@/lib/leaderboard-highlights";
 import { createNotificationsForLeaderboardEvents, createTrophyEarnedNotifications, type NotificationEventSeed } from "@/lib/notifications";
+import { canScoreKnockoutMatch } from "@/lib/bracket-scoring";
+import {
+  resetKnockoutMatchScoring,
+  scoreFinalizedKnockoutMatchWithClient
+} from "@/lib/bracket-predictions";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 import type { MatchNextSlot, MatchStage, UserRole } from "@/lib/types";
@@ -1710,9 +1715,17 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
   }
 
   if ((previousMatch as MatchRow).status === "final" && input.status !== "final") {
-    const resetResult = await resetGroupMatchScoring(adminSupabase, input.id);
-    if (!resetResult.ok) {
-      return resetResult;
+    if ((previousMatch as MatchRow).stage === "group") {
+      const resetResult = await resetGroupMatchScoring(adminSupabase, input.id);
+      if (!resetResult.ok) {
+        return resetResult;
+      }
+    } else {
+      try {
+        await resetKnockoutMatchScoring(input.id);
+      } catch (error) {
+        return { ok: false, message: (error as Error).message };
+      }
     }
   }
 
@@ -1737,6 +1750,28 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
 
   if (!scoreableMatchResult.scoreable) {
     return scoreableMatchResult.result;
+  }
+
+  if (scoreableMatchResult.kind === "knockout") {
+    try {
+      const predictionsScored = await scoreFinalizedKnockoutMatchWithClient(adminSupabase, matchId);
+
+      revalidatePath("/knockout");
+      revalidatePath("/admin/matches");
+      revalidatePath("/profile");
+
+      return {
+        ok: true,
+        scored: true,
+        predictionsScored,
+        message:
+          predictionsScored === 0
+            ? `Knockout match saved as final, but no bracket picks were found for match ${matchId}.`
+            : `Knockout match saved and ${predictionsScored} bracket picks scored.`
+      };
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
   }
 
   const predictionsResult = await loadPredictionsForMatch(adminSupabase, matchId);
@@ -1791,8 +1826,8 @@ async function loadScoreableMatch(
 ):
   Promise<
     | { ok: false; message: string }
-    | { ok: true; scoreable: false; result: SkippedScoreMatchResult }
-    | { ok: true; scoreable: true; match: ReturnType<typeof mapMatchRow> }
+    | { ok: true; scoreable: false; kind: "skip"; result: SkippedScoreMatchResult }
+    | { ok: true; scoreable: true; kind: "group" | "knockout"; match: ReturnType<typeof mapMatchRow> }
   > {
   const { data: match, error: matchError } = await adminSupabase
     .from("matches")
@@ -1806,19 +1841,24 @@ async function loadScoreableMatch(
 
   const mappedMatch = mapMatchRow(match as MatchRow);
   if (!canScoreGroupMatch(mappedMatch)) {
+    if (canScoreKnockoutMatch(mappedMatch)) {
+      return { ok: true, scoreable: true, kind: "knockout", match: mappedMatch };
+    }
+
     return {
       ok: true,
       scoreable: false,
+      kind: "skip",
       result: {
         ok: true,
         scored: false,
         predictionsScored: 0,
-        message: "Match saved. Scoring skipped because this is not a finalized group-stage match with scores."
+        message: "Match saved. Scoring skipped because this match is not scoreable yet."
       }
     };
   }
 
-  return { ok: true, scoreable: true, match: mappedMatch };
+  return { ok: true, scoreable: true, kind: "group", match: mappedMatch };
 }
 
 async function loadPredictionsForMatch(

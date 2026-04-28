@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { CalendarDays, CircleHelp, ListOrdered, Network, Sparkles, Trophy } from "lucide-react";
+import { CalendarDays, CircleHelp, ListOrdered, Network, Sparkles, SquareCheckBig, Trophy } from "lucide-react";
 import { fetchMyGroupsAction } from "@/app/my-groups/actions";
 import { AdminStatsSection, AdminToolsSection, AdminMessage } from "@/components/admin/AdminHomeClient";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
@@ -101,8 +101,7 @@ export function DashboardOverview() {
   const completedCount = groupMatches.filter((match) =>
     predictions.some((prediction) => prediction.matchId === match.id)
   ).length;
-  const ctaLabel = "Score Picks";
-
+  const heroCtaLabel = completedCount > 0 ? "My Next Pick" : "My Picks";
   function handleInviteEntrySubmit() {
     const token = normalizeInviteTokenInput(inviteEntryValue);
     if (!token) {
@@ -137,9 +136,10 @@ export function DashboardOverview() {
           </h2>
           <Link
             href="/groups"
-            className="mt-5 inline-flex w-full items-center justify-center rounded-md bg-accent px-4 py-3 text-base font-bold text-white sm:w-auto"
-        >
-            {ctaLabel}
+            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-3 text-base font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:w-auto"
+          >
+            <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+            {heroCtaLabel}
           </Link>
         </div>
       </section>

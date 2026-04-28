@@ -14,6 +14,7 @@ import {
 } from "@/app/admin/actions";
 import { Avatar } from "@/components/Avatar";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
+import { showAppToast } from "@/lib/app-toast";
 import {
   ActionButton,
   InlineConfirmation,
@@ -59,6 +60,12 @@ export function AdminGroupsSection({
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (message) {
+      showAppToast(message);
+    }
+  }, [message]);
 
   async function load() {
     setIsLoading(true);

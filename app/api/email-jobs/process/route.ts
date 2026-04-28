@@ -27,6 +27,7 @@ type EmailJobRow = {
     inviterName?: string;
     inviterEmail?: string;
     suggestedDisplayName?: string | null;
+    customMessage?: string | null;
     claimUrl?: string;
     language?: string;
   } | null;
@@ -258,6 +259,7 @@ async function sendGroupInviteEmail(job: EmailJobRow) {
     groupName,
     invitedEmail,
     suggestedDisplayName,
+    customMessage: payload.customMessage?.trim() || null,
     inviterLabel: payload.inviterName?.trim() || payload.inviterEmail?.trim() || null,
     claimUrl
   });

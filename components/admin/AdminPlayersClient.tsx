@@ -21,6 +21,7 @@ import type { AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import type { LeaderboardFeatureSettingKey, LeaderboardFeatureSettings } from "@/lib/app-settings";
 import type { LegalDocument } from "@/lib/legal";
 import type { SystemReadinessReport } from "@/lib/system-readiness";
+import { showAppToast } from "@/lib/app-toast";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { AdminGroupsSection } from "@/components/admin/AdminGroupsClient";
 import { AdminInvitesSection, formatDate } from "@/components/admin/AdminInvitesClient";
@@ -83,6 +84,12 @@ export function AdminPlayersClient() {
     title: "PICK-IT! Terms of Use",
     body: ""
   });
+
+  useEffect(() => {
+    if (message) {
+      showAppToast(message);
+    }
+  }, [message]);
 
   async function loadPlayers() {
     const result = await fetchAdminPlayerHealthAction();

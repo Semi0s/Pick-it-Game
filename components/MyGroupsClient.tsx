@@ -31,6 +31,7 @@ import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { formatDate } from "@/components/admin/AdminInvitesClient";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
+import { showAppToast } from "@/lib/app-toast";
 import { appendLanguageToPath, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import {
   ActionButton,
@@ -75,7 +76,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
   const [groupName, setGroupName] = useState("");
   const [membershipLimit, setMembershipLimit] = useState("");
   const [groupLimitForms, setGroupLimitForms] = useState<Record<string, string>>({});
-  const [inviteForms, setInviteForms] = useState<Record<string, { email: string; suggestedDisplayName: string; language: SupportedLanguage }>>({});
+  const [inviteForms, setInviteForms] = useState<
+    Record<string, { email: string; suggestedDisplayName: string; customMessage: string; language: SupportedLanguage }>
+  >({});
   const [inviteSuggestions, setInviteSuggestions] = useState<Record<string, InviteAutocompleteOption[]>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
   const [submittingInviteForGroup, setSubmittingInviteForGroup] = useState<string | null>(null);
@@ -84,6 +87,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
   const [invitePreview, setInvitePreview] = useState<{
     groupName: string;
     email: string;
+    customMessage?: string | null;
     language: SupportedLanguage;
     status: string;
     expiresAt: string | null;
@@ -155,6 +159,24 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (message) {
+      showAppToast(message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (invitePreviewMessage) {
+      showAppToast(invitePreviewMessage);
+    }
+  }, [invitePreviewMessage]);
+
+  useEffect(() => {
+    if (inviteEntryError) {
+      showAppToast({ tone: "error", text: inviteEntryError });
+    }
+  }, [inviteEntryError]);
 
   useEffect(() => {
     try {
@@ -295,6 +317,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
         setInvitePreview({
           groupName: result.invite.groupName,
           email: result.invite.email,
+          customMessage: result.invite.customMessage ?? null,
           language: normalizeLanguage(result.invite.language ?? inviteLanguage),
           status: result.invite.status,
           expiresAt: result.invite.expiresAt
@@ -424,11 +447,12 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
     setMessage(null);
 
     const defaultLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
-    const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "", language: defaultLanguage };
+    const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "", customMessage: "", language: defaultLanguage };
     const result = await createGroupInviteAction({
       groupId: group.id,
       email: formState.email,
       suggestedDisplayName: formState.suggestedDisplayName,
+      customMessage: formState.customMessage,
       language: formState.language
     });
 
@@ -441,7 +465,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
       const resetLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
       setInviteForms((current) => ({
         ...current,
-        [group.id]: { email: "", suggestedDisplayName: "", language: resetLanguage }
+        [group.id]: { email: "", suggestedDisplayName: "", customMessage: "", language: resetLanguage }
       }));
       await load();
     }
@@ -647,6 +671,14 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                 Status: {invitePreview.status}
                 {invitePreview.expiresAt ? ` · Expires ${formatDate(invitePreview.expiresAt)}` : ""}
               </p>
+              {invitePreview.customMessage ? (
+                <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                  <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Message from your group manager</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm font-semibold text-gray-700">
+                    {invitePreview.customMessage}
+                  </p>
+                </div>
+              ) : null}
               {invitePreviewMessage ? (
                 <AdminMessage tone={invitePreviewMessage.tone} message={invitePreviewMessage.text} />
               ) : null}
@@ -835,7 +867,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
         ) : (
           filteredGroups.map((group) => {
             const defaultInviteLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
-            const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "", language: defaultInviteLanguage };
+            const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "", customMessage: "", language: defaultInviteLanguage };
             const trophyDraft = groupTrophyDrafts[group.id] ?? { name: "", icon: "", description: "" };
             const groupLimitFormValue = groupLimitForms[group.id] ?? String(group.membershipLimit);
             const usesDisclosure = true;
@@ -978,6 +1010,33 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                         <p className="mt-2 text-xs font-semibold text-gray-500">
                           This only helps identify the invite. Players still choose their own profile name during setup.
                         </p>
+                      </label>
+                      <label className="block">
+                        <span className="text-sm font-bold text-gray-800">Custom message (optional)</span>
+                        <textarea
+                          value={formState.customMessage}
+                          onChange={(event) =>
+                            setInviteForms((current) => ({
+                              ...current,
+                              [group.id]: {
+                                ...formState,
+                                customMessage: event.target.value
+                              }
+                            }))
+                          }
+                          maxLength={280}
+                          rows={4}
+                          placeholder="Add a short note for your invitee."
+                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                        />
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                          <p className="text-xs font-semibold text-gray-500">
+                            This note will appear in the invite email.
+                          </p>
+                          <p className="text-xs font-semibold text-gray-500">
+                            {formState.customMessage.length}/280
+                          </p>
+                        </div>
                       </label>
                       <label className="block">
                         <span className="text-sm font-bold text-gray-800">Invite language</span>

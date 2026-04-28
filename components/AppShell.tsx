@@ -7,6 +7,7 @@ import { BarChart3, CircleUserRound, SquareCheckBig, UsersRound } from "lucide-r
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
+import { APP_TOAST_EVENT, type AppToastDetail } from "@/lib/app-toast";
 import { getStrings } from "@/lib/strings";
 import {
   fetchCurrentUserTrophies,
@@ -29,6 +30,7 @@ type AppShellProps = {
 
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TROPHY_POLL_INTERVAL_MS = 4000;
+const DEFAULT_TOAST_DURATION_MS = 4200;
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
@@ -44,7 +46,30 @@ export function AppShell({ children }: AppShellProps) {
   const [pendingCelebrationQueue, setPendingCelebrationQueue] = useState<PendingTrophyCelebration[]>([]);
   const [activeCelebration, setActiveCelebration] = useState<PendingTrophyCelebration | null>(null);
   const [readinessBanner, setReadinessBanner] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Array<{ id: string; tone: AppToastDetail["tone"]; text: string }>>([]);
   const lastTrophySignatureRef = useRef<string>("");
+
+  useEffect(() => {
+    const handleToast = (event: Event) => {
+      const customEvent = event as CustomEvent<AppToastDetail>;
+      const detail = customEvent.detail;
+      if (!detail?.text) {
+        return;
+      }
+
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setToasts((current) => [...current, { id, tone: detail.tone, text: detail.text }]);
+
+      window.setTimeout(() => {
+        setToasts((current) => current.filter((toast) => toast.id !== id));
+      }, detail.durationMs ?? DEFAULT_TOAST_DURATION_MS);
+    };
+
+    window.addEventListener(APP_TOAST_EVENT, handleToast as EventListener);
+    return () => {
+      window.removeEventListener(APP_TOAST_EVENT, handleToast as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -285,6 +310,25 @@ export function AppShell({ children }: AppShellProps) {
         trophy={activeCelebration}
         onDismiss={() => setActiveCelebration(null)}
       />
+
+      {toasts.length > 0 ? (
+        <div className="pointer-events-none fixed inset-x-0 top-20 z-40 flex justify-center px-4">
+          <div className="flex w-full max-w-md flex-col gap-2">
+            {toasts.map((toast) => (
+              <div
+                key={toast.id}
+                className={`pointer-events-auto rounded-lg border px-4 py-3 text-sm font-semibold shadow-lg ${
+                  toast.tone === "success"
+                    ? "border-accent-light bg-white text-accent-dark"
+                    : "border-red-200 bg-white text-red-700"
+                }`}
+              >
+                {toast.text}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white shadow-[0_-10px_24px_rgba(15,23,42,0.05)]">
         <div

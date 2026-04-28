@@ -339,6 +339,9 @@ export function LeaderboardClient() {
   const shouldShowPlayerSocialIndicators = !isGlobalView;
   const canAwardManagedTrophies = activeView === "managed_groups" && Boolean(managedAwardGroup);
   const canSelfAwardTrophies = user?.role === "admin";
+  const leaders = useMemo(() => users.filter((profile) => profile.rank === 1), [users]);
+  const sharedLeaderScore = leaders[0]?.totalPoints ?? null;
+  const tiedFirstPlayerIds = useMemo(() => new Set(leaders.length > 1 ? leaders.map((profile) => profile.id) : []), [leaders]);
   const activeManagedTrophyMember = managedAwardGroup && managedTrophySheetTarget
     ? managedAwardGroup.members.find((member) => member.userId === managedTrophySheetTarget.userId) ?? null
     : null;
@@ -377,7 +380,7 @@ export function LeaderboardClient() {
               <Trophy aria-hidden className="h-4 w-4" />
               <SquareCheckBig aria-hidden className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-[2px] bg-white" />
             </span>
-            Side Picks
+            My Side Picks
           </Link>
         </div>
       </section>
@@ -828,16 +831,35 @@ export function LeaderboardClient() {
             </p>
           ) : null}
 
+          {!isLoading && !error && leaders.length > 0 ? (
+            <LeaderSummaryCard leaders={leaders} sharedScore={sharedLeaderScore} />
+          ) : null}
+
           {users.map((profile, index) => (
+            (() => {
+              const isCurrentUser = profile.id === user?.id;
+              const isTiedFirst = tiedFirstPlayerIds.has(profile.id);
+              const isLightlyHighlighted = index < 3;
+              const rowTone = isCurrentUser
+                ? "border-accent bg-accent-light"
+                : isLightlyHighlighted
+                  ? "border-gray-300 bg-gray-50"
+                  : "border-gray-200 bg-white";
+              const rankTone = isCurrentUser
+                ? "bg-white text-accent-dark"
+                : isLightlyHighlighted
+                  ? "bg-white text-gray-800"
+                  : "bg-gray-100 text-gray-700";
+              const pointsTone = isCurrentUser
+                ? "bg-white text-accent-dark"
+                : "bg-white text-gray-800";
+              const socialTone = isCurrentUser ? "text-gray-600" : "text-gray-500";
+              const badgeHomeTeamTone = isCurrentUser ? "bg-white/85" : "bg-white/70";
+
+              return (
             <div
               key={profile.id}
-              className={`rounded-lg border p-4 ${
-                index === 0
-                  ? "border-amber-200 bg-amber-50"
-                  : profile.id === user?.id
-                    ? "border-accent bg-accent-light"
-                    : "border-gray-200 bg-white"
-              }`}
+              className={`rounded-lg border p-4 ${rowTone}`}
             >
               <Link
                 href={`/leaderboard/${profile.id}`}
@@ -846,13 +868,7 @@ export function LeaderboardClient() {
                 }`}
               >
                 <span
-                  className={`flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md px-2 py-1 text-center ${
-                    index === 0
-                      ? "bg-white text-amber-800"
-                      : profile.id === user?.id
-                        ? "bg-white text-accent-dark"
-                        : "bg-gray-100 text-gray-700"
-                  }`}
+                  className={`flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md px-2 py-1 text-center ${rankTone}`}
                 >
                   <span className="text-sm font-black leading-none">{profile.rank ?? index + 1}</span>
                   <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">Place</span>
@@ -861,35 +877,26 @@ export function LeaderboardClient() {
                   <Avatar
                     name={profile.name}
                     avatarUrl={profile.avatarUrl}
-                    size={index === 0 ? "lg" : "md"}
-                    className={index === 0 ? "border-amber-200 bg-amber-100" : undefined}
+                    size="md"
                   />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-start justify-between gap-3">
                       <span className="min-w-0">
-                        {index === 0 ? (
-                          <span className="mb-1 block text-[11px] font-black uppercase tracking-wide text-amber-700">
-                            Leading the board
+                        {isTiedFirst ? (
+                          <span className="mb-1 inline-flex items-center rounded-md bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700">
+                            T1
                           </span>
                         ) : null}
                         <span
-                          className={`min-w-0 truncate font-black text-gray-950 ${
-                            index === 0 ? "text-lg" : "text-base"
-                          }`}
+                          className="min-w-0 truncate text-base font-black text-gray-950"
                         >
                           {profile.name}
-                          {profile.id === user?.id ? " (You)" : ""}
+                          {isCurrentUser ? " (You)" : ""}
                         </span>
                       </span>
                       <span className="flex shrink-0 flex-col items-end gap-1">
                         <span
-                          className={`rounded-md px-2 py-1 text-sm font-black ${
-                            index === 0
-                              ? "bg-white text-amber-800"
-                              : profile.id === user?.id
-                                ? "bg-white text-accent-dark"
-                                : "bg-accent-light text-accent-dark"
-                          }`}
+                          className={`rounded-md px-2 py-1 text-sm font-black ${pointsTone}`}
                         >
                           {profile.totalPoints} points
                         </span>
@@ -907,9 +914,7 @@ export function LeaderboardClient() {
                     </span>
                     {shouldShowPlayerSocialIndicators ? (
                       <span
-                        className={`mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold ${
-                          index === 0 ? "text-amber-800" : profile.id === user?.id ? "text-gray-600" : "text-gray-500"
-                        }`}
+                        className={`mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold ${socialTone}`}
                       >
                         {profile.hasPerfectPickHighlight ? (
                           <span className="rounded-md bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">
@@ -924,7 +929,7 @@ export function LeaderboardClient() {
                                 icon={trophy.icon}
                                 tier={trophy.tier}
                                 size="sm"
-                                className={index === 0 ? "border-amber-200" : profile.id === user?.id ? "border-accent/40" : ""}
+                                className={isCurrentUser ? "border-accent/40" : ""}
                               />
                             ))}
                           </span>
@@ -932,7 +937,7 @@ export function LeaderboardClient() {
                         {profile.homeTeamId ? (
                           <HomeTeamBadge
                             teamId={profile.homeTeamId}
-                            className={index === 0 ? "border-amber-200 bg-white/90" : "bg-white/70"}
+                            className={badgeHomeTeamTone}
                           />
                         ) : null}
                       </span>
@@ -958,6 +963,8 @@ export function LeaderboardClient() {
                 ) : null}
               </div>
             </div>
+              );
+            })()
           ))}
         </section>
       ) : isGroupStandingsView ? (
@@ -1361,6 +1368,54 @@ function GroupStandingsSection({
           })
         : null}
     </section>
+  );
+}
+
+function LeaderSummaryCard({
+  leaders,
+  sharedScore
+}: {
+  leaders: LeaderboardListItem[];
+  sharedScore: number | null;
+}) {
+  const visibleLeaders = leaders.slice(0, 4);
+  const hiddenLeaderCount = Math.max(0, leaders.length - visibleLeaders.length);
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">
+            {leaders.length > 1 ? "Leaders" : "Leader"}
+          </p>
+          <p className="mt-1 text-sm font-semibold text-gray-600">
+            {leaders.length > 1 ? "Sharing rank 1 right now." : "Currently holding rank 1."}
+          </p>
+        </div>
+        <div className="shrink-0 rounded-md bg-gray-100 px-3 py-2 text-right">
+          <p className="text-sm font-black text-gray-900">{sharedScore ?? "—"} pts</p>
+          <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">Shared score</p>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        {visibleLeaders.map((leader) => (
+          <Link
+            key={leader.id}
+            href={`/leaderboard/${leader.id}`}
+            className="inline-flex max-w-full items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            <Avatar name={leader.name} avatarUrl={leader.avatarUrl} size="sm" />
+            <span className="truncate">{leader.name}</span>
+          </Link>
+        ))}
+        {hiddenLeaderCount > 0 ? (
+          <span className="inline-flex items-center rounded-md bg-gray-100 px-3 py-2 text-sm font-bold text-gray-600">
+            +{hiddenLeaderCount} more
+          </span>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

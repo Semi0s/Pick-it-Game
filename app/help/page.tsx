@@ -23,9 +23,21 @@ const HELP_SECTIONS = [
     bullets: [
       "Correct winner or draw: +3 points",
       "Exact score: +8 points total",
-      "Close with the right goal difference: +1 bonus point"
+      "Close with the right goal difference: +4 points total"
     ],
     tip: "The closer your prediction, the more you earn."
+  },
+  {
+    title: "Knockout Bracket Scoring",
+    bullets: [
+      "Knockout picks score the correct winner only",
+      "Round of 16: +5 points",
+      "Quarterfinals: +10 points",
+      "Semifinals: +15 points",
+      "Final: +20 points",
+      "Champion: +25 bonus points from your Final winner pick"
+    ],
+    tip: "Bracket points are tracked separately from your group-stage leaderboard total for now."
   },
   {
     title: "Compete with Friends",
@@ -68,7 +80,8 @@ const HELP_SECTIONS = [
 
 const QUICK_TIPS = [
   "Make your picks before a match starts",
-  "Knockout rounds and Trophies are coming soon",
+  "Knockout picks lock when the first knockout match starts",
+  "Bracket points are separate from the main leaderboard for now",
   "Create and manage groups to create different pools"
 ] as const;
 

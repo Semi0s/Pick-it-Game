@@ -1,6 +1,11 @@
+import { KnockoutBracketBuilder } from "@/components/KnockoutBracketBuilder";
 import { KnockoutGroupComparison } from "@/components/KnockoutGroupComparison";
 import { AppShell } from "@/components/AppShell";
-import { fetchGroupBracketComparisonView, fetchKnockoutStructureStatus } from "@/lib/bracket-predictions";
+import {
+  fetchGroupBracketComparisonView,
+  fetchKnockoutBracketEditorView,
+  fetchKnockoutStructureStatus
+} from "@/lib/bracket-predictions";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +27,20 @@ export default async function KnockoutPage({
     isFullySeeded: false,
     firstRoundOf32Kickoff: null
   }));
+  const bracketEditorView = user
+      ? await fetchKnockoutBracketEditorView(user.id).catch(() => ({
+        isSeeded: false,
+        isLocked: true,
+        lockReason: "not_seeded" as const,
+        firstRoundOf32Kickoff: null,
+        bracketPoints: 0,
+        correctPicks: 0,
+        stages: [],
+        champion: null,
+        thirdPlace: null,
+        predictions: []
+      }))
+    : null;
   const comparisonView =
     user
       ? await fetchGroupBracketComparisonView(user.id, selectedGroupId, selectedPlayerId).catch(() => ({
@@ -52,11 +71,11 @@ export default async function KnockoutPage({
           <div className="min-w-0">
             <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Picks</p>
             <h2 className="mt-2 text-3xl font-black leading-tight">
-              {isSeeded ? "Compare your group’s bracket futures." : "Knockout picks coming soon."}
+              {isSeeded ? "Build your bracket, then compare it." : "Knockout picks coming soon."}
             </h2>
             <p className="mt-3 text-base leading-7 text-gray-600">
               {isSeeded
-                ? "See who picked the same champion, whose bracket is still alive, and where the pressure is building inside your group."
+                ? "Make one winner pick per knockout match, watch your path advance forward, and stack your bracket against the rest of the group."
                 : "We will open knockout picks once the full Round of 32 through Final bracket has been seeded."}
             </p>
           </div>
@@ -76,6 +95,12 @@ export default async function KnockoutPage({
           </p>
         </div>
       </section>
+
+      {bracketEditorView ? (
+        <div className="mt-5">
+          <KnockoutBracketBuilder initialView={bracketEditorView} />
+        </div>
+      ) : null}
 
       <div className="mt-5">
         <KnockoutGroupComparison view={comparisonView} />

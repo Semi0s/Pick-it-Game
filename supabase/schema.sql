@@ -122,6 +122,21 @@ create table public.bracket_predictions (
   unique (user_id, match_id)
 );
 
+create table public.bracket_scores (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  match_id text not null references public.matches(id) on delete cascade,
+  stage public.match_stage not null,
+  predicted_winner_team_id text not null references public.teams(id),
+  actual_winner_team_id text not null references public.teams(id),
+  round_points integer not null default 0,
+  champion_points integer not null default 0,
+  points integer not null default 0,
+  is_correct boolean not null default false,
+  scored_at timestamptz not null default now(),
+  unique (user_id, match_id)
+);
+
 create table public.side_picks (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade unique,
@@ -211,6 +226,7 @@ create table public.group_invites (
   normalized_email text not null,
   invited_by_user_id uuid references public.users(id) on delete set null,
   suggested_display_name text,
+  custom_message text,
   language text not null default 'en',
   status public.group_invite_status not null default 'pending',
   token_hash text not null unique,
@@ -343,6 +359,12 @@ create index bracket_predictions_user_updated_idx
 
 create index bracket_predictions_match_id_idx
   on public.bracket_predictions (match_id);
+
+create index bracket_scores_user_scored_idx
+  on public.bracket_scores (user_id, scored_at desc);
+
+create index bracket_scores_match_id_idx
+  on public.bracket_scores (match_id);
 
 create unique index user_notifications_user_event_type_unique_idx
   on public.user_notifications (user_id, event_id, type)
@@ -777,6 +799,7 @@ alter table public.teams enable row level security;
 alter table public.matches enable row level security;
 alter table public.predictions enable row level security;
 alter table public.bracket_predictions enable row level security;
+alter table public.bracket_scores enable row level security;
 alter table public.side_picks enable row level security;
 alter table public.leaderboard_entries enable row level security;
 alter table public.app_settings enable row level security;
@@ -866,6 +889,11 @@ on public.bracket_predictions for select
 to authenticated
 using (public.is_admin());
 
+create policy "Admins can read all bracket scores"
+on public.bracket_scores for select
+to authenticated
+using (public.is_admin());
+
 create policy "Admins can read all side picks"
 on public.side_picks for select
 to authenticated
@@ -951,6 +979,11 @@ on public.bracket_predictions for all
 to authenticated
 using (user_id = auth.uid())
 with check (user_id = auth.uid());
+
+create policy "Users can read own bracket scores"
+on public.bracket_scores for select
+to authenticated
+using (user_id = auth.uid());
 
 create policy "Users manage own side picks"
 on public.side_picks for all

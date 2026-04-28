@@ -7,6 +7,7 @@ import { TrophyBadge } from "@/components/TrophyBadge";
 import {
   clearCurrentUserAvatar,
   fetchCurrentLegalDocumentForProfile,
+  fetchCurrentBracketScoreSummary,
   fetchCurrentUserTrophies,
   registerCurrentBrowserPushNotifications,
   sendCurrentUserPasswordReset,
@@ -16,6 +17,7 @@ import {
   uploadCurrentUserAvatar
 } from "@/lib/auth-client";
 import { getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-levels";
+import { showAppToast } from "@/lib/app-toast";
 import type { LegalDocument } from "@/lib/legal";
 import { getStrings } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
@@ -49,6 +51,10 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
         }
       : null
   );
+  const [bracketScoreSummary, setBracketScoreSummary] = useState<{ bracketPoints: number; correctPicks: number }>({
+    bracketPoints: 0,
+    correctPicks: 0
+  });
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -90,6 +96,18 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
   }, [user?.id]);
 
   useEffect(() => {
+    if (passwordMessage) {
+      showAppToast(passwordMessage);
+    }
+  }, [passwordMessage]);
+
+  useEffect(() => {
+    if (notificationMessage) {
+      showAppToast(notificationMessage);
+    }
+  }, [notificationMessage]);
+
+  useEffect(() => {
     let isMounted = true;
 
     async function loadCurrentLegalDocument() {
@@ -105,6 +123,23 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
       isMounted = false;
     };
   }, [user?.preferredLanguage]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadBracketSummary() {
+      const summary = await fetchCurrentBracketScoreSummary();
+      if (isMounted) {
+        setBracketScoreSummary(summary);
+      }
+    }
+
+    void loadBracketSummary();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
 
   if (isLoading || !user) {
     return (
@@ -282,6 +317,36 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
             ))}
           </div>
         )}
+      </div>
+
+      <div className="rounded-lg border border-gray-200 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold">Knockout Bracket</h3>
+            <p className="mt-2 text-sm leading-6 text-gray-600">
+              Your knockout score stays separate from the main leaderboard for now.
+            </p>
+          </div>
+          <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+            {bracketScoreSummary.bracketPoints} pts
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-md bg-gray-100 px-4 py-3">
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Correct picks</p>
+            <p className="mt-1 text-2xl font-black text-gray-950">{bracketScoreSummary.correctPicks}</p>
+          </div>
+          <div className="rounded-md bg-gray-100 px-4 py-3">
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Bracket points</p>
+            <p className="mt-1 text-2xl font-black text-gray-950">{bracketScoreSummary.bracketPoints}</p>
+          </div>
+        </div>
+        <a
+          href="/knockout"
+          className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+        >
+          Open Knockout Picks
+        </a>
       </div>
 
       <div className="rounded-lg border border-gray-200 p-4">

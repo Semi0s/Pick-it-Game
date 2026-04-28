@@ -1,7 +1,7 @@
 "use server";
 
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
-import { saveBracketPrediction } from "@/lib/bracket-predictions";
+import { fetchUserBracketPredictions, saveBracketPrediction } from "@/lib/bracket-predictions";
 import type { BracketPrediction } from "@/lib/types";
 
 type SaveBracketPredictionInput = {
@@ -10,7 +10,7 @@ type SaveBracketPredictionInput = {
 };
 
 export type SaveBracketPredictionResult =
-  | { ok: true; prediction: BracketPrediction }
+  | { ok: true; prediction: BracketPrediction; predictions: BracketPrediction[] }
   | { ok: false; message: string };
 
 export async function saveBracketPredictionAction(
@@ -28,7 +28,8 @@ export async function saveBracketPredictionAction(
 
   try {
     const prediction = await saveBracketPrediction(user.id, input.matchId, input.teamId);
-    return { ok: true, prediction };
+    const predictions = await fetchUserBracketPredictions(user.id);
+    return { ok: true, prediction, predictions };
   } catch (caughtError) {
     const message = caughtError instanceof Error ? caughtError.message : "Could not save the knockout pick.";
     return { ok: false, message };

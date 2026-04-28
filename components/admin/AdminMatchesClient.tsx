@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
 import { scoreFinalizedGroupMatch, updateAdminMatchResultAction } from "@/app/admin/actions";
+import { showAppToast } from "@/lib/app-toast";
 import { formatMatchStage } from "@/lib/match-stage";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
 import type { MatchStage, MatchStatus } from "@/lib/types";
@@ -30,27 +31,17 @@ export function AdminMatchesClient() {
   const [isLoading, setIsLoading] = useState(true);
   const [stageFilter, setStageFilter] = useState<"all" | MatchStage>("all");
   const [dateFilter, setDateFilter] = useState("all");
-  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     loadMatches();
   }, []);
-
-  useEffect(() => {
-    if (!message) {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => setMessage(null), 4200);
-    return () => window.clearTimeout(timeout);
-  }, [message]);
 
   async function loadMatches() {
     setIsLoading(true);
     try {
       setMatches(await fetchAdminMatches());
     } catch (error) {
-      setMessage({ tone: "error", text: (error as Error).message });
+      showAppToast({ tone: "error", text: (error as Error).message });
     } finally {
       setIsLoading(false);
     }
@@ -69,7 +60,6 @@ export function AdminMatchesClient() {
   return (
     <div className="space-y-5">
       <AdminHeader eyebrow="Matches" title="Update match results." />
-      {message ? <FloatingAdminToast tone={message.tone} message={message.text} onDismiss={() => setMessage(null)} /> : null}
 
       <section className="grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:grid-cols-2">
         <label>
@@ -114,46 +104,13 @@ export function AdminMatchesClient() {
               setMatches((currentMatches) =>
                 currentMatches.map((currentMatch) => (currentMatch.id === updatedMatch.id ? updatedMatch : currentMatch))
               );
-              setMessage({ tone: "success", text: "Match updated." });
+              showAppToast({ tone: "success", text: "Match updated." });
             }}
-            onScored={(text) => setMessage({ tone: "success", text })}
-            onError={(text) => setMessage({ tone: "error", text })}
+            onScored={(text) => showAppToast({ tone: "success", text })}
+            onError={(text) => showAppToast({ tone: "error", text })}
           />
         ))}
       </section>
-    </div>
-  );
-}
-
-function FloatingAdminToast({
-  tone,
-  message,
-  onDismiss
-}: {
-  tone: "success" | "error";
-  message: string;
-  onDismiss: () => void;
-}) {
-  return (
-    <div className="pointer-events-none fixed inset-x-4 top-4 z-50 sm:left-auto sm:right-4 sm:w-full sm:max-w-sm">
-      <div
-        className={`pointer-events-auto rounded-lg border px-4 py-3 shadow-lg ${
-          tone === "success"
-            ? "border-green-200 bg-green-50 text-green-900"
-            : "border-red-200 bg-red-50 text-red-900"
-        }`}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <p className="text-sm font-semibold">{message}</p>
-          <button
-            type="button"
-            onClick={onDismiss}
-            className="shrink-0 rounded-md px-2 py-1 text-xs font-bold text-current/80 transition hover:bg-black/5 hover:text-current"
-          >
-            Close
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

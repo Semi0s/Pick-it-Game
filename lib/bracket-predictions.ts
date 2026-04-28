@@ -1,5 +1,6 @@
 import "server-only";
 
+import { scoreBracketPrediction } from "@/lib/bracket-scoring";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   EXPECTED_KNOCKOUT_MATCH_COUNTS,
@@ -9,7 +10,7 @@ import {
   normalizeKnockoutStage,
   type CanonicalKnockoutStage
 } from "@/lib/match-stage";
-import type { BracketPrediction, MatchNextSlot, MatchStage, MatchStatus } from "@/lib/types";
+import type { BracketPrediction, BracketScore, MatchNextSlot, MatchStage, MatchStatus } from "@/lib/types";
 
 type MatchRow = {
   id: string;
@@ -30,6 +31,20 @@ type BracketPredictionRow = {
   predicted_winner_team_id: string;
   created_at: string;
   updated_at: string;
+};
+
+type BracketScoreRow = {
+  id: string;
+  user_id: string;
+  match_id: string;
+  stage: MatchStage;
+  predicted_winner_team_id: string;
+  actual_winner_team_id: string;
+  round_points: number;
+  champion_points: number;
+  points: number;
+  is_correct: boolean;
+  scored_at: string;
 };
 
 type GroupRow = {
@@ -111,6 +126,57 @@ export type GroupBracketComparisonView = {
   selectedPlayerBracket: GroupBracketDetailView | null;
 };
 
+export type BracketTeamOption = {
+  id: string;
+  name: string;
+  shortName: string;
+};
+
+export type KnockoutBracketMatchView = {
+  matchId: string;
+  stage: CanonicalKnockoutStage;
+  stageLabel: string;
+  title: string;
+  kickoffTime: string;
+  status: MatchStatus;
+  seededHomeTeam: BracketTeamOption | null;
+  seededAwayTeam: BracketTeamOption | null;
+  homeSourceMatchId: string | null;
+  awaySourceMatchId: string | null;
+  homeTeam: BracketTeamOption | null;
+  awayTeam: BracketTeamOption | null;
+  predictedWinnerTeamId: string | null;
+  actualWinnerTeamId: string | null;
+  awardedPoints: number;
+  isCorrectWinner: boolean | null;
+  isLocked: boolean;
+  canSelectWinner: boolean;
+};
+
+export type KnockoutBracketStageView = {
+  stage: CanonicalKnockoutStage;
+  label: string;
+  matches: KnockoutBracketMatchView[];
+};
+
+export type KnockoutBracketEditorView = {
+  isSeeded: boolean;
+  isLocked: boolean;
+  lockReason: "not_seeded" | "locked" | null;
+  firstRoundOf32Kickoff: string | null;
+  bracketPoints: number;
+  correctPicks: number;
+  stages: KnockoutBracketStageView[];
+  champion: BracketTeamOption | null;
+  thirdPlace: KnockoutBracketMatchView | null;
+  predictions: BracketPrediction[];
+};
+
+export type BracketScoreSummary = {
+  bracketPoints: number;
+  correctPicks: number;
+};
+
 export async function canEditBracketPredictions() {
   const adminSupabase = createAdminClient();
   const editState = await getBracketEditState(adminSupabase);
@@ -182,6 +248,7 @@ export async function saveBracketPrediction(
     throw existingPredictionError;
   }
 
+  let savedPrediction: BracketPrediction;
   if ((existingPrediction as { id?: string } | null)?.id) {
     const { data, error } = await adminSupabase
       .from("bracket_predictions")
@@ -197,25 +264,28 @@ export async function saveBracketPrediction(
       throw error;
     }
 
-    return mapBracketPredictionRow(data as BracketPredictionRow);
+    savedPrediction = mapBracketPredictionRow(data as BracketPredictionRow);
+  } else {
+    const { data, error } = await adminSupabase
+      .from("bracket_predictions")
+      .insert({
+        user_id: userId,
+        match_id: matchId,
+        predicted_winner_team_id: teamId,
+        updated_at: now
+      })
+      .select("id,user_id,match_id,predicted_winner_team_id,created_at,updated_at")
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    savedPrediction = mapBracketPredictionRow(data as BracketPredictionRow);
   }
 
-  const { data, error } = await adminSupabase
-    .from("bracket_predictions")
-    .insert({
-      user_id: userId,
-      match_id: matchId,
-      predicted_winner_team_id: teamId,
-      updated_at: now
-    })
-    .select("id,user_id,match_id,predicted_winner_team_id,created_at,updated_at")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return mapBracketPredictionRow(data as BracketPredictionRow);
+  await clearInvalidDescendantPredictions(adminSupabase, userId, matchId);
+  return savedPrediction;
 }
 
 export async function fetchKnockoutStructureStatus(): Promise<KnockoutStructureStatus> {
@@ -263,6 +333,78 @@ export async function fetchKnockoutStructureStatus(): Promise<KnockoutStructureS
     isFullySeeded,
     firstRoundOf32Kickoff
   };
+}
+
+export async function fetchKnockoutBracketEditorView(userId: string): Promise<KnockoutBracketEditorView> {
+  const adminSupabase = createAdminClient();
+  const [editState, knockoutData, predictions, scoreRows] = await Promise.all([
+    getBracketEditState(adminSupabase),
+    fetchKnockoutData(adminSupabase),
+    fetchUserBracketPredictions(userId),
+    fetchUserBracketScores(userId)
+  ]);
+
+  const predictionsByMatchId = new Map(predictions.map((prediction) => [prediction.matchId, prediction]));
+  const scoresByMatchId = new Map(scoreRows.map((score) => [score.matchId, score]));
+  const scoreSummary = {
+    bracketPoints: scoreRows.reduce((sum, score) => sum + score.points, 0),
+    correctPicks: scoreRows.filter((score) => score.isCorrect).length
+  };
+  const stages = buildKnockoutBracketStages(
+    knockoutData.matches,
+    knockoutData.teamsById,
+    predictionsByMatchId,
+    scoresByMatchId,
+    !editState.editable
+  );
+  const championTeamId =
+    stages
+      .find((stage) => stage.stage === "final")
+      ?.matches[0]
+      ?.predictedWinnerTeamId ?? null;
+
+  return {
+    isSeeded: knockoutData.status.isFullySeeded,
+    isLocked: !editState.editable,
+    lockReason: editState.editable ? null : editState.reason,
+    firstRoundOf32Kickoff: knockoutData.status.firstRoundOf32Kickoff,
+    bracketPoints: scoreSummary.bracketPoints,
+    correctPicks: scoreSummary.correctPicks,
+    stages: stages.filter((stage) => stage.stage !== "third"),
+    champion: championTeamId ? knockoutData.teamsById.get(championTeamId) ?? null : null,
+    thirdPlace: stages.find((stage) => stage.stage === "third")?.matches[0] ?? null,
+    predictions
+  };
+}
+
+export async function fetchUserBracketScores(userId: string): Promise<BracketScore[]> {
+  const adminSupabase = createAdminClient();
+  const { data, error } = await adminSupabase
+    .from("bracket_scores")
+    .select(
+      "id,user_id,match_id,stage,predicted_winner_team_id,actual_winner_team_id,round_points,champion_points,points,is_correct,scored_at"
+    )
+    .eq("user_id", userId)
+    .order("scored_at", { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return ((data ?? []) as BracketScoreRow[]).map(mapBracketScoreRow);
+}
+
+export async function fetchUserBracketScoreSummary(userId: string): Promise<BracketScoreSummary> {
+  const scores = await fetchUserBracketScores(userId);
+  return {
+    bracketPoints: scores.reduce((sum, score) => sum + score.points, 0),
+    correctPicks: scores.filter((score) => score.isCorrect).length
+  };
+}
+
+export async function scoreFinalizedKnockoutMatch(matchId: string): Promise<number> {
+  const adminSupabase = createAdminClient();
+  return scoreFinalizedKnockoutMatchWithClient(adminSupabase, matchId);
 }
 
 export async function fetchGroupBracketComparisonView(
@@ -537,6 +679,251 @@ async function getBracketEditState(adminSupabase: ReturnType<typeof createAdminC
   return { editable: true, firstRoundOf32Kickoff };
 }
 
+async function clearInvalidDescendantPredictions(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  rootMatchId: string
+) {
+  const knockoutData = await fetchKnockoutData(adminSupabase);
+  const { data: predictionRows, error: predictionsError } = await adminSupabase
+    .from("bracket_predictions")
+    .select("id,user_id,match_id,predicted_winner_team_id,created_at,updated_at")
+    .eq("user_id", userId);
+
+  if (predictionsError) {
+    throw predictionsError;
+  }
+
+  const predictionsByMatchId = new Map(
+    ((predictionRows ?? []) as BracketPredictionRow[]).map((prediction) => [prediction.match_id, prediction])
+  );
+  const descendantIds = collectDescendantMatchIds(rootMatchId, knockoutData.matchesById);
+  const descendants = knockoutData.matches
+    .filter((match) => descendantIds.has(match.id))
+    .sort((left, right) => getStageOrder(normalizeKnockoutStage(left.stage)) - getStageOrder(normalizeKnockoutStage(right.stage)));
+
+  const invalidPredictionIds: string[] = [];
+  for (const match of descendants) {
+    const prediction = predictionsByMatchId.get(match.id);
+    if (!prediction) {
+      continue;
+    }
+
+    const availableTeams = getAvailablePredictedTeamsForMatch(
+      match,
+      knockoutData.previousMatchesByNextMatchId,
+      predictionsByMatchId,
+      knockoutData.teamsById
+    );
+    const validTeamIds = [availableTeams.homeTeam?.id ?? null, availableTeams.awayTeam?.id ?? null].filter(
+      (teamId): teamId is string => Boolean(teamId)
+    );
+
+    if (!validTeamIds.includes(prediction.predicted_winner_team_id)) {
+      invalidPredictionIds.push(prediction.id);
+      predictionsByMatchId.delete(match.id);
+    }
+  }
+
+  if (invalidPredictionIds.length === 0) {
+    return;
+  }
+
+  const { error } = await adminSupabase
+    .from("bracket_predictions")
+    .delete()
+    .in("id", invalidPredictionIds);
+
+  if (error) {
+    throw error;
+  }
+}
+
+async function fetchKnockoutData(adminSupabase: ReturnType<typeof createAdminClient>) {
+  const [{ data: matchRows, error: matchesError }, status] = await Promise.all([
+    adminSupabase
+      .from("matches")
+      .select("id,stage,kickoff_time,status,home_team_id,away_team_id,winner_team_id,next_match_id,next_match_slot")
+      .neq("stage", "group"),
+    fetchKnockoutStructureStatus()
+  ]);
+
+  if (matchesError) {
+    throw matchesError;
+  }
+
+  const matches = ((matchRows ?? []) as MatchRow[])
+    .filter((match) => isKnockoutStage(match.stage))
+    .sort((left, right) => {
+      const stageOrder = getStageOrder(normalizeKnockoutStage(left.stage)) - getStageOrder(normalizeKnockoutStage(right.stage));
+      if (stageOrder !== 0) {
+        return stageOrder;
+      }
+
+      return left.kickoff_time.localeCompare(right.kickoff_time);
+    });
+
+  const teamIds = new Set<string>();
+  for (const match of matches) {
+    if (match.home_team_id) teamIds.add(match.home_team_id);
+    if (match.away_team_id) teamIds.add(match.away_team_id);
+    if (match.winner_team_id) teamIds.add(match.winner_team_id);
+  }
+
+  const { data: teams, error: teamsError } =
+    teamIds.size > 0
+      ? await adminSupabase.from("teams").select("id,name,short_name").in("id", Array.from(teamIds))
+      : { data: [], error: null };
+
+  if (teamsError) {
+    throw teamsError;
+  }
+
+  const teamsById = new Map<string, BracketTeamOption>(
+    ((teams ?? []) as TeamRow[]).map((team) => [
+      team.id,
+      {
+        id: team.id,
+        name: team.name || team.short_name || team.id,
+        shortName: team.short_name || team.name || team.id
+      }
+    ])
+  );
+
+  const matchesById = new Map(matches.map((match) => [match.id, match]));
+  const previousMatchesByNextMatchId = new Map<string, MatchRow[]>();
+  for (const match of matches) {
+    if (!match.next_match_id) {
+      continue;
+    }
+
+    const current = previousMatchesByNextMatchId.get(match.next_match_id) ?? [];
+    current.push(match);
+    previousMatchesByNextMatchId.set(match.next_match_id, current);
+  }
+
+  return {
+    matches,
+    matchesById,
+    teamsById,
+    previousMatchesByNextMatchId,
+    status
+  };
+}
+
+function buildKnockoutBracketStages(
+  matches: MatchRow[],
+  teamsById: Map<string, BracketTeamOption>,
+  predictionsByMatchId: Map<string, BracketPrediction>,
+  scoresByMatchId: Map<string, BracketScore>,
+  isLocked: boolean
+): KnockoutBracketStageView[] {
+  const stagesById = new Map<CanonicalKnockoutStage, KnockoutBracketMatchView[]>();
+  const previousMatchesByNextMatchId = new Map<string, MatchRow[]>();
+  for (const match of matches) {
+    if (!match.next_match_id) {
+      continue;
+    }
+
+    const current = previousMatchesByNextMatchId.get(match.next_match_id) ?? [];
+    current.push(match);
+    previousMatchesByNextMatchId.set(match.next_match_id, current);
+  }
+
+  for (const match of matches) {
+    const stage = normalizeKnockoutStage(match.stage);
+    if (!stage) {
+      continue;
+    }
+
+    const previousMatches = previousMatchesByNextMatchId.get(match.id) ?? [];
+    const homeSource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "home");
+    const awaySource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "away");
+    const availableTeams = getAvailablePredictedTeamsForMatch(match, previousMatchesByNextMatchId, predictionsByMatchId, teamsById);
+    const predictedWinnerTeamId = predictionsByMatchId.get(match.id)?.predictedWinnerTeamId ?? null;
+    const validPredictedWinnerTeamId =
+      predictedWinnerTeamId &&
+      [availableTeams.homeTeam?.id, availableTeams.awayTeam?.id].includes(predictedWinnerTeamId)
+        ? predictedWinnerTeamId
+        : null;
+
+    const currentStageMatches = stagesById.get(stage) ?? [];
+    currentStageMatches.push({
+      matchId: match.id,
+      stage,
+      stageLabel: formatMatchStage(match.stage),
+      title: `${formatMatchStage(match.stage)} ${currentStageMatches.length + 1}`,
+      kickoffTime: match.kickoff_time,
+      status: match.status,
+      seededHomeTeam: match.home_team_id ? teamsById.get(match.home_team_id) ?? null : null,
+      seededAwayTeam: match.away_team_id ? teamsById.get(match.away_team_id) ?? null : null,
+      homeSourceMatchId: homeSource?.id ?? null,
+      awaySourceMatchId: awaySource?.id ?? null,
+      homeTeam: availableTeams.homeTeam,
+      awayTeam: availableTeams.awayTeam,
+      predictedWinnerTeamId: validPredictedWinnerTeamId,
+      actualWinnerTeamId: match.winner_team_id ?? null,
+      awardedPoints: scoresByMatchId.get(match.id)?.points ?? 0,
+      isCorrectWinner: scoresByMatchId.get(match.id)?.isCorrect ?? null,
+      isLocked,
+      canSelectWinner: Boolean(availableTeams.homeTeam && availableTeams.awayTeam) && !isLocked
+    });
+    stagesById.set(stage, currentStageMatches);
+  }
+
+  return (["r32", "r16", "qf", "sf", "final", "third"] as CanonicalKnockoutStage[])
+    .map((stage) => ({
+      stage,
+      label: formatMatchStage(stage),
+      matches: stagesById.get(stage) ?? []
+    }))
+    .filter((stage) => stage.matches.length > 0);
+}
+
+function getAvailablePredictedTeamsForMatch(
+  match: MatchRow,
+  previousMatchesByNextMatchId: Map<string, MatchRow[]>,
+  predictionsByMatchId: Map<string, { predictedWinnerTeamId?: string; predicted_winner_team_id?: string }>,
+  teamsById: Map<string, BracketTeamOption>
+) {
+  const previousMatches = previousMatchesByNextMatchId.get(match.id) ?? [];
+  const homeSource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "home");
+  const awaySource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "away");
+  const homeTeamId =
+    (homeSource
+      ? predictionsByMatchId.get(homeSource.id)?.predictedWinnerTeamId ??
+        predictionsByMatchId.get(homeSource.id)?.predicted_winner_team_id ??
+        null
+      : null) ??
+    match.home_team_id ??
+    null;
+  const awayTeamId =
+    (awaySource
+      ? predictionsByMatchId.get(awaySource.id)?.predictedWinnerTeamId ??
+        predictionsByMatchId.get(awaySource.id)?.predicted_winner_team_id ??
+        null
+      : null) ??
+    match.away_team_id ??
+    null;
+
+  return {
+    homeTeam: homeTeamId ? teamsById.get(homeTeamId) ?? null : null,
+    awayTeam: awayTeamId ? teamsById.get(awayTeamId) ?? null : null
+  };
+}
+
+function collectDescendantMatchIds(rootMatchId: string, matchesById: Map<string, MatchRow>) {
+  const descendants = new Set<string>();
+  let nextMatchId = matchesById.get(rootMatchId)?.next_match_id ?? null;
+
+  while (nextMatchId) {
+    descendants.add(nextMatchId);
+    nextMatchId = matchesById.get(nextMatchId)?.next_match_id ?? null;
+  }
+
+  return descendants;
+}
+
 function mapBracketPredictionRow(row: BracketPredictionRow): BracketPrediction {
   return {
     id: row.id,
@@ -546,6 +933,98 @@ function mapBracketPredictionRow(row: BracketPredictionRow): BracketPrediction {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+}
+
+function mapBracketScoreRow(row: BracketScoreRow): BracketScore {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    matchId: row.match_id,
+    stage: row.stage,
+    predictedWinnerTeamId: row.predicted_winner_team_id,
+    actualWinnerTeamId: row.actual_winner_team_id,
+    roundPoints: row.round_points,
+    championPoints: row.champion_points,
+    points: row.points,
+    isCorrect: row.is_correct,
+    scoredAt: row.scored_at
+  };
+}
+
+export async function scoreFinalizedKnockoutMatchWithClient(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchId: string
+) {
+  const { data: match, error: matchError } = await adminSupabase
+    .from("matches")
+    .select("id,stage,status,winner_team_id")
+    .eq("id", matchId)
+    .single();
+
+  if (matchError) {
+    throw matchError;
+  }
+
+  const matchRow = match as Pick<MatchRow, "id" | "stage" | "status" | "winner_team_id">;
+  if (!matchRow.winner_team_id || matchRow.status !== "final" || !isKnockoutStage(matchRow.stage)) {
+    return 0;
+  }
+
+  const { data: predictions, error: predictionsError } = await adminSupabase
+    .from("bracket_predictions")
+    .select("id,user_id,match_id,predicted_winner_team_id,created_at,updated_at")
+    .eq("match_id", matchId);
+
+  if (predictionsError) {
+    throw predictionsError;
+  }
+
+  const predictionRows = (predictions ?? []) as BracketPredictionRow[];
+  if (predictionRows.length === 0) {
+    return 0;
+  }
+
+  const scoredAt = new Date().toISOString();
+  const { error: upsertError } = await adminSupabase.from("bracket_scores").upsert(
+    predictionRows.map((prediction) => {
+      const breakdown = scoreBracketPrediction(
+        {
+          stage: matchRow.stage,
+          status: matchRow.status,
+          winnerTeamId: matchRow.winner_team_id
+        },
+        prediction.predicted_winner_team_id
+      );
+
+      return {
+        user_id: prediction.user_id,
+        match_id: prediction.match_id,
+        stage: matchRow.stage,
+        predicted_winner_team_id: prediction.predicted_winner_team_id,
+        actual_winner_team_id: matchRow.winner_team_id,
+        round_points: breakdown.roundPoints,
+        champion_points: breakdown.championPoints,
+        points: breakdown.points,
+        is_correct: breakdown.isCorrect,
+        scored_at: scoredAt
+      };
+    }),
+    { onConflict: "user_id,match_id" }
+  );
+
+  if (upsertError) {
+    throw upsertError;
+  }
+
+  return predictionRows.length;
+}
+
+export async function resetKnockoutMatchScoring(matchId: string) {
+  const adminSupabase = createAdminClient();
+  const { error } = await adminSupabase.from("bracket_scores").delete().eq("match_id", matchId);
+  if (error) {
+    throw error;
+  }
 }
 
 function deriveBracketHealthStatus(

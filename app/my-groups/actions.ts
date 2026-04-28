@@ -16,6 +16,7 @@ import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 const DEFAULT_GROUP_MEMBERSHIP_LIMIT = 15;
 const DEFAULT_INVITE_EXPIRY_DAYS = 14;
 const MAX_CUSTOM_TROPHIES_PER_GROUP = 10;
+const MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH = 280;
 
 type GroupStatus = "active" | "archived";
 type GroupMemberRole = "manager" | "member";
@@ -59,6 +60,7 @@ type GroupInviteRow = {
   normalized_email: string;
   invited_by_user_id: string | null;
   suggested_display_name?: string | null;
+  custom_message?: string | null;
   language?: string | null;
   status: GroupInviteStatus;
   token_hash: string;
@@ -77,6 +79,7 @@ type GroupInviteRecord = {
   normalized_email: string;
   invited_by_user_id: string | null;
   suggested_display_name?: string | null;
+  custom_message?: string | null;
   language?: string | null;
   status: GroupInviteStatus;
   expires_at?: string | null;
@@ -147,6 +150,7 @@ export type CreateGroupInviteInput = {
   groupId: string;
   email: string;
   suggestedDisplayName?: string;
+  customMessage?: string;
   language?: string;
   expiresInDays?: number;
 };
@@ -218,6 +222,7 @@ export type ManagedGroupInvite = {
   id: string;
   email: string;
   suggestedDisplayName?: string;
+  customMessage?: string;
   invitedByLabel?: string;
   status: GroupInviteStatus;
   expiresAt?: string | null;
@@ -280,6 +285,7 @@ export type GroupInvitePreviewResult =
         inviterLabel: string;
         email: string;
         suggestedDisplayName?: string | null;
+        customMessage?: string | null;
         language?: SupportedLanguage;
         status: GroupInviteStatus;
         expiresAt: string | null;
@@ -502,6 +508,13 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
   const token = randomBytes(24).toString("hex");
   const tokenHash = hashInviteToken(token);
   const inviteLanguage = normalizeLanguage(input.language ?? currentUser.preferredLanguage);
+  const customMessage = normalizeGroupInviteCustomMessage(input.customMessage);
+  if (customMessage.length > MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH) {
+    return {
+      ok: false,
+      message: `Keep the custom message under ${MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH} characters.`
+    };
+  }
   const claimUrl = buildGroupInviteClaimUrl(token, inviteLanguage);
   const expiresAt = new Date(Date.now() + normalizeExpiryDays(input.expiresInDays) * 24 * 60 * 60 * 1000).toISOString();
 
@@ -522,6 +535,7 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
       normalized_email: normalizedEmail,
       invited_by_user_id: currentUser.userId,
       suggested_display_name: input.suggestedDisplayName?.trim() || null,
+      custom_message: customMessage || null,
       language: inviteLanguage,
       status: "pending",
       token_hash: tokenHash,
@@ -543,6 +557,7 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
     inviterName: inviterProfile.name,
     inviterEmail: inviterProfile.email,
     suggestedDisplayName: input.suggestedDisplayName?.trim() || null,
+    customMessage: customMessage || null,
     language: inviteLanguage,
     claimUrl
   });
@@ -1123,6 +1138,7 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
       inviterName: inviterProfile.name,
       inviterEmail: inviterProfile.email,
       suggestedDisplayName: invite.suggested_display_name ?? null,
+      customMessage: invite.custom_message ?? null,
       language: inviteLanguage,
       claimUrl
     });
@@ -1489,7 +1505,7 @@ export async function fetchGroupInvitePreviewAction(token: string): Promise<Grou
     const tokenHash = hashInviteToken(trimmedToken);
     const { data, error } = await adminSupabase
       .from("group_invites")
-      .select("group_id,email,suggested_display_name,language,status,expires_at,groups(name),invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
+      .select("group_id,email,suggested_display_name,custom_message,language,status,expires_at,groups(name),invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
       .eq("token_hash", tokenHash)
       .maybeSingle();
 
@@ -1515,6 +1531,7 @@ export async function fetchGroupInvitePreviewAction(token: string): Promise<Grou
         inviterLabel,
         email: data.email,
         suggestedDisplayName: data.suggested_display_name ?? null,
+        customMessage: data.custom_message ?? null,
         language: normalizeLanguage((data as { language?: string | null }).language ?? null),
         status: data.status,
         expiresAt: data.expires_at ?? null
@@ -1706,7 +1723,7 @@ async function fetchManagedGroupDetails(
     manageableGroupIds.length > 0
       ? adminSupabase
           .from("group_invites")
-          .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
+          .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
           .in("group_id", manageableGroupIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
@@ -1765,6 +1782,7 @@ async function fetchManagedGroupDetails(
       id: row.id,
       email: row.email,
       suggestedDisplayName: row.suggested_display_name ?? undefined,
+      customMessage: row.custom_message ?? undefined,
       invitedByLabel: inviterRow?.name ?? inviterRow?.email ?? undefined,
       status: row.status,
       expiresAt: row.expires_at ?? null,
@@ -2202,7 +2220,7 @@ async function getManagedGroupInvite(
 ) {
   const { data, error } = await adminSupabase
     .from("group_invites")
-    .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,language,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error")
+    .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,language,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error")
     .eq("id", inviteId)
     .maybeSingle();
 
@@ -2246,6 +2264,7 @@ async function enqueueGroupInviteEmail(
     inviterName?: string | null;
     inviterEmail?: string | null;
     suggestedDisplayName?: string | null;
+    customMessage?: string | null;
     language?: string | null;
     claimUrl: string;
   }
@@ -2263,6 +2282,7 @@ async function enqueueGroupInviteEmail(
       inviterName: input.inviterName ?? undefined,
       inviterEmail: input.inviterEmail ?? undefined,
       suggestedDisplayName: input.suggestedDisplayName ?? undefined,
+      customMessage: input.customMessage ?? undefined,
       claimUrl: input.claimUrl,
       language: preferredLanguage
     },
@@ -2281,6 +2301,7 @@ async function enqueueGroupInviteEmail(
           groupName: input.groupName,
           invitedEmail: input.email,
           suggestedDisplayName: input.suggestedDisplayName ?? null,
+          customMessage: input.customMessage ?? null,
           inviterName: input.inviterName ?? null,
           inviterEmail: input.inviterEmail ?? null,
           claimUrl: input.claimUrl,
@@ -2356,6 +2377,7 @@ async function sendGroupInviteEmailInline(input: {
   groupName: string;
   invitedEmail: string;
   suggestedDisplayName?: string | null;
+  customMessage?: string | null;
   inviterName?: string | null;
   inviterEmail?: string | null;
   claimUrl: string;
@@ -2366,6 +2388,7 @@ async function sendGroupInviteEmailInline(input: {
     groupName: input.groupName,
     invitedEmail: input.invitedEmail,
     suggestedDisplayName: input.suggestedDisplayName ?? null,
+    customMessage: input.customMessage ?? null,
     inviterLabel: input.inviterName?.trim() || input.inviterEmail?.trim() || null,
     claimUrl: input.claimUrl
   });
@@ -2407,6 +2430,10 @@ function normalizeExpiryDays(value?: number) {
 
 function normalizeEmail(value?: string | null) {
   return value?.trim().toLowerCase() ?? "";
+}
+
+function normalizeGroupInviteCustomMessage(value?: string | null) {
+  return value?.trim() ?? "";
 }
 
 function hashInviteToken(token: string) {
