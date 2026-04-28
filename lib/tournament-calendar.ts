@@ -1,6 +1,6 @@
 export type TournamentCalendarEntry = {
   date: string;
-  stage: "group" | "round_of_32" | "round_of_16" | "quarterfinal" | "semifinal" | "final";
+  stage: "group" | "round_of_32" | "round_of_16" | "quarterfinal" | "semifinal" | "third" | "final";
   label: string;
   shortLabel: string;
   matchCount: number;
@@ -39,6 +39,7 @@ export const tournamentCalendar: TournamentCalendarEntry[] = [
   { date: "2026-07-11", stage: "quarterfinal", label: "Quarterfinals", shortLabel: "QF", matchCount: 1 },
   { date: "2026-07-14", stage: "semifinal", label: "Semifinals", shortLabel: "SF", matchCount: 1 },
   { date: "2026-07-15", stage: "semifinal", label: "Semifinals", shortLabel: "SF", matchCount: 1 },
+  { date: "2026-07-18", stage: "third", label: "Third Place", shortLabel: "3rd", matchCount: 1 },
   { date: "2026-07-19", stage: "final", label: "Final", shortLabel: "Final", matchCount: 1 }
 ];
 

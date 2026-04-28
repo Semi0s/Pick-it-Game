@@ -3,6 +3,11 @@ create extension if not exists "pgcrypto";
 create type public.user_role as enum ('player', 'admin');
 create type public.match_stage as enum (
   'group',
+  'r32',
+  'r16',
+  'qf',
+  'sf',
+  'third',
   'round_of_32',
   'round_of_16',
   'quarterfinal',
@@ -76,11 +81,16 @@ create table public.matches (
   home_score integer,
   away_score integer,
   winner_team_id text references public.teams(id),
+  next_match_id text references public.matches(id) on delete set null,
+  next_match_slot text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint match_has_teams_or_sources check (
     (home_team_id is not null or home_source is not null)
     and (away_team_id is not null or away_source is not null)
+  ),
+  constraint matches_next_match_slot_check check (
+    next_match_slot is null or next_match_slot in ('home', 'away')
   )
 );
 
@@ -102,12 +112,11 @@ create table public.predictions (
   )
 );
 
-create table public.bracket_picks (
+create table public.bracket_predictions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
   match_id text not null references public.matches(id) on delete cascade,
   predicted_winner_team_id text not null references public.teams(id),
-  points_awarded integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, match_id)
@@ -133,6 +142,7 @@ create table public.leaderboard_entries (
 create table public.app_settings (
   key text primary key,
   boolean_value boolean not null default false,
+  integer_value integer,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -324,6 +334,15 @@ create unique index email_jobs_active_dedupe_idx
 create unique index users_username_lower_unique_idx
   on public.users (lower(username))
   where username is not null;
+
+create index matches_next_match_id_idx
+  on public.matches (next_match_id);
+
+create index bracket_predictions_user_updated_idx
+  on public.bracket_predictions (user_id, updated_at desc);
+
+create index bracket_predictions_match_id_idx
+  on public.bracket_predictions (match_id);
 
 create unique index user_notifications_user_event_type_unique_idx
   on public.user_notifications (user_id, event_id, type)
@@ -744,11 +763,12 @@ create trigger set_user_settings_updated_at
 before update on public.user_settings
 for each row execute function public.set_updated_at();
 
-insert into public.app_settings (key, boolean_value)
+insert into public.app_settings (key, boolean_value, integer_value)
 values
-  ('daily_winner_enabled', false),
-  ('perfect_pick_enabled', false),
-  ('leaderboard_activity_enabled', false)
+  ('daily_winner_enabled', false, null),
+  ('perfect_pick_enabled', false, null),
+  ('leaderboard_activity_enabled', false, null),
+  ('max_joined_groups_per_player', false, 10)
 on conflict (key) do nothing;
 
 alter table public.invites enable row level security;
@@ -756,7 +776,7 @@ alter table public.users enable row level security;
 alter table public.teams enable row level security;
 alter table public.matches enable row level security;
 alter table public.predictions enable row level security;
-alter table public.bracket_picks enable row level security;
+alter table public.bracket_predictions enable row level security;
 alter table public.side_picks enable row level security;
 alter table public.leaderboard_entries enable row level security;
 alter table public.app_settings enable row level security;
@@ -841,8 +861,8 @@ using (
   )
 );
 
-create policy "Admins can read all bracket picks"
-on public.bracket_picks for select
+create policy "Admins can read all bracket predictions"
+on public.bracket_predictions for select
 to authenticated
 using (public.is_admin());
 
@@ -926,8 +946,8 @@ to authenticated
 using (public.is_admin())
 with check (public.is_admin());
 
-create policy "Users manage own bracket picks"
-on public.bracket_picks for all
+create policy "Users manage own bracket predictions"
+on public.bracket_predictions for all
 to authenticated
 using (user_id = auth.uid())
 with check (user_id = auth.uid());

@@ -119,22 +119,27 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
   return (
     <section className="space-y-5">
       <div className="rounded-lg bg-gray-100 p-5">
-        <div className="flex items-center gap-4">
-          <Avatar name={user.name} avatarUrl={user.avatarUrl} size="lg" className="rounded-lg" />
-          <div className="min-w-0">
-            <h2 className="truncate text-2xl font-black">{user.name}</h2>
-            <p className="mt-1 text-sm font-bold text-accent-dark">
-              {getAccessLevelLabel(user)}
-              {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
-            </p>
-            <p className="truncate text-sm font-medium text-gray-600">{user.email}</p>
-            <div className="mt-2">
-              {user.homeTeamId ? (
-                <HomeTeamBadge teamId={user.homeTeamId} />
-              ) : (
-                <p className="text-sm font-semibold text-gray-500">No home team selected</p>
-              )}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-4">
+            <Avatar name={user.name} avatarUrl={user.avatarUrl} size="lg" className="rounded-lg" />
+            <div className="min-w-0">
+              <h2 className="truncate text-2xl font-black">{user.name}</h2>
+              <p className="mt-1 text-sm font-bold text-accent-dark">
+                {getAccessLevelLabel(user)}
+                {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
+              </p>
+              <p className="truncate text-sm font-medium text-gray-600">{user.email}</p>
+              <div className="mt-2">
+                {user.homeTeamId ? (
+                  <HomeTeamBadge teamId={user.homeTeamId} />
+                ) : (
+                  <p className="text-sm font-semibold text-gray-500">No home team selected</p>
+                )}
+              </div>
             </div>
+          </div>
+          <div className="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
+            Membership Active
           </div>
         </div>
         <div className="mt-4">

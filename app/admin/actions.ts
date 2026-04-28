@@ -18,17 +18,18 @@ import {
 import { fetchAdminPlayerHealthRows, type AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import { sendTransactionalEmail } from "@/lib/email-sender";
 import { buildAdminRecoveryEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
+import { ensureUserCanJoinAnotherGroup } from "@/lib/group-membership-limits";
 import { appendLanguageToPath, normalizeLanguage } from "@/lib/i18n";
 import { fetchGlobalLeaderboardRankMovement, fetchGroupLeaderboardRankMovement } from "@/lib/leaderboard-movement";
 import { fetchDailyWinners } from "@/lib/leaderboard-highlights";
 import { createNotificationsForLeaderboardEvents, createTrophyEarnedNotifications, type NotificationEventSeed } from "@/lib/notifications";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
-import type { UserRole } from "@/lib/types";
+import type { MatchNextSlot, MatchStage, UserRole } from "@/lib/types";
 
 type MatchRow = {
   id: string;
-  stage: "group" | "round_of_32" | "round_of_16" | "quarterfinal" | "semifinal" | "final";
+  stage: MatchStage;
   group_name?: string | null;
   status: "scheduled" | "live" | "final";
   home_team_id?: string | null;
@@ -39,6 +40,8 @@ type MatchRow = {
   home_score?: number | null;
   away_score?: number | null;
   winner_team_id?: string | null;
+  next_match_id?: string | null;
+  next_match_slot?: MatchNextSlot | null;
   updated_at?: string | null;
 };
 
@@ -783,23 +786,26 @@ export async function deleteUserAndStartOverAction(
   }
 
   if (appUser?.id) {
-    const [predictionsResult, bracketResult, sidePicksResult] = await Promise.all([
+    const [predictionsResult, bracketPredictionsResult, legacyBracketPicksResult, sidePicksResult] = await Promise.all([
       adminSupabase.from("predictions").select("id", { count: "exact", head: true }).eq("user_id", appUser.id),
-      adminSupabase.from("bracket_picks").select("id", { count: "exact", head: true }).eq("user_id", appUser.id),
+      countOptionalGameplayRows(adminSupabase, "bracket_predictions", appUser.id),
+      countOptionalGameplayRows(adminSupabase, "bracket_picks", appUser.id),
       adminSupabase.from("side_picks").select("id", { count: "exact", head: true }).eq("user_id", appUser.id)
     ]);
 
     const gameplayCount =
       (predictionsResult.count ?? 0) +
-      (bracketResult.count ?? 0) +
+      (bracketPredictionsResult.count ?? 0) +
+      (legacyBracketPicksResult.count ?? 0) +
       (sidePicksResult.count ?? 0);
 
-    if (predictionsResult.error || bracketResult.error || sidePicksResult.error) {
+    if (predictionsResult.error || bracketPredictionsResult.error || legacyBracketPicksResult.error || sidePicksResult.error) {
       return {
         ok: false,
         message:
           predictionsResult.error?.message ??
-          bracketResult.error?.message ??
+          bracketPredictionsResult.error?.message ??
+          legacyBracketPicksResult.error?.message ??
           sidePicksResult.error?.message ??
           "Could not inspect the player's gameplay data."
       };
@@ -1372,6 +1378,13 @@ export async function addUserToGroupAction(input: AddUserToGroupInput): Promise<
 
   if (!overrideCapacity && (memberCount ?? 0) >= group.membership_limit) {
     return { ok: false, message: `${group.name} is already full. Use override to add this player anyway.` };
+  }
+
+  if (role === "member") {
+    const joinLimitResult = await ensureUserCanJoinAnotherGroup(adminSupabase, targetUser.id);
+    if (!joinLimitResult.ok) {
+      return joinLimitResult;
+    }
   }
 
   const { error: insertError } = await adminSupabase.from("group_members").insert({
@@ -2632,6 +2645,8 @@ function mapMatchRow(row: MatchRow) {
     homeScore: row.home_score ?? undefined,
     awayScore: row.away_score ?? undefined,
     winnerTeamId: row.winner_team_id ?? undefined,
+    nextMatchId: row.next_match_id ?? null,
+    nextMatchSlot: row.next_match_slot ?? null,
     updatedAt: row.updated_at ?? undefined
   };
 }
@@ -3008,7 +3023,20 @@ function isMissingColumnError(message: string, column: string) {
 
 function isMissingRelationError(message: string, relation: string) {
   const normalized = message.toLowerCase();
-  return normalized.includes(relation.toLowerCase()) && normalized.includes("schema cache");
+  return normalized.includes(relation.toLowerCase()) && (normalized.includes("schema cache") || normalized.includes("does not exist"));
+}
+
+async function countOptionalGameplayRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  tableName: "bracket_predictions" | "bracket_picks",
+  userId: string
+) {
+  const result = await adminSupabase.from(tableName).select("id", { count: "exact", head: true }).eq("user_id", userId);
+  if (result.error && isMissingRelationError(result.error.message, `public.${tableName}`)) {
+    return { count: 0, error: null };
+  }
+
+  return result;
 }
 
 function isMissingEmailJobsError(message: string) {

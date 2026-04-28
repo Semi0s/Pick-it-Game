@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Trophy } from "lucide-react";
+import { ChevronDown, ChevronUp, SquareCheckBig, Trophy } from "lucide-react";
 import {
   awardManagedGroupTrophyAction,
   listManagedGroupPlayersAction,
@@ -16,6 +17,7 @@ import { TrophyBadge } from "@/components/TrophyBadge";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
   GroupStandingItem,
+  LeaderboardGroupNavItem,
   LeaderboardListItem,
   LeaderboardPageData,
   LeaderboardSwitcherContext,
@@ -42,6 +44,7 @@ const TWO_LINE_CLAMP_STYLE = {
 
 export function LeaderboardClient() {
   const { user } = useCurrentUser();
+  const searchParams = useSearchParams();
   const [users, setUsers] = useState<LeaderboardListItem[]>([]);
   const [groupStandings, setGroupStandings] = useState<GroupStandingItem[]>([]);
   const [switcher, setSwitcher] = useState<LeaderboardSwitcherContext | null>(null);
@@ -67,6 +70,7 @@ export function LeaderboardClient() {
     icon: string;
     tier?: "bronze" | "silver" | "gold" | "special" | null;
   } | null>(null);
+  const [globalStandingLabel, setGlobalStandingLabel] = useState<string | null>(null);
 
   const requestUrl = useMemo(() => {
     const params = new URLSearchParams();
@@ -82,7 +86,7 @@ export function LeaderboardClient() {
   }, [activeView, selectedGroupId, selectedManagerId]);
 
   const loadManagedAwardGroup = useCallback(async () => {
-    if (!shouldShowGroupSelector(activeView) || !selectedGroupId) {
+    if (activeView !== "managed_groups" || !selectedGroupId) {
       setManagedAwardGroup(null);
       return;
     }
@@ -99,10 +103,26 @@ export function LeaderboardClient() {
 
   useEffect(() => {
     try {
+      const queryView = searchParams.get("view");
+      const queryGroupId = searchParams.get("groupId");
+      const queryManagerId = searchParams.get("managerId");
+      if (queryView || queryGroupId || queryManagerId) {
+        if (queryView) {
+          setActiveView(queryView as LeaderboardSwitcherView);
+        }
+        if (queryGroupId) {
+          setSelectedGroupId(queryGroupId);
+        }
+        if (queryManagerId) {
+          setSelectedManagerId(queryManagerId);
+        }
+        return;
+      }
+
       const storedValue = window.sessionStorage.getItem(LEADERBOARD_SWITCHER_STORAGE_KEY);
       if (storedValue) {
         const parsed = JSON.parse(storedValue) as typeof DEFAULT_SWITCHER_STATE;
-        if (parsed.activeView === "global") {
+        if (parsed.activeView) {
           setActiveView(parsed.activeView);
         }
         if (parsed.selectedGroupId) {
@@ -115,7 +135,7 @@ export function LeaderboardClient() {
     } catch (caughtError) {
       console.warn("Could not restore leaderboard switcher state.", caughtError);
     }
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
     try {
@@ -217,6 +237,44 @@ export function LeaderboardClient() {
   }, []);
 
   useEffect(() => {
+    let isMounted = true;
+
+    if (!user?.id) {
+      setGlobalStandingLabel(null);
+      return;
+    }
+
+    fetch("/api/leaderboard?view=global", { cache: "no-store" })
+      .then(async (response) => {
+        const result = (await response.json()) as
+          | ({ ok: true } & LeaderboardPageData)
+          | { ok: false; message?: string };
+
+        if (!response.ok || !result.ok) {
+          throw new Error(result.ok ? "Could not load the live leaderboard right now." : result.message);
+        }
+
+        return result.leaderboard.find((profile) => profile.id === user.id) ?? null;
+      })
+      .then((profile) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setGlobalStandingLabel(profile?.rank ? `Global #${profile.rank}` : "Global unranked");
+      })
+      .catch(() => {
+        if (isMounted) {
+          setGlobalStandingLabel(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id, refreshNonce]);
+
+  useEffect(() => {
     void loadManagedAwardGroup();
   }, [loadManagedAwardGroup, refreshNonce]);
 
@@ -231,19 +289,29 @@ export function LeaderboardClient() {
     }
   }, [activeView, switcher]);
 
+  const availableGroupOptions = useMemo(
+    () => (switcher ? getGroupOptionsForView(switcher, activeView) : []),
+    [activeView, switcher]
+  );
+
   useEffect(() => {
     if (!switcher || !shouldShowGroupSelector(activeView)) {
       return;
     }
 
-    if (!selectedGroupId && switcher.groups.length > 0) {
-      setSelectedGroupId(switcher.groups[0]!.id);
+    if (!selectedGroupId && availableGroupOptions.length > 0) {
+      setSelectedGroupId(availableGroupOptions[0]!.id);
+      return;
     }
-  }, [activeView, selectedGroupId, switcher]);
+
+    if (selectedGroupId && !availableGroupOptions.some((group) => group.id === selectedGroupId)) {
+      setSelectedGroupId(availableGroupOptions[0]?.id ?? "");
+    }
+  }, [activeView, availableGroupOptions, selectedGroupId, switcher]);
 
   useEffect(() => {
     const nextState = {
-      activeView: activeView === "global" ? activeView : DEFAULT_SWITCHER_STATE.activeView,
+      activeView,
       selectedGroupId,
       selectedManagerId
     };
@@ -256,8 +324,8 @@ export function LeaderboardClient() {
   }, [activeView, selectedGroupId, selectedManagerId]);
 
   const selectedGroupLabel = useMemo(
-    () => switcher?.groups.find((group) => group.id === selectedGroupId)?.label ?? null,
-    [selectedGroupId, switcher?.groups]
+    () => availableGroupOptions.find((group) => group.id === selectedGroupId)?.label ?? null,
+    [availableGroupOptions, selectedGroupId]
   );
   const selectedManagerLabel = useMemo(
     () => switcher?.managers.find((manager) => manager.id === selectedManagerId)?.label ?? null,
@@ -269,7 +337,7 @@ export function LeaderboardClient() {
   const isGroupStandingsView = activeView === "groups";
   const shouldRenderLeaderboardRows = isGlobalView || isGroupView;
   const shouldShowPlayerSocialIndicators = !isGlobalView;
-  const canAwardManagedTrophies = isGroupView && Boolean(managedAwardGroup);
+  const canAwardManagedTrophies = activeView === "managed_groups" && Boolean(managedAwardGroup);
   const canSelfAwardTrophies = user?.role === "admin";
   const activeManagedTrophyMember = managedAwardGroup && managedTrophySheetTarget
     ? managedAwardGroup.members.find((member) => member.userId === managedTrophySheetTarget.userId) ?? null
@@ -277,26 +345,39 @@ export function LeaderboardClient() {
 
   return (
     <div className="space-y-5">
-      <section className="rounded-lg bg-gray-100 p-5">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Leaderboard</p>
-        <h2 className="mt-2 text-3xl font-black leading-tight">Your standing</h2>
-        <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
-          A quick snapshot of your current rank, total points, and recent movement across global and group
-          leaderboards.
-        </p>
+      <section className="relative rounded-lg bg-gray-100 p-5">
+        <div className={globalStandingLabel ? "pr-28 sm:pr-36" : undefined}>
+          <div className="min-w-0">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Leaderboard</p>
+            <h2 className="mt-2 text-3xl font-black leading-tight">Your standing</h2>
+            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
+              A quick snapshot of your current rank, total points, and recent movement across global and group
+              leaderboards.
+            </p>
+          </div>
+        </div>
+        {globalStandingLabel ? (
+          <div className="absolute right-5 top-5 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
+            {globalStandingLabel}
+          </div>
+        ) : null}
         <div className="mt-4 flex justify-end gap-2">
           <Link
             href="/groups?focus=next"
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
           >
-            Next Pick
+            <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+            My Next Pick
           </Link>
           <Link
             href="/trophies"
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
           >
-            <Trophy aria-hidden className="h-4 w-4 text-accent-dark" />
-            Trophies
+            <span className="relative inline-flex h-5 w-5 items-center justify-center text-accent-dark">
+              <Trophy aria-hidden className="h-4 w-4" />
+              <SquareCheckBig aria-hidden className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-[2px] bg-white" />
+            </span>
+            Side Picks
           </Link>
         </div>
       </section>
@@ -414,21 +495,65 @@ export function LeaderboardClient() {
         {(shouldShowGroupSelector(activeView) || shouldShowManagerSelector(activeView)) && switcher ? (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {shouldShowGroupSelector(activeView) ? (
-              <label className="block">
-                <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Group</span>
-                <select
-                  value={selectedGroupId}
-                  onChange={(event) => setSelectedGroupId(event.target.value)}
-                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                >
-                  <option value="">Choose a group</option>
-                  {switcher.groups.map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="sm:col-span-2">
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                  {activeView === "managed_groups" ? "My Managed Group Leaderboards" : "My Group Leaderboards"}
+                </p>
+                <div className="mt-2 flex gap-3 overflow-x-auto pb-1">
+                  {availableGroupOptions.length > 0 ? (
+                    availableGroupOptions.map((group) => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        onClick={() => setSelectedGroupId(group.id)}
+                        className={`min-w-[220px] shrink-0 rounded-lg border px-3 py-3 text-left transition ${
+                          selectedGroupId === group.id
+                            ? "border-accent bg-accent-light"
+                            : "border-gray-200 bg-gray-50 hover:border-accent-light hover:bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-black text-gray-950">{group.label}</p>
+                            <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-gray-500">
+                              {group.context === "managed" ? "Managed Group" : "Joined Group"}
+                            </p>
+                          </div>
+                          {group.rankDelta ? (
+                            <span className={`text-xs font-black ${getMovementTone(group.rankDelta)}`}>
+                              {formatRankMovement(group.rankDelta)}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-3 grid grid-cols-3 gap-3 text-xs font-semibold text-gray-600">
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">Rank</p>
+                            <p className="mt-1 text-sm font-black text-gray-950">
+                              {group.rank ? `#${group.rank}` : "—"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">Players</p>
+                            <p className="mt-1 text-sm font-black text-gray-950">{group.totalPlayers}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">Points</p>
+                            <p className="mt-1 text-sm font-black text-gray-950">
+                              {group.points !== null ? group.points : "—"}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                      {activeView === "managed_groups"
+                        ? "You are not managing any groups yet."
+                        : "You have not joined any groups yet."}
+                    </p>
+                  )}
+                </div>
+              </div>
             ) : null}
 
             {shouldShowManagerSelector(activeView) ? (
@@ -1034,6 +1159,21 @@ function shouldShowGroupSelector(activeView: LeaderboardSwitcherView) {
   return activeView === "my_groups" || activeView === "managed_groups";
 }
 
+function getGroupOptionsForView(
+  switcher: LeaderboardSwitcherContext,
+  activeView: LeaderboardSwitcherView
+): LeaderboardGroupNavItem[] {
+  if (activeView === "managed_groups") {
+    return switcher.managedGroups;
+  }
+
+  if (activeView === "my_groups") {
+    return switcher.joinedGroups;
+  }
+
+  return [];
+}
+
 function shouldShowManagerSelector(activeView: LeaderboardSwitcherView) {
   return activeView === "managers";
 }
@@ -1055,9 +1195,10 @@ function getSwitcherSummary(
   }
 
   if (shouldShowGroupSelector(activeView)) {
+    const availableGroupCount = getGroupOptionsForView(switcher, activeView).length;
     return selectedGroupLabel
       ? `Group focus: ${selectedGroupLabel}`
-      : `Choose from ${switcher.groups.length} available ${switcher.groups.length === 1 ? "group" : "groups"}.`;
+      : `Choose from ${availableGroupCount} available ${availableGroupCount === 1 ? "group" : "groups"}.`;
   }
 
   if (activeView === "groups") {

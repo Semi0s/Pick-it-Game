@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
 import { scoreFinalizedGroupMatch, updateAdminMatchResultAction } from "@/app/admin/actions";
+import { formatMatchStage } from "@/lib/match-stage";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
 import type { MatchStage, MatchStatus } from "@/lib/types";
 import { AdminHeader } from "@/components/admin/AdminInvitesClient";
@@ -13,9 +14,14 @@ const stages: ("all" | MatchStage)[] = [
   "all",
   "group",
   "round_of_32",
+  "r32",
   "round_of_16",
+  "r16",
   "quarterfinal",
+  "qf",
   "semifinal",
+  "sf",
+  "third",
   "final"
 ];
 
@@ -484,10 +490,7 @@ function getSideLabel(match: AdminMatch, side: "home" | "away") {
 }
 
 function formatStage(stage: MatchStage) {
-  return stage
-    .split("_")
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
-    .join(" ");
+  return formatMatchStage(stage);
 }
 
 function formatMatchStatus(status: MatchStatus) {

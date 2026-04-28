@@ -30,17 +30,28 @@ export function normalizeInviteTokenInput(value: string) {
 export function ManagementIntro({
   eyebrow,
   title,
-  description
+  description,
+  statusChip
 }: {
   eyebrow: string;
   title: string;
   description: string;
+  statusChip?: string | null;
 }) {
   return (
-    <section className="rounded-lg bg-gray-100 p-5">
-      <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{eyebrow}</p>
-      <h2 className="mt-2 text-3xl font-black leading-tight">{title}</h2>
-      <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">{description}</p>
+    <section className="relative rounded-lg bg-gray-100 p-5">
+      <div className={statusChip ? "pr-28 sm:pr-40" : undefined}>
+        <div className="min-w-0">
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{eyebrow}</p>
+          <h2 className="mt-2 text-3xl font-black leading-tight">{title}</h2>
+          <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">{description}</p>
+        </div>
+      </div>
+      {statusChip ? (
+        <div className="absolute right-5 top-5 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
+          {statusChip}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -55,11 +66,11 @@ export function HierarchyPanel({
       <HierarchyCard
         title={
           <>
-            Super Admin {activeLevel === "super_admin" ? <span className="text-sm font-black text-accent-dark">(YOU)</span> : null}
+            Director {activeLevel === "super_admin" ? <span className="text-sm font-black text-accent-dark">(YOU)</span> : null}
           </>
         }
-        badge="Unlimited access"
-        copy="Full system control. Can create and manage groups, players, managers, limits, invites, and match administration."
+        badge="Full access"
+        copy="Can create and manage groups, players and managers with some limits."
         tone="accent"
         isActive={activeLevel === "super_admin"}
       />

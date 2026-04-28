@@ -374,16 +374,24 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
     ? true
     : Boolean(summary?.ok && summary.managerAccess.enabled);
   const filteredGroups = useMemo(() => {
+    const orderedGroups = [...groups].sort((left, right) => {
+      if (left.canManage !== right.canManage) {
+        return left.canManage ? -1 : 1;
+      }
+
+      return 0;
+    });
+
     if (!isSuperAdmin) {
-      return groups;
+      return orderedGroups;
     }
 
     const query = superAdminGroupQuery.trim().toLowerCase();
     if (!query) {
-      return groups;
+      return orderedGroups;
     }
 
-    return groups.filter((group) => group.name.toLowerCase().includes(query));
+    return orderedGroups.filter((group) => group.name.toLowerCase().includes(query));
   }, [groups, isSuperAdmin, superAdminGroupQuery]);
   const activeTrophyGroup = trophySheetTarget ? groups.find((group) => group.id === trophySheetTarget.groupId) ?? null : null;
   const activeTrophyMember = activeTrophyGroup
@@ -575,6 +583,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
         eyebrow="Groups"
         title="Play in groups and manage them"
         description="Players see the groups they belong to. Managers get group controls. Super admins get an elevated control layer at the top."
+        statusChip={
+          summary?.ok
+            ? `${summary.groupAccess.joinedGroupCount} joined · ${summary.groupAccess.managedGroupCount} managed`
+            : null
+        }
       />
 
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
@@ -825,7 +838,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
             const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "", language: defaultInviteLanguage };
             const trophyDraft = groupTrophyDrafts[group.id] ?? { name: "", icon: "", description: "" };
             const groupLimitFormValue = groupLimitForms[group.id] ?? String(group.membershipLimit);
-            const usesDisclosure = group.canManage || isSuperAdmin;
+            const usesDisclosure = true;
             const isExpanded = usesDisclosure ? expandedGroupIds.includes(group.id) : true;
             const isGroupLimitExpanded = expandedGroupLimitIds.includes(group.id);
             const isPeopleInvitesExpanded = expandedPeopleInviteIds.includes(group.id);
@@ -890,6 +903,15 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
               >
                 {isExpanded ? (
                   <>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Link
+                        href={getGroupLeaderboardHref(group)}
+                        className="inline-flex"
+                      >
+                        <ActionButton>View Leaderboard</ActionButton>
+                      </Link>
+                    </div>
+
                     {group.canManage ? (
                     <>
                     <form className="mt-4 space-y-3" onSubmit={(event) => handleCreateInvite(event, group)}>
@@ -986,15 +1008,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                     </form>
                     <div className="h-2" aria-hidden />
                     </>
-                    ) : (
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <Link href="/leaderboard" className="inline-flex">
-                          <ActionButton>View Leaderboard</ActionButton>
-                        </Link>
-                      </div>
-                    )}
+                    ) : null}
 
-                    {(() => {
+                    {group.canManage ? (() => {
                   const directoryState = groupDirectoryState[group.id] ?? { search: "", filter: "all" as const };
                   const normalizedQuery = directoryState.search.trim().toLowerCase();
                   const filteredMembers = group.members.filter((member) => {
@@ -1318,7 +1334,39 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                       </div>
                     </div>
                   );
-                })()}
+                    })() : (
+                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Members</h4>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">
+                              {group.members.length} members
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          {group.members.map((member) => (
+                            <div key={member.membershipId} className="rounded-md border border-gray-200 px-3 py-3">
+                              <div className="flex items-start gap-3">
+                                <Avatar name={member.name} avatarUrl={member.avatarUrl} size="sm" />
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
+                                  <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
+                                  {member.homeTeamId ? (
+                                    <div className="mt-2">
+                                      <HomeTeamBadge teamId={member.homeTeamId} />
+                                    </div>
+                                  ) : null}
+                                  <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                    {member.role} · Joined {formatDate(member.joinedAt)}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {group.canManage ? (
                       <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
@@ -1763,6 +1811,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
       />
     </section>
   );
+}
+
+function getGroupLeaderboardHref(group: MyManagedGroup) {
+  const view = group.canManage ? "managed_groups" : "my_groups";
+  return `/leaderboard?view=${view}&groupId=${encodeURIComponent(group.id)}`;
 }
 
 function getPendingTrophyId(activeActionKey: string | null, groupId: string, userId: string) {

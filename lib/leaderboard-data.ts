@@ -101,6 +101,14 @@ export type LeaderboardSwitcherOption = {
   label: string;
 };
 
+export type LeaderboardGroupNavItem = LeaderboardSwitcherOption & {
+  rank: number | null;
+  totalPlayers: number;
+  points: number | null;
+  rankDelta: number | null;
+  context: "joined" | "managed" | "all";
+};
+
 export type LeaderboardSwitcherContext = {
   accessLevel: AccessLevel;
   tabs: Array<{
@@ -108,6 +116,8 @@ export type LeaderboardSwitcherContext = {
     label: string;
   }>;
   groups: LeaderboardSwitcherOption[];
+  joinedGroups: LeaderboardGroupNavItem[];
+  managedGroups: LeaderboardGroupNavItem[];
   managers: LeaderboardSwitcherOption[];
 };
 
@@ -164,6 +174,8 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
           { value: "my_groups", label: "My Groups" }
         ],
         groups: [],
+        joinedGroups: [],
+        managedGroups: [],
         managers: []
       }
     };
@@ -172,10 +184,14 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
   const [settings, switcher] = await Promise.all([fetchLeaderboardFeatureSettings(), fetchLeaderboardSwitcherContext()]);
   const activeView = resolveAllowedView(request?.view, switcher);
   const selectedGroupId = resolveAllowedGroupId(request?.groupId, switcher, activeView);
+  const groupStandingIds =
+    switcher.accessLevel === "super_admin"
+      ? switcher.groups.map((group) => group.id)
+      : switcher.managedGroups.map((group) => group.id);
   const groupStandingsPromise = activeView === "groups"
     ? fetchGroupStandingsForAccessibleGroups(
         switcher.accessLevel,
-        switcher.groups.map((group) => group.id),
+        groupStandingIds,
         settings.perfect_pick_enabled
       )
     : Promise.resolve([]);
@@ -528,6 +544,8 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
       accessLevel: "player",
       tabs: [{ value: "global", label: "Global" }],
       groups: [],
+      joinedGroups: [],
+      managedGroups: [],
       managers: []
     };
   }
@@ -547,7 +565,11 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
     accessLevel: managerLimit ? "manager" : profile?.role === "admin" ? "super_admin" : "player"
   });
 
-  const groupOptions = await fetchAccessibleGroupOptions(adminSupabase, user.id, accessLevel);
+  const { groups: groupOptions, joinedGroups, managedGroups } = await fetchAccessibleGroupOptions(
+    adminSupabase,
+    user.id,
+    accessLevel
+  );
   const managerOptions = accessLevel === "super_admin" ? await fetchManagerOptions(adminSupabase) : [];
 
   const tabs: LeaderboardSwitcherContext["tabs"] =
@@ -559,10 +581,11 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
         ]
       : accessLevel === "manager"
         ? [
-          { value: "global", label: "Global" },
-          { value: "managed_groups", label: "My Managed Groups" },
-          { value: "groups", label: "Group Standings" }
-        ]
+            { value: "global", label: "Global" },
+            { value: "managed_groups", label: "My Managed Groups" },
+            { value: "my_groups", label: "My Groups" },
+            { value: "groups", label: "Group Standings" }
+          ]
         : [
             { value: "global", label: "Global" },
             { value: "my_groups", label: "My Groups" }
@@ -572,6 +595,8 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
     accessLevel,
     tabs,
     groups: groupOptions,
+    joinedGroups,
+    managedGroups,
     managers: managerOptions
   };
 }
@@ -591,10 +616,14 @@ async function fetchAccessibleGroupOptions(
       throw new Error(error.message);
     }
 
-    return (((data as GroupRow[] | null) ?? []).map((group) => ({
-      id: group.id,
-      label: group.status === "archived" ? `${group.name} (Archived)` : group.name
-    })));
+    return {
+      groups: (((data as GroupRow[] | null) ?? []).map((group) => ({
+        id: group.id,
+        label: group.status === "archived" ? `${group.name} (Archived)` : group.name
+      }))),
+      joinedGroups: [],
+      managedGroups: []
+    };
   }
 
   const { data: groupMemberships, error: membershipError } = await adminSupabase
@@ -607,29 +636,159 @@ async function fetchAccessibleGroupOptions(
   }
 
   const memberships = (groupMemberships as GroupMemberRow[] | null) ?? [];
-  const relevantGroupIds =
-    accessLevel === "manager"
-      ? Array.from(new Set(memberships.filter((membership) => membership.role === "manager").map((membership) => membership.group_id)))
-      : Array.from(new Set(memberships.map((membership) => membership.group_id)));
+  const joinedGroupIds = Array.from(
+    new Set(memberships.filter((membership) => membership.role === "member").map((membership) => membership.group_id))
+  );
+  const managedGroupIds = Array.from(
+    new Set(memberships.filter((membership) => membership.role === "manager").map((membership) => membership.group_id))
+  );
+  const relevantGroupIds = Array.from(
+    new Set(accessLevel === "manager" ? [...joinedGroupIds, ...managedGroupIds] : joinedGroupIds)
+  );
 
   if (relevantGroupIds.length === 0) {
-    return [];
+    return {
+      groups: [],
+      joinedGroups: [],
+      managedGroups: []
+    };
   }
 
-  const { data: groups, error: groupsError } = await adminSupabase
-    .from("groups")
-    .select("id,name,status")
-    .in("id", relevantGroupIds)
-    .order("name", { ascending: true });
+  const [{ data: groups, error: groupsError }, joinedGroups, managedGroups] = await Promise.all([
+    adminSupabase
+      .from("groups")
+      .select("id,name,status")
+      .in("id", relevantGroupIds)
+      .order("name", { ascending: true }),
+    fetchGroupNavigationItems(adminSupabase, userId, joinedGroupIds, "joined"),
+    accessLevel === "manager"
+      ? fetchGroupNavigationItems(adminSupabase, userId, managedGroupIds, "managed")
+      : Promise.resolve([])
+  ]);
 
   if (groupsError) {
     throw new Error(groupsError.message);
   }
 
-  return (((groups as GroupRow[] | null) ?? []).map((group) => ({
-    id: group.id,
-    label: group.status === "archived" ? `${group.name} (Archived)` : group.name
-  })));
+  return {
+    groups: (((groups as GroupRow[] | null) ?? []).map((group) => ({
+      id: group.id,
+      label: group.status === "archived" ? `${group.name} (Archived)` : group.name
+    }))),
+    joinedGroups,
+    managedGroups
+  };
+}
+
+async function fetchGroupNavigationItems(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  groupIds: string[],
+  context: LeaderboardGroupNavItem["context"]
+): Promise<LeaderboardGroupNavItem[]> {
+  const uniqueGroupIds = Array.from(new Set(groupIds)).filter(Boolean);
+  if (uniqueGroupIds.length === 0) {
+    return [];
+  }
+
+  const [{ data: groupsData, error: groupsError }, { data: membershipsData, error: membershipsError }] = await Promise.all([
+    adminSupabase
+      .from("groups")
+      .select("id,name,status")
+      .in("id", uniqueGroupIds),
+    adminSupabase
+      .from("group_members")
+      .select("group_id,user_id")
+      .in("group_id", uniqueGroupIds)
+  ]);
+
+  if (groupsError) {
+    throw new Error(groupsError.message);
+  }
+
+  if (membershipsError) {
+    throw new Error(membershipsError.message);
+  }
+
+  const groups = (groupsData as GroupRow[] | null) ?? [];
+  const memberships = (membershipsData as Array<{ group_id: string; user_id: string }> | null) ?? [];
+  if (groups.length === 0 || memberships.length === 0) {
+    return [];
+  }
+
+  const memberIds = Array.from(new Set(memberships.map((membership) => membership.user_id)));
+  const usersById = await fetchUsersByIds(adminSupabase, memberIds);
+
+  const membersByGroupId = new Map<string, string[]>();
+  for (const membership of memberships) {
+    const list = membersByGroupId.get(membership.group_id) ?? [];
+    list.push(membership.user_id);
+    membersByGroupId.set(membership.group_id, list);
+  }
+
+  const latestMatchIdsByGroup = new Map(
+    await Promise.all(
+      groups.map(async (group) => [
+        group.id,
+        await fetchLatestSnapshotMatchId(adminSupabase, { scopeType: "group", groupId: group.id })
+      ] as const)
+    )
+  );
+  const movementByGroupId = new Map<string, { rankDelta: number | null }>();
+  await Promise.all(
+    groups.map(async (group) => {
+      const latestMatchId = latestMatchIdsByGroup.get(group.id);
+      if (!latestMatchId) {
+        movementByGroupId.set(group.id, { rankDelta: null });
+        return;
+      }
+
+      const movementRows = await fetchGroupLeaderboardRankMovement(latestMatchId, group.id);
+      const currentUserMovement = movementRows.find((row) => row.user_id === userId) ?? null;
+      movementByGroupId.set(group.id, { rankDelta: currentUserMovement?.rank_delta ?? null });
+    })
+  );
+
+  return groups
+    .map((group) => {
+      const memberUserIds = membersByGroupId.get(group.id) ?? [];
+      const rankedEntries = assignRanks(
+        memberUserIds
+          .map((memberUserId) => {
+            const member = usersById.get(memberUserId);
+            if (!member) {
+              return null;
+            }
+
+            return {
+              user_id: memberUserId,
+              total_points: member.total_points
+            };
+          })
+          .filter(Boolean)
+          .sort((left, right) =>
+            (right?.total_points ?? 0) - (left?.total_points ?? 0) ||
+            (left?.user_id ?? "").localeCompare(right?.user_id ?? "")
+          ) as Array<{ user_id: string; total_points: number }>
+      );
+      const currentUserEntry = rankedEntries.find((entry) => entry.user_id === userId) ?? null;
+      const currentUser = usersById.get(userId);
+
+      return {
+        id: group.id,
+        label: group.status === "archived" ? `${group.name} (Archived)` : group.name,
+        rank: currentUserEntry?.rank ?? null,
+        totalPlayers: rankedEntries.length,
+        points: currentUser?.total_points ?? null,
+        rankDelta: movementByGroupId.get(group.id)?.rankDelta ?? null,
+        context
+      } satisfies LeaderboardGroupNavItem;
+    })
+    .sort((left, right) =>
+      (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER) ||
+      (right.points ?? 0) - (left.points ?? 0) ||
+      left.label.localeCompare(right.label)
+    );
 }
 
 async function fetchManagerOptions(adminSupabase: ReturnType<typeof createAdminClient>) {
@@ -792,11 +951,28 @@ function resolveAllowedGroupId(
     return "";
   }
 
-  if (requestedGroupId && switcher.groups.some((group) => group.id === requestedGroupId)) {
+  const availableGroups = getGroupOptionsForView(switcher, activeView);
+
+  if (requestedGroupId && availableGroups.some((group) => group.id === requestedGroupId)) {
     return requestedGroupId;
   }
 
-  return switcher.groups[0]?.id ?? "";
+  return availableGroups[0]?.id ?? "";
+}
+
+export function getGroupOptionsForView(
+  switcher: LeaderboardSwitcherContext,
+  activeView: LeaderboardSwitcherView
+): LeaderboardGroupNavItem[] {
+  if (activeView === "managed_groups") {
+    return switcher.managedGroups;
+  }
+
+  if (activeView === "my_groups") {
+    return switcher.joinedGroups;
+  }
+
+  return [];
 }
 
 function assignRanks(entries: Array<{ user_id: string; total_points: number }>) {

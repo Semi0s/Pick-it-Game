@@ -1,5 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isMissingRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
+import { isMissingColumnError, isMissingRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 
 export const LEADERBOARD_FEATURE_SETTING_KEYS = [
   "daily_winner_enabled",
@@ -12,6 +12,7 @@ export type LeaderboardFeatureSettingKey = (typeof LEADERBOARD_FEATURE_SETTING_K
 type AppSettingRow = {
   key: string;
   boolean_value: boolean | null;
+  integer_value?: number | null;
 };
 
 export type LeaderboardFeatureSettings = Record<LeaderboardFeatureSettingKey, boolean>;
@@ -100,6 +101,43 @@ export async function fetchBooleanAppSetting(
 
   const row = data as AppSettingRow | null;
   return row?.boolean_value ?? defaultValue;
+}
+
+export async function fetchIntegerAppSetting(
+  key: string,
+  defaultValue: number
+): Promise<number> {
+  const adminSupabase = createAdminClient();
+  const fullQuery = await adminSupabase
+    .from("app_settings")
+    .select("key,integer_value")
+    .eq("key", key)
+    .maybeSingle();
+
+  if (!fullQuery.error) {
+    const row = fullQuery.data as AppSettingRow | null;
+    return row?.integer_value ?? defaultValue;
+  }
+
+  if (isMissingColumnError(fullQuery.error.message, "app_settings", "integer_value")) {
+    warnOptionalFeatureOnce(
+      `app-settings-missing-integer:${key}`,
+      `App setting ${key} is loading without integer_value support; defaulting to ${defaultValue}.`,
+      fullQuery.error.message
+    );
+    return defaultValue;
+  }
+
+  if (isMissingAppSettingsTableError(fullQuery.error.message)) {
+    warnOptionalFeatureOnce(
+      `app-settings-missing:${key}:integer`,
+      `App setting ${key} is unavailable; defaulting to ${defaultValue}.`,
+      fullQuery.error.message
+    );
+    return defaultValue;
+  }
+
+  throw new Error(fullQuery.error.message);
 }
 
 function isMissingAppSettingsTableError(message: string) {

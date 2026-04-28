@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { CircleUserRound, SquareCheckBig, UsersRound } from "lucide-react";
+import { BarChart3, CircleUserRound, SquareCheckBig, UsersRound } from "lucide-react";
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
@@ -38,7 +38,7 @@ export function AppShell({ children }: AppShellProps) {
   const navItems = [
     { href: "/groups", label: copy.myPicks, ariaLabel: copy.myPicks, icon: SquareCheckBig },
     { href: "/my-groups", label: copy.myGroups, ariaLabel: copy.myGroups, icon: UsersRound },
-    { href: "/leaderboard", label: copy.theArena, ariaLabel: copy.theArena, icon: ArenaIcon },
+    { href: "/leaderboard", label: copy.results, ariaLabel: copy.results, icon: BarChart3 },
     { href: "/profile", label: copy.myProfile, ariaLabel: copy.myProfile, icon: CircleUserRound }
   ];
   const [pendingCelebrationQueue, setPendingCelebrationQueue] = useState<PendingTrophyCelebration[]>([]);
@@ -241,7 +241,7 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <div
       className="min-h-screen bg-white text-gray-950"
-      style={{ paddingBottom: "calc(7.25rem + env(safe-area-inset-bottom, 0px))" }}
+      style={{ paddingBottom: "calc(6.35rem + env(safe-area-inset-bottom, 0px))" }}
     >
       <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
@@ -288,8 +288,8 @@ export function AppShell({ children }: AppShellProps) {
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white shadow-[0_-10px_24px_rgba(15,23,42,0.05)]">
         <div
-          className="mx-auto grid max-w-4xl grid-cols-4 gap-1.5 px-2 pt-2"
-          style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom, 0px))" }}
+          className="grid w-full grid-cols-4 gap-1.5 px-2 pt-2 md:mx-auto md:max-w-4xl"
+          style={{ paddingBottom: "max(0.35rem, env(safe-area-inset-bottom, 0px))" }}
         >
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -348,31 +348,4 @@ function dispatchTrophyStateChangedIfNeeded(
 
 function buildTrophySignature(trophies: UserTrophy[]) {
   return trophies.map((trophy) => `${trophy.id}:${trophy.awardedAt}`).join("|");
-}
-
-function ArenaIcon({ className, ...props }: { className?: string; "aria-hidden"?: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      {...props}
-    >
-      <rect x="2.75" y="2.75" width="18.5" height="18.5" rx="5.5" />
-      <rect x="5" y="5" width="14" height="14" rx="3.5" />
-      <rect x="7" y="8" width="10" height="8" rx="1.5" />
-      <path d="M12 8v8" />
-      <circle cx="12" cy="12" r="1.75" />
-      <path d="M7 6.5h10" />
-      <path d="M7 17.5h10" />
-      <path d="M6.5 7v10" />
-      <path d="M17.5 7v10" />
-      <path d="M7 10h1.5v4H7" />
-      <path d="M17 10h-1.5v4H17" />
-    </svg>
-  );
 }

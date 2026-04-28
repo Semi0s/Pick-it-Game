@@ -4,6 +4,7 @@ import { createHash, randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { fetchBooleanAppSetting } from "@/lib/app-settings";
 import { buildGroupInviteEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
+import { ensureUserCanJoinAnotherGroup, fetchJoinedPlayerGroupCount } from "@/lib/group-membership-limits";
 import { appendLanguageToPath, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -470,6 +471,13 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
     return { ok: false, message: "That user is already a member of this group." };
   }
 
+  if (existingUserId) {
+    const joinLimitResult = await ensureUserCanJoinAnotherGroup(adminSupabase, existingUserId);
+    if (!joinLimitResult.ok) {
+      return joinLimitResult;
+    }
+  }
+
   const { data: existingPendingInvite, error: existingPendingInviteError } = await adminSupabase
     .from("group_invites")
     .select("id")
@@ -662,6 +670,11 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
   const seatCheck = await ensureGroupHasOpenSeat(adminSupabase, group.id, group.membership_limit);
   if (!seatCheck.ok) {
     return seatCheck;
+  }
+
+  const joinLimitResult = await ensureUserCanJoinAnotherGroup(adminSupabase, currentUser.userId);
+  if (!joinLimitResult.ok) {
+    return joinLimitResult;
   }
 
   const { error: membershipInsertError } = await adminSupabase
@@ -1431,7 +1444,7 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
     const adminSupabase = createAdminClient();
     const managerLimits = await getManagerLimits(adminSupabase, currentUser.userId);
     const groups = await fetchManagedGroups(adminSupabase, currentUser.userId, currentUser.role);
-    const joinedGroupCount = await getJoinedGroupCount(adminSupabase, currentUser.userId);
+    const joinedGroupCount = await fetchJoinedPlayerGroupCount(adminSupabase, currentUser.userId);
 
     return {
       ok: true,
@@ -1608,19 +1621,6 @@ async function getActiveOwnedGroupCount(adminSupabase: ReturnType<typeof createA
     .select("id", { count: "exact", head: true })
     .eq("owner_user_id", userId)
     .eq("status", "active");
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return count ?? 0;
-}
-
-async function getJoinedGroupCount(adminSupabase: ReturnType<typeof createAdminClient>, userId: string) {
-  const { count, error } = await adminSupabase
-    .from("group_members")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId);
 
   if (error) {
     throw new Error(error.message);

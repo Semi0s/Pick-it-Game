@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ensureUserCanJoinAnotherGroup } from "@/lib/group-membership-limits";
 
 type AuthUserForReconciliation = {
   id: string;
@@ -213,6 +214,12 @@ export async function reconcileInvitesForAuthUser(user: AuthUserForReconciliatio
 
       if ((memberCount ?? 0) >= (group as GroupRow).membership_limit) {
         notes.push(`Skipped group invite ${invite.id} because the group is full.`);
+        continue;
+      }
+
+      const joinLimitResult = await ensureUserCanJoinAnotherGroup(adminSupabase, user.id);
+      if (!joinLimitResult.ok) {
+        notes.push(`Skipped group invite ${invite.id} because the player is already in the maximum number of groups.`);
         continue;
       }
 

@@ -211,7 +211,7 @@ export function DashboardOverview() {
         <DashboardLinkCard
           href="/knockout"
           icon={Network}
-          title="Knockout Stage"
+          title="Knockout Picks"
           copy="Bracket picks from the Round of 32 to the Final."
         />
         <DashboardLinkCard

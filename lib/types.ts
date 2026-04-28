@@ -4,7 +4,19 @@ export type UserRole = "player" | "admin";
 export type UserStatus = "active" | "inactive" | "suspended";
 export type AccessLevel = "player" | "manager" | "super_admin";
 
-export type MatchStage = "group" | "round_of_32" | "round_of_16" | "quarterfinal" | "semifinal" | "final";
+export type MatchNextSlot = "home" | "away";
+export type KnockoutMatchStage =
+  | "round_of_32"
+  | "round_of_16"
+  | "quarterfinal"
+  | "semifinal"
+  | "third"
+  | "final"
+  | "r32"
+  | "r16"
+  | "qf"
+  | "sf";
+export type MatchStage = "group" | KnockoutMatchStage;
 
 export type MatchStatus = "scheduled" | "live" | "final";
 
@@ -70,6 +82,8 @@ export type Match = {
   homeScore?: number;
   awayScore?: number;
   winnerTeamId?: string;
+  nextMatchId?: string | null;
+  nextMatchSlot?: MatchNextSlot | null;
 };
 
 export type Prediction = {
@@ -82,6 +96,15 @@ export type Prediction = {
   predictedAwayScore?: number;
   pointsAwarded: number;
   updatedAt?: string;
+};
+
+export type BracketPrediction = {
+  id: string;
+  userId: string;
+  matchId: string;
+  predictedWinnerTeamId: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type Invite = {
