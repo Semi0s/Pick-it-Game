@@ -1,7 +1,7 @@
 const PRODUCTION_SITE_URL = "https://pick-it-game2026.vercel.app";
 
 export function getSiteUrl() {
-  const publicSiteUrl = resolveConfiguredPublicSiteUrl();
+  const publicSiteUrl = resolveConfiguredPublicSiteUrl({ allowLocal: true });
   if (publicSiteUrl) {
     return publicSiteUrl;
   }
@@ -14,7 +14,7 @@ export function getSiteUrl() {
 }
 
 export function getPublicSiteUrl() {
-  const publicSiteUrl = resolveConfiguredPublicSiteUrl();
+  const publicSiteUrl = resolveConfiguredPublicSiteUrl({ allowLocal: false });
   if (publicSiteUrl) {
     return publicSiteUrl;
   }
@@ -29,17 +29,26 @@ export function getPublicSiteUrl() {
   return PRODUCTION_SITE_URL;
 }
 
-function resolveConfiguredPublicSiteUrl() {
+function resolveConfiguredPublicSiteUrl({ allowLocal }: { allowLocal: boolean }) {
   if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return normalize(process.env.NEXT_PUBLIC_SITE_URL);
+    const normalized = normalize(process.env.NEXT_PUBLIC_SITE_URL);
+    if (allowLocal || !isLocalOrigin(normalized)) {
+      return normalized;
+    }
   }
 
   if (process.env.NEXT_PUBLIC_APP_URL) {
-    return normalize(process.env.NEXT_PUBLIC_APP_URL);
+    const normalized = normalize(process.env.NEXT_PUBLIC_APP_URL);
+    if (allowLocal || !isLocalOrigin(normalized)) {
+      return normalized;
+    }
   }
 
   if (process.env.NEXT_PUBLIC_VERCEL_URL) {
-    return normalize(`https://${process.env.NEXT_PUBLIC_VERCEL_URL}`);
+    const normalized = normalize(`https://${process.env.NEXT_PUBLIC_VERCEL_URL}`);
+    if (allowLocal || !isLocalOrigin(normalized)) {
+      return normalized;
+    }
   }
 
   if (process.env.NODE_ENV === "production") {

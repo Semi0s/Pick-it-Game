@@ -83,28 +83,15 @@ export default async function KnockoutPage({
         <div className="absolute right-5 top-5 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
           {phaseChip}
         </div>
-        <div className="mt-5 rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Bracket status</p>
-          <p className="mt-2 text-sm font-semibold text-gray-900">
-            Round of 32: {knockoutStatus.counts.r32}/16 · Round of 16: {knockoutStatus.counts.r16}/8 · Quarter-finals:{" "}
-            {knockoutStatus.counts.qf}/4
-          </p>
-          <p className="mt-1 text-sm font-semibold text-gray-900">
-            Semi-finals: {knockoutStatus.counts.sf}/2 · Third Place: {knockoutStatus.counts.third}/1 · Final:{" "}
-            {knockoutStatus.counts.final}/1
-          </p>
-        </div>
       </section>
 
       {bracketEditorView ? (
         <div className="mt-5">
-          <KnockoutBracketBuilder initialView={bracketEditorView} />
+          <KnockoutBracketBuilder initialView={bracketEditorView}>
+            <KnockoutGroupComparison view={comparisonView} />
+          </KnockoutBracketBuilder>
         </div>
       ) : null}
-
-      <div className="mt-5">
-        <KnockoutGroupComparison view={comparisonView} />
-      </div>
     </AppShell>
   );
 }

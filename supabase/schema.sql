@@ -228,6 +228,7 @@ create table public.group_invites (
   suggested_display_name text,
   custom_message text,
   language text not null default 'en',
+  helper_language text not null default 'en',
   status public.group_invite_status not null default 'pending',
   token_hash text not null unique,
   expires_at timestamptz,

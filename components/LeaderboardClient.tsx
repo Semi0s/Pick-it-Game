@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, SquareCheckBig, Trophy } from "lucide-react";
+import { ChevronDown, ChevronUp, Network, SquareCheckBig, Trophy } from "lucide-react";
 import {
   awardManagedGroupTrophyAction,
   listManagedGroupPlayersAction,
@@ -371,6 +371,13 @@ export function LeaderboardClient() {
           >
             <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
             My Next Pick
+          </Link>
+          <Link
+            href="/knockout"
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            <Network aria-hidden className="h-4 w-4 text-accent-dark" />
+            My Knockout Picks
           </Link>
           <Link
             href="/trophies"

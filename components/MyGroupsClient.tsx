@@ -12,15 +12,15 @@ import {
   createGroupInviteAction,
   createManagedGroupTrophyAction,
   deleteManagedGroupAction,
+  fetchManagedGroupDetailAction,
   fetchGroupInvitePreviewAction,
   fetchMyGroupsAction,
-  listManagedGroupPlayersAction,
   removeGroupMemberAction,
   resendGroupInviteAction,
   updateManagedGroupLimitAction,
   updateGroupInviteNameAction,
+  type ManagedGroupDetails,
   type FetchMyGroupsResult,
-  type ListManagedGroupPlayersResult,
   type MyManagedGroup
 } from "@/app/my-groups/actions";
 import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
@@ -32,7 +32,15 @@ import { formatDate } from "@/components/admin/AdminInvitesClient";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { showAppToast } from "@/lib/app-toast";
-import { appendLanguageToPath, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
+import {
+  appendExplainerLanguageToPath,
+  appendLanguageToPath,
+  getInviteLanguageForExplainerLanguage,
+  normalizeExplainerLanguage,
+  normalizeLanguage,
+  type ExplainerLanguage,
+  type SupportedLanguage
+} from "@/lib/i18n";
 import {
   ActionButton,
   HierarchyPanel,
@@ -51,9 +59,11 @@ import {
 type MyGroupsClientProps = {
   inviteToken?: string;
   inviteLanguage?: string;
+  inviteHelperLanguage?: string;
 };
 
 type ToastState = { tone: "success" | "error"; text: string } | null;
+const PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY = "pickit:play-explainer-language";
 const GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-expanded-groups";
 const GROUP_LIMIT_SECTION_STORAGE_KEY = "my-groups-expanded-group-limit-sections";
 const GROUP_PEOPLE_SECTION_STORAGE_KEY = "my-groups-expanded-group-people-sections";
@@ -66,18 +76,21 @@ const TROPHY_PROMPTS = [
   { name: "Drama King", icon: "🎭", description: "Never met a chaotic scoreline they didn't love." }
 ] as const;
 
-export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientProps) {
+export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLanguage }: MyGroupsClientProps) {
   const router = useRouter();
   const [summary, setSummary] = useState<FetchMyGroupsResult | null>(null);
-  const [managedGroupsResult, setManagedGroupsResult] = useState<ListManagedGroupPlayersResult | null>(null);
   const [message, setMessage] = useState<ToastState>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [groupDetailsById, setGroupDetailsById] = useState<Record<string, ManagedGroupDetails>>({});
+  const [loadingGroupDetailIds, setLoadingGroupDetailIds] = useState<Record<string, boolean>>({});
+  const [groupDetailErrors, setGroupDetailErrors] = useState<Record<string, string>>({});
+  const [managerCustomTrophiesEnabled, setManagerCustomTrophiesEnabled] = useState(false);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [membershipLimit, setMembershipLimit] = useState("");
   const [groupLimitForms, setGroupLimitForms] = useState<Record<string, string>>({});
   const [inviteForms, setInviteForms] = useState<
-    Record<string, { email: string; suggestedDisplayName: string; customMessage: string; language: SupportedLanguage }>
+    Record<string, { email: string; suggestedDisplayName: string; customMessage: string; language: SupportedLanguage; helperLanguage: ExplainerLanguage }>
   >({});
   const [inviteSuggestions, setInviteSuggestions] = useState<Record<string, InviteAutocompleteOption[]>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
@@ -89,6 +102,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
     email: string;
     customMessage?: string | null;
     language: SupportedLanguage;
+    helperLanguage: ExplainerLanguage;
     status: string;
     expiresAt: string | null;
   } | null>(null);
@@ -132,33 +146,79 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
 
   const load = useCallback(async () => {
     setIsLoading(true);
-    const [summaryResult, groupsResult] = await Promise.all([
-      fetchMyGroupsAction(),
-      listManagedGroupPlayersAction()
-    ]);
-
+    setGroupDetailsById({});
+    setLoadingGroupDetailIds({});
+    setGroupDetailErrors({});
+    setManagerCustomTrophiesEnabled(false);
+    const summaryResult = await fetchMyGroupsAction();
     setSummary(summaryResult);
-    setManagedGroupsResult(groupsResult);
-    if (groupsResult.ok) {
-      setGroupLimitForms(
-        Object.fromEntries(groupsResult.groups.map((group) => [group.id, String(group.membershipLimit)]))
-      );
+
+    if (!summaryResult.ok) {
+      if (!inviteToken) {
+        setMessage({ tone: "error", text: summaryResult.message });
+      }
+      setIsLoading(false);
+      return;
     }
 
-    if (!summaryResult.ok && !inviteToken) {
-      setMessage({ tone: "error", text: summaryResult.message });
-    }
-
-    if (!groupsResult.ok && summaryResult.ok) {
-      setMessage({ tone: "error", text: groupsResult.message });
-    }
-
+    const resolvedSummary = summaryResult;
+    setGroupLimitForms(
+      Object.fromEntries(resolvedSummary.groups.map((group) => [group.id, String(group.membershipLimit)]))
+    );
     setIsLoading(false);
   }, [inviteToken]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadGroupDetail = useCallback(async (groupId: string, force = false) => {
+    if (!force && (groupDetailsById[groupId] || loadingGroupDetailIds[groupId])) {
+      return;
+    }
+
+    setLoadingGroupDetailIds((current) => ({ ...current, [groupId]: true }));
+    setGroupDetailErrors((current) => {
+      if (!current[groupId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[groupId];
+      return next;
+    });
+
+    const result = await fetchManagedGroupDetailAction(groupId);
+    if (result.ok) {
+      setGroupDetailsById((current) => ({ ...current, [groupId]: result.group }));
+      setGroupLimitForms((current) => ({ ...current, [groupId]: String(result.group.membershipLimit) }));
+      setManagerCustomTrophiesEnabled(result.managerCustomTrophiesEnabled);
+    } else {
+      setGroupDetailErrors((current) => ({ ...current, [groupId]: result.message }));
+    }
+
+    setLoadingGroupDetailIds((current) => {
+      const next = { ...current };
+      delete next[groupId];
+      return next;
+    });
+  }, [groupDetailsById, loadingGroupDetailIds]);
+
+  useEffect(() => {
+    if (!summary?.ok) {
+      return;
+    }
+
+    for (const groupId of expandedGroupIds) {
+      if (!summary.groups.some((group) => group.id === groupId)) {
+        continue;
+      }
+
+      if (!groupDetailsById[groupId] && !loadingGroupDetailIds[groupId] && !groupDetailErrors[groupId]) {
+        void loadGroupDetail(groupId);
+      }
+    }
+  }, [expandedGroupIds, groupDetailErrors, groupDetailsById, loadGroupDetail, loadingGroupDetailIds, summary]);
 
   useEffect(() => {
     if (message) {
@@ -319,12 +379,28 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
           email: result.invite.email,
           customMessage: result.invite.customMessage ?? null,
           language: normalizeLanguage(result.invite.language ?? inviteLanguage),
+          helperLanguage: normalizeExplainerLanguage(result.invite.helperLanguage ?? inviteHelperLanguage),
           status: result.invite.status,
           expiresAt: result.invite.expiresAt
         });
       })
       .finally(() => setIsLoadingInvitePreview(false));
-  }, [inviteLanguage, inviteToken]);
+  }, [inviteHelperLanguage, inviteLanguage, inviteToken]);
+
+  useEffect(() => {
+    const helperLanguageSource = invitePreview?.helperLanguage ?? inviteHelperLanguage;
+    if (!helperLanguageSource) {
+      return;
+    }
+
+    const helperLanguage = normalizeExplainerLanguage(helperLanguageSource);
+
+    try {
+      window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, helperLanguage);
+    } catch (error) {
+      console.warn("Could not save invite helper language preference.", error);
+    }
+  }, [inviteHelperLanguage, invitePreview?.helperLanguage]);
 
   useEffect(() => {
     let isActive = true;
@@ -365,13 +441,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
     };
   }, [inviteForms]);
 
-  const groups = useMemo(
-    () => (managedGroupsResult?.ok ? managedGroupsResult.groups : []),
-    [managedGroupsResult]
-  );
-  const managerCustomTrophiesEnabled = managedGroupsResult?.ok
-    ? managedGroupsResult.managerCustomTrophiesEnabled
-    : false;
+  const summaryGroups = useMemo(() => (summary?.ok ? summary.groups : []), [summary]);
   const currentUserId = summary?.ok ? summary.currentUser.userId : null;
   const canSelfAwardTrophies = summary?.ok ? summary.currentUser.role === "admin" : false;
   const currentUser = summary?.ok ? summary.currentUser : null;
@@ -397,7 +467,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
     ? true
     : Boolean(summary?.ok && summary.managerAccess.enabled);
   const filteredGroups = useMemo(() => {
-    const orderedGroups = [...groups].sort((left, right) => {
+    const orderedGroups = [...summaryGroups].sort((left, right) => {
       if (left.canManage !== right.canManage) {
         return left.canManage ? -1 : 1;
       }
@@ -415,8 +485,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
     }
 
     return orderedGroups.filter((group) => group.name.toLowerCase().includes(query));
-  }, [groups, isSuperAdmin, superAdminGroupQuery]);
-  const activeTrophyGroup = trophySheetTarget ? groups.find((group) => group.id === trophySheetTarget.groupId) ?? null : null;
+  }, [summaryGroups, isSuperAdmin, superAdminGroupQuery]);
+  const activeTrophyGroup = trophySheetTarget ? groupDetailsById[trophySheetTarget.groupId] ?? null : null;
   const activeTrophyMember = activeTrophyGroup
     ? activeTrophyGroup.members.find((member) => member.userId === trophySheetTarget?.userId) ?? null
     : null;
@@ -447,13 +517,21 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
     setMessage(null);
 
     const defaultLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
-    const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "", customMessage: "", language: defaultLanguage };
+    const defaultHelperLanguage = normalizeExplainerLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
+    const formState = inviteForms[group.id] ?? {
+      email: "",
+      suggestedDisplayName: "",
+      customMessage: "",
+      language: defaultLanguage,
+      helperLanguage: defaultHelperLanguage
+    };
     const result = await createGroupInviteAction({
       groupId: group.id,
       email: formState.email,
       suggestedDisplayName: formState.suggestedDisplayName,
       customMessage: formState.customMessage,
-      language: formState.language
+      language: formState.language,
+      helperLanguage: formState.helperLanguage
     });
 
     setMessage({
@@ -463,9 +541,16 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
 
     if (result.ok) {
       const resetLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
+      const resetHelperLanguage = normalizeExplainerLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
       setInviteForms((current) => ({
         ...current,
-        [group.id]: { email: "", suggestedDisplayName: "", customMessage: "", language: resetLanguage }
+        [group.id]: {
+          email: "",
+          suggestedDisplayName: "",
+          customMessage: "",
+          language: resetLanguage,
+          helperLanguage: resetHelperLanguage
+        }
       }));
       await load();
     }
@@ -570,9 +655,14 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
   }
 
   function toggleExpandedGroup(groupId: string) {
+    const shouldOpen = !expandedGroupIds.includes(groupId);
     setExpandedGroupIds((current) =>
       current.includes(groupId) ? current.filter((id) => id !== groupId) : [...current, groupId]
     );
+
+    if (shouldOpen) {
+      void loadGroupDetail(groupId);
+    }
   }
 
   function toggleExpandedInviteEditor(inviteId: string) {
@@ -591,8 +681,14 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
   }
 
   const resolvedInviteLanguage = normalizeLanguage(invitePreview?.language ?? inviteLanguage);
+  const resolvedInviteHelperLanguage = normalizeExplainerLanguage(
+    invitePreview?.helperLanguage ?? inviteHelperLanguage ?? resolvedInviteLanguage
+  );
   const inviteReturnPath = inviteToken
-    ? appendLanguageToPath(`/my-groups?invite=${inviteToken}`, resolvedInviteLanguage)
+    ? appendExplainerLanguageToPath(
+        appendLanguageToPath(`/my-groups?invite=${inviteToken}`, resolvedInviteLanguage),
+        resolvedInviteHelperLanguage
+      )
     : undefined;
   const inviteLoginPath = inviteToken
     ? `/login?flow=invite&lang=${resolvedInviteLanguage}&next=${encodeURIComponent(inviteReturnPath ?? "/my-groups")}`
@@ -867,7 +963,22 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
         ) : (
           filteredGroups.map((group) => {
             const defaultInviteLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
-            const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "", customMessage: "", language: defaultInviteLanguage };
+            const defaultHelperLanguage = normalizeExplainerLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
+            const detailedGroup = groupDetailsById[group.id] ?? null;
+            const isGroupDetailLoading = Boolean(loadingGroupDetailIds[group.id]);
+            const groupDetailError = groupDetailErrors[group.id] ?? null;
+            const groupMembers = detailedGroup?.members ?? [];
+            const groupInvites = detailedGroup?.invites ?? [];
+            const groupTrophies = detailedGroup?.trophies ?? [];
+            const resolvedMemberCount = detailedGroup?.memberCount ?? group.memberCount;
+            const resolvedPendingInviteCount = detailedGroup?.pendingInviteCount ?? group.pendingInviteCount;
+            const formState = inviteForms[group.id] ?? {
+              email: "",
+              suggestedDisplayName: "",
+              customMessage: "",
+              language: defaultInviteLanguage,
+              helperLanguage: defaultHelperLanguage
+            };
             const trophyDraft = groupTrophyDrafts[group.id] ?? { name: "", icon: "", description: "" };
             const groupLimitFormValue = groupLimitForms[group.id] ?? String(group.membershipLimit);
             const usesDisclosure = true;
@@ -876,7 +987,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
             const isPeopleInvitesExpanded = expandedPeopleInviteIds.includes(group.id);
             const isTrophyExpanded = expandedTrophyIds.includes(group.id);
             const isGroupInfoExpanded = expandedGroupInfoIds.includes(group.id);
-            const managerTrophies = group.trophies.filter(
+            const managerTrophies = groupTrophies.filter(
               (trophy) => trophy.awardSource === "manager" && trophy.scope === "group"
             );
             const coreTrophies = managerTrophies.filter((trophy) => !trophy.key.startsWith(`group_${group.id}_`));
@@ -892,7 +1003,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
               return left.name.localeCompare(right.name);
             });
             const hasReachedCustomTrophyLimit = customTrophies.length >= 10;
-            const activeMembers = group.members.filter((member) => member.role === "member");
+            const activeMembers = groupMembers.filter((member) => member.role === "member");
 
             return (
               <ManagementCard
@@ -902,8 +1013,12 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                 className="bg-gray-50"
                 subtitle={
                   group.canManage
-                    ? `${group.memberCount} members · ${group.pendingInviteCount} pending invites`
-                    : `${group.memberCount} members`
+                    ? resolvedMemberCount !== undefined && resolvedPendingInviteCount !== undefined
+                      ? `${resolvedMemberCount} members · ${resolvedPendingInviteCount} pending invites`
+                      : "Open to load members and invites"
+                    : resolvedMemberCount !== undefined
+                      ? `${resolvedMemberCount} members`
+                      : "Open to load members"
                 }
                 badges={
                   <>
@@ -1039,26 +1154,34 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                         </div>
                       </label>
                       <label className="block">
-                        <span className="text-sm font-bold text-gray-800">Invite language</span>
+                        <span className="text-sm font-bold text-gray-800">Language</span>
                         <select
-                          value={formState.language}
+                          value={formState.helperLanguage}
                           onChange={(event) =>
-                            setInviteForms((current) => ({
-                              ...current,
-                              [group.id]: {
-                                ...formState,
-                                language: normalizeLanguage(event.target.value)
-                              }
-                            }))
+                            {
+                              const helperLanguage = normalizeExplainerLanguage(event.target.value);
+                              const inviteLanguage = getInviteLanguageForExplainerLanguage(helperLanguage);
+                              setInviteForms((current) => ({
+                                ...current,
+                                [group.id]: {
+                                  ...formState,
+                                  language: inviteLanguage,
+                                  helperLanguage
+                                }
+                              }));
+                            }
                           }
                           className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                         >
                           <option value="en">English</option>
                           <option value="es">Spanish</option>
+                          <option value="fr">French</option>
+                          <option value="pt">Portuguese</option>
+                          <option value="de">German</option>
                         </select>
                         <p className="mt-2 text-xs font-semibold text-gray-500">
-                          Choose the language your invitee will see during signup. This language will be used for the
-                          invitation email and first signup experience.
+                          English and Spanish carry through the invite email and signup flow. French, Portuguese, and
+                          German also preselect the Play helper text, while the rest of the invite stays in English for now.
                         </p>
                       </label>
                       <ActionButton type="submit" disabled={submittingInviteForGroup === group.id} fullWidth>
@@ -1069,10 +1192,28 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                     </>
                     ) : null}
 
-                    {group.canManage ? (() => {
+                    {!detailedGroup ? (
+                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
+                        <div className="space-y-2">
+                          <p className="text-sm font-black text-gray-900">Group details</p>
+                          <p className="text-sm font-semibold text-gray-600">
+                            {isGroupDetailLoading
+                              ? "Loading members, invites, and trophies..."
+                              : groupDetailError ?? "Open this group to load its detailed view."}
+                          </p>
+                        </div>
+                        {groupDetailError ? (
+                          <div className="mt-3">
+                            <ActionButton type="button" onClick={() => void loadGroupDetail(group.id, true)}>
+                              Retry
+                            </ActionButton>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : group.canManage ? (() => {
                   const directoryState = groupDirectoryState[group.id] ?? { search: "", filter: "all" as const };
                   const normalizedQuery = directoryState.search.trim().toLowerCase();
-                  const filteredMembers = group.members.filter((member) => {
+                  const filteredMembers = groupMembers.filter((member) => {
                     const matchesSearch =
                       !normalizedQuery ||
                       member.name.toLowerCase().includes(normalizedQuery) ||
@@ -1084,7 +1225,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
 
                     return directoryState.filter === "all" || directoryState.filter === "members";
                   });
-                  const filteredInvites = group.invites.filter((invite) => {
+                  const filteredInvites = groupInvites.filter((invite) => {
                     const inviteStatusLabel = invite.status === "revoked" ? "canceled" : invite.status;
                     const matchesSearch =
                       !normalizedQuery ||
@@ -1119,7 +1260,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                           <div>
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">People & invites</h4>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
-                              {group.members.length} members · {group.invites.length} invites
+                              {groupMembers.length} members · {groupInvites.length} invites
                             </p>
                           </div>
                           <button
@@ -1137,11 +1278,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                         {isPeopleInvitesExpanded ? (
                           <>
                       {(() => {
-                        const pendingInviteCount = group.invites.filter((invite) => invite.status === "pending").length;
-                        const acceptedInviteCount = group.invites.filter((invite) => invite.status === "accepted").length;
+                        const pendingInviteCount = groupInvites.filter((invite) => invite.status === "pending").length;
+                        const acceptedInviteCount = groupInvites.filter((invite) => invite.status === "accepted").length;
                         const filterOptions = [
-                          { value: "all", label: `All (${group.members.length + group.invites.length})` },
-                          { value: "members", label: `Members (${group.members.length})` },
+                          { value: "all", label: `All (${groupMembers.length + groupInvites.length})` },
+                          { value: "members", label: `Members (${groupMembers.length})` },
                           { value: "pending", label: `Pending (${pendingInviteCount})` },
                           { value: "accepted", label: `Accepted (${acceptedInviteCount})` }
                         ] as const;
@@ -1399,12 +1540,12 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                           <div>
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Members</h4>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
-                              {group.members.length} members
+                              {groupMembers.length} members
                             </p>
                           </div>
                         </div>
                         <div className="mt-3 space-y-2">
-                          {group.members.map((member) => (
+                          {groupMembers.map((member) => (
                             <div key={member.membershipId} className="rounded-md border border-gray-200 px-3 py-3">
                               <div className="flex items-start gap-3">
                                 <Avatar name={member.name} avatarUrl={member.avatarUrl} size="sm" />
@@ -1630,7 +1771,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                                 orderedManagerTrophies.map((trophy) => {
                                   const selectedUserId = groupTrophyAwardSelections[group.id]?.[trophy.id] ?? "";
                                   const alreadyAwardedUserIds = new Set(
-                                    group.members
+                                    groupMembers
                                       .filter((member) => member.trophies.some((awarded) => awarded.id === trophy.id))
                                       .map((member) => member.userId)
                                   );
@@ -1746,10 +1887,17 @@ export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientPr
                         {isGroupInfoExpanded ? (
                           <div className="mt-3 space-y-4">
                             <ManagementGrid>
-                              <ManagementDatum label="Capacity" value={`${group.memberCount + group.pendingInviteCount} / ${group.membershipLimit} seats used`} />
+                              <ManagementDatum
+                                label="Capacity"
+                                value={
+                                  resolvedMemberCount !== undefined && resolvedPendingInviteCount !== undefined
+                                    ? `${resolvedMemberCount + resolvedPendingInviteCount} / ${group.membershipLimit} seats used`
+                                    : `Open group details to load seat usage`
+                                }
+                              />
                               <ManagementDatum label="Group limit" value={`${group.membershipLimit} members`} />
-                              <ManagementDatum label="Members" value={group.memberCount} />
-                              <ManagementDatum label="Pending invites" value={group.pendingInviteCount} />
+                              <ManagementDatum label="Members" value={resolvedMemberCount ?? "—"} />
+                              <ManagementDatum label="Pending invites" value={resolvedPendingInviteCount ?? "—"} />
                               <ManagementDatum
                                 label="Your access"
                                 value={

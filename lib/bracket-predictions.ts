@@ -19,6 +19,8 @@ type MatchRow = {
   status: MatchStatus;
   home_team_id?: string | null;
   away_team_id?: string | null;
+  home_source?: string | null;
+  away_source?: string | null;
   winner_team_id?: string | null;
   next_match_id?: string | null;
   next_match_slot?: MatchNextSlot | null;
@@ -143,6 +145,8 @@ export type KnockoutBracketMatchView = {
   seededAwayTeam: BracketTeamOption | null;
   homeSourceMatchId: string | null;
   awaySourceMatchId: string | null;
+  homeSourceLabel: string | null;
+  awaySourceLabel: string | null;
   homeTeam: BracketTeamOption | null;
   awayTeam: BracketTeamOption | null;
   predictedWinnerTeamId: string | null;
@@ -215,7 +219,7 @@ export async function saveBracketPrediction(
 
   const { data: match, error: matchError } = await adminSupabase
     .from("matches")
-    .select("id,stage,kickoff_time,status,home_team_id,away_team_id,winner_team_id,next_match_id,next_match_slot")
+    .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,winner_team_id,next_match_id,next_match_slot")
     .eq("id", matchId)
     .single();
 
@@ -324,9 +328,8 @@ export async function fetchKnockoutStructureStatus(): Promise<KnockoutStructureS
     }
   }
 
-  const isFullySeeded = (Object.keys(EXPECTED_KNOCKOUT_MATCH_COUNTS) as CanonicalKnockoutStage[]).every(
-    (stage) => counts[stage] >= EXPECTED_KNOCKOUT_MATCH_COUNTS[stage]
-  );
+  const stagesRequiredForBracket = (["r32", "r16", "qf", "sf", "final"] as CanonicalKnockoutStage[]);
+  const isFullySeeded = stagesRequiredForBracket.every((stage) => counts[stage] >= EXPECTED_KNOCKOUT_MATCH_COUNTS[stage]);
 
   return {
     counts,
@@ -450,9 +453,8 @@ export async function fetchGroupBracketComparisonView(
   }
 
   const visibleGroups = ((groups ?? []) as GroupRow[]).filter((group) => group.status !== "archived");
-  const fallbackGroupId = visibleGroups[0]?.id ?? null;
   const resolvedGroupId =
-    selectedGroupId && visibleGroups.some((group) => group.id === selectedGroupId) ? selectedGroupId : fallbackGroupId;
+    selectedGroupId && visibleGroups.some((group) => group.id === selectedGroupId) ? selectedGroupId : null;
 
   if (!resolvedGroupId) {
     return {
@@ -499,7 +501,7 @@ export async function fetchGroupBracketComparisonView(
         .in("user_id", memberIds),
       adminSupabase
         .from("matches")
-        .select("id,stage,kickoff_time,status,home_team_id,away_team_id,winner_team_id,next_match_id,next_match_slot")
+        .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,winner_team_id,next_match_id,next_match_slot")
         .neq("stage", "group")
     ]);
 
@@ -603,8 +605,9 @@ export async function fetchGroupBracketComparisonView(
         (getTeamName(teamNameById, left[0]) ?? left[0]).localeCompare(getTeamName(teamNameById, right[0]) ?? right[0])
     )[0];
 
-  const selectedMember =
-    (selectedPlayerId ? memberSummaries.find((member) => member.userId === selectedPlayerId) : null) ?? memberSummaries[0] ?? null;
+  const selectedMember = selectedPlayerId
+    ? memberSummaries.find((member) => member.userId === selectedPlayerId) ?? null
+    : null;
 
   return {
     groups: visibleGroups.map((group) => ({ id: group.id, name: group.name })),
@@ -743,7 +746,7 @@ async function fetchKnockoutData(adminSupabase: ReturnType<typeof createAdminCli
   const [{ data: matchRows, error: matchesError }, status] = await Promise.all([
     adminSupabase
       .from("matches")
-      .select("id,stage,kickoff_time,status,home_team_id,away_team_id,winner_team_id,next_match_id,next_match_slot")
+      .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,winner_team_id,next_match_id,next_match_slot")
       .neq("stage", "group"),
     fetchKnockoutStructureStatus()
   ]);
@@ -852,13 +855,15 @@ function buildKnockoutBracketStages(
       matchId: match.id,
       stage,
       stageLabel: formatMatchStage(match.stage),
-      title: `${formatMatchStage(match.stage)} ${currentStageMatches.length + 1}`,
+      title: buildMatchTitle(stage, currentStageMatches.length + 1),
       kickoffTime: match.kickoff_time,
       status: match.status,
       seededHomeTeam: match.home_team_id ? teamsById.get(match.home_team_id) ?? null : null,
       seededAwayTeam: match.away_team_id ? teamsById.get(match.away_team_id) ?? null : null,
       homeSourceMatchId: homeSource?.id ?? null,
       awaySourceMatchId: awaySource?.id ?? null,
+      homeSourceLabel: getMatchSlotLabel(match.home_source, homeSource),
+      awaySourceLabel: getMatchSlotLabel(match.away_source, awaySource),
       homeTeam: availableTeams.homeTeam,
       awayTeam: availableTeams.awayTeam,
       predictedWinnerTeamId: validPredictedWinnerTeamId,
@@ -910,6 +915,40 @@ function getAvailablePredictedTeamsForMatch(
     homeTeam: homeTeamId ? teamsById.get(homeTeamId) ?? null : null,
     awayTeam: awayTeamId ? teamsById.get(awayTeamId) ?? null : null
   };
+}
+
+function buildMatchTitle(stage: CanonicalKnockoutStage, index: number) {
+  switch (stage) {
+    case "r32":
+      return `Round of 32 Match ${index}`;
+    case "r16":
+      return `Round of 16 Match ${index}`;
+    case "qf":
+      return `Quarter-final ${index}`;
+    case "sf":
+      return `Semi-final ${index}`;
+    case "final":
+      return "Final";
+    case "third":
+      return "Third Place Match";
+    default:
+      return `${formatMatchStage(stage)} ${index}`;
+  }
+}
+
+function getMatchSlotLabel(
+  directSourceLabel: string | null | undefined,
+  sourceMatch: MatchRow | undefined
+) {
+  if (directSourceLabel?.trim()) {
+    return directSourceLabel.trim();
+  }
+
+  if (!sourceMatch) {
+    return null;
+  }
+
+  return `Winner of ${formatMatchStage(sourceMatch.stage)}`;
 }
 
 function collectDescendantMatchIds(rootMatchId: string, matchesById: Map<string, MatchRow>) {

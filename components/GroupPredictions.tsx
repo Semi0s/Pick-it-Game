@@ -2,9 +2,16 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { Network, SquareCheckBig, Trophy } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronDown, Globe, Network, SquareCheckBig, Trophy } from "lucide-react";
+import { showAppToast } from "@/lib/app-toast";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
+import {
+  getExplainerLanguageForUser,
+  normalizeExplainerLanguage,
+  PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
+  type ExplainerLanguage
+} from "@/lib/i18n";
 import { fetchPlayerPredictions, savePlayerPrediction } from "@/lib/player-predictions";
 import { formatMatchStage } from "@/lib/match-stage";
 import { canEditPrediction } from "@/lib/prediction-state";
@@ -17,23 +24,105 @@ import { SocialPredictionList } from "@/components/SocialPredictionList";
 
 type GroupPredictionsProps = {
   user: UserProfile;
+  initialMatches?: MatchWithTeams[];
+  initialPredictions?: Prediction[];
+  initialKnockoutSeeded?: boolean;
 };
 
 const stages: ("all" | MatchStage)[] = ["all", "group"];
+const EXPLAINER_LANGUAGES = ["en", "es", "fr", "pt", "de"] as const;
 
-export function GroupPredictions({ user }: GroupPredictionsProps) {
+const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
+  en: "English",
+  es: "Español",
+  fr: "Français",
+  pt: "Português",
+  de: "Deutsch"
+};
+
+const EXPLAINER_TITLE_COPY: Record<ExplainerLanguage, string> = {
+  en: "Pick every match.",
+  es: "Elige tus partidos.",
+  fr: "Choisissez chaque match.",
+  pt: "Escolha cada partida.",
+  de: "Tippe jedes Spiel."
+};
+
+const EXPLAINER_COPY: Record<ExplainerLanguage, string[]> = {
+  en: [
+    "Submit your score predictions at any time before kickoff.",
+    "Matches remain open for entries until the game starts.",
+    "After kickoff all player picks become public."
+  ],
+  es: [
+    "Envía tus pronósticos en cualquier momento antes del pitazo inicial.",
+    "Las predicciones se cierran al comenzar el partido.",
+    "Una vez iniciado el encuentro, las predicciones de todos los jugadores serán públicas."
+  ],
+  fr: [
+    "Soumettez vos pronostics de score à tout moment avant le coup d'envoi.",
+    "Les matchs restent ouverts aux pronostics jusqu'au début du match.",
+    "Après le coup d'envoi, tous les pronostics des joueurs deviennent publics."
+  ],
+  pt: [
+    "Envie seus palpites de placar a qualquer momento antes do início.",
+    "As partidas permanecem abertas para palpites até o começo do jogo.",
+    "Após o início, todos os palpites dos jogadores se tornam públicos."
+  ],
+  de: [
+    "Gib deine Ergebnistipps jederzeit vor dem Anpfiff ab.",
+    "Spiele bleiben bis zum Anstoß für Tipps geöffnet.",
+    "Nach dem Anpfiff werden alle Tipps der Spieler öffentlich."
+  ]
+};
+
+export function GroupPredictions({
+  user,
+  initialMatches,
+  initialPredictions,
+  initialKnockoutSeeded
+}: GroupPredictionsProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [predictions, setPredictions] = useState<Prediction[]>(initialPredictions ?? []);
   const [socialPredictions, setSocialPredictions] = useState<SocialPrediction[]>([]);
-  const [matches, setMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
+  const [matches, setMatches] = useState<MatchWithTeams[]>(() => initialMatches ?? getLocalGroupMatches());
   const [stageFilter, setStageFilter] = useState<"all" | MatchStage>("all");
   const [dateFilter, setDateFilter] = useState("all");
   const [teamSearch, setTeamSearch] = useState("");
   const [matchWindowStart, setMatchWindowStart] = useState(0);
   const [pendingScrollMatchId, setPendingScrollMatchId] = useState<string | null>(null);
+  const [isKnockoutSeeded, setIsKnockoutSeeded] = useState(initialKnockoutSeeded ?? false);
+  const [explainerLanguage, setExplainerLanguage] = useState<ExplainerLanguage>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
+        if (storedValue) {
+          return normalizeExplainerLanguage(storedValue);
+        }
+      } catch (error) {
+        console.warn("Could not restore play explainer language.", error);
+      }
+    }
+
+    return getExplainerLanguageForUser(user);
+  });
+  const [isExplainerLanguageMenuOpen, setIsExplainerLanguageMenuOpen] = useState(false);
   const matchCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, explainerLanguage);
+    } catch (error) {
+      console.warn("Could not persist play explainer language.", error);
+    }
+  }, [explainerLanguage]);
+
+  useEffect(() => {
+    if (initialMatches) {
+      return;
+    }
+
     let isMounted = true;
     fetchGroupMatchesForPredictions()
       .then((items) => {
@@ -50,9 +139,13 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [initialMatches]);
 
   useEffect(() => {
+    if (initialPredictions) {
+      return;
+    }
+
     let isMounted = true;
     setPredictions(getStoredPredictions(user.id));
 
@@ -71,7 +164,36 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
     return () => {
       isMounted = false;
     };
-  }, [user.id]);
+  }, [initialPredictions, user.id]);
+
+  useEffect(() => {
+    if (initialKnockoutSeeded !== undefined) {
+      return;
+    }
+
+    let isMounted = true;
+
+    fetch("/api/knockout/status", { cache: "no-store" })
+      .then(async (response) => {
+        const result = (await response.json()) as { ok: boolean; isSeeded?: boolean };
+        if (!response.ok || !result.ok) {
+          throw new Error("Could not load knockout status.");
+        }
+
+        if (isMounted) {
+          setIsKnockoutSeeded(Boolean(result.isSeeded));
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setIsKnockoutSeeded(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [initialKnockoutSeeded]);
 
   useEffect(() => {
     let isMounted = true;
@@ -145,6 +267,13 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
 
     return matches.find((match) => canEditPrediction(match.status))?.id ?? null;
   }, [matches, predictions]);
+  const shouldPromoteKnockout = !nextPredictionMatchId;
+  const shouldShowSecondaryKnockoutButton = !shouldPromoteKnockout;
+  const primaryActionLabel = nextPredictionMatchId
+    ? "My Next Pick"
+    : isKnockoutSeeded
+      ? "My Knockout Picks"
+      : "My Results";
 
   const jumpToMatch = useCallback(
     (matchId: string) => {
@@ -194,6 +323,24 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
     return savedPrediction;
   }
 
+  function handlePrimaryAction() {
+    if (nextPredictionMatchId) {
+      jumpToMatch(nextPredictionMatchId);
+      return;
+    }
+
+    if (isKnockoutSeeded) {
+      router.push("/knockout");
+      return;
+    }
+
+    router.push("/leaderboard");
+    showAppToast({
+      tone: "success",
+      text: "Group picks are complete. Knockout picks will open once the bracket is seeded."
+    });
+  }
+
   const renderMatchPager = () =>
     filteredMatches.length > 0 ? (
       <section className="rounded-lg border border-gray-200 bg-white p-3">
@@ -233,44 +380,111 @@ export function GroupPredictions({ user }: GroupPredictionsProps) {
   return (
     <div className="space-y-6">
       <section className="relative rounded-lg bg-gray-100 p-5">
-        <div className="pr-28 sm:pr-32">
+        <div className="pr-52 sm:pr-64">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Play</p>
-            <h2 className="mt-2 text-3xl font-black leading-tight">Pick every match.</h2>
-            <p className="mt-3 text-base leading-7 text-gray-600">
-              Make your score predictions when you are ready. Matches stay open until kickoff. Players picks become public
-              then.
-            </p>
+            <h2 className="mt-2 text-3xl font-black leading-tight">{EXPLAINER_TITLE_COPY[explainerLanguage]}</h2>
+            <div className="mt-3">
+              <ul className="min-w-0 flex-1 space-y-1 text-base leading-7 text-gray-600">
+                {EXPLAINER_COPY[explainerLanguage].map((line) => (
+                  <li key={line}>&bull; {line}</li>
+                ))}
+              </ul>
+            </div>
           </div>
         </div>
-        <div
-          className={`absolute right-5 top-5 rounded-md px-3 py-2 text-sm font-semibold ${
+        <div className="absolute right-5 top-5 flex items-start gap-2">
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsExplainerLanguageMenuOpen((current) => !current)}
+              className="inline-flex items-center gap-1 rounded-full border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+              aria-haspopup="menu"
+              aria-expanded={isExplainerLanguageMenuOpen}
+              aria-label={`Translate title and explainer text. Current language: ${EXPLAINER_LANGUAGE_LABELS[explainerLanguage]}`}
+            >
+              <Globe aria-hidden className="h-3.5 w-3.5 text-accent-dark" />
+              <span>{explainerLanguage.toUpperCase()}</span>
+              <ChevronDown aria-hidden className="h-3.5 w-3.5 text-gray-500" />
+            </button>
+            {isExplainerLanguageMenuOpen ? (
+              <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+                {EXPLAINER_LANGUAGES.map((language) => (
+                  <button
+                    key={language}
+                    type="button"
+                    onClick={() => {
+                      setExplainerLanguage(language);
+                      setIsExplainerLanguageMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm font-semibold transition ${
+                      language === explainerLanguage
+                        ? "bg-accent-light text-accent-dark"
+                        : "text-gray-700 hover:bg-gray-50"
+                    }`}
+                    role="menuitem"
+                  >
+                    <span>{EXPLAINER_LANGUAGE_LABELS[language]}</span>
+                    <span className="text-xs font-black uppercase">{language}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div
+            className={`rounded-md px-3 py-2 text-sm font-semibold ${
             hasCompletedAllPicks ? "bg-amber-50 text-amber-800" : "bg-white text-gray-700"
-          }`}
-        >
-          {savedCount} of {matches.length} picks saved
+            }`}
+          >
+            {savedCount} of {matches.length} picks saved
+          </div>
         </div>
         <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             {nextPredictionMatchId ? (
               <button
                 type="button"
-                onClick={() => jumpToMatch(nextPredictionMatchId)}
+                onClick={handlePrimaryAction}
                 className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
               >
-                <span className="inline-flex h-6 w-6 items-center justify-center rounded-md text-accent-dark">
-                  <SquareCheckBig aria-hidden className="h-4 w-4" />
-                </span>
-                My Next Pick
+                {shouldPromoteKnockout ? (
+                  isKnockoutSeeded ? (
+                    <Network aria-hidden className="h-4 w-4 text-accent-dark" />
+                  ) : (
+                    <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+                  )
+                ) : (
+                  <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+                )}
+                {primaryActionLabel}
               </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handlePrimaryAction}
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+              >
+                {shouldPromoteKnockout ? (
+                  isKnockoutSeeded ? (
+                    <Network aria-hidden className="h-4 w-4 text-accent-dark" />
+                  ) : (
+                    <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+                  )
+                ) : (
+                  <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+                )}
+                {primaryActionLabel}
+              </button>
+            )}
+            {shouldShowSecondaryKnockoutButton ? (
+              <Link
+                href="/knockout"
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+              >
+                <Network aria-hidden className="h-4 w-4 text-accent-dark" />
+                My Knockout Picks
+              </Link>
             ) : null}
-            <Link
-              href="/knockout"
-              className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-            >
-              <Network aria-hidden className="h-4 w-4 text-accent-dark" />
-              My Knockout Picks
-            </Link>
             <Link
               href="/trophies"
               className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"

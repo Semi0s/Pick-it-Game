@@ -12,7 +12,7 @@ import {
   warnOptionalFeatureOnce
 } from "@/lib/schema-safety";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
-import { getSiteUrl } from "@/lib/site-url";
+import { getPublicSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/client";
 import { demoSignIn, demoSignOut, demoSignUp, getDemoCurrentUser } from "@/lib/demo-auth-fallback";
 import type { UserProfile, UserTrophy } from "@/lib/types";
@@ -344,7 +344,7 @@ export async function sendCurrentUserPasswordReset(email: string): Promise<AuthR
 
   const supabase = createClient();
   const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-    redirectTo: `${getSiteUrl()}/auth/confirm?next=/reset-password`
+    redirectTo: `${getPublicSiteUrl()}/auth/confirm?next=/reset-password`
   });
 
   if (error) {
@@ -1033,7 +1033,7 @@ function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; f
 }
 
 function buildAuthCallbackUrl(nextPath: string, language?: string | null) {
-  const callbackUrl = new URL("/auth/callback", getSiteUrl());
+  const callbackUrl = new URL("/auth/callback", getPublicSiteUrl());
   callbackUrl.searchParams.set("next", appendLanguageToPath(nextPath, language));
   if (language) {
     callbackUrl.searchParams.set("lang", normalizeLanguage(language));

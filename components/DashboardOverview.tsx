@@ -9,10 +9,24 @@ import { AdminStatsSection, AdminToolsSection, AdminMessage } from "@/components
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { InviteEntryForm, normalizeInviteTokenInput } from "@/components/player-management/Shared";
+import {
+  getExplainerLanguageForUser,
+  normalizeExplainerLanguage,
+  PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
+  type ExplainerLanguage
+} from "@/lib/i18n";
 import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
 import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
+
+const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: string }> = {
+  en: { hello: "Hello", help: "Help" },
+  es: { hello: "Hola", help: "Ayuda" },
+  fr: { hello: "Bonjour", help: "Aide" },
+  pt: { hello: "Olá", help: "Ajuda" },
+  de: { hello: "Hallo", help: "Hilfe" }
+};
 
 export function DashboardOverview() {
   const router = useRouter();
@@ -23,6 +37,20 @@ export function DashboardOverview() {
   const [groupAccess, setGroupAccess] = useState<{ hasAnyGroups: boolean; joinedGroupCount: number } | null>(null);
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
+  const [displayLanguage] = useState<ExplainerLanguage>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
+        if (storedValue) {
+          return normalizeExplainerLanguage(storedValue);
+        }
+      } catch (error) {
+        console.warn("Could not restore dashboard helper language.", error);
+      }
+    }
+
+    return getExplainerLanguageForUser(user);
+  });
   const predictions = user ? getStoredPredictions(user.id) : [];
 
   useEffect(() => {
@@ -102,6 +130,7 @@ export function DashboardOverview() {
     predictions.some((prediction) => prediction.matchId === match.id)
   ).length;
   const heroCtaLabel = completedCount > 0 ? "My Next Pick" : "My Picks";
+  const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
   function handleInviteEntrySubmit() {
     const token = normalizeInviteTokenInput(inviteEntryValue);
     if (!token) {
@@ -128,9 +157,9 @@ export function DashboardOverview() {
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-accent-light text-accent-dark">
               <CircleHelp aria-hidden className="h-4 w-4" />
             </span>
-            Help
+            {dashboardCopy.help}
           </Link>
-          <p className="text-4xl font-black uppercase leading-none tracking-wide text-accent-dark">Hello</p>
+          <p className="text-4xl font-black uppercase leading-none tracking-wide text-accent-dark">{dashboardCopy.hello}</p>
           <h2 className="mt-2 text-4xl font-black leading-tight text-gray-950 sm:text-5xl">
             {user?.name ?? "Player"}
           </h2>

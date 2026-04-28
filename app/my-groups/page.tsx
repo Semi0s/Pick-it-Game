@@ -4,13 +4,17 @@ import { MyGroupsClient } from "@/components/MyGroupsClient";
 export default async function MyGroupsPage({
   searchParams
 }: {
-  searchParams?: Promise<{ invite?: string; lang?: string }>;
+  searchParams?: Promise<{ invite?: string; lang?: string; helperLang?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
 
   return (
     <AppShell>
-      <MyGroupsClient inviteToken={resolvedSearchParams?.invite} inviteLanguage={resolvedSearchParams?.lang} />
+      <MyGroupsClient
+        inviteToken={resolvedSearchParams?.invite}
+        inviteLanguage={resolvedSearchParams?.lang}
+        inviteHelperLanguage={resolvedSearchParams?.helperLang}
+      />
     </AppShell>
   );
 }

@@ -5,7 +5,14 @@ import { revalidatePath } from "next/cache";
 import { fetchBooleanAppSetting } from "@/lib/app-settings";
 import { buildGroupInviteEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
 import { ensureUserCanJoinAnotherGroup, fetchJoinedPlayerGroupCount } from "@/lib/group-membership-limits";
-import { appendLanguageToPath, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
+import {
+  appendExplainerLanguageToPath,
+  appendLanguageToPath,
+  normalizeExplainerLanguage,
+  normalizeLanguage,
+  type ExplainerLanguage,
+  type SupportedLanguage
+} from "@/lib/i18n";
 import { isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendTransactionalEmail } from "@/lib/email-sender";
@@ -62,6 +69,7 @@ type GroupInviteRow = {
   suggested_display_name?: string | null;
   custom_message?: string | null;
   language?: string | null;
+  helper_language?: string | null;
   status: GroupInviteStatus;
   token_hash: string;
   expires_at?: string | null;
@@ -81,6 +89,7 @@ type GroupInviteRecord = {
   suggested_display_name?: string | null;
   custom_message?: string | null;
   language?: string | null;
+  helper_language?: string | null;
   status: GroupInviteStatus;
   expires_at?: string | null;
   accepted_by_user_id?: string | null;
@@ -152,6 +161,7 @@ export type CreateGroupInviteInput = {
   suggestedDisplayName?: string;
   customMessage?: string;
   language?: string;
+  helperLanguage?: string;
   expiresInDays?: number;
 };
 
@@ -196,8 +206,8 @@ export type MyManagedGroup = {
   name: string;
   membershipLimit: number;
   status: GroupStatus;
-  memberCount: number;
-  pendingInviteCount: number;
+  memberCount?: number;
+  pendingInviteCount?: number;
   canManage: boolean;
   userRole: "super_admin" | GroupMemberRole | "viewer";
 };
@@ -287,6 +297,7 @@ export type GroupInvitePreviewResult =
         suggestedDisplayName?: string | null;
         customMessage?: string | null;
         language?: SupportedLanguage;
+        helperLanguage?: ExplainerLanguage;
         status: GroupInviteStatus;
         expiresAt: string | null;
       };
@@ -300,6 +311,17 @@ export type ListManagedGroupPlayersResult =
   | {
       ok: true;
       groups: ManagedGroupDetails[];
+      managerCustomTrophiesEnabled: boolean;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type FetchManagedGroupDetailResult =
+  | {
+      ok: true;
+      group: ManagedGroupDetails;
       managerCustomTrophiesEnabled: boolean;
     }
   | {
@@ -508,6 +530,7 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
   const token = randomBytes(24).toString("hex");
   const tokenHash = hashInviteToken(token);
   const inviteLanguage = normalizeLanguage(input.language ?? currentUser.preferredLanguage);
+  const helperLanguage = normalizeExplainerLanguage(input.helperLanguage ?? inviteLanguage);
   const customMessage = normalizeGroupInviteCustomMessage(input.customMessage);
   if (customMessage.length > MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH) {
     return {
@@ -515,7 +538,7 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
       message: `Keep the custom message under ${MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH} characters.`
     };
   }
-  const claimUrl = buildGroupInviteClaimUrl(token, inviteLanguage);
+  const claimUrl = buildGroupInviteClaimUrl(token, inviteLanguage, helperLanguage);
   const expiresAt = new Date(Date.now() + normalizeExpiryDays(input.expiresInDays) * 24 * 60 * 60 * 1000).toISOString();
 
   console.info("Manager group invite claim link generated.", {
@@ -537,6 +560,7 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
       suggested_display_name: input.suggestedDisplayName?.trim() || null,
       custom_message: customMessage || null,
       language: inviteLanguage,
+      helper_language: helperLanguage,
       status: "pending",
       token_hash: tokenHash,
       expires_at: expiresAt
@@ -559,6 +583,7 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
     suggestedDisplayName: input.suggestedDisplayName?.trim() || null,
     customMessage: customMessage || null,
     language: inviteLanguage,
+    helperLanguage,
     claimUrl
   });
 
@@ -748,6 +773,37 @@ export async function listManagedGroupPlayersAction(): Promise<ListManagedGroupP
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not load managed group players."
+    };
+  }
+}
+
+export async function fetchManagedGroupDetailAction(groupId: string): Promise<FetchManagedGroupDetailResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedGroupId = groupId.trim();
+  if (!trimmedGroupId) {
+    return { ok: false, message: "Group id is required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const [group, managerCustomTrophiesEnabled] = await Promise.all([
+      fetchManagedGroupDetail(adminSupabase, currentUser.userId, currentUser.role, trimmedGroupId),
+      fetchBooleanAppSetting("manager_custom_trophies_enabled", false)
+    ]);
+
+    if (!group) {
+      return { ok: false, message: "That group could not be loaded." };
+    }
+
+    return { ok: true, group, managerCustomTrophiesEnabled };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load that group."
     };
   }
 }
@@ -1111,7 +1167,8 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
     const freshToken = randomBytes(24).toString("hex");
     const freshTokenHash = hashInviteToken(freshToken);
     const inviteLanguage = normalizeLanguage(invite.language ?? currentUser.preferredLanguage);
-    const claimUrl = buildGroupInviteClaimUrl(freshToken, inviteLanguage);
+    const helperLanguage = normalizeExplainerLanguage(invite.helper_language ?? inviteLanguage);
+    const claimUrl = buildGroupInviteClaimUrl(freshToken, inviteLanguage, helperLanguage);
     const refreshedExpiry = new Date(Date.now() + DEFAULT_INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const inviterProfile = await getUserLabel(adminSupabase, invite.invited_by_user_id ?? currentUser.userId);
 
@@ -1140,6 +1197,7 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
       suggestedDisplayName: invite.suggested_display_name ?? null,
       customMessage: invite.custom_message ?? null,
       language: inviteLanguage,
+      helperLanguage,
       claimUrl
     });
 
@@ -1458,9 +1516,11 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
 
   try {
     const adminSupabase = createAdminClient();
-    const managerLimits = await getManagerLimits(adminSupabase, currentUser.userId);
-    const groups = await fetchManagedGroups(adminSupabase, currentUser.userId, currentUser.role);
-    const joinedGroupCount = await fetchJoinedPlayerGroupCount(adminSupabase, currentUser.userId);
+    const [managerLimits, groups, joinedGroupCount] = await Promise.all([
+      getManagerLimits(adminSupabase, currentUser.userId),
+      fetchManagedGroups(adminSupabase, currentUser.userId, currentUser.role),
+      fetchJoinedPlayerGroupCount(adminSupabase, currentUser.userId)
+    ]);
 
     return {
       ok: true,
@@ -1505,7 +1565,7 @@ export async function fetchGroupInvitePreviewAction(token: string): Promise<Grou
     const tokenHash = hashInviteToken(trimmedToken);
     const { data, error } = await adminSupabase
       .from("group_invites")
-      .select("group_id,email,suggested_display_name,custom_message,language,status,expires_at,groups(name),invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
+      .select("group_id,email,suggested_display_name,custom_message,language,helper_language,status,expires_at,groups(name),invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
       .eq("token_hash", tokenHash)
       .maybeSingle();
 
@@ -1533,6 +1593,7 @@ export async function fetchGroupInvitePreviewAction(token: string): Promise<Grou
         suggestedDisplayName: data.suggested_display_name ?? null,
         customMessage: data.custom_message ?? null,
         language: normalizeLanguage((data as { language?: string | null }).language ?? null),
+        helperLanguage: normalizeExplainerLanguage((data as { helper_language?: string | null }).helper_language ?? null),
         status: data.status,
         expiresAt: data.expires_at ?? null
       }
@@ -1651,6 +1712,16 @@ async function fetchManagedGroups(
   userId: string,
   role: PlatformRole
 ): Promise<MyManagedGroup[]> {
+  const membershipRoleByGroup =
+    role === "admin" ? new Map<string, GroupMemberRole>() : await fetchMembershipRolesByGroup(adminSupabase, userId);
+  const managedIds = Array.from(
+    new Set(
+      Array.from(membershipRoleByGroup.entries())
+        .filter(([, membershipRole]) => membershipRole === "manager")
+        .map(([groupId]) => groupId)
+    )
+  );
+
   const { data: groups, error: groupsError } = role === "admin"
     ? await adminSupabase
         .from("groups")
@@ -1659,7 +1730,7 @@ async function fetchManagedGroups(
     : await adminSupabase
         .from("groups")
         .select("id,name,membership_limit,status,owner_user_id")
-        .or(`owner_user_id.eq.${userId},id.in.(${await managedGroupIdList(adminSupabase, userId)})`)
+        .or(`owner_user_id.eq.${userId},id.in.(${managedIds.length > 0 ? managedIds.join(",") : "00000000-0000-0000-0000-000000000000"})`)
         .order("created_at", { ascending: false });
 
   if (groupsError) {
@@ -1678,20 +1749,11 @@ async function fetchManagedGroups(
     return [];
   }
 
-  const groupIds = groupRows.map((group) => group.id);
-  const membershipRoleByGroup = await fetchMembershipRolesByGroup(adminSupabase, userId, groupIds);
-  const [memberCounts, pendingInviteCounts] = await Promise.all([
-    fetchCountsByGroup(adminSupabase, "group_members", groupIds),
-    fetchCountsByGroup(adminSupabase, "group_invites", groupIds, { status: "pending" })
-  ]);
-
   return groupRows.map((group) => ({
     id: group.id,
     name: group.name,
     membershipLimit: group.membership_limit,
     status: group.status,
-    memberCount: memberCounts.get(group.id) ?? 0,
-    pendingInviteCount: pendingInviteCounts.get(group.id) ?? 0,
     canManage: true,
     userRole:
       role === "admin"
@@ -1712,6 +1774,34 @@ async function fetchManagedGroupDetails(
     return [];
   }
 
+  return fetchManagedGroupDetailRows(adminSupabase, groups, role);
+}
+
+async function fetchManagedGroupDetail(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  role: PlatformRole,
+  groupId: string
+): Promise<ManagedGroupDetails | null> {
+  const groups = await fetchVisibleGroups(adminSupabase, userId, role);
+  const group = groups.find((entry) => entry.id === groupId);
+  if (!group) {
+    return null;
+  }
+
+  const [detail] = await fetchManagedGroupDetailRows(adminSupabase, [group], role);
+  return detail ?? null;
+}
+
+async function fetchManagedGroupDetailRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groups: MyManagedGroup[],
+  role: PlatformRole
+): Promise<ManagedGroupDetails[]> {
+  if (groups.length === 0) {
+    return [];
+  }
+
   const groupIds = groups.map((group) => group.id);
   const manageableGroupIds = groups.filter((group) => group.canManage).map((group) => group.id);
   const [memberResult, inviteResult, trophyResult] = await Promise.all([
@@ -1723,7 +1813,7 @@ async function fetchManagedGroupDetails(
     manageableGroupIds.length > 0
       ? adminSupabase
           .from("group_invites")
-          .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
+          .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,language,helper_language,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
           .in("group_id", manageableGroupIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
@@ -1840,6 +1930,19 @@ async function fetchManagedGroupDetails(
     );
   }
 
+  const memberCounts = new Map<string, number>();
+  for (const [groupId, members] of membersByGroup.entries()) {
+    memberCounts.set(groupId, members.length);
+  }
+
+  const pendingInviteCounts = new Map<string, number>();
+  for (const [groupId, invites] of invitesByGroup.entries()) {
+    pendingInviteCounts.set(
+      groupId,
+      invites.filter((invite) => invite.status === "pending").length
+    );
+  }
+
   const trophiesByGroup = new Map<string, ManagedGroupDetails["trophies"]>();
   for (const trophy of trophyRows) {
     if (trophy.group_id) {
@@ -1881,6 +1984,8 @@ async function fetchManagedGroupDetails(
 
   return groups.map((group) => ({
     ...group,
+    memberCount: memberCounts.get(group.id) ?? 0,
+    pendingInviteCount: group.canManage ? pendingInviteCounts.get(group.id) ?? 0 : 0,
     members: membersByGroup.get(group.id) ?? [],
     invites: invitesByGroup.get(group.id) ?? [],
     trophies: (trophiesByGroup.get(group.id) ?? []).sort((left, right) =>
@@ -1928,12 +2033,6 @@ async function fetchVisibleGroups(
     return [];
   }
 
-  const groupIds = groupRows.map((group) => group.id);
-  const [memberCounts, pendingInviteCounts] = await Promise.all([
-    fetchCountsByGroup(adminSupabase, "group_members", groupIds),
-    fetchCountsByGroup(adminSupabase, "group_invites", groupIds, { status: "pending" })
-  ]);
-
   return groupRows.map((group) => {
     const membershipRole = membershipRoleByGroup.get(group.id);
     const canManage = role === "admin" || group.owner_user_id === userId || membershipRole === "manager";
@@ -1943,8 +2042,6 @@ async function fetchVisibleGroups(
       name: group.name,
       membershipLimit: group.membership_limit,
       status: group.status,
-      memberCount: memberCounts.get(group.id) ?? 0,
-      pendingInviteCount: canManage ? pendingInviteCounts.get(group.id) ?? 0 : 0,
       canManage,
       userRole:
         role === "admin"
@@ -1952,21 +2049,6 @@ async function fetchVisibleGroups(
           : membershipRole ?? "viewer"
     };
   });
-}
-
-async function managedGroupIdList(adminSupabase: ReturnType<typeof createAdminClient>, userId: string) {
-  const { data, error } = await adminSupabase
-    .from("group_members")
-    .select("group_id")
-    .eq("user_id", userId)
-    .eq("role", "manager");
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  const ids = ((data ?? []) as Array<{ group_id: string }>).map((row) => row.group_id);
-  return ids.length > 0 ? ids.join(",") : "00000000-0000-0000-0000-000000000000";
 }
 
 async function allVisibleGroupIdList(adminSupabase: ReturnType<typeof createAdminClient>, userId: string) {
@@ -2007,31 +2089,6 @@ async function fetchMembershipRolesByGroup(
   }
 
   return roles;
-}
-
-async function fetchCountsByGroup(
-  adminSupabase: ReturnType<typeof createAdminClient>,
-  table: "group_members" | "group_invites",
-  groupIds: string[],
-  filters?: { status?: GroupInviteStatus }
-) {
-  let query = adminSupabase.from(table).select("group_id");
-  query = query.in("group_id", groupIds);
-  if (table === "group_invites" && filters?.status) {
-    query = query.eq("status", filters.status);
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  const counts = new Map<string, number>();
-  for (const row of ((data ?? []) as Array<{ group_id: string }>)) {
-    counts.set(row.group_id, (counts.get(row.group_id) ?? 0) + 1);
-  }
-
-  return counts;
 }
 
 async function getManagedGroup(
@@ -2220,7 +2277,7 @@ async function getManagedGroupInvite(
 ) {
   const { data, error } = await adminSupabase
     .from("group_invites")
-    .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,language,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error")
+    .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,language,helper_language,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error")
     .eq("id", inviteId)
     .maybeSingle();
 
@@ -2266,6 +2323,7 @@ async function enqueueGroupInviteEmail(
     suggestedDisplayName?: string | null;
     customMessage?: string | null;
     language?: string | null;
+    helperLanguage?: string | null;
     claimUrl: string;
   }
 ): Promise<EnqueueEmailJobResult> {
@@ -2284,7 +2342,8 @@ async function enqueueGroupInviteEmail(
       suggestedDisplayName: input.suggestedDisplayName ?? undefined,
       customMessage: input.customMessage ?? undefined,
       claimUrl: input.claimUrl,
-      language: preferredLanguage
+      language: preferredLanguage,
+      helperLanguage: input.helperLanguage ? normalizeExplainerLanguage(input.helperLanguage) : undefined
     },
     requested_by_admin_id: input.invitedByUserId
   });
@@ -2440,7 +2499,10 @@ function hashInviteToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function buildGroupInviteClaimUrl(token: string, language?: string | null) {
-  const path = appendLanguageToPath(`/my-groups?invite=${token}`, language);
+function buildGroupInviteClaimUrl(token: string, language?: string | null, helperLanguage?: string | null) {
+  const path = appendExplainerLanguageToPath(
+    appendLanguageToPath(`/my-groups?invite=${token}`, language),
+    helperLanguage
+  );
   return `${getPublicSiteUrl()}${path}`;
 }

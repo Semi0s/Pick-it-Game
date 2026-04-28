@@ -245,6 +245,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/api/knockout/status/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/knockout/status">> = Specific
+  const handler = {} as typeof import("../../app/api/knockout/status/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/api/leaderboard/comments/route.ts
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/leaderboard/comments">> = Specific
