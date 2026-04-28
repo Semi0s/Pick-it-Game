@@ -246,6 +246,7 @@ export async function createCommentNotification(input: {
   adminSupabase: ReturnType<typeof createAdminClient>;
   recipientUserId: string;
   eventId: string;
+  commentId: string;
   commenterName: string;
   body: string;
   scopeType: "global" | "group";
@@ -260,6 +261,7 @@ export async function createCommentNotification(input: {
       payload: {
         title: "💬 New Comment",
         body: "New comment on your activity 💬",
+        commentId: input.commentId,
         commenterName: input.commenterName,
         commentBody: input.body,
         scopeType: input.scopeType,
@@ -472,20 +474,28 @@ async function fetchExistingNotificationKeys(
   adminSupabase: ReturnType<typeof createAdminClient>,
   inserts: NotificationInsert[]
 ) {
-  const eventIds = Array.from(new Set(inserts.map((item) => item.event_id).filter(Boolean))) as string[];
-  if (eventIds.length === 0) {
-    return new Set<string>();
-  }
-
   const userIds = Array.from(new Set(inserts.map((item) => item.user_id)));
   const types = Array.from(new Set(inserts.map((item) => item.type)));
 
-  const { data, error } = await adminSupabase
+  let query = adminSupabase
     .from("user_notifications")
-    .select("user_id,event_id,type")
+    .select("user_id,event_id,type,payload")
     .in("user_id", userIds)
-    .in("event_id", eventIds)
     .in("type", types);
+
+  const eventBackedInserts = inserts.filter((item) => item.event_id && item.type !== "event_comment");
+  const nonEventBackedTypes = new Set(
+    inserts
+      .filter((item) => !item.event_id || item.type === "event_comment")
+      .map((item) => item.type)
+  );
+
+  if (eventBackedInserts.length > 0 && nonEventBackedTypes.size === 0) {
+    const eventIds = Array.from(new Set(eventBackedInserts.map((item) => item.event_id).filter(Boolean))) as string[];
+    query = query.in("event_id", eventIds);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     if (isMissingUserNotificationsTableError(error.message)) {
@@ -513,11 +523,15 @@ function notificationInsertKey(insert: {
   type: NotificationType;
   payload?: Record<string, unknown>;
 }) {
+  const commentId =
+    insert.type === "event_comment" && "payload" in insert && typeof insert.payload?.commentId === "string"
+      ? insert.payload.commentId
+      : "none";
   const trophyId =
     insert.type === "trophy_earned" && "payload" in insert && typeof insert.payload?.trophyId === "string"
       ? insert.payload.trophyId
       : "none";
-  return `${insert.user_id}:${insert.event_id ?? "none"}:${insert.type}:${trophyId}`;
+  return `${insert.user_id}:${insert.event_id ?? "none"}:${insert.type}:${commentId}:${trophyId}`;
 }
 
 function mapNotificationRow(row: NotificationRow): UserNotification {

@@ -27,6 +27,9 @@ export type UserProfile = {
   requiredEulaVersion?: string | null;
   acceptedEulaVersion?: string | null;
   acceptedEulaAt?: string | null;
+  currentEulaLanguage?: SupportedLanguage | null;
+  currentEulaTitle?: string | null;
+  currentEulaBody?: string | null;
   managerLimits?: {
     maxGroups: number;
     maxMembersPerGroup: number;

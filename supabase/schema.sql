@@ -36,6 +36,15 @@ create table public.invites (
   created_at timestamptz not null default now()
 );
 
+create table public.teams (
+  id text primary key,
+  name text not null,
+  short_name text not null,
+  group_name text not null,
+  fifa_rank integer,
+  flag_emoji text not null default ''
+);
+
 create table public.users (
   id uuid primary key references auth.users(id) on delete cascade,
   name text not null,
@@ -52,15 +61,6 @@ create table public.users (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint users_status_check check (status in ('active', 'inactive', 'suspended'))
-);
-
-create table public.teams (
-  id text primary key,
-  name text not null,
-  short_name text not null,
-  group_name text not null,
-  fifa_rank integer,
-  flag_emoji text not null default ''
 );
 
 create table public.matches (
@@ -215,6 +215,79 @@ create table public.group_invites (
   constraint group_invites_normalized_email_check check (normalized_email = lower(email))
 );
 
+create table public.prediction_scores (
+  prediction_id uuid not null references public.predictions(id) on delete cascade,
+  match_id text not null references public.matches(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  points integer not null default 0,
+  outcome_points integer not null default 0,
+  exact_score_points integer not null default 0,
+  goal_difference_points integer not null default 0,
+  scored_at timestamptz not null default now(),
+  primary key (prediction_id, match_id)
+);
+
+create table public.leaderboard_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  scope_type text not null check (scope_type in ('global', 'group')),
+  group_id uuid references public.groups(id) on delete cascade,
+  match_id text not null references public.matches(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  rank integer not null,
+  total_points integer not null default 0,
+  created_at timestamptz not null default now(),
+  constraint leaderboard_snapshots_scope_group_chk check (
+    (scope_type = 'global' and group_id is null)
+    or (scope_type = 'group' and group_id is not null)
+  )
+);
+
+create table public.leaderboard_events (
+  id uuid primary key default gen_random_uuid(),
+  event_type text not null check (
+    event_type in (
+      'points_awarded',
+      'perfect_pick',
+      'rank_moved_up',
+      'rank_moved_down',
+      'daily_winner',
+      'trophy_awarded'
+    )
+  ),
+  scope_type text not null check (scope_type in ('global', 'group')),
+  group_id uuid references public.groups(id) on delete cascade,
+  match_id text references public.matches(id) on delete cascade,
+  user_id uuid references public.users(id) on delete cascade,
+  related_user_id uuid references public.users(id) on delete cascade,
+  points_delta integer,
+  rank_delta integer,
+  message text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  constraint leaderboard_events_scope_group_chk check (
+    (scope_type = 'global' and group_id is null)
+    or (scope_type = 'group' and group_id is not null)
+  )
+);
+
+create table public.leaderboard_event_reactions (
+  id uuid primary key default gen_random_uuid(),
+  event_id uuid not null references public.leaderboard_events(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  emoji text not null,
+  created_at timestamptz not null default now(),
+  constraint leaderboard_event_reactions_unique unique (event_id, user_id, emoji)
+);
+
+create table public.leaderboard_event_comments (
+  id uuid primary key default gen_random_uuid(),
+  event_id uuid not null references public.leaderboard_events(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  body text not null,
+  created_at timestamptz not null default now(),
+  is_deleted boolean not null default false
+);
+
 create table public.user_notifications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
@@ -253,10 +326,22 @@ create unique index users_username_lower_unique_idx
   where username is not null;
 
 create unique index user_notifications_user_event_type_unique_idx
-  on public.user_notifications (user_id, event_id, type);
+  on public.user_notifications (user_id, event_id, type)
+  where event_id is not null
+    and type <> 'event_comment';
 
 create index user_notifications_user_created_idx
   on public.user_notifications (user_id, created_at desc);
+
+create unique index user_notifications_event_comment_unique_idx
+  on public.user_notifications (
+    user_id,
+    type,
+    (payload->>'commentId')
+  )
+  where type = 'event_comment'
+    and payload ? 'commentId'
+    and coalesce(payload->>'commentId', '') <> '';
 
 create unique index user_notifications_trophy_earned_unique_idx
   on public.user_notifications (
@@ -289,6 +374,113 @@ create unique index group_invites_active_group_email_idx
 
 create index manager_limits_user_id_idx
   on public.manager_limits (user_id);
+
+create index prediction_scores_match_id_idx
+  on public.prediction_scores (match_id);
+
+create index prediction_scores_user_id_idx
+  on public.prediction_scores (user_id);
+
+create index prediction_scores_scored_at_idx
+  on public.prediction_scores (scored_at desc);
+
+create index leaderboard_snapshots_match_id_idx
+  on public.leaderboard_snapshots (match_id);
+
+create index leaderboard_snapshots_scope_group_created_idx
+  on public.leaderboard_snapshots (scope_type, group_id, created_at desc);
+
+create unique index leaderboard_snapshots_global_match_user_unique_idx
+  on public.leaderboard_snapshots (match_id, user_id)
+  where scope_type = 'global' and group_id is null;
+
+create unique index leaderboard_snapshots_group_match_user_unique_idx
+  on public.leaderboard_snapshots (group_id, match_id, user_id)
+  where scope_type = 'group';
+
+create index leaderboard_events_match_idx
+  on public.leaderboard_events (match_id);
+
+create index leaderboard_events_scope_created_idx
+  on public.leaderboard_events (scope_type, created_at desc);
+
+create index leaderboard_events_group_created_idx
+  on public.leaderboard_events (group_id, created_at desc);
+
+create index leaderboard_events_type_idx
+  on public.leaderboard_events (event_type, created_at desc);
+
+create index leaderboard_events_user_idx
+  on public.leaderboard_events (user_id, created_at desc);
+
+create unique index leaderboard_events_scoring_global_unique_idx
+  on public.leaderboard_events (event_type, match_id, user_id)
+  where scope_type = 'global'
+    and group_id is null
+    and event_type in ('points_awarded', 'perfect_pick', 'rank_moved_up', 'rank_moved_down');
+
+create unique index leaderboard_events_scoring_group_unique_idx
+  on public.leaderboard_events (event_type, group_id, match_id, user_id)
+  where scope_type = 'group'
+    and group_id is not null
+    and event_type in ('points_awarded', 'perfect_pick', 'rank_moved_up', 'rank_moved_down');
+
+create unique index leaderboard_events_daily_winner_global_unique_idx
+  on public.leaderboard_events (event_type, user_id, (metadata->>'date'))
+  where event_type = 'daily_winner'
+    and scope_type = 'global'
+    and group_id is null
+    and metadata ? 'date'
+    and coalesce(metadata->>'date', '') <> '';
+
+create unique index leaderboard_events_daily_winner_group_unique_idx
+  on public.leaderboard_events (event_type, group_id, user_id, (metadata->>'date'))
+  where event_type = 'daily_winner'
+    and scope_type = 'group'
+    and group_id is not null
+    and metadata ? 'date'
+    and coalesce(metadata->>'date', '') <> '';
+
+create unique index leaderboard_events_trophy_awarded_global_unique_idx
+  on public.leaderboard_events (
+    event_type,
+    user_id,
+    related_user_id,
+    (metadata->>'trophy_id'),
+    coalesce(metadata->>'awarded_on', '')
+  )
+  where event_type = 'trophy_awarded'
+    and scope_type = 'global'
+    and group_id is null
+    and metadata ? 'trophy_id'
+    and coalesce(metadata->>'trophy_id', '') <> '';
+
+create unique index leaderboard_events_trophy_awarded_group_unique_idx
+  on public.leaderboard_events (
+    event_type,
+    group_id,
+    user_id,
+    related_user_id,
+    (metadata->>'trophy_id'),
+    coalesce(metadata->>'awarded_on', '')
+  )
+  where event_type = 'trophy_awarded'
+    and scope_type = 'group'
+    and group_id is not null
+    and metadata ? 'trophy_id'
+    and coalesce(metadata->>'trophy_id', '') <> '';
+
+create index leaderboard_event_reactions_event_id_idx
+  on public.leaderboard_event_reactions (event_id);
+
+create index leaderboard_event_reactions_user_id_idx
+  on public.leaderboard_event_reactions (user_id);
+
+create index leaderboard_event_comments_event_created_idx
+  on public.leaderboard_event_comments (event_id, created_at);
+
+create index leaderboard_event_comments_user_id_idx
+  on public.leaderboard_event_comments (user_id);
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -551,6 +743,13 @@ for each row execute function public.set_updated_at();
 create trigger set_user_settings_updated_at
 before update on public.user_settings
 for each row execute function public.set_updated_at();
+
+insert into public.app_settings (key, boolean_value)
+values
+  ('daily_winner_enabled', false),
+  ('perfect_pick_enabled', false),
+  ('leaderboard_activity_enabled', false)
+on conflict (key) do nothing;
 
 alter table public.invites enable row level security;
 alter table public.users enable row level security;
@@ -1114,6 +1313,12 @@ create table if not exists public.user_trophies (
 create unique index if not exists user_trophies_user_trophy_unique_idx
   on public.user_trophies (user_id, trophy_id);
 
+create index if not exists trophies_group_id_idx
+  on public.trophies (group_id);
+
+create index if not exists trophies_created_by_idx
+  on public.trophies (created_by);
+
 insert into public.trophies (key, name, description, icon, tier, award_source)
 values
   (
@@ -1226,7 +1431,9 @@ set
   description = excluded.description,
   icon = excluded.icon,
   tier = excluded.tier,
-  award_source = excluded.award_source;
+  award_source = excluded.award_source,
+  group_id = excluded.group_id,
+  created_by = excluded.created_by;
 
 create policy "Users can read own push tokens"
 on public.push_tokens for select

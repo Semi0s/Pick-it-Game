@@ -93,6 +93,15 @@ type TrophyNotificationRow = {
 type LegalDocumentRow = {
   language: string;
   required_version: string;
+  title: string;
+  body: string;
+};
+
+export type CurrentLegalDocument = {
+  language: SupportedLanguage;
+  requiredVersion: string;
+  title: string;
+  body: string;
 };
 
 type UserLegalAcceptanceRow = {
@@ -223,7 +232,7 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
       .maybeSingle(),
     supabase
       .from("legal_documents")
-      .select("language,required_version")
+      .select("language,required_version,title,body")
       .eq("document_type", DEFAULT_LEGAL_DOCUMENT_TYPE)
       .eq("is_active", true),
     supabase
@@ -284,7 +293,10 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
       needsLegalAcceptance,
       requiredEulaVersion,
       acceptedEulaVersion: latestLegalAcceptance?.document_version ?? null,
-      acceptedEulaAt: latestLegalAcceptance?.accepted_at ?? null
+      acceptedEulaAt: latestLegalAcceptance?.accepted_at ?? null,
+      currentEulaLanguage: resolvedLegalDocument ? normalizeLanguage(resolvedLegalDocument.language) : null,
+      currentEulaTitle: resolvedLegalDocument?.title ?? null,
+      currentEulaBody: resolvedLegalDocument?.body ?? null
     }
   );
 }
@@ -426,6 +438,49 @@ export async function fetchPendingTrophyCelebrations(): Promise<PendingTrophyCel
   return (((data as TrophyNotificationRow[] | null) ?? [])
     .map((row) => mapPendingTrophyCelebration(row))
     .filter((row): row is PendingTrophyCelebration => Boolean(row)));
+}
+
+export async function fetchCurrentLegalDocumentForProfile(
+  preferredLanguage?: string | null
+): Promise<CurrentLegalDocument | null> {
+  if (!hasSupabaseConfig()) {
+    return null;
+  }
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("legal_documents")
+    .select("language,required_version,title,body")
+    .eq("document_type", DEFAULT_LEGAL_DOCUMENT_TYPE)
+    .eq("is_active", true);
+
+  if (error) {
+    if (isMissingLegalTablesError(error.message)) {
+      return null;
+    }
+
+    console.error("Could not load current legal document for profile.", error);
+    return null;
+  }
+
+  const rows = ((data as LegalDocumentRow[] | null) ?? []).map((row) => ({
+    language: normalizeLanguage(row.language),
+    requiredVersion: row.required_version,
+    title: row.title,
+    body: row.body
+  }));
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const resolvedPreferredLanguage = normalizeLanguage(preferredLanguage);
+  return (
+    rows.find((row) => row.language === resolvedPreferredLanguage) ??
+    rows.find((row) => row.language === defaultLanguage) ??
+    rows[0] ??
+    null
+  );
 }
 
 export async function markTrophyCelebrationRead(notificationId: string): Promise<boolean> {
@@ -631,6 +686,9 @@ function mapUserRow(
     requiredEulaVersion: string | null;
     acceptedEulaVersion: string | null;
     acceptedEulaAt: string | null;
+    currentEulaLanguage?: SupportedLanguage | null;
+    currentEulaTitle?: string | null;
+    currentEulaBody?: string | null;
   }
 ): UserProfile {
   return {
@@ -651,6 +709,9 @@ function mapUserRow(
     requiredEulaVersion: legalStatus?.requiredEulaVersion ?? null,
     acceptedEulaVersion: legalStatus?.acceptedEulaVersion ?? null,
     acceptedEulaAt: legalStatus?.acceptedEulaAt ?? null,
+    currentEulaLanguage: legalStatus?.currentEulaLanguage ?? null,
+    currentEulaTitle: legalStatus?.currentEulaTitle ?? null,
+    currentEulaBody: legalStatus?.currentEulaBody ?? null,
     managerLimits: managerLimits
       ? {
           maxGroups: managerLimits.max_groups,

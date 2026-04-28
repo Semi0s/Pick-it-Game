@@ -81,11 +81,15 @@ export async function addLeaderboardEventComment(
     return { ok: false, message: eventRowError.message };
   }
 
-  const { error } = await adminSupabase.from("leaderboard_event_comments").insert({
-    event_id: eventId,
-    user_id: userResult.userId,
-    body: normalizedBody
-  });
+  const { data: insertedComment, error } = await adminSupabase
+    .from("leaderboard_event_comments")
+    .insert({
+      event_id: eventId,
+      user_id: userResult.userId,
+      body: normalizedBody
+    })
+    .select("id")
+    .single();
 
   if (error) {
     return { ok: false, message: error.message };
@@ -99,6 +103,7 @@ export async function addLeaderboardEventComment(
       adminSupabase,
       recipientUserId: leaderboardEvent.user_id,
       eventId,
+      commentId: ((insertedComment as { id: string } | null)?.id ?? ""),
       commenterName: commenterProfile?.name ?? "Player",
       body: normalizedBody,
       scopeType: leaderboardEvent.scope_type,

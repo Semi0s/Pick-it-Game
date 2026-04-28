@@ -134,6 +134,13 @@ export type ScoreMatchResult =
       message: string;
     };
 
+type SkippedScoreMatchResult = {
+  ok: true;
+  scored: false;
+  predictionsScored: number;
+  message: string;
+};
+
 export type UpdateMatchResultInput = {
   id: string;
   status: MatchRow["status"];
@@ -1710,6 +1717,70 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
   }
 
   const adminSupabase = createAdminClient();
+  const scoreableMatchResult = await loadScoreableMatch(adminSupabase, matchId);
+  if (!scoreableMatchResult.ok) {
+    return scoreableMatchResult;
+  }
+
+  if (!scoreableMatchResult.scoreable) {
+    return scoreableMatchResult.result;
+  }
+
+  const predictionsResult = await loadPredictionsForMatch(adminSupabase, matchId);
+  if (!predictionsResult.ok) {
+    return predictionsResult;
+  }
+
+  const scoredPredictions = scorePredictionsForMatch(scoreableMatchResult.match, predictionsResult.predictions);
+
+  const persistedScoresResult = await persistPredictionScores(adminSupabase, scoredPredictions);
+  if (!persistedScoresResult.ok) {
+    return persistedScoresResult;
+  }
+
+  const trophiesAndNotificationsResult = await awardScoringRelatedTrophiesAndNotifications(adminSupabase, matchId, scoredPredictions);
+  if (!trophiesAndNotificationsResult.ok) {
+    return trophiesAndNotificationsResult;
+  }
+
+  // Totals and snapshots must reflect the newly persisted prediction rows before movement-based events are rebuilt.
+  const leaderboardResult = await recalculateLeaderboardWithSnapshots(adminSupabase, matchId);
+  if (!leaderboardResult.ok) {
+    return leaderboardResult;
+  }
+
+  const leaderboardEventsResult = await rebuildLeaderboardEventsForMatch(adminSupabase, matchId, scoredPredictions);
+  if (!leaderboardEventsResult.ok) {
+    return leaderboardEventsResult;
+  }
+
+  revalidatePath("/");
+  revalidatePath("/leaderboard");
+  revalidatePath("/predictions");
+  revalidatePath("/admin/matches");
+  revalidatePath("/profile");
+  revalidatePath("/trophies");
+
+  return {
+    ok: true,
+    scored: true,
+    predictionsScored: predictionsResult.predictions.length,
+    message:
+      predictionsResult.predictions.length === 0
+        ? `Match saved as final, but no Supabase prediction rows were found for match ${matchId}.`
+        : `Match saved and ${predictionsResult.predictions.length} predictions scored.`
+  };
+}
+
+async function loadScoreableMatch(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchId: string
+):
+  Promise<
+    | { ok: false; message: string }
+    | { ok: true; scoreable: false; result: SkippedScoreMatchResult }
+    | { ok: true; scoreable: true; match: ReturnType<typeof mapMatchRow> }
+  > {
   const { data: match, error: matchError } = await adminSupabase
     .from("matches")
     .select("id,stage,status,home_team_id,away_team_id,home_score,away_score,winner_team_id")
@@ -1724,12 +1795,23 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
   if (!canScoreGroupMatch(mappedMatch)) {
     return {
       ok: true,
-      scored: false,
-      predictionsScored: 0,
-      message: "Match saved. Scoring skipped because this is not a finalized group-stage match with scores."
+      scoreable: false,
+      result: {
+        ok: true,
+        scored: false,
+        predictionsScored: 0,
+        message: "Match saved. Scoring skipped because this is not a finalized group-stage match with scores."
+      }
     };
   }
 
+  return { ok: true, scoreable: true, match: mappedMatch };
+}
+
+async function loadPredictionsForMatch(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchId: string
+): Promise<{ ok: true; predictions: PredictionRow[] } | { ok: false; message: string }> {
   const { data: predictions, error: predictionsError } = await adminSupabase
     .from("predictions")
     .select(
@@ -1741,8 +1823,11 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
     return { ok: false, message: predictionsError.message };
   }
 
-  const predictionRows = (predictions ?? []) as PredictionRow[];
-  const scoredPredictions = predictionRows.map((prediction) => {
+  return { ok: true, predictions: (predictions ?? []) as PredictionRow[] };
+}
+
+function scorePredictionsForMatch(match: ReturnType<typeof mapMatchRow>, predictions: PredictionRow[]): ScoredPrediction[] {
+  return predictions.map((prediction) => {
     const scoreBreakdown = scoreGroupStagePrediction(
       {
         predictedWinnerTeamId: prediction.predicted_winner_team_id,
@@ -1750,7 +1835,7 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
         predictedHomeScore: prediction.predicted_home_score,
         predictedAwayScore: prediction.predicted_away_score
       },
-      mappedMatch
+      match
     );
 
     return {
@@ -1760,7 +1845,12 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
       scoreBreakdown
     };
   });
+}
 
+async function persistPredictionScores(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  scoredPredictions: ScoredPrediction[]
+): Promise<{ ok: true } | { ok: false; message: string }> {
   const predictionUpdates = scoredPredictions.map((prediction) =>
     adminSupabase
       .from("predictions")
@@ -1776,64 +1866,65 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
     return { ok: false, message: failedPredictionUpdate.error.message };
   }
 
-  if (scoredPredictions.length > 0) {
-    const { error: predictionScoresError } = await adminSupabase
-      .from("prediction_scores")
-      .upsert(
-        scoredPredictions.map((prediction) => ({
-          prediction_id: prediction.predictionId,
-          match_id: prediction.matchId,
-          user_id: prediction.userId,
-          points: prediction.scoreBreakdown.points,
-          outcome_points: prediction.scoreBreakdown.outcome_points,
-          exact_score_points: prediction.scoreBreakdown.exact_score_points,
-          goal_difference_points: prediction.scoreBreakdown.goal_difference_points,
-          scored_at: new Date().toISOString()
-        })),
-        { onConflict: "prediction_id,match_id" }
-      );
-
-    if (predictionScoresError) {
-      return { ok: false, message: predictionScoresError.message };
-    }
-
-    const trophyResult = await awardPerfectPickFirstTrophy(adminSupabase, scoredPredictions);
-    if (!trophyResult.ok) {
-      return trophyResult;
-    }
+  if (scoredPredictions.length === 0) {
+    return { ok: true };
   }
 
-  const leaderboardResult = await recalculateLeaderboard(adminSupabase, matchId);
-  if (!leaderboardResult.ok) {
-    return leaderboardResult;
+  const { error: predictionScoresError } = await adminSupabase
+    .from("prediction_scores")
+    .upsert(
+      scoredPredictions.map((prediction) => ({
+        prediction_id: prediction.predictionId,
+        match_id: prediction.matchId,
+        user_id: prediction.userId,
+        points: prediction.scoreBreakdown.points,
+        outcome_points: prediction.scoreBreakdown.outcome_points,
+        exact_score_points: prediction.scoreBreakdown.exact_score_points,
+        goal_difference_points: prediction.scoreBreakdown.goal_difference_points,
+        scored_at: new Date().toISOString()
+      })),
+      { onConflict: "prediction_id,match_id" }
+    );
+
+  if (predictionScoresError) {
+    return { ok: false, message: predictionScoresError.message };
   }
 
+  return { ok: true };
+}
+
+async function recalculateLeaderboardWithSnapshots(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  return recalculateLeaderboard(adminSupabase, matchId);
+}
+
+async function rebuildLeaderboardEventsForMatch(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchId: string,
+  scoredPredictions: ScoredPrediction[]
+): Promise<{ ok: true } | { ok: false; message: string }> {
   const eventResult = await recreateGlobalLeaderboardEventsForMatch(adminSupabase, matchId, scoredPredictions);
   if (!eventResult.ok) {
     return eventResult;
   }
 
-  const groupEventResult = await recreateGroupLeaderboardEventsForMatch(adminSupabase, matchId, scoredPredictions);
-  if (!groupEventResult.ok) {
-    return groupEventResult;
+  return recreateGroupLeaderboardEventsForMatch(adminSupabase, matchId, scoredPredictions);
+}
+
+async function awardScoringRelatedTrophiesAndNotifications(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchId: string,
+  scoredPredictions: ScoredPrediction[]
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  void matchId;
+
+  if (scoredPredictions.length === 0) {
+    return { ok: true };
   }
 
-  revalidatePath("/");
-  revalidatePath("/leaderboard");
-  revalidatePath("/predictions");
-  revalidatePath("/admin/matches");
-  revalidatePath("/profile");
-  revalidatePath("/trophies");
-
-  return {
-    ok: true,
-    scored: true,
-    predictionsScored: predictionRows.length,
-    message:
-      predictionRows.length === 0
-        ? `Match saved as final, but no Supabase prediction rows were found for match ${matchId}.`
-        : `Match saved and ${predictionRows.length} predictions scored.`
-  };
+  return awardPerfectPickFirstTrophy(adminSupabase, scoredPredictions);
 }
 
 async function awardPerfectPickFirstTrophy(

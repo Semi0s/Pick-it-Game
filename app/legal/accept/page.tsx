@@ -11,6 +11,10 @@ export default async function LegalAcceptPage({
 }) {
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const nextPath = typeof resolvedSearchParams.next === "string" ? resolvedSearchParams.next : undefined;
+  const viewMode =
+    resolvedSearchParams.view === "1" ||
+    resolvedSearchParams.view === "true" ||
+    (Array.isArray(resolvedSearchParams.view) && resolvedSearchParams.view.includes("1"));
   const supabase = await createServerSupabaseClient();
   const {
     data: { user }
@@ -31,11 +35,18 @@ export default async function LegalAcceptPage({
     getLegalDocuments(DEFAULT_LEGAL_DOCUMENT_TYPE, supportedLanguages)
   ]);
 
-  if (!acceptanceStatus.needsAcceptance) {
+  const fallbackDocument =
+    document ??
+    documents.find((item) => item.language === preferredLanguage) ??
+    documents.find((item) => item.language === defaultLanguage) ??
+    documents[0] ??
+    null;
+
+  if (!acceptanceStatus.needsAcceptance && !viewMode) {
     redirect(nextPath?.startsWith("/") ? nextPath : "/dashboard");
   }
 
-  if (!document) {
+  if (!fallbackDocument) {
     return (
       <main className="min-h-screen bg-white px-4 py-8">
         <section className="mx-auto max-w-2xl space-y-5">
@@ -55,10 +66,10 @@ export default async function LegalAcceptPage({
     <main className="min-h-screen bg-white px-4 py-8">
       <section className="mx-auto max-w-2xl">
         <LegalAcceptanceForm
-          documentType={document.documentType}
-          documentLanguage={document.language}
-          currentVersion={document.requiredVersion}
-          title={document.title}
+          documentType={fallbackDocument.documentType}
+          documentLanguage={fallbackDocument.language}
+          currentVersion={fallbackDocument.requiredVersion}
+          title={fallbackDocument.title}
           documents={
             documents.length > 0
               ? documents.map((item) => ({
@@ -68,9 +79,9 @@ export default async function LegalAcceptPage({
                 }))
               : [
                   {
-                    language: document.language ?? defaultLanguage,
-                    title: document.title,
-                    body: document.body
+                    language: fallbackDocument.language ?? defaultLanguage,
+                    title: fallbackDocument.title,
+                    body: fallbackDocument.body
                   }
                 ]
           }

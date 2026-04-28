@@ -6,6 +6,7 @@ import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import {
   clearCurrentUserAvatar,
+  fetchCurrentLegalDocumentForProfile,
   fetchCurrentUserTrophies,
   registerCurrentBrowserPushNotifications,
   sendCurrentUserPasswordReset,
@@ -15,14 +16,16 @@ import {
   uploadCurrentUserAvatar
 } from "@/lib/auth-client";
 import { getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-levels";
+import type { LegalDocument } from "@/lib/legal";
 import { getStrings } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
 import type { UserTrophy } from "@/lib/types";
+import type { CurrentLegalDocument } from "@/lib/auth-client";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 
-export function ProfileSummary() {
+export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?: LegalDocument | null }) {
   const { user, isLoading, refresh } = useCurrentUser();
   const [passwordMessage, setPasswordMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [notificationMessage, setNotificationMessage] = useState<{ tone: "success" | "error"; text: string } | null>(
@@ -36,6 +39,16 @@ export function ProfileSummary() {
   const [isUpdatingLanguage, setIsUpdatingLanguage] = useState(false);
   const [trophies, setTrophies] = useState<UserTrophy[]>([]);
   const [isLoadingTrophies, setIsLoadingTrophies] = useState(true);
+  const [currentLegalDocument, setCurrentLegalDocument] = useState<CurrentLegalDocument | null>(
+    initialLegalDocument
+      ? {
+          language: initialLegalDocument.language,
+          requiredVersion: initialLegalDocument.requiredVersion,
+          title: initialLegalDocument.title,
+          body: initialLegalDocument.body
+        }
+      : null
+  );
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -76,6 +89,23 @@ export function ProfileSummary() {
     };
   }, [user?.id]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCurrentLegalDocument() {
+      const document = await fetchCurrentLegalDocumentForProfile(user?.preferredLanguage);
+      if (isMounted) {
+        setCurrentLegalDocument(document);
+      }
+    }
+
+    void loadCurrentLegalDocument();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.preferredLanguage]);
+
   if (isLoading || !user) {
     return (
       <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
@@ -84,13 +114,6 @@ export function ProfileSummary() {
     );
   }
 
-  const acceptedTermsLabel = user.acceptedEulaAt
-    ? new Intl.DateTimeFormat("en-US", {
-        dateStyle: "medium",
-        timeStyle: "short",
-        timeZoneName: "short"
-      }).format(new Date(user.acceptedEulaAt))
-    : "Not accepted yet";
   const copy = getStrings(user.preferredLanguage);
 
   return (
@@ -258,24 +281,39 @@ export function ProfileSummary() {
 
       <div className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">{copy.termsOfUse}</h3>
-        <p className="mt-2 text-sm leading-6 text-gray-600">
-          Current required version: <span className="font-bold text-gray-900">{user.requiredEulaVersion ?? "Not configured"}</span>
-        </p>
-        <p className="mt-2 text-sm leading-6 text-gray-600">
-          Accepted version: <span className="font-bold text-gray-900">{user.acceptedEulaVersion ?? "Not accepted yet"}</span>
-        </p>
-        <p className="mt-2 text-sm leading-6 text-gray-600">
-          {copy.language}: <span className="font-bold text-gray-900">{user.preferredLanguage === "es" ? copy.spanish : copy.english}</span>
-        </p>
-        <p className="mt-2 text-sm leading-6 text-gray-600">
-          Accepted on: <span className="font-bold text-gray-900">{acceptedTermsLabel}</span>
-        </p>
-        <a
-          href="/legal/accept"
-          className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-        >
-          View Current Terms
-        </a>
+        <div className="mt-4 rounded-md bg-gray-100 px-4 py-4">
+          <p className="text-sm font-bold text-gray-900">
+            {currentLegalDocument?.title ?? user.currentEulaTitle ?? copy.termsOfUse}
+          </p>
+          <p className="mt-1 text-xs font-semibold text-gray-500">
+            {(currentLegalDocument?.body ?? user.currentEulaBody)
+              ? `Showing the active ${copy.termsOfUse.toLowerCase()} in ${
+                  (currentLegalDocument?.language ?? user.currentEulaLanguage) === "es" ? copy.spanish : copy.english
+                }.`
+              : "The active terms are not available in this profile view right now."}
+          </p>
+          {(currentLegalDocument?.body ?? user.currentEulaBody) ? (
+            <div className="mt-3 max-h-56 overflow-y-auto whitespace-pre-wrap text-sm font-semibold leading-6 text-gray-700">
+              {currentLegalDocument?.body ?? user.currentEulaBody}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">
+              Use the button below to open the current acceptance screen and review the active terms directly.
+            </p>
+          )}
+        </div>
+        {user.needsLegalAcceptance ? (
+          <a
+            href="/legal/accept?next=/profile"
+            className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Review and Accept Terms
+          </a>
+        ) : (
+          <p className="mt-4 text-sm font-semibold text-gray-600">
+            You&apos;re current on the active terms shown above.
+          </p>
+        )}
       </div>
 
       {user.role === "admin" ? (
