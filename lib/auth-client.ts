@@ -1,6 +1,7 @@
 "use client";
 
 import { DEFAULT_LEGAL_DOCUMENT_TYPE } from "@/lib/legal";
+import { appendLanguageToPath, defaultLanguage, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { teams } from "@/lib/mock-data";
 import { getPublicWebPushVapidKey } from "@/lib/push-config";
 import {
@@ -30,6 +31,7 @@ export type PushRegistrationResult = AuthResult;
 type AuthOptions = {
   nextPath?: string;
   flow?: string;
+  language?: string;
 };
 
 type UserRow = {
@@ -38,6 +40,7 @@ type UserRow = {
   email: string;
   avatar_url?: string | null;
   home_team_id?: string | null;
+  preferred_language?: string | null;
   role: UserProfile["role"];
   username?: string | null;
   username_set_at?: string | null;
@@ -87,10 +90,12 @@ type TrophyNotificationRow = {
 };
 
 type LegalDocumentRow = {
+  language: string;
   required_version: string;
 };
 
 type UserLegalAcceptanceRow = {
+  language: string;
   document_version: string;
   accepted_at: string;
 };
@@ -121,9 +126,10 @@ export async function authenticateWithEmail(
   const loginReturnPath = buildLoginReturnPath({
     confirmed: true,
     nextPath: options?.nextPath,
-    flow: options?.flow
+    flow: options?.flow,
+    language: options?.language
   });
-  const signupRedirectUrl = `${getSiteUrl()}/auth/callback?next=${encodeURIComponent(loginReturnPath)}`;
+  const signupRedirectUrl = buildAuthCallbackUrl(loginReturnPath, options?.language);
   if (mode === "signup") {
     console.info("Starting signup with confirmation redirect.", {
       email: normalizedEmail,
@@ -199,7 +205,7 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
   const [{ data: profile }, { data: managerLimits }, userSettingsResult, pushTokensResult, legalDocumentResult, legalAcceptanceResult] = await Promise.all([
     supabase
       .from("users")
-      .select("id,name,email,avatar_url,home_team_id,role,username,username_set_at,needs_profile_setup,total_points")
+      .select("id,name,email,avatar_url,home_team_id,preferred_language,role,username,username_set_at,needs_profile_setup,total_points")
       .eq("id", session.user.id)
       .single(),
     supabase
@@ -220,40 +226,45 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
       .maybeSingle(),
     supabase
       .from("legal_documents")
-      .select("required_version")
+      .select("language,required_version")
       .eq("document_type", DEFAULT_LEGAL_DOCUMENT_TYPE)
-      .eq("is_active", true)
-      .maybeSingle(),
+      .eq("is_active", true),
     supabase
       .from("user_legal_acceptances")
-      .select("document_version,accepted_at")
+      .select("language,document_version,accepted_at")
       .eq("user_id", session.user.id)
       .eq("document_type", DEFAULT_LEGAL_DOCUMENT_TYPE)
       .order("accepted_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
+      .limit(10)
   ]);
 
+  const profileRow = (profile as UserRow | null) ?? null;
+  const preferredLanguage = normalizeLanguage(profileRow?.preferred_language);
   const notificationsEnabled = isMissingUserSettingsTableError(userSettingsResult.error?.message)
     ? false
     : ((userSettingsResult.data as UserSettingsRow | null)?.notifications_enabled ?? false);
   const pushNotificationsEnabled = isMissingPushTokensTableError(pushTokensResult.error?.message)
     ? false
     : Boolean((pushTokensResult.data as PushTokenRow | null)?.id);
-  const requiredEulaVersion = isMissingLegalTablesError(legalDocumentResult.error?.message)
-    ? null
-    : ((legalDocumentResult.data as LegalDocumentRow | null)?.required_version ?? null);
-  const latestLegalAcceptance = isMissingLegalTablesError(legalAcceptanceResult.error?.message)
-    ? null
-    : ((legalAcceptanceResult.data as UserLegalAcceptanceRow | null) ?? null);
+  const requiredLegalDocuments = isMissingLegalTablesError(legalDocumentResult.error?.message)
+    ? []
+    : ((legalDocumentResult.data as LegalDocumentRow[] | null) ?? []);
+  const resolvedLegalDocument = resolvePreferredLegalDocument(requiredLegalDocuments, preferredLanguage);
+  const legalAcceptances = isMissingLegalTablesError(legalAcceptanceResult.error?.message)
+    ? []
+    : ((legalAcceptanceResult.data as UserLegalAcceptanceRow[] | null) ?? []);
+  const latestLegalAcceptance = resolvedLegalDocument
+    ? legalAcceptances.find((acceptance) => normalizeLanguage(acceptance.language) === resolvedLegalDocument.language) ?? null
+    : null;
+  const requiredEulaVersion = resolvedLegalDocument?.required_version ?? null;
   const needsLegalAcceptance = Boolean(
     requiredEulaVersion &&
       (!latestLegalAcceptance || latestLegalAcceptance.document_version !== requiredEulaVersion)
   );
 
-  if (profile) {
+  if (profileRow) {
     return mapUserRow(
-      profile as UserRow,
+      profileRow,
       (managerLimits as ManagerLimitsRow | null) ?? null,
       notificationsEnabled,
       pushNotificationsEnabled,
@@ -271,6 +282,7 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
     name: session.user.email?.split("@")[0] ?? "Player",
     email: session.user.email ?? "",
     homeTeamId: null,
+    preferredLanguage,
     role: "player",
     accessLevel: managerLimits ? "manager" : "player",
     username: null,
@@ -589,6 +601,37 @@ export async function updateCurrentUserHomeTeam(homeTeamId: string | null): Prom
   };
 }
 
+export async function updateCurrentUserPreferredLanguage(language: string): Promise<AuthResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Language preferences need a configured Supabase project." };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to update your language." };
+  }
+
+  const preferredLanguage = normalizeLanguage(language);
+  const { error } = await supabase
+    .from("users")
+    .update({ preferred_language: preferredLanguage })
+    .eq("id", user.id);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  return {
+    ok: true,
+    message: preferredLanguage === "es" ? "Language updated to Spanish." : "Language updated to English."
+  };
+}
+
 export function isUsingDemoAuthFallback() {
   return !hasSupabaseConfig();
 }
@@ -611,6 +654,7 @@ function mapUserRow(
     email: row.email,
     avatarUrl: row.avatar_url ?? undefined,
     homeTeamId: row.home_team_id ?? null,
+    preferredLanguage: normalizeLanguage(row.preferred_language),
     role: row.role,
     accessLevel: row.role === "admin" ? "super_admin" : managerLimits ? "manager" : "player",
     username: row.username ?? null,
@@ -630,6 +674,11 @@ function mapUserRow(
       : null,
     totalPoints: row.total_points
   };
+}
+
+function resolvePreferredLegalDocument(rows: LegalDocumentRow[], preferredLanguage: SupportedLanguage) {
+  const rowsByLanguage = new Map(rows.map((row) => [normalizeLanguage(row.language), row]));
+  return rowsByLanguage.get(preferredLanguage) ?? rowsByLanguage.get(defaultLanguage) ?? null;
 }
 
 function getAvatarExtension(mimeType: string) {
@@ -818,7 +867,7 @@ function isMissingLegalTablesError(message?: string) {
   return isMissingAnyRelationError(message, ["legal_documents", "user_legal_acceptances"]);
 }
 
-function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; flow?: string }) {
+function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; flow?: string; language?: string }) {
   const params = new URLSearchParams();
 
   if (input.confirmed) {
@@ -833,11 +882,25 @@ function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; f
   }
 
   if (input.nextPath?.startsWith("/")) {
-    params.set("next", input.nextPath);
+    params.set("next", appendLanguageToPath(input.nextPath, input.language));
+  }
+
+  if (input.language) {
+    params.set("lang", normalizeLanguage(input.language));
   }
 
   const query = params.toString();
   return query ? `/login?${query}` : "/login";
+}
+
+function buildAuthCallbackUrl(nextPath: string, language?: string | null) {
+  const callbackUrl = new URL("/auth/callback", getSiteUrl());
+  callbackUrl.searchParams.set("next", appendLanguageToPath(nextPath, language));
+  if (language) {
+    callbackUrl.searchParams.set("lang", normalizeLanguage(language));
+  }
+
+  return callbackUrl.toString();
 }
 
 function mapPendingTrophyCelebration(row: TrophyNotificationRow): PendingTrophyCelebration | null {

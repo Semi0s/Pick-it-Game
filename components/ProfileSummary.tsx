@@ -10,10 +10,12 @@ import {
   registerCurrentBrowserPushNotifications,
   sendCurrentUserPasswordReset,
   updateCurrentUserHomeTeam,
+  updateCurrentUserPreferredLanguage,
   updateCurrentUserNotificationPreferences,
   uploadCurrentUserAvatar
 } from "@/lib/auth-client";
 import { getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-levels";
+import { getStrings } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
 import type { UserTrophy } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -31,6 +33,7 @@ export function ProfileSummary() {
   const [isUpdatingNotifications, setIsUpdatingNotifications] = useState(false);
   const [isRegisteringPush, setIsRegisteringPush] = useState(false);
   const [isUpdatingHomeTeam, setIsUpdatingHomeTeam] = useState(false);
+  const [isUpdatingLanguage, setIsUpdatingLanguage] = useState(false);
   const [trophies, setTrophies] = useState<UserTrophy[]>([]);
   const [isLoadingTrophies, setIsLoadingTrophies] = useState(true);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
@@ -88,6 +91,7 @@ export function ProfileSummary() {
         timeZoneName: "short"
       }).format(new Date(user.acceptedEulaAt))
     : "Not accepted yet";
+  const copy = getStrings(user.preferredLanguage);
 
   return (
     <section className="space-y-5">
@@ -206,6 +210,30 @@ export function ProfileSummary() {
             ))}
           </select>
         </label>
+        <label className="mt-4 block">
+          <span className="text-sm font-bold text-gray-800">{copy.language}</span>
+          <select
+            value={user.preferredLanguage ?? "en"}
+            disabled={isUpdatingLanguage}
+            onChange={async (event) => {
+              setIsUpdatingLanguage(true);
+              setNotificationMessage(null);
+              const result = await updateCurrentUserPreferredLanguage(event.target.value);
+              setNotificationMessage({
+                tone: result.ok ? "success" : "error",
+                text: result.message ?? "Something went wrong."
+              });
+              if (result.ok) {
+                await refresh();
+              }
+              setIsUpdatingLanguage(false);
+            }}
+            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+          >
+            <option value="en">{copy.english}</option>
+            <option value="es">{copy.spanish}</option>
+          </select>
+        </label>
       </div>
 
       <div className="rounded-lg border border-gray-200 p-4">
@@ -229,12 +257,15 @@ export function ProfileSummary() {
       </div>
 
       <div className="rounded-lg border border-gray-200 p-4">
-        <h3 className="text-lg font-bold">Terms of Use</h3>
+        <h3 className="text-lg font-bold">{copy.termsOfUse}</h3>
         <p className="mt-2 text-sm leading-6 text-gray-600">
           Current required version: <span className="font-bold text-gray-900">{user.requiredEulaVersion ?? "Not configured"}</span>
         </p>
         <p className="mt-2 text-sm leading-6 text-gray-600">
           Accepted version: <span className="font-bold text-gray-900">{user.acceptedEulaVersion ?? "Not accepted yet"}</span>
+        </p>
+        <p className="mt-2 text-sm leading-6 text-gray-600">
+          {copy.language}: <span className="font-bold text-gray-900">{user.preferredLanguage === "es" ? copy.spanish : copy.english}</span>
         </p>
         <p className="mt-2 text-sm leading-6 text-gray-600">
           Accepted on: <span className="font-bold text-gray-900">{acceptedTermsLabel}</span>

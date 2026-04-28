@@ -1,3 +1,5 @@
+import type { SupportedLanguage } from "@/lib/i18n";
+
 export type UserRole = "player" | "admin";
 export type UserStatus = "active" | "inactive" | "suspended";
 export type AccessLevel = "player" | "manager" | "super_admin";
@@ -12,6 +14,7 @@ export type UserProfile = {
   email: string;
   avatarUrl?: string;
   homeTeamId?: string | null;
+  preferredLanguage?: SupportedLanguage;
   trophies?: UserTrophy[];
   role: UserRole;
   accessLevel?: AccessLevel;

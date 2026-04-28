@@ -3,6 +3,8 @@
 import { createHash, randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { fetchBooleanAppSetting } from "@/lib/app-settings";
+import { buildGroupInviteEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
+import { appendLanguageToPath, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendTransactionalEmail } from "@/lib/email-sender";
 import { createTrophyEarnedNotifications } from "@/lib/notifications";
@@ -24,6 +26,7 @@ type CurrentUserContext =
       userId: string;
       email: string;
       role: PlatformRole;
+      preferredLanguage: SupportedLanguage;
     }
   | {
       ok: false;
@@ -54,6 +57,7 @@ type GroupInviteRow = {
   normalized_email: string;
   invited_by_user_id: string | null;
   suggested_display_name?: string | null;
+  language?: string | null;
   status: GroupInviteStatus;
   token_hash: string;
   expires_at?: string | null;
@@ -71,6 +75,7 @@ type GroupInviteRecord = {
   normalized_email: string;
   invited_by_user_id: string | null;
   suggested_display_name?: string | null;
+  language?: string | null;
   status: GroupInviteStatus;
   expires_at?: string | null;
   accepted_by_user_id?: string | null;
@@ -140,6 +145,7 @@ export type CreateGroupInviteInput = {
   groupId: string;
   email: string;
   suggestedDisplayName?: string;
+  language?: string;
   expiresInDays?: number;
 };
 
@@ -244,6 +250,7 @@ export type FetchMyGroupsResult =
         userId: string;
         email: string;
         role: PlatformRole;
+        preferredLanguage: SupportedLanguage;
       };
       managerAccess: {
         enabled: boolean;
@@ -271,6 +278,7 @@ export type GroupInvitePreviewResult =
         inviterLabel: string;
         email: string;
         suggestedDisplayName?: string | null;
+        language?: SupportedLanguage;
         status: GroupInviteStatus;
         expiresAt: string | null;
       };
@@ -484,7 +492,8 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
 
   const token = randomBytes(24).toString("hex");
   const tokenHash = hashInviteToken(token);
-  const claimUrl = buildGroupInviteClaimUrl(token);
+  const inviteLanguage = normalizeLanguage(input.language ?? currentUser.preferredLanguage);
+  const claimUrl = buildGroupInviteClaimUrl(token, inviteLanguage);
   const expiresAt = new Date(Date.now() + normalizeExpiryDays(input.expiresInDays) * 24 * 60 * 60 * 1000).toISOString();
 
   console.info("Manager group invite claim link generated.", {
@@ -504,6 +513,7 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
       normalized_email: normalizedEmail,
       invited_by_user_id: currentUser.userId,
       suggested_display_name: input.suggestedDisplayName?.trim() || null,
+      language: inviteLanguage,
       status: "pending",
       token_hash: tokenHash,
       expires_at: expiresAt
@@ -524,6 +534,7 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
     inviterName: inviterProfile.name,
     inviterEmail: inviterProfile.email,
     suggestedDisplayName: input.suggestedDisplayName?.trim() || null,
+    language: inviteLanguage,
     claimUrl
   });
 
@@ -1070,7 +1081,8 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
 
     const freshToken = randomBytes(24).toString("hex");
     const freshTokenHash = hashInviteToken(freshToken);
-    const claimUrl = buildGroupInviteClaimUrl(freshToken);
+    const inviteLanguage = normalizeLanguage(invite.language ?? currentUser.preferredLanguage);
+    const claimUrl = buildGroupInviteClaimUrl(freshToken, inviteLanguage);
     const refreshedExpiry = new Date(Date.now() + DEFAULT_INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const inviterProfile = await getUserLabel(adminSupabase, invite.invited_by_user_id ?? currentUser.userId);
 
@@ -1097,6 +1109,7 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
       inviterName: inviterProfile.name,
       inviterEmail: inviterProfile.email,
       suggestedDisplayName: invite.suggested_display_name ?? null,
+      language: inviteLanguage,
       claimUrl
     });
 
@@ -1424,7 +1437,8 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
       currentUser: {
         userId: currentUser.userId,
         email: currentUser.email,
-        role: currentUser.role
+        role: currentUser.role,
+        preferredLanguage: currentUser.preferredLanguage
       },
       managerAccess: currentUser.role === "admin"
         ? {
@@ -1461,7 +1475,7 @@ export async function fetchGroupInvitePreviewAction(token: string): Promise<Grou
     const tokenHash = hashInviteToken(trimmedToken);
     const { data, error } = await adminSupabase
       .from("group_invites")
-      .select("group_id,email,suggested_display_name,status,expires_at,groups(name),invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
+      .select("group_id,email,suggested_display_name,language,status,expires_at,groups(name),invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
       .eq("token_hash", tokenHash)
       .maybeSingle();
 
@@ -1487,6 +1501,7 @@ export async function fetchGroupInvitePreviewAction(token: string): Promise<Grou
         inviterLabel,
         email: data.email,
         suggestedDisplayName: data.suggested_display_name ?? null,
+        language: normalizeLanguage((data as { language?: string | null }).language ?? null),
         status: data.status,
         expiresAt: data.expires_at ?? null
       }
@@ -1512,7 +1527,7 @@ async function getCurrentUserContext(): Promise<CurrentUserContext> {
 
   const { data: profile, error: profileError } = await supabase
     .from("users")
-    .select("id,email,role")
+    .select("id,email,role,preferred_language")
     .eq("id", user.id)
     .single();
 
@@ -1524,7 +1539,8 @@ async function getCurrentUserContext(): Promise<CurrentUserContext> {
     ok: true,
     userId: profile.id,
     email: profile.email,
-    role: profile.role
+    role: profile.role,
+    preferredLanguage: normalizeLanguage((profile as { preferred_language?: string | null }).preferred_language)
   };
 }
 
@@ -2142,7 +2158,7 @@ async function getManagedGroupInvite(
 ) {
   const { data, error } = await adminSupabase
     .from("group_invites")
-    .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error")
+    .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,language,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error")
     .eq("id", inviteId)
     .maybeSingle();
 
@@ -2186,10 +2202,12 @@ async function enqueueGroupInviteEmail(
     inviterName?: string | null;
     inviterEmail?: string | null;
     suggestedDisplayName?: string | null;
+    language?: string | null;
     claimUrl: string;
   }
 ): Promise<EnqueueEmailJobResult> {
   const normalizedEmail = normalizeEmail(input.email);
+  const preferredLanguage = getSafeEmailLanguage(input.language ?? null);
   const { error } = await adminSupabase.from("email_jobs").insert({
     kind: "group_invite_email",
     email: input.email,
@@ -2201,7 +2219,8 @@ async function enqueueGroupInviteEmail(
       inviterName: input.inviterName ?? undefined,
       inviterEmail: input.inviterEmail ?? undefined,
       suggestedDisplayName: input.suggestedDisplayName ?? undefined,
-      claimUrl: input.claimUrl
+      claimUrl: input.claimUrl,
+      language: preferredLanguage
     },
     requested_by_admin_id: input.invitedByUserId
   });
@@ -2220,7 +2239,8 @@ async function enqueueGroupInviteEmail(
           suggestedDisplayName: input.suggestedDisplayName ?? null,
           inviterName: input.inviterName ?? null,
           inviterEmail: input.inviterEmail ?? null,
-          claimUrl: input.claimUrl
+          claimUrl: input.claimUrl,
+          language: preferredLanguage
         });
         return { ok: true, alreadyQueued: false };
       } catch (inlineError) {
@@ -2295,45 +2315,22 @@ async function sendGroupInviteEmailInline(input: {
   inviterName?: string | null;
   inviterEmail?: string | null;
   claimUrl: string;
+  language?: string | null;
 }) {
-  const inviterLabel = input.inviterName?.trim() || input.inviterEmail?.trim() || "A group manager";
-  const subject = `${inviterLabel} invited you to join ${input.groupName}`;
-  const introLine = input.suggestedDisplayName?.trim()
-    ? `${inviterLabel} invited ${input.suggestedDisplayName.trim()} (${input.invitedEmail}) to join ${input.groupName}.`
-    : `${inviterLabel} invited ${input.invitedEmail} to join ${input.groupName}.`;
+  const emailCopy = buildGroupInviteEmailCopy({
+    language: input.language,
+    groupName: input.groupName,
+    invitedEmail: input.invitedEmail,
+    suggestedDisplayName: input.suggestedDisplayName ?? null,
+    inviterLabel: input.inviterName?.trim() || input.inviterEmail?.trim() || null,
+    claimUrl: input.claimUrl
+  });
 
   await sendTransactionalEmail({
     to: input.to,
-    subject,
-    html: `
-      <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
-        <h1 style="font-size: 24px; margin-bottom: 16px;">${inviterLabel} invited you to join ${input.groupName}</h1>
-        <div style="margin-bottom: 16px; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px 14px; background: #f9fafb;">
-          <p style="margin: 0 0 6px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; font-weight: 700;">Invitation details</p>
-          <p style="margin: 0; font-weight: 700;">Group: ${input.groupName}</p>
-          <p style="margin: 4px 0 0 0; font-weight: 700;">Invited by: ${inviterLabel}</p>
-        </div>
-        <p style="margin-bottom: 12px;">${introLine}</p>
-        <p style="margin-bottom: 12px;">Use the secure claim link below to sign in or create your account, then join the group.</p>
-        <p style="margin: 24px 0;">
-          <a href="${input.claimUrl}" style="display: inline-block; background: #1f8b4c; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-weight: 700;">
-            Open Group Invite
-          </a>
-        </p>
-        <p style="font-size: 14px; color: #6b7280; word-break: break-all;">${input.claimUrl}</p>
-      </div>
-    `,
-    text: [
-      `${inviterLabel} invited you to join ${input.groupName}`,
-      "",
-      `Group: ${input.groupName}`,
-      `Invited by: ${inviterLabel}`,
-      "",
-      introLine,
-      "",
-      "Use this secure claim link to sign in or create your account, then join the group:",
-      input.claimUrl
-    ].join("\n"),
+    subject: emailCopy.subject,
+    html: emailCopy.html,
+    text: emailCopy.text,
     replyTo: input.inviterEmail?.trim() || undefined
   });
 }
@@ -2372,6 +2369,7 @@ function hashInviteToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function buildGroupInviteClaimUrl(token: string) {
-  return `${getPublicSiteUrl()}/my-groups?invite=${token}`;
+function buildGroupInviteClaimUrl(token: string, language?: string | null) {
+  const path = appendLanguageToPath(`/my-groups?invite=${token}`, language);
+  return `${getPublicSiteUrl()}${path}`;
 }

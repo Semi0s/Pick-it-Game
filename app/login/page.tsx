@@ -11,6 +11,7 @@ export default async function LoginPage({
   const reset = resolvedSearchParams.reset === "1";
   const mode = typeof resolvedSearchParams.mode === "string" ? resolvedSearchParams.mode : undefined;
   const flow = typeof resolvedSearchParams.flow === "string" ? resolvedSearchParams.flow : undefined;
+  const language = typeof resolvedSearchParams.lang === "string" ? resolvedSearchParams.lang : undefined;
   const callbackError = typeof resolvedSearchParams.error === "string" ? resolvedSearchParams.error : undefined;
   const next = typeof resolvedSearchParams.next === "string" ? resolvedSearchParams.next : undefined;
 
@@ -39,6 +40,7 @@ export default async function LoginPage({
             reset={reset}
             initialMode={mode === "signup" ? "signup" : "login"}
             flow={flow}
+            language={language}
             callbackError={callbackError}
             nextPath={next}
           />

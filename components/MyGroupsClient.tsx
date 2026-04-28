@@ -31,6 +31,7 @@ import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { formatDate } from "@/components/admin/AdminInvitesClient";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
+import { appendLanguageToPath, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import {
   ActionButton,
   HierarchyPanel,
@@ -48,6 +49,7 @@ import {
 
 type MyGroupsClientProps = {
   inviteToken?: string;
+  inviteLanguage?: string;
 };
 
 type ToastState = { tone: "success" | "error"; text: string } | null;
@@ -63,7 +65,7 @@ const TROPHY_PROMPTS = [
   { name: "Drama King", icon: "🎭", description: "Never met a chaotic scoreline they didn't love." }
 ] as const;
 
-export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
+export function MyGroupsClient({ inviteToken, inviteLanguage }: MyGroupsClientProps) {
   const router = useRouter();
   const [summary, setSummary] = useState<FetchMyGroupsResult | null>(null);
   const [managedGroupsResult, setManagedGroupsResult] = useState<ListManagedGroupPlayersResult | null>(null);
@@ -73,7 +75,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   const [groupName, setGroupName] = useState("");
   const [membershipLimit, setMembershipLimit] = useState("");
   const [groupLimitForms, setGroupLimitForms] = useState<Record<string, string>>({});
-  const [inviteForms, setInviteForms] = useState<Record<string, { email: string; suggestedDisplayName: string }>>({});
+  const [inviteForms, setInviteForms] = useState<Record<string, { email: string; suggestedDisplayName: string; language: SupportedLanguage }>>({});
   const [inviteSuggestions, setInviteSuggestions] = useState<Record<string, InviteAutocompleteOption[]>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
   const [submittingInviteForGroup, setSubmittingInviteForGroup] = useState<string | null>(null);
@@ -82,6 +84,7 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
   const [invitePreview, setInvitePreview] = useState<{
     groupName: string;
     email: string;
+    language: SupportedLanguage;
     status: string;
     expiresAt: string | null;
   } | null>(null);
@@ -292,12 +295,13 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
         setInvitePreview({
           groupName: result.invite.groupName,
           email: result.invite.email,
+          language: normalizeLanguage(result.invite.language ?? inviteLanguage),
           status: result.invite.status,
           expiresAt: result.invite.expiresAt
         });
       })
       .finally(() => setIsLoadingInvitePreview(false));
-  }, [inviteToken]);
+  }, [inviteLanguage, inviteToken]);
 
   useEffect(() => {
     let isActive = true;
@@ -411,11 +415,13 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     setSubmittingInviteForGroup(group.id);
     setMessage(null);
 
-    const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "" };
+    const defaultLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
+    const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "", language: defaultLanguage };
     const result = await createGroupInviteAction({
       groupId: group.id,
       email: formState.email,
-      suggestedDisplayName: formState.suggestedDisplayName
+      suggestedDisplayName: formState.suggestedDisplayName,
+      language: formState.language
     });
 
     setMessage({
@@ -424,9 +430,10 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     });
 
     if (result.ok) {
+      const resetLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
       setInviteForms((current) => ({
         ...current,
-        [group.id]: { email: "", suggestedDisplayName: "" }
+        [group.id]: { email: "", suggestedDisplayName: "", language: resetLanguage }
       }));
       await load();
     }
@@ -551,9 +558,15 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
     );
   }
 
-  const inviteLoginPath = inviteToken ? `/login?flow=invite&next=${encodeURIComponent(`/my-groups?invite=${inviteToken}`)}` : "/login";
+  const resolvedInviteLanguage = normalizeLanguage(invitePreview?.language ?? inviteLanguage);
+  const inviteReturnPath = inviteToken
+    ? appendLanguageToPath(`/my-groups?invite=${inviteToken}`, resolvedInviteLanguage)
+    : undefined;
+  const inviteLoginPath = inviteToken
+    ? `/login?flow=invite&lang=${resolvedInviteLanguage}&next=${encodeURIComponent(inviteReturnPath ?? "/my-groups")}`
+    : "/login";
   const inviteSignupPath = inviteToken
-    ? `/login?mode=signup&flow=invite&next=${encodeURIComponent(`/my-groups?invite=${inviteToken}`)}`
+    ? `/login?mode=signup&flow=invite&lang=${resolvedInviteLanguage}&next=${encodeURIComponent(inviteReturnPath ?? "/my-groups")}`
     : "/login?mode=signup";
 
   return (
@@ -808,7 +821,8 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
           />
         ) : (
           filteredGroups.map((group) => {
-            const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "" };
+            const defaultInviteLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
+            const formState = inviteForms[group.id] ?? { email: "", suggestedDisplayName: "", language: defaultInviteLanguage };
             const trophyDraft = groupTrophyDrafts[group.id] ?? { name: "", icon: "", description: "" };
             const groupLimitFormValue = groupLimitForms[group.id] ?? String(group.membershipLimit);
             const usesDisclosure = group.canManage || isSuperAdmin;
@@ -941,6 +955,29 @@ export function MyGroupsClient({ inviteToken }: MyGroupsClientProps) {
                         />
                         <p className="mt-2 text-xs font-semibold text-gray-500">
                           This only helps identify the invite. Players still choose their own profile name during setup.
+                        </p>
+                      </label>
+                      <label className="block">
+                        <span className="text-sm font-bold text-gray-800">Invite language</span>
+                        <select
+                          value={formState.language}
+                          onChange={(event) =>
+                            setInviteForms((current) => ({
+                              ...current,
+                              [group.id]: {
+                                ...formState,
+                                language: normalizeLanguage(event.target.value)
+                              }
+                            }))
+                          }
+                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                        >
+                          <option value="en">English</option>
+                          <option value="es">Spanish</option>
+                        </select>
+                        <p className="mt-2 text-xs font-semibold text-gray-500">
+                          Choose the language your invitee will see during signup. This language will be used for the
+                          invitation email and first signup experience.
                         </p>
                       </label>
                       <ActionButton type="submit" disabled={submittingInviteForGroup === group.id} fullWidth>

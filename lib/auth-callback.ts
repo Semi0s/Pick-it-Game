@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
 import { reconcileInvitesForAuthUser } from "@/lib/auth-invite-reconciliation";
+import { appendLanguageToPath, normalizeLanguage } from "@/lib/i18n";
 
 const DEFAULT_NEXT_PATH = "/reset-password";
 
@@ -8,6 +9,7 @@ type SupportedOtpType = "signup" | "invite" | "magiclink" | "recovery" | "email_
 
 export async function handleAuthCallback(nextRequest: NextRequest) {
   const nextPath = getSafeNextPath(nextRequest.nextUrl.searchParams.get("next"));
+  const requestedLanguage = nextRequest.nextUrl.searchParams.get("lang");
   const cookieBuffer: Array<{ name: string; value: string; options: CookieOptions }> = [];
 
   const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
@@ -100,6 +102,22 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
         emailConfirmedAt: user.email_confirmed_at ?? null
       });
       try {
+        if (requestedLanguage) {
+          const normalizedLanguage = normalizeLanguage(requestedLanguage);
+          const { error: languageUpdateError } = await supabase
+            .from("users")
+            .update({ preferred_language: normalizedLanguage })
+            .eq("id", user.id);
+
+          if (languageUpdateError) {
+            console.warn("Auth callback could not persist preferred language.", {
+              userId: user.id,
+              language: normalizedLanguage,
+              message: languageUpdateError.message
+            });
+          }
+        }
+
         const reconciliationResult = await reconcileInvitesForAuthUser({
           id: user.id,
           email: user.email,
@@ -119,7 +137,11 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
     }
   }
 
-  const redirectPath = errorMessage ? removeConfirmedFlag(nextPath) : nextPath;
+  const redirectPath = requestedLanguage
+    ? appendLanguageToPath(errorMessage ? removeConfirmedFlag(nextPath) : nextPath, requestedLanguage)
+    : errorMessage
+      ? removeConfirmedFlag(nextPath)
+      : nextPath;
   const redirectUrl = new URL(redirectPath, nextRequest.url);
   if (errorMessage) {
     redirectUrl.searchParams.set("error", errorMessage);

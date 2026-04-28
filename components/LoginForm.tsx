@@ -11,6 +11,7 @@ export function LoginForm({
   reset = false,
   initialMode = "login",
   flow,
+  language,
   callbackError,
   nextPath
 }: {
@@ -18,6 +19,7 @@ export function LoginForm({
   reset?: boolean;
   initialMode?: AuthMode;
   flow?: string;
+  language?: string;
   callbackError?: string;
   nextPath?: string;
 }) {
@@ -40,7 +42,8 @@ export function LoginForm({
     setIsSubmitting(true);
     const result = await authenticateWithEmail(mode, email, password, {
       nextPath,
-      flow
+      flow,
+      language
     });
     setIsSubmitting(false);
 

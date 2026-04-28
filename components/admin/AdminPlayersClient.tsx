@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   deleteUserAndStartOverAction,
   fetchAdminPlayerHealthAction,
@@ -78,16 +78,11 @@ export function AdminPlayersClient() {
   const [deleteConfirmationValue, setDeleteConfirmationValue] = useState("");
   const [legalEditor, setLegalEditor] = useState({
     documentType: "eula",
-    requiredVersion: "2026-04-26-v1",
+    language: "en",
+    requiredVersion: "2026-04-26-v2-en",
     title: "PICK-IT! Terms of Use",
     body: ""
   });
-
-  useEffect(() => {
-    Promise.all([loadPlayers(), loadLeaderboardSettings(), loadLegalDocument(), loadSystemReadiness()]).finally(() =>
-      setIsLoading(false)
-    );
-  }, []);
 
   async function loadPlayers() {
     const result = await fetchAdminPlayerHealthAction();
@@ -109,8 +104,8 @@ export function AdminPlayersClient() {
     setLeaderboardSettings(result.settings);
   }
 
-  async function loadLegalDocument() {
-    const result = await fetchRequiredLegalDocumentAction();
+  const loadLegalDocument = useCallback(async (language = legalEditor.language) => {
+    const result = await fetchRequiredLegalDocumentAction(legalEditor.documentType, language);
     if (!result.ok) {
       setMessage({ tone: "error", text: result.message });
       return;
@@ -120,12 +115,13 @@ export function AdminPlayersClient() {
     if (result.document) {
       setLegalEditor({
         documentType: result.document.documentType,
+        language: result.document.language,
         requiredVersion: result.document.requiredVersion,
         title: result.document.title,
         body: result.document.body
       });
     }
-  }
+  }, [legalEditor.documentType, legalEditor.language]);
 
   async function loadSystemReadiness() {
     const response = await fetch("/api/admin/system-readiness", { cache: "no-store" });
@@ -143,6 +139,16 @@ export function AdminPlayersClient() {
 
     setSystemReadiness(result.report);
   }
+
+  useEffect(() => {
+    Promise.all([loadPlayers(), loadLeaderboardSettings(), loadLegalDocument(), loadSystemReadiness()]).finally(() =>
+      setIsLoading(false)
+    );
+  }, [loadLegalDocument]);
+
+  useEffect(() => {
+    void loadLegalDocument(legalEditor.language);
+  }, [legalEditor.language, loadLegalDocument]);
 
   const filteredPlayers = useMemo(() => {
     const query = searchValue.trim().toLowerCase();
@@ -284,14 +290,15 @@ export function AdminPlayersClient() {
       </ManagementCard>
       <ManagementCard
         title="Legal / Terms"
-        subtitle="Update the required EULA version and require everyone to accept it before using the app again."
+        subtitle="Update the required EULA version by language and require users to accept it before using the app again."
       >
         <div className="space-y-4">
           <p className="text-sm font-semibold text-gray-600">
-            This will require all users to accept the new terms before using the app again. Active sessions will be
-            revoked where supported.
+            Users will be required to accept the current terms in their selected language before continuing. Active
+            sessions will be revoked where supported.
           </p>
           <ManagementGrid>
+            <ManagementDatum label="Language" value={legalDocument?.language?.toUpperCase() ?? "Not configured"} />
             <ManagementDatum label="Current version" value={legalDocument?.requiredVersion ?? "Not configured"} />
             <ManagementDatum label="Last updated" value={legalDocument?.updatedAt ? formatDate(legalDocument.updatedAt) : "—"} />
           </ManagementGrid>
@@ -302,6 +309,17 @@ export function AdminPlayersClient() {
               onChange={(event) => setLegalEditor((current) => ({ ...current, documentType: event.target.value }))}
               className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
             />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-gray-800">Language</span>
+            <select
+              value={legalEditor.language}
+              onChange={(event) => setLegalEditor((current) => ({ ...current, language: event.target.value }))}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            >
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+            </select>
           </label>
           <label className="block">
             <span className="text-sm font-bold text-gray-800">Required version</span>
@@ -335,6 +353,7 @@ export function AdminPlayersClient() {
               void withAction("force-legal-reacceptance", async () => {
                 const result = await forceLegalReacceptanceAction(
                   legalEditor.documentType,
+                  legalEditor.language,
                   legalEditor.requiredVersion,
                   legalEditor.title,
                   legalEditor.body

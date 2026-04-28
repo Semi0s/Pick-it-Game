@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createAdminInviteAction } from "@/app/admin/actions";
 import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
 import { fetchAdminInvites, type AdminInvite } from "@/lib/admin-data";
+import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import type { UserRole } from "@/lib/types";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import {
@@ -32,6 +33,7 @@ export function AdminInvitesSection({
   const [invites, setInvites] = useState<AdminInvite[]>([]);
   const [email, setEmail] = useState("");
   const [accessLevel, setAccessLevel] = useState<InviteAccessLevel>("player");
+  const [inviteLanguage, setInviteLanguage] = useState<SupportedLanguage>("en");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -47,6 +49,12 @@ export function AdminInvitesSection({
   useEffect(() => {
     loadInvites();
   }, []);
+
+  useEffect(() => {
+    if (user?.preferredLanguage) {
+      setInviteLanguage((current) => (current === "en" ? normalizeLanguage(user.preferredLanguage) : current));
+    }
+  }, [user?.preferredLanguage]);
 
   useEffect(() => {
     let isActive = true;
@@ -91,11 +99,12 @@ export function AdminInvitesSection({
 
     try {
       const inviteRole: UserRole = accessLevel === "super_admin" ? "admin" : "player";
-      const result = await createAdminInviteAction({ email, role: inviteRole });
+      const result = await createAdminInviteAction({ email, role: inviteRole, language: inviteLanguage });
       setMessage({ tone: result.ok ? "success" : "error", text: result.message });
       if (result.ok) {
         setEmail("");
         setAccessLevel("player");
+        setInviteLanguage(normalizeLanguage(user?.preferredLanguage));
         await loadInvites();
         if (accessLevel === "manager") {
           setMessage({
@@ -177,12 +186,29 @@ export function AdminInvitesSection({
               ))}
             </select>
           </label>
+          <label className="block">
+            <span className="text-sm font-bold text-gray-800">Invite language</span>
+            <select
+              value={inviteLanguage}
+              onChange={(event) => setInviteLanguage(normalizeLanguage(event.target.value))}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            >
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+            </select>
+            <p className="mt-2 text-xs font-semibold text-gray-500">
+              Choose the language your invitee will see during signup.
+            </p>
+          </label>
           <p className="text-sm font-semibold text-gray-500">
             {accessLevel === "player"
               ? "Player keeps the standard gameplay experience."
               : accessLevel === "manager"
                 ? "Manager starts as a player, then gains manager access when a super admin assigns manager limits."
                 : "Super Admin gives this user unlimited administrative access."}
+          </p>
+          <p className="text-xs font-semibold text-gray-500">
+            This language will be used for the invitation email and first signup experience.
           </p>
           {accessLevel === "manager" ? (
             <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">

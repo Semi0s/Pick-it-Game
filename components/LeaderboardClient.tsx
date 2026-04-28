@@ -1060,6 +1060,12 @@ function getSwitcherSummary(
       : `Choose from ${switcher.groups.length} available ${switcher.groups.length === 1 ? "group" : "groups"}.`;
   }
 
+  if (activeView === "groups") {
+    return switcher.accessLevel === "manager"
+      ? "Compare the groups you manage by average points per player."
+      : "Compare every group by average points per player.";
+  }
+
   return "Leaderboard context switcher ready.";
 }
 
@@ -1071,7 +1077,7 @@ function getPlaceholderTitle(activeView: LeaderboardSwitcherView) {
     return "My Managed Groups";
   }
   if (activeView === "groups") {
-    return "Groups";
+    return "Group Standings";
   }
   if (activeView === "managers") {
     return "Managers";
@@ -1096,6 +1102,10 @@ function getPlaceholderCopy(
       : "Choose a group to preview that leaderboard context.";
   }
 
+  if (activeView === "groups") {
+    return "Group performance is ranked by average points per player.";
+  }
+
   return "Global leaderboard is ready now.";
 }
 
@@ -1109,6 +1119,7 @@ function GroupStandingsSection({
   error: string | null;
 }) {
   const topAverage = groups[0]?.avgPoints ?? 0;
+  const allGroupsAreScoreless = groups.length > 0 && groups.every((group) => group.totalPoints <= 0);
 
   return (
     <section className="space-y-2">
@@ -1134,9 +1145,18 @@ function GroupStandingsSection({
         </p>
       ) : null}
 
+      {!isLoading && !error && allGroupsAreScoreless ? (
+        <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600">
+          Groups are set up, but no scores have landed yet.
+        </p>
+      ) : null}
+
       {!isLoading && !error
         ? groups.map((group) => {
-            const barWidth = topAverage > 0 ? Math.max(12, Math.round((group.avgPoints / topAverage) * 100)) : 12;
+            const isScoreless = group.totalPoints <= 0;
+            const barWidth = topAverage > 0
+              ? Math.min(100, Math.max(group.avgPoints > 0 ? 12 : 10, Math.round((group.avgPoints / topAverage) * 100)))
+              : 10;
 
             return (
               <div key={group.id} className="rounded-lg border border-gray-200 bg-white p-4">
@@ -1159,7 +1179,7 @@ function GroupStandingsSection({
 
                     <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-gray-100">
                       <div
-                        className="h-full rounded-full bg-accent"
+                        className={`h-full rounded-full ${isScoreless ? "bg-gray-300" : "bg-accent"}`}
                         style={{ width: `${barWidth}%` }}
                       />
                     </div>
@@ -1169,12 +1189,23 @@ function GroupStandingsSection({
                       <span>•</span>
                       <span>{group.totalPoints} total pts</span>
                       <span>•</span>
-                      <span>Top player: {group.topPlayerName}</span>
+                      <span>Top player: {group.topPlayerName} ({group.topPlayerPoints} pts)</span>
                       {group.perfectPickCount !== null ? (
                         <>
                           <span>•</span>
                           <span>{group.perfectPickCount} perfect picks</span>
                         </>
+                      ) : null}
+                      {group.recentActivityCount !== null ? (
+                        <>
+                          <span>•</span>
+                          <span>{group.recentActivityCount} recent moments</span>
+                        </>
+                      ) : null}
+                      {isScoreless ? (
+                        <span className="rounded-md bg-gray-100 px-2 py-1 text-[11px] font-black text-gray-600">
+                          No scores yet
+                        </span>
                       ) : null}
                       {group.tag ? (
                         <span className="rounded-md bg-accent-light px-2 py-1 text-[11px] font-black text-accent-dark">

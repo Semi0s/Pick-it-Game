@@ -19,6 +19,7 @@ export type AcceptCurrentLegalDocumentResult =
 export async function acceptCurrentLegalDocumentAction(
   input?: {
     documentType?: string;
+    language?: string;
     nextPath?: string;
   }
 ): Promise<AcceptCurrentLegalDocumentResult> {
@@ -37,10 +38,15 @@ export async function acceptCurrentLegalDocumentAction(
   const acceptedUserAgent = headerStore.get("user-agent");
 
   try {
-    await acceptLegalDocument(user.id, input?.documentType ?? DEFAULT_LEGAL_DOCUMENT_TYPE, {
-      acceptedIp,
-      acceptedUserAgent
-    });
+    await acceptLegalDocument(
+      user.id,
+      input?.documentType ?? DEFAULT_LEGAL_DOCUMENT_TYPE,
+      input?.language,
+      {
+        acceptedIp,
+        acceptedUserAgent
+      }
+    );
   } catch (error) {
     return {
       ok: false,

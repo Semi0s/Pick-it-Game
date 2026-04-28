@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { escapeHtml, sendTransactionalEmail } from "@/lib/email-sender";
+import { sendTransactionalEmail } from "@/lib/email-sender";
+import { buildGroupInviteEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
+import { appendLanguageToPath, normalizeLanguage } from "@/lib/i18n";
 import { getPublicSiteUrl } from "@/lib/site-url";
 import type { UserRole } from "@/lib/types";
 
@@ -26,6 +28,7 @@ type EmailJobRow = {
     inviterEmail?: string;
     suggestedDisplayName?: string | null;
     claimUrl?: string;
+    language?: string;
   } | null;
   status: EmailJobStatus;
   attempts: number;
@@ -37,6 +40,7 @@ type EmailJobRow = {
 type InviteRow = {
   email: string;
   display_name: string;
+  language?: string | null;
   role: UserRole;
   accepted_at?: string | null;
   send_attempts?: number | null;
@@ -128,7 +132,7 @@ async function processJob(adminSupabase: ReturnType<typeof createAdminClient>, j
     } else if (job.kind === "group_invite_email") {
       await sendGroupInviteEmail(job);
     } else {
-      await sendPasswordRecovery(adminSupabase, job.email);
+      await sendPasswordRecovery(adminSupabase, job.email, job.payload?.language ?? null);
     }
 
     emailSent = true;
@@ -194,11 +198,16 @@ async function sendAccessEmail(
   job: EmailJobRow
 ): Promise<AccessEmailResult> {
   const normalizedEmail = job.email.trim().toLowerCase();
+  const inviteLanguage = await resolveAdminInviteLanguage(
+    adminSupabase,
+    normalizedEmail,
+    job.payload?.language ?? null
+  );
   const authUser = await findAuthUserByEmail(adminSupabase, normalizedEmail);
   const { data: existingUser } = await adminSupabase.from("users").select("id").eq("email", normalizedEmail).maybeSingle();
 
   if (authUser && existingUser) {
-    await sendPasswordRecovery(adminSupabase, normalizedEmail);
+    await sendPasswordRecovery(adminSupabase, normalizedEmail, inviteLanguage);
     return "recovery_sent";
   }
 
@@ -207,12 +216,19 @@ async function sendAccessEmail(
     await ensureInviteRow(adminSupabase, {
       email: normalizedEmail,
       displayName: payload.displayName,
+      language: inviteLanguage,
       role: payload.role
     });
   }
 
+  const redirectUrl = new URL("/auth/callback", getPublicSiteUrl());
+  redirectUrl.searchParams.set(
+    "next",
+    appendLanguageToPath("/login?confirmed=1&flow=invite&mode=signup", inviteLanguage)
+  );
+  redirectUrl.searchParams.set("lang", inviteLanguage);
   const { error } = await adminSupabase.auth.admin.inviteUserByEmail(normalizedEmail, {
-    redirectTo: `${getPublicSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`
+    redirectTo: redirectUrl.toString()
   });
 
   if (error) {
@@ -224,80 +240,42 @@ async function sendAccessEmail(
 
 async function sendGroupInviteEmail(job: EmailJobRow) {
   const payload = job.payload ?? {};
-  if (!payload.groupInviteId || !payload.groupName || !payload.claimUrl) {
+  if (!payload.groupInviteId || !payload.claimUrl) {
     throw new Error("Group invite email job is missing required payload.");
   }
 
-  const groupName = payload.groupName;
+  const groupName = payload.groupName?.trim() || "your PICK-IT! group";
   const invitedEmail = job.email;
   const suggestedDisplayName = payload.suggestedDisplayName?.trim() || null;
-  const inviterLabel = payload.inviterName?.trim() || payload.inviterEmail?.trim() || "A group manager";
   const claimUrl = payload.claimUrl;
-
-  const escapedGroupName = escapeHtml(groupName);
-  const escapedInvitedEmail = escapeHtml(invitedEmail);
-  const escapedInviterLabel = escapeHtml(inviterLabel);
-  const escapedSuggestedName = suggestedDisplayName ? escapeHtml(suggestedDisplayName) : null;
-  const escapedClaimUrl = escapeHtml(claimUrl);
-
-  const introLine = escapedSuggestedName
-    ? `${escapedInviterLabel} invited ${escapedSuggestedName} (${escapedInvitedEmail}) to join ${escapedGroupName}.`
-    : `${escapedInviterLabel} invited ${escapedInvitedEmail} to join ${escapedGroupName}.`;
-
-  const html = `
-    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
-      <h1 style="font-size: 24px; margin-bottom: 16px;">${escapedInviterLabel} invited you to join ${escapedGroupName}</h1>
-      <div style="margin-bottom: 16px; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px 14px; background: #f9fafb;">
-        <p style="margin: 0 0 6px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; font-weight: 700;">Invitation details</p>
-        <p style="margin: 0; font-weight: 700;">Group: ${escapedGroupName}</p>
-        <p style="margin: 4px 0 0 0; font-weight: 700;">Invited by: ${escapedInviterLabel}</p>
-      </div>
-      <p style="margin-bottom: 12px;">${introLine}</p>
-      <p style="margin-bottom: 12px;">
-        Use the secure claim link below to sign in or create your account, then join the group with your global picks.
-      </p>
-      <p style="margin: 24px 0;">
-        <a href="${escapedClaimUrl}" style="display: inline-block; background: #1f8b4c; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-weight: 700;">
-          Open Group Invite
-        </a>
-      </p>
-      <p style="margin-bottom: 12px; font-size: 14px; color: #4b5563;">
-        If the button does not work, paste this link into your browser:<br />
-        <span style="word-break: break-all;">${escapedClaimUrl}</span>
-      </p>
-      <p style="font-size: 14px; color: #6b7280;">If you already have an account, sign in with ${escapedInvitedEmail}. Otherwise create one with that email first.</p>
-    </div>
-  `;
-
-  const textLines = [
-    `${inviterLabel} invited you to join ${groupName}`,
-    "",
-    `Group: ${groupName}`,
-    `Invited by: ${inviterLabel}`,
-    "",
-    suggestedDisplayName
-      ? `${inviterLabel} invited ${suggestedDisplayName} (${invitedEmail}) to join ${groupName}.`
-      : `${inviterLabel} invited ${invitedEmail} to join ${groupName}.`,
-    "",
-    "Use this secure claim link to sign in or create your account, then join the group:",
-    claimUrl,
-    "",
-    `If you already have an account, sign in with ${invitedEmail}. Otherwise create one with that email first.`
-  ];
+  const preferredLanguage =
+    payload.language ??
+    (payload.groupInviteId
+      ? await resolveGroupInviteLanguage(createAdminClient(), payload.groupInviteId)
+      : await resolvePreferredLanguageForEmail(createAdminClient(), invitedEmail));
+  const emailCopy = buildGroupInviteEmailCopy({
+    language: preferredLanguage,
+    groupName,
+    invitedEmail,
+    suggestedDisplayName,
+    inviterLabel: payload.inviterName?.trim() || payload.inviterEmail?.trim() || null,
+    claimUrl
+  });
 
   console.info("[email-jobs] Sending group invite email.", {
     jobId: job.id,
     groupInviteId: payload.groupInviteId,
     groupId: payload.groupId ?? null,
-    email: invitedEmail
+    email: invitedEmail,
+    language: preferredLanguage
   });
 
   try {
     const result = await sendTransactionalEmail({
       to: invitedEmail,
-      subject: `${inviterLabel} invited you to join ${groupName}`,
-      html,
-      text: textLines.join("\n"),
+      subject: emailCopy.subject,
+      html: emailCopy.html,
+      text: emailCopy.text,
       replyTo: payload.inviterEmail?.trim() || undefined
     });
 
@@ -319,9 +297,18 @@ async function sendGroupInviteEmail(job: EmailJobRow) {
   }
 }
 
-async function sendPasswordRecovery(adminSupabase: ReturnType<typeof createAdminClient>, email: string) {
+async function sendPasswordRecovery(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  email: string,
+  language?: string | null
+) {
+  const recoveryUrl = new URL("/auth/confirm", getPublicSiteUrl());
+  recoveryUrl.searchParams.set("next", appendLanguageToPath("/reset-password", language));
+  if (language) {
+    recoveryUrl.searchParams.set("lang", normalizeLanguage(language));
+  }
   const { error } = await adminSupabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${getPublicSiteUrl()}/auth/confirm?next=/reset-password`
+    redirectTo: recoveryUrl.toString()
   });
 
   if (error) {
@@ -363,11 +350,48 @@ async function findAuthUserByEmail(
   return null;
 }
 
+async function resolvePreferredLanguageForEmail(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  email: string
+) {
+  const { data } = await adminSupabase
+    .from("users")
+    .select("preferred_language")
+    .eq("email", email.trim().toLowerCase())
+    .maybeSingle();
+
+  return getSafeEmailLanguage((data as { preferred_language?: string | null } | null)?.preferred_language ?? null);
+}
+
+async function resolveAdminInviteLanguage(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  email: string,
+  fallbackLanguage?: string | null
+) {
+  const { data, error } = await adminSupabase.from("invites").select("language").eq("email", email).maybeSingle();
+  if (error) {
+    return getSafeEmailLanguage(fallbackLanguage ?? null);
+  }
+  return getSafeEmailLanguage((data as { language?: string | null } | null)?.language ?? fallbackLanguage ?? null);
+}
+
+async function resolveGroupInviteLanguage(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupInviteId: string
+) {
+  const { data, error } = await adminSupabase.from("group_invites").select("language").eq("id", groupInviteId).maybeSingle();
+  if (error) {
+    return getSafeEmailLanguage(null);
+  }
+  return getSafeEmailLanguage((data as { language?: string | null } | null)?.language ?? null);
+}
+
 async function ensureInviteRow(
   adminSupabase: ReturnType<typeof createAdminClient>,
   input: {
     email: string;
     displayName: string;
+    language: string;
     role: UserRole;
   }
 ) {
@@ -375,6 +399,7 @@ async function ensureInviteRow(
     {
       email: input.email,
       display_name: input.displayName,
+      language: input.language,
       role: input.role
     },
     { onConflict: "email" }
@@ -441,7 +466,7 @@ async function markJobFailed(adminSupabase: ReturnType<typeof createAdminClient>
 async function markInviteSent(adminSupabase: ReturnType<typeof createAdminClient>, email: string) {
   const { data: invite, error: inviteLookupError } = await adminSupabase
     .from("invites")
-    .select("email,display_name,role,accepted_at,send_attempts")
+    .select("email,display_name,language,role,accepted_at,send_attempts")
     .eq("email", email)
     .maybeSingle();
 
@@ -453,6 +478,7 @@ async function markInviteSent(adminSupabase: ReturnType<typeof createAdminClient
   await upsertInviteWithFallback(adminSupabase, {
     email: inviteRow.email,
     display_name: inviteRow.display_name,
+    language: inviteRow.language ?? "en",
     role: inviteRow.role,
     accepted_at: inviteRow.accepted_at ?? null,
     status: inviteRow.accepted_at ? "accepted" : "pending",
@@ -465,7 +491,7 @@ async function markInviteSent(adminSupabase: ReturnType<typeof createAdminClient
 async function clearInviteQueueState(adminSupabase: ReturnType<typeof createAdminClient>, email: string) {
   const { data: invite, error: inviteLookupError } = await adminSupabase
     .from("invites")
-    .select("email,display_name,role,accepted_at,send_attempts")
+    .select("email,display_name,language,role,accepted_at,send_attempts")
     .eq("email", email)
     .maybeSingle();
 
@@ -477,6 +503,7 @@ async function clearInviteQueueState(adminSupabase: ReturnType<typeof createAdmi
   await upsertInviteWithFallback(adminSupabase, {
     email: inviteRow.email,
     display_name: inviteRow.display_name,
+    language: inviteRow.language ?? "en",
     role: inviteRow.role,
     accepted_at: inviteRow.accepted_at ?? null,
     status: inviteRow.accepted_at ? "accepted" : "pending",
@@ -553,7 +580,7 @@ async function markGroupInviteFailed(
 async function markInviteFailed(adminSupabase: ReturnType<typeof createAdminClient>, email: string, message: string) {
   const { data: invite, error: inviteLookupError } = await adminSupabase
     .from("invites")
-    .select("email,display_name,role,accepted_at,send_attempts")
+    .select("email,display_name,language,role,accepted_at,send_attempts")
     .eq("email", email)
     .maybeSingle();
 
@@ -565,6 +592,7 @@ async function markInviteFailed(adminSupabase: ReturnType<typeof createAdminClie
   await upsertInviteWithFallback(adminSupabase, {
     email: inviteRow.email,
     display_name: inviteRow.display_name,
+    language: inviteRow.language ?? "en",
     role: inviteRow.role,
     accepted_at: inviteRow.accepted_at ?? null,
     status: "failed",
@@ -578,6 +606,7 @@ async function upsertInviteWithFallback(
   payload: {
     email: string;
     display_name: string;
+    language: string;
     role: UserRole;
     accepted_at: string | null;
     status: "pending" | "accepted" | "failed";
@@ -612,6 +641,7 @@ async function upsertInviteWithFallback(
 
 function isMissingInviteDeliveryColumnError(message: string) {
   return (
+    isMissingColumnError(message, "language") ||
     isMissingColumnError(message, "status") ||
     isMissingColumnError(message, "last_sent_at") ||
     isMissingColumnError(message, "send_attempts") ||

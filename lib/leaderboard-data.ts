@@ -129,7 +129,9 @@ export type GroupStandingItem = {
   avgPoints: number;
   playerCount: number;
   topPlayerName: string;
+  topPlayerPoints: number;
   perfectPickCount: number | null;
+  recentActivityCount: number | null;
   tag: string | null;
 };
 
@@ -171,7 +173,11 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
   const activeView = resolveAllowedView(request?.view, switcher);
   const selectedGroupId = resolveAllowedGroupId(request?.groupId, switcher, activeView);
   const groupStandingsPromise = activeView === "groups"
-    ? fetchAllGroupStandings(settings.perfect_pick_enabled)
+    ? fetchGroupStandingsForAccessibleGroups(
+        switcher.accessLevel,
+        switcher.groups.map((group) => group.id),
+        settings.perfect_pick_enabled
+      )
     : Promise.resolve([]);
   const leaderboardPromise =
     activeView === "global"
@@ -223,17 +229,39 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
   };
 }
 
-async function fetchAllGroupStandings(perfectPickEnabled: boolean): Promise<GroupStandingItem[]> {
+async function fetchGroupStandingsForAccessibleGroups(
+  accessLevel: AccessLevel,
+  accessibleGroupIds: string[],
+  perfectPickEnabled: boolean
+): Promise<GroupStandingItem[]> {
   const adminSupabase = createAdminClient();
-  const [{ data: groupsData, error: groupsError }, { data: membershipsData, error: membershipsError }] = await Promise.all([
-    adminSupabase
-      .from("groups")
-      .select("id,name,status,owner_user_id,owner:users!groups_owner_user_id_fkey(id,name,email)")
-      .order("name", { ascending: true }),
-    adminSupabase
-      .from("group_members")
-      .select("group_id,user_id,role,user:users!group_members_user_id_fkey(id,name,email,total_points)")
-  ]);
+  if (accessLevel === "player" || accessibleGroupIds.length === 0) {
+    return [];
+  }
+
+  const groupsQuery = adminSupabase
+    .from("groups")
+    .select("id,name,status,owner_user_id,owner:users!groups_owner_user_id_fkey(id,name,email)")
+    .order("name", { ascending: true });
+  const membershipsQuery = adminSupabase
+    .from("group_members")
+    .select("group_id,user_id,role,user:users!group_members_user_id_fkey(id,name,email,total_points)");
+  const activityCountsQuery = adminSupabase
+    .from("leaderboard_events")
+    .select("group_id")
+    .eq("scope_type", "group");
+
+  const scopedGroupsQuery = accessLevel === "super_admin" ? groupsQuery : groupsQuery.in("id", accessibleGroupIds);
+  const scopedMembershipsQuery =
+    accessLevel === "super_admin" ? membershipsQuery : membershipsQuery.in("group_id", accessibleGroupIds);
+  const scopedActivityCountsQuery =
+    accessLevel === "super_admin" ? activityCountsQuery : activityCountsQuery.in("group_id", accessibleGroupIds);
+
+  const [
+    { data: groupsData, error: groupsError },
+    { data: membershipsData, error: membershipsError },
+    { data: activityRows, error: activityError }
+  ] = await Promise.all([scopedGroupsQuery, scopedMembershipsQuery, scopedActivityCountsQuery]);
 
   if (groupsError) {
     throw new Error(groupsError.message);
@@ -243,8 +271,13 @@ async function fetchAllGroupStandings(perfectPickEnabled: boolean): Promise<Grou
     throw new Error(membershipsError.message);
   }
 
+  if (activityError && !isMissingAnyRelationError(activityError.message, ["leaderboard_events"])) {
+    throw new Error(activityError.message);
+  }
+
   const groups = (groupsData as GroupRow[] | null) ?? [];
   const memberships = (membershipsData as GroupMemberRow[] | null) ?? [];
+  const hasActivityCounts = !activityError;
 
   if (groups.length === 0 || memberships.length === 0) {
     return [];
@@ -252,7 +285,7 @@ async function fetchAllGroupStandings(perfectPickEnabled: boolean): Promise<Grou
 
   const membersByGroupId = new Map<
     string,
-    Array<{ userId: string; name: string; totalPoints: number }>
+    Array<{ userId: string; name: string; totalPoints: number; role: "manager" | "member" }>
   >();
 
   for (const membership of memberships) {
@@ -265,9 +298,19 @@ async function fetchAllGroupStandings(perfectPickEnabled: boolean): Promise<Grou
     list.push({
       userId: membership.user_id,
       name: user.name,
-      totalPoints: user.total_points
+      totalPoints: user.total_points,
+      role: membership.role
     });
     membersByGroupId.set(membership.group_id, list);
+  }
+
+  const recentActivityCountByGroupId = new Map<string, number>();
+  for (const row of ((activityRows as Array<{ group_id: string | null }> | null) ?? [])) {
+    if (!row.group_id) {
+      continue;
+    }
+
+    recentActivityCountByGroupId.set(row.group_id, (recentActivityCountByGroupId.get(row.group_id) ?? 0) + 1);
   }
 
   const perfectPickCountsByGroupId = new Map<string, number>();
@@ -294,18 +337,22 @@ async function fetchAllGroupStandings(perfectPickEnabled: boolean): Promise<Grou
       const topPlayer = [...members].sort(
         (left, right) => right.totalPoints - left.totalPoints || left.name.localeCompare(right.name)
       )[0];
+      const manager = members.find((member) => member.role === "manager");
       const perfectPickCount = perfectPickEnabled ? (perfectPickCountsByGroupId.get(group.id) ?? 0) : null;
+      const recentActivityCount = hasActivityCounts ? (recentActivityCountByGroupId.get(group.id) ?? 0) : null;
 
       return {
         id: group.id,
         rank: 0,
         name: group.status === "archived" ? `${group.name} (Archived)` : group.name,
-        managerName: owner?.name ?? "Group manager",
+        managerName: manager?.name ?? owner?.name ?? "Group manager",
         totalPoints,
         avgPoints,
         playerCount,
         topPlayerName: topPlayer?.name ?? "No top player yet",
+        topPlayerPoints: topPlayer?.totalPoints ?? 0,
         perfectPickCount,
+        recentActivityCount,
         tag: deriveGroupStandingTag({ avgPoints, playerCount, perfectPickCount })
       } satisfies GroupStandingItem;
     })
@@ -313,6 +360,8 @@ async function fetchAllGroupStandings(perfectPickEnabled: boolean): Promise<Grou
     .sort((left, right) =>
       (right?.avgPoints ?? 0) - (left?.avgPoints ?? 0) ||
       (right?.totalPoints ?? 0) - (left?.totalPoints ?? 0) ||
+      (right?.playerCount ?? 0) - (left?.playerCount ?? 0) ||
+      (right?.perfectPickCount ?? 0) - (left?.perfectPickCount ?? 0) ||
       (left?.name ?? "").localeCompare(right?.name ?? "")
     )
     .map((group, index) => ({
@@ -506,13 +555,14 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
       ? [
           { value: "global", label: "Global" },
           { value: "managers", label: "Managers" },
-          { value: "groups", label: "Groups" }
+          { value: "groups", label: "Group Standings" }
         ]
       : accessLevel === "manager"
         ? [
-            { value: "global", label: "Global" },
-            { value: "managed_groups", label: "My Managed Groups" }
-          ]
+          { value: "global", label: "Global" },
+          { value: "managed_groups", label: "My Managed Groups" },
+          { value: "groups", label: "Group Standings" }
+        ]
         : [
             { value: "global", label: "Global" },
             { value: "my_groups", label: "My Groups" }
@@ -559,7 +609,7 @@ async function fetchAccessibleGroupOptions(
   const memberships = (groupMemberships as GroupMemberRow[] | null) ?? [];
   const relevantGroupIds =
     accessLevel === "manager"
-      ? Array.from(new Set(memberships.map((membership) => membership.group_id)))
+      ? Array.from(new Set(memberships.filter((membership) => membership.role === "manager").map((membership) => membership.group_id)))
       : Array.from(new Set(memberships.map((membership) => membership.group_id)));
 
   if (relevantGroupIds.length === 0) {

@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { defaultLanguage, normalizeLanguage } from "@/lib/i18n";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 
 const protectedRoutes = ["/dashboard", "/groups", "/my-groups", "/leaderboard", "/profile", "/profile-setup", "/admin", "/legal/accept"];
@@ -168,29 +169,47 @@ async function getLegalGateStatus(
   supabase: ReturnType<typeof createServerClient>,
   userId: string
 ) {
-  const [{ data: document, error: documentError }, { data: acceptance, error: acceptanceError }] = await Promise.all([
+  const [{ data: profile, error: profileError }, { data: documents, error: documentError }, { data: acceptances, error: acceptanceError }] = await Promise.all([
+    supabase.from("users").select("preferred_language").eq("id", userId).maybeSingle(),
     supabase
       .from("legal_documents")
-      .select("required_version")
+      .select("language,required_version")
       .eq("document_type", "eula")
-      .eq("is_active", true)
-      .maybeSingle(),
+      .eq("is_active", true),
     supabase
       .from("user_legal_acceptances")
-      .select("document_version")
+      .select("language,document_version")
       .eq("user_id", userId)
       .eq("document_type", "eula")
       .order("accepted_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
   ]);
 
-  if (isMissingLegalTableError(documentError?.message) || isMissingLegalTableError(acceptanceError?.message)) {
+  if (
+    isMissingLegalTableError(documentError?.message) ||
+    isMissingLegalTableError(acceptanceError?.message) ||
+    isMissingPreferredLanguageError(profileError?.message)
+  ) {
     return { needsAcceptance: false };
   }
 
-  const requiredVersion = (document as { required_version?: string } | null)?.required_version ?? null;
-  const acceptedVersion = (acceptance as { document_version?: string } | null)?.document_version ?? null;
+  const preferredLanguage = normalizeLanguage(
+    (profile as { preferred_language?: string | null } | null)?.preferred_language ?? defaultLanguage
+  );
+  const legalDocumentRows = ((documents as Array<{ language?: string | null; required_version?: string | null }> | null) ?? []).map(
+    (document) => ({
+      language: normalizeLanguage(document.language),
+      requiredVersion: document.required_version ?? null
+    })
+  );
+  const requiredDocument =
+    legalDocumentRows.find((document) => document.language === preferredLanguage) ??
+    legalDocumentRows.find((document) => document.language === defaultLanguage) ??
+    null;
+  const acceptedVersion =
+    (((acceptances as Array<{ language?: string | null; document_version?: string | null }> | null) ?? []).find(
+      (acceptance) => normalizeLanguage(acceptance.language) === (requiredDocument?.language ?? defaultLanguage)
+    )?.document_version ?? null);
+  const requiredVersion = requiredDocument?.requiredVersion ?? null;
   return {
     needsAcceptance: Boolean(requiredVersion && acceptedVersion !== requiredVersion)
   };
@@ -209,5 +228,18 @@ function isMissingLegalTableError(message?: string | null) {
       normalized.includes("does not exist") ||
       normalized.includes("could not find the table")
     )
+  );
+}
+
+function isMissingPreferredLanguageError(message?: string | null) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return normalized.includes("preferred_language") && (
+    normalized.includes("could not find the") ||
+    normalized.includes("column") ||
+    normalized.includes("schema cache")
   );
 }

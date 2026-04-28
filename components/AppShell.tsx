@@ -7,6 +7,7 @@ import { CircleUserRound, SquareCheckBig, UsersRound } from "lucide-react";
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
+import { getStrings } from "@/lib/strings";
 import {
   fetchCurrentUserTrophies,
   fetchPendingTrophyCelebrations,
@@ -26,12 +27,6 @@ type AppShellProps = {
   children: ReactNode;
 };
 
-const navItems = [
-  { href: "/groups", label: "My Picks", ariaLabel: "My Picks", icon: SquareCheckBig },
-  { href: "/my-groups", label: "My Groups", ariaLabel: "My Groups", icon: UsersRound },
-  { href: "/leaderboard", label: "The Arena", ariaLabel: "The Arena", icon: ArenaIcon },
-  { href: "/profile", label: "My Profile", ariaLabel: "My Profile", icon: CircleUserRound }
-];
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TROPHY_POLL_INTERVAL_MS = 4000;
 
@@ -39,6 +34,13 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading } = useCurrentUser();
+  const copy = getStrings(user?.preferredLanguage);
+  const navItems = [
+    { href: "/groups", label: copy.myPicks, ariaLabel: copy.myPicks, icon: SquareCheckBig },
+    { href: "/my-groups", label: copy.myGroups, ariaLabel: copy.myGroups, icon: UsersRound },
+    { href: "/leaderboard", label: copy.theArena, ariaLabel: copy.theArena, icon: ArenaIcon },
+    { href: "/profile", label: copy.myProfile, ariaLabel: copy.myProfile, icon: CircleUserRound }
+  ];
   const [pendingCelebrationQueue, setPendingCelebrationQueue] = useState<PendingTrophyCelebration[]>([]);
   const [activeCelebration, setActiveCelebration] = useState<PendingTrophyCelebration | null>(null);
   const [readinessBanner, setReadinessBanner] = useState<string | null>(null);

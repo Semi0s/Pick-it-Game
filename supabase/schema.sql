@@ -26,6 +26,7 @@ create type public.email_job_status as enum ('pending', 'processing', 'retrying'
 create table public.invites (
   email text primary key,
   display_name text not null,
+  language text not null default 'en',
   role public.user_role not null default 'player',
   accepted_at timestamptz,
   status public.invite_delivery_status not null default 'pending',
@@ -44,6 +45,7 @@ create table public.users (
   needs_profile_setup boolean not null default false,
   avatar_url text,
   home_team_id text references public.teams(id),
+  preferred_language text not null default 'en',
   role public.user_role not null default 'player',
   status text not null default 'active',
   total_points integer not null default 0,
@@ -199,6 +201,7 @@ create table public.group_invites (
   normalized_email text not null,
   invited_by_user_id uuid references public.users(id) on delete set null,
   suggested_display_name text,
+  language text not null default 'en',
   status public.group_invite_status not null default 'pending',
   token_hash text not null unique,
   expires_at timestamptz,
@@ -487,8 +490,8 @@ begin
   where lower(email) = lower(new.email);
 
   if invite_row.email is not null then
-    insert into public.users (id, name, email, role, needs_profile_setup)
-    values (new.id, invite_row.display_name, new.email, invite_row.role, true)
+    insert into public.users (id, name, email, preferred_language, role, needs_profile_setup)
+    values (new.id, invite_row.display_name, new.email, coalesce(nullif(trim(invite_row.language), ''), 'en'), invite_row.role, true)
     on conflict (id) do nothing;
 
     return new;
@@ -509,8 +512,8 @@ begin
 
   derived_name := coalesce(nullif(trim(group_invite_row.suggested_display_name), ''), split_part(new.email, '@', 1));
 
-  insert into public.users (id, name, email, role, needs_profile_setup)
-  values (new.id, derived_name, new.email, 'player', true)
+  insert into public.users (id, name, email, preferred_language, role, needs_profile_setup)
+  values (new.id, derived_name, new.email, coalesce(nullif(trim(group_invite_row.language), ''), 'en'), 'player', true)
   on conflict (id) do nothing;
 
   return new;
@@ -833,7 +836,8 @@ with check (user_id = auth.uid());
 
 create table if not exists public.legal_documents (
   id uuid primary key default gen_random_uuid(),
-  document_type text not null unique,
+  document_type text not null,
+  language text not null default 'en',
   required_version text not null,
   title text not null,
   body text not null,
@@ -846,14 +850,18 @@ create table if not exists public.user_legal_acceptances (
   user_id uuid not null references auth.users(id) on delete cascade,
   document_type text not null,
   document_version text not null,
+  language text not null default 'en',
   accepted_at timestamptz not null default now(),
   accepted_ip text,
   accepted_user_agent text,
   created_at timestamptz not null default now()
 );
 
-create unique index if not exists user_legal_acceptances_user_doc_version_unique_idx
-  on public.user_legal_acceptances (user_id, document_type, document_version);
+create unique index if not exists legal_documents_document_type_language_unique_idx
+  on public.legal_documents (document_type, language);
+
+create unique index if not exists user_legal_acceptances_user_doc_version_language_unique_idx
+  on public.user_legal_acceptances (user_id, document_type, document_version, language);
 
 create index if not exists user_legal_acceptances_user_doc_created_idx
   on public.user_legal_acceptances (user_id, document_type, created_at desc);
@@ -865,6 +873,7 @@ for each row execute function public.set_updated_at();
 
 insert into public.legal_documents (
   document_type,
+  language,
   required_version,
   title,
   body,
@@ -872,7 +881,8 @@ insert into public.legal_documents (
 )
 values (
   'eula',
-  '2026-04-26-v2',
+  'en',
+  '2026-04-26-v2-en',
   'PICK-IT! Terms of Use',
   $$PICK-IT! Terms of Use
 
@@ -956,8 +966,96 @@ Acceptance
 
 By checking the box and continuing, you confirm that you have read and agree to these Terms of Use.$$,
   true
+),
+(
+  'eula',
+  'es',
+  '2026-04-26-v2-es',
+  'Términos de Uso de PICK-IT!',
+  $$Términos de Uso de PICK-IT!
+
+Última actualización: 26 de abril de 2026
+
+Bienvenido a PICK-IT! Este juego está hecho para ser divertido, social y justo. Al crear una cuenta o usar la aplicación, aceptas estos Términos de Uso.
+
+1. Sobre el Juego
+
+PICK-IT! es un juego de predicciones para la Copa Mundial 2026. Los jugadores hacen predicciones de partidos, se unen a grupos, comparan puntajes y aparecen en tablas de posiciones.
+
+El juego es solo para fines de entretenimiento.
+
+2. Cuentas
+
+Eres responsable de la exactitud de la información de tu cuenta y de mantener tu acceso seguro.
+
+No puedes hacerte pasar por otra persona, crear cuentas disruptivas ni interferir con la capacidad de otros jugadores para disfrutar del juego.
+
+3. Predicciones y Puntuación
+
+Los jugadores son responsables de hacer sus propias predicciones antes de la fecha límite correspondiente.
+
+Las predicciones pueden bloquearse antes o en el momento en que comience el partido.
+
+La puntuación se basa en las reglas que se muestran en la aplicación. PICK-IT! puede corregir puntajes, clasificaciones, datos de partidos o resultados de tablas si se encuentran errores.
+
+Las decisiones finales de puntuación las toma el administrador de la aplicación.
+
+4. Grupos y Tablas de Posiciones
+
+Los jugadores pueden unirse a grupos privados por invitación o aprobación.
+
+Los administradores de grupo pueden invitar jugadores, gestionar la participación del grupo y ver la actividad del grupo según los permisos disponibles en la aplicación.
+
+Las tablas de posiciones se ofrecen para divertirse y pueden cambiar a medida que los puntajes se actualicen, corrijan o finalicen.
+
+5. Juego Limpio
+
+Aceptas no abusar de la aplicación, intentar manipular la puntuación, acceder a la cuenta de otro usuario, interferir con el sistema ni usar la aplicación de una manera que perjudique a otros jugadores o al servicio.
+
+Podemos suspender o eliminar cuentas que violen estos términos o alteren el juego.
+
+6. No es Apuestas
+
+PICK-IT! no está diseñado para ser una plataforma de apuestas.
+
+A menos que se indique claramente lo contrario en reglas oficiales, no se requiere compra, apuesta ni pago para participar.
+
+No uses PICK-IT! para apuestas no autorizadas, juegos de azar ni pozos pagados.
+
+7. Disponibilidad de la Aplicación
+
+Hacemos todo lo posible para que PICK-IT! funcione sin problemas, pero la aplicación puede estar ocasionalmente no disponible, retrasada, inexacta o interrumpida.
+
+No somos responsables por predicciones perdidas, datos perdidos, actualizaciones tardías, retrasos en la puntuación ni problemas técnicos fuera de nuestro control razonable.
+
+8. Cambios en el Juego
+
+Podemos actualizar la aplicación, el sistema de puntuación, las reglas, las funciones o estos Términos a medida que el juego crece.
+
+Si se requiere una nueva versión de estos Términos, es posible que debas aceptarla antes de continuar usando la aplicación.
+
+9. Privacidad
+
+Tu uso de PICK-IT! también está sujeto a nuestra Política de Privacidad.
+
+Recopilamos y usamos la información necesaria para operar el juego, gestionar cuentas, enviar invitaciones, mostrar tablas de posiciones y mejorar la experiencia.
+
+10. Limitación de Responsabilidad
+
+PICK-IT! se ofrece "tal cual" y "según disponibilidad".
+
+En la máxima medida permitida por la ley, no somos responsables por daños indirectos, incidentales, especiales, consecuentes o punitivos relacionados con tu uso de la aplicación.
+
+11. Contacto
+
+Si tienes preguntas sobre estos Términos, comunícate con el administrador de PICK-IT!.
+
+Aceptación
+
+Al marcar la casilla y continuar, confirmas que has leído y aceptas estos Términos de Uso.$$,
+  true
 )
-on conflict (document_type) do nothing;
+on conflict (document_type, language) do nothing;
 
 alter table public.legal_documents enable row level security;
 alter table public.user_legal_acceptances enable row level security;

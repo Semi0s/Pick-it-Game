@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { LegalAcceptanceForm } from "@/components/LegalAcceptanceForm";
-import { DEFAULT_LEGAL_DOCUMENT_TYPE, getRequiredLegalDocument, getUserLegalAcceptanceStatus } from "@/lib/legal";
+import { defaultLanguage, getLegalLanguageForUser, supportedLanguages } from "@/lib/i18n";
+import { DEFAULT_LEGAL_DOCUMENT_TYPE, getLegalDocuments, getRequiredLegalDocument, getUserLegalAcceptanceStatus } from "@/lib/legal";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export default async function LegalAcceptPage({
@@ -19,10 +20,20 @@ export default async function LegalAcceptPage({
     redirect(`/login?next=${encodeURIComponent("/legal/accept")}`);
   }
 
-  const [document, acceptanceStatus] = await Promise.all([
-    getRequiredLegalDocument(DEFAULT_LEGAL_DOCUMENT_TYPE),
-    getUserLegalAcceptanceStatus(user.id, DEFAULT_LEGAL_DOCUMENT_TYPE)
+  const { data: profile } = await supabase.from("users").select("preferred_language").eq("id", user.id).maybeSingle();
+  const preferredLanguage = getLegalLanguageForUser({
+    preferredLanguage: (profile as { preferred_language?: string | null } | null)?.preferred_language ?? null
+  });
+
+  const [document, acceptanceStatus, documents] = await Promise.all([
+    getRequiredLegalDocument(DEFAULT_LEGAL_DOCUMENT_TYPE, preferredLanguage),
+    getUserLegalAcceptanceStatus(user.id, DEFAULT_LEGAL_DOCUMENT_TYPE, preferredLanguage),
+    getLegalDocuments(DEFAULT_LEGAL_DOCUMENT_TYPE, supportedLanguages)
   ]);
+
+  if (!acceptanceStatus.needsAcceptance) {
+    redirect(nextPath?.startsWith("/") ? nextPath : "/dashboard");
+  }
 
   if (!document) {
     return (
@@ -45,9 +56,25 @@ export default async function LegalAcceptPage({
       <section className="mx-auto max-w-2xl">
         <LegalAcceptanceForm
           documentType={document.documentType}
+          documentLanguage={document.language}
           currentVersion={document.requiredVersion}
           title={document.title}
-          body={document.body}
+          documents={
+            documents.length > 0
+              ? documents.map((item) => ({
+                  language: item.language,
+                  title: item.title,
+                  body: item.body
+                }))
+              : [
+                  {
+                    language: document.language ?? defaultLanguage,
+                    title: document.title,
+                    body: document.body
+                  }
+                ]
+          }
+          uiLanguage={preferredLanguage}
           nextPath={nextPath}
           alreadyAccepted={!acceptanceStatus.needsAcceptance}
         />

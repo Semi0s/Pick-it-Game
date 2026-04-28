@@ -16,7 +16,9 @@ import {
   type LegalDocument
 } from "@/lib/legal";
 import { fetchAdminPlayerHealthRows, type AdminPlayerHealthRow } from "@/lib/admin-player-health";
-import { escapeHtml, sendTransactionalEmail } from "@/lib/email-sender";
+import { sendTransactionalEmail } from "@/lib/email-sender";
+import { buildAdminRecoveryEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
+import { appendLanguageToPath, normalizeLanguage } from "@/lib/i18n";
 import { fetchGlobalLeaderboardRankMovement, fetchGroupLeaderboardRankMovement } from "@/lib/leaderboard-movement";
 import { fetchDailyWinners } from "@/lib/leaderboard-highlights";
 import { createNotificationsForLeaderboardEvents, createTrophyEarnedNotifications, type NotificationEventSeed } from "@/lib/notifications";
@@ -88,6 +90,7 @@ type TrophyRow = {
 type InviteLookupRow = {
   email: string;
   display_name: string;
+  language?: string | null;
   role: UserRole;
   accepted_at?: string | null;
   status?: "pending" | "accepted" | "revoked" | "expired" | "failed" | null;
@@ -102,6 +105,7 @@ type GroupStatus = "active" | "archived";
 
 type EmailJobPayload = {
   displayName?: string;
+  language?: string;
   role?: UserRole;
   source?: "admin_invites" | "admin_players";
 };
@@ -151,6 +155,7 @@ export type UpdateMatchResult =
 export type CreateInviteInput = {
   email: string;
   displayName?: string;
+  language?: string;
   role: UserRole;
 };
 
@@ -304,6 +309,15 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
   const adminSupabase = createAdminClient();
   const normalizedEmail = input.email.trim().toLowerCase();
   const trimmedDisplayName = derivePlaceholderDisplayName(normalizedEmail, input.displayName);
+  const { data: adminProfile } = await adminSupabase
+    .from("users")
+    .select("preferred_language")
+    .eq("id", adminCheck.userId)
+    .maybeSingle();
+  const inviteLanguage = normalizeLanguage(
+    input.language ??
+      ((adminProfile as { preferred_language?: string | null } | null)?.preferred_language ?? null)
+  );
 
   if (!normalizedEmail) {
     return { ok: false, message: "Email is required." };
@@ -334,6 +348,7 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
   const inviteUpsertResult = await upsertInviteRow(adminSupabase, {
     email: normalizedEmail,
     displayName: trimmedDisplayName,
+    language: inviteLanguage,
     role: input.role,
     status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
     lastError: null,
@@ -347,13 +362,15 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
   if (!supportsEmailJobs) {
     const sendResult = await sendAdminEmailInline(adminSupabase, {
       kind: sendKind,
-      email: normalizedEmail
+      email: normalizedEmail,
+      language: inviteLanguage
     });
 
     if (!sendResult.ok) {
       await upsertInviteRow(adminSupabase, {
         email: normalizedEmail,
         displayName: trimmedDisplayName,
+        language: inviteLanguage,
         role: input.role,
         status: "failed",
         lastError: sendResult.message,
@@ -366,6 +383,7 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
       await upsertInviteRow(adminSupabase, {
         email: normalizedEmail,
         displayName: trimmedDisplayName,
+        language: inviteLanguage,
         role: input.role,
         status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
         lastError: null,
@@ -396,6 +414,7 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
     requestedByAdminId: adminCheck.userId,
     payload: {
       displayName: trimmedDisplayName,
+      language: inviteLanguage,
       role: input.role,
       source: "admin_invites"
     }
@@ -404,13 +423,15 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
   if (!enqueueResult.ok && isMissingEmailJobsError(enqueueResult.message)) {
     const sendResult = await sendAdminEmailInline(adminSupabase, {
       kind: sendKind,
-      email: normalizedEmail
+      email: normalizedEmail,
+      language: inviteLanguage
     });
 
     if (!sendResult.ok) {
       await upsertInviteRow(adminSupabase, {
         email: normalizedEmail,
         displayName: trimmedDisplayName,
+        language: inviteLanguage,
         role: input.role,
         status: "failed",
         lastError: sendResult.message,
@@ -423,6 +444,7 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
       await upsertInviteRow(adminSupabase, {
         email: normalizedEmail,
         displayName: trimmedDisplayName,
+        language: inviteLanguage,
         role: input.role,
         status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
         lastError: null,
@@ -451,6 +473,7 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
     await upsertInviteRow(adminSupabase, {
       email: normalizedEmail,
       displayName: trimmedDisplayName,
+      language: inviteLanguage,
       role: input.role,
       status: "failed",
       lastError: enqueueResult.message,
@@ -514,9 +537,11 @@ export async function resetUserAccess(input: ResetUserAccessInput): Promise<Rese
     });
   }
 
+  const { data: appUser } = await adminSupabase.from("users").select("preferred_language").eq("id", userId).maybeSingle();
   const sendResult = await sendAdminEmailInline(adminSupabase, {
     kind: "password_recovery",
-    email
+    email,
+    language: (appUser as { preferred_language?: string | null } | null)?.preferred_language ?? undefined
   });
 
   if (!sendResult.ok) {
@@ -594,7 +619,7 @@ export async function resendConfirmationOrOnboardingNudgeAction(
 
   const { data: appUser, error: appUserError } = await adminSupabase
     .from("users")
-    .select("id,name,email,username,needs_profile_setup")
+    .select("id,name,email,username,needs_profile_setup,preferred_language")
     .eq("email", normalizedEmail)
     .maybeSingle();
 
@@ -604,9 +629,16 @@ export async function resendConfirmationOrOnboardingNudgeAction(
 
   const isConfirmed = Boolean(authUser.emailConfirmedAt);
   const needsProfileSetup = Boolean(appUser?.needs_profile_setup || !appUser?.username?.trim());
-  const redirectTo = isConfirmed
-    ? `${getPublicSiteUrl()}/auth/callback?next=${encodeURIComponent("/profile-setup")}`
-    : `${getPublicSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`;
+  const preferredLanguage = getSafeEmailLanguage(
+    (appUser as { preferred_language?: string | null } | null)?.preferred_language ?? null
+  );
+  const redirectTarget = isConfirmed
+    ? appendLanguageToPath("/profile-setup", preferredLanguage)
+    : appendLanguageToPath("/login?confirmed=1&flow=invite&mode=signup", preferredLanguage);
+  const redirectUrl = new URL("/auth/callback", getPublicSiteUrl());
+  redirectUrl.searchParams.set("next", redirectTarget);
+  redirectUrl.searchParams.set("lang", preferredLanguage);
+  const redirectTo = redirectUrl.toString();
   const { data: linkData, error: linkError } = isConfirmed
     ? await adminSupabase.auth.admin.generateLink({
         type: "magiclink",
@@ -628,33 +660,19 @@ export async function resendConfirmationOrOnboardingNudgeAction(
   }
 
   try {
+    const emailCopy = buildAdminRecoveryEmailCopy({
+      language: preferredLanguage,
+      isConfirmed,
+      recipientLabel: appUser?.name?.trim() || normalizedEmail,
+      email: normalizedEmail,
+      actionUrl: linkData.properties.action_link
+    });
+
     await sendTransactionalEmail({
       to: normalizedEmail,
-      subject: isConfirmed
-        ? "Finish your Pick-It profile setup"
-        : "Confirm your Pick-It account",
-      html: buildAdminRecoveryEmailHtml({
-        heading: isConfirmed ? "Finish setting up your profile" : "Confirm your account",
-        intro: isConfirmed
-          ? `${escapeHtml(appUser?.name?.trim() || normalizedEmail)}, finish your profile setup so your groups, scores, and leaderboard name stay in sync.`
-          : `Use the secure confirmation link below to finish creating your Pick-It account for ${escapeHtml(normalizedEmail)}.`,
-        actionLabel: isConfirmed ? "Open Profile Setup" : "Confirm Account",
-        actionUrl: linkData.properties.action_link,
-        note: isConfirmed
-          ? "This link signs the player in and sends them straight to profile setup."
-          : "This link confirms the account first, then returns them to the app."
-      }),
-      text: buildAdminRecoveryEmailText({
-        heading: isConfirmed ? "Finish your Pick-It profile setup" : "Confirm your Pick-It account",
-        intro: isConfirmed
-          ? `${appUser?.name?.trim() || normalizedEmail}, finish your profile setup so your groups, scores, and leaderboard name stay in sync.`
-          : `Use the secure confirmation link below to finish creating your Pick-It account for ${normalizedEmail}.`,
-        actionLabel: isConfirmed ? "Open Profile Setup" : "Confirm Account",
-        actionUrl: linkData.properties.action_link,
-        note: isConfirmed
-          ? "This link signs the player in and sends them straight to profile setup."
-          : "This link confirms the account first, then returns them to the app."
-      })
+      subject: emailCopy.subject,
+      html: emailCopy.html,
+      text: emailCopy.text
     });
   } catch (error) {
     return {
@@ -881,7 +899,8 @@ export async function updateLeaderboardFeatureSettingAction(
 }
 
 export async function fetchRequiredLegalDocumentAction(
-  documentType = DEFAULT_LEGAL_DOCUMENT_TYPE
+  documentType = DEFAULT_LEGAL_DOCUMENT_TYPE,
+  language = "en"
 ): Promise<FetchRequiredLegalDocumentResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
@@ -889,7 +908,7 @@ export async function fetchRequiredLegalDocumentAction(
   }
 
   try {
-    const document = await getRequiredLegalDocument(documentType);
+    const document = await getRequiredLegalDocument(documentType, language);
     return { ok: true, document };
   } catch (error) {
     return {
@@ -901,6 +920,7 @@ export async function fetchRequiredLegalDocumentAction(
 
 export async function forceLegalReacceptanceAction(
   documentType: string,
+  language: string,
   newRequiredVersion: string,
   newTitle?: string,
   newBody?: string
@@ -911,12 +931,17 @@ export async function forceLegalReacceptanceAction(
   }
 
   const normalizedDocumentType = documentType.trim().toLowerCase();
+  const normalizedLanguage = language.trim().toLowerCase();
   const normalizedVersion = newRequiredVersion.trim();
   const normalizedTitle = newTitle?.trim() ?? "";
   const normalizedBody = newBody?.trim() ?? "";
 
   if (!normalizedDocumentType) {
     return { ok: false, message: "A legal document type is required." };
+  }
+
+  if (!normalizedLanguage) {
+    return { ok: false, message: "A legal document language is required." };
   }
 
   if (!normalizedVersion) {
@@ -934,6 +959,7 @@ export async function forceLegalReacceptanceAction(
   try {
     await upsertRequiredLegalDocument({
       documentType: normalizedDocumentType,
+      language: normalizedLanguage,
       requiredVersion: normalizedVersion,
       title: normalizedTitle,
       body: normalizedBody,
@@ -947,6 +973,7 @@ export async function forceLegalReacceptanceAction(
   }
 
   const adminSupabase = createAdminClient();
+  const { data: userProfiles } = await adminSupabase.from("users").select("id,preferred_language");
   let revokedUsers = 0;
   let revokeFailed = false;
   let page = 1;
@@ -969,6 +996,19 @@ export async function forceLegalReacceptanceAction(
     }
 
     for (const authUser of users) {
+      const matchedProfile = ((userProfiles as Array<{ id: string; preferred_language?: string | null }> | null) ?? []).find(
+        (profile) => profile.id === authUser.id
+      );
+      const preferredLanguage = (matchedProfile?.preferred_language ?? "en").trim().toLowerCase();
+      const shouldRevoke =
+        normalizedLanguage === "en"
+          ? preferredLanguage === "en" || !["en", "es"].includes(preferredLanguage)
+          : preferredLanguage === normalizedLanguage;
+
+      if (!shouldRevoke) {
+        continue;
+      }
+
       try {
         // Supabase Admin session revocation support can vary by SDK version and backend behavior.
         // Even if this call fails, the server-side legal gate still blocks normal app usage until
@@ -2545,56 +2585,6 @@ async function findAuthUserByEmail(
   return null;
 }
 
-function buildAdminRecoveryEmailHtml(input: {
-  heading: string;
-  intro: string;
-  actionLabel: string;
-  actionUrl: string;
-  note: string;
-}) {
-  const escapedHeading = escapeHtml(input.heading);
-  const escapedIntro = escapeHtml(input.intro);
-  const escapedActionLabel = escapeHtml(input.actionLabel);
-  const escapedActionUrl = escapeHtml(input.actionUrl);
-  const escapedNote = escapeHtml(input.note);
-
-  return `
-    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
-      <h1 style="font-size: 24px; margin-bottom: 16px;">${escapedHeading}</h1>
-      <p style="margin-bottom: 16px;">${escapedIntro}</p>
-      <p style="margin: 24px 0;">
-        <a href="${escapedActionUrl}" style="display: inline-block; background: #1f8b4c; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-weight: 700;">
-          ${escapedActionLabel}
-        </a>
-      </p>
-      <p style="margin-bottom: 12px; font-size: 14px; color: #4b5563;">
-        If the button does not work, paste this link into your browser:<br />
-        <span style="word-break: break-all;">${escapedActionUrl}</span>
-      </p>
-      <p style="font-size: 14px; color: #6b7280;">${escapedNote}</p>
-    </div>
-  `;
-}
-
-function buildAdminRecoveryEmailText(input: {
-  heading: string;
-  intro: string;
-  actionLabel: string;
-  actionUrl: string;
-  note: string;
-}) {
-  return [
-    input.heading,
-    "",
-    input.intro,
-    "",
-    `${input.actionLabel}:`,
-    input.actionUrl,
-    "",
-    input.note
-  ].join("\n");
-}
-
 function formatLeaderboardFeatureSettingLabel(key: LeaderboardFeatureSettingKey) {
   switch (key) {
     case "daily_winner_enabled":
@@ -2670,6 +2660,7 @@ async function upsertInviteRow(
   input: {
     email: string;
     displayName: string;
+    language: string;
     role: UserRole;
     status: "pending" | "accepted" | "revoked" | "expired" | "failed";
     lastError: string | null;
@@ -2697,6 +2688,7 @@ async function upsertInviteRow(
   const fullPayload = {
     email: input.email,
     display_name: input.displayName,
+    language: normalizeLanguage(input.language),
     role: input.role,
     accepted_at: input.preserveAcceptedAt ?? null,
     status: input.status,
@@ -2799,7 +2791,7 @@ async function fetchInviteLookup(
 ) {
   const fullResult = await adminSupabase
     .from("invites")
-    .select("email,display_name,role,accepted_at,status,last_sent_at,send_attempts,last_error")
+    .select("email,display_name,language,role,accepted_at,status,last_sent_at,send_attempts,last_error")
     .eq("email", normalizedEmail)
     .maybeSingle();
 
@@ -2817,9 +2809,10 @@ async function fetchInviteLookup(
     return {
       data: {
         ...fallbackResult.data,
-        last_sent_at: null,
-        send_attempts: 0,
-        last_error: null
+        language: "en",
+          last_sent_at: null,
+          send_attempts: 0,
+          last_error: null
       },
       error: null
     };
@@ -2839,6 +2832,7 @@ async function fetchInviteLookup(
     data: minimalResult.data
       ? {
           ...minimalResult.data,
+          language: "en",
           status: minimalResult.data.accepted_at ? "accepted" : "pending",
           last_sent_at: null,
           send_attempts: 0,
@@ -2864,11 +2858,19 @@ async function hasEmailJobsTable(adminSupabase: ReturnType<typeof createAdminCli
 
 async function sendAdminEmailInline(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  input: { kind: EmailJobKind; email: string }
+  input: { kind: EmailJobKind; email: string; language?: string }
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  const preferredLanguage = normalizeLanguage(input.language);
+
   if (input.kind === "access_email") {
+    const redirectUrl = new URL("/auth/callback", getPublicSiteUrl());
+    redirectUrl.searchParams.set(
+      "next",
+      appendLanguageToPath("/login?confirmed=1&flow=invite&mode=signup", preferredLanguage)
+    );
+    redirectUrl.searchParams.set("lang", preferredLanguage);
     const { error } = await adminSupabase.auth.admin.inviteUserByEmail(input.email, {
-      redirectTo: `${getPublicSiteUrl()}/auth/callback?next=${encodeURIComponent("/login?confirmed=1&flow=invite&mode=signup")}`
+      redirectTo: redirectUrl.toString()
     });
 
     if (error) {
@@ -2878,8 +2880,11 @@ async function sendAdminEmailInline(
     return { ok: true };
   }
 
+  const recoveryUrl = new URL("/auth/confirm", getPublicSiteUrl());
+  recoveryUrl.searchParams.set("next", appendLanguageToPath("/reset-password", preferredLanguage));
+  recoveryUrl.searchParams.set("lang", preferredLanguage);
   const { error } = await adminSupabase.auth.resetPasswordForEmail(input.email, {
-    redirectTo: `${getPublicSiteUrl()}/auth/confirm?next=/reset-password`
+    redirectTo: recoveryUrl.toString()
   });
 
   if (error) {
@@ -2891,6 +2896,7 @@ async function sendAdminEmailInline(
 
 function isMissingInviteLifecycleColumnError(message: string) {
   return (
+    isMissingColumnError(message, "language") ||
     isMissingColumnError(message, "status") ||
     isMissingColumnError(message, "last_sent_at") ||
     isMissingColumnError(message, "send_attempts") ||
