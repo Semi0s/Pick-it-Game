@@ -5,6 +5,7 @@ import { appendLanguageToPath, defaultLanguage, normalizeLanguage, type Supporte
 import { teams } from "@/lib/mock-data";
 import { getPublicWebPushVapidKey } from "@/lib/push-config";
 import {
+  isMissingColumnError,
   isMissingAnyRelationError,
   isMissingRelationError,
   isMissingStorageBucketError,
@@ -202,12 +203,8 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
     return null;
   }
 
-  const [{ data: profile }, { data: managerLimits }, userSettingsResult, pushTokensResult, legalDocumentResult, legalAcceptanceResult] = await Promise.all([
-    supabase
-      .from("users")
-      .select("id,name,email,avatar_url,home_team_id,preferred_language,role,username,username_set_at,needs_profile_setup,total_points")
-      .eq("id", session.user.id)
-      .single(),
+  const [profileResult, { data: managerLimits }, userSettingsResult, pushTokensResult, legalDocumentResult, legalAcceptanceResult] = await Promise.all([
+    fetchCurrentUserProfileRow(supabase, session.user.id),
     supabase
       .from("manager_limits")
       .select("max_groups,max_members_per_group")
@@ -238,7 +235,23 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
       .limit(10)
   ]);
 
-  const profileRow = (profile as UserRow | null) ?? null;
+  if (profileResult.error) {
+    console.error("Could not load current user profile from public.users.", {
+      userId: session.user.id,
+      message: profileResult.error.message
+    });
+    return null;
+  }
+
+  const profileRow = profileResult.data;
+  if (!profileRow) {
+    console.error("Authenticated user session exists without a matching public.users profile.", {
+      userId: session.user.id,
+      email: session.user.email ?? null
+    });
+    return null;
+  }
+
   const preferredLanguage = normalizeLanguage(profileRow?.preferred_language);
   const notificationsEnabled = isMissingUserSettingsTableError(userSettingsResult.error?.message)
     ? false
@@ -262,46 +275,18 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
       (!latestLegalAcceptance || latestLegalAcceptance.document_version !== requiredEulaVersion)
   );
 
-  if (profileRow) {
-    return mapUserRow(
-      profileRow,
-      (managerLimits as ManagerLimitsRow | null) ?? null,
-      notificationsEnabled,
-      pushNotificationsEnabled,
-      {
-        needsLegalAcceptance,
-        requiredEulaVersion,
-        acceptedEulaVersion: latestLegalAcceptance?.document_version ?? null,
-        acceptedEulaAt: latestLegalAcceptance?.accepted_at ?? null
-      }
-    );
-  }
-
-  return {
-    id: session.user.id,
-    name: session.user.email?.split("@")[0] ?? "Player",
-    email: session.user.email ?? "",
-    homeTeamId: null,
-    preferredLanguage,
-    role: "player",
-    accessLevel: managerLimits ? "manager" : "player",
-    username: null,
-    usernameSetAt: null,
-    needsProfileSetup: false,
+  return mapUserRow(
+    profileRow,
+    (managerLimits as ManagerLimitsRow | null) ?? null,
     notificationsEnabled,
     pushNotificationsEnabled,
-    needsLegalAcceptance,
-    requiredEulaVersion,
-    acceptedEulaVersion: latestLegalAcceptance?.document_version ?? null,
-    acceptedEulaAt: latestLegalAcceptance?.accepted_at ?? null,
-    managerLimits: managerLimits
-      ? {
-          maxGroups: managerLimits.max_groups,
-          maxMembersPerGroup: managerLimits.max_members_per_group
-        }
-      : null,
-    totalPoints: 0
-  };
+    {
+      needsLegalAcceptance,
+      requiredEulaVersion,
+      acceptedEulaVersion: latestLegalAcceptance?.document_version ?? null,
+      acceptedEulaAt: latestLegalAcceptance?.accepted_at ?? null
+    }
+  );
 }
 
 export function onAuthStateChange(callback: () => void) {
@@ -833,6 +818,50 @@ function getFriendlyAuthError(message: string, mode: AuthMode) {
   return message || "Something went wrong. Please try again.";
 }
 
+async function fetchCurrentUserProfileRow(
+  supabase: ReturnType<typeof createClient>,
+  userId: string
+): Promise<{ data: UserRow | null; error: { message: string } | null }> {
+  const fullProfileQuery = await supabase
+    .from("users")
+    .select("id,name,email,avatar_url,home_team_id,preferred_language,role,username,username_set_at,needs_profile_setup,total_points")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!fullProfileQuery.error) {
+    return {
+      data: (fullProfileQuery.data as UserRow | null) ?? null,
+      error: null
+    };
+  }
+
+  if (!isMissingPreferredLanguageColumnError(fullProfileQuery.error.message)) {
+    return { data: null, error: { message: fullProfileQuery.error.message } };
+  }
+
+  warnOptionalFeatureOnce(
+    "current-user-profile-preferred-language-missing",
+    "Current-user profile is loading without preferred_language because the live public.users schema is behind the app.",
+    fullProfileQuery.error.message
+  );
+
+  const fallbackProfileQuery = await supabase
+    .from("users")
+    .select("id,name,email,avatar_url,home_team_id,role,username,username_set_at,needs_profile_setup,total_points")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (fallbackProfileQuery.error) {
+    return { data: null, error: { message: fallbackProfileQuery.error.message } };
+  }
+
+  const fallbackRow = fallbackProfileQuery.data as Omit<UserRow, "preferred_language"> | null;
+  return {
+    data: fallbackRow ? { ...fallbackRow, preferred_language: defaultLanguage } : null,
+    error: null
+  };
+}
+
 function isInvalidRefreshTokenError(message: string) {
   const normalized = message.toLowerCase();
   return normalized.includes("invalid refresh token") || normalized.includes("refresh token not found");
@@ -865,6 +894,10 @@ function isMissingTrophiesTableError(message?: string) {
 
 function isMissingLegalTablesError(message?: string) {
   return isMissingAnyRelationError(message, ["legal_documents", "user_legal_acceptances"]);
+}
+
+function isMissingPreferredLanguageColumnError(message?: string) {
+  return isMissingColumnError(message, "users", "preferred_language");
 }
 
 function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; flow?: string; language?: string }) {

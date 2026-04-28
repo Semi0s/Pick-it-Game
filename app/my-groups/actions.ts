@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { fetchBooleanAppSetting } from "@/lib/app-settings";
 import { buildGroupInviteEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
 import { appendLanguageToPath, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
+import { isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendTransactionalEmail } from "@/lib/email-sender";
 import { createTrophyEarnedNotifications } from "@/lib/notifications";
@@ -1525,11 +1526,7 @@ async function getCurrentUserContext(): Promise<CurrentUserContext> {
     return { ok: false, message: "You must be signed in to do that." };
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from("users")
-    .select("id,email,role,preferred_language")
-    .eq("id", user.id)
-    .single();
+  const { data: profile, error: profileError } = await fetchCurrentUserContextProfile(supabase, user.id);
 
   if (profileError || !profile) {
     return { ok: false, message: "Your player profile could not be loaded." };
@@ -1541,6 +1538,53 @@ async function getCurrentUserContext(): Promise<CurrentUserContext> {
     email: profile.email,
     role: profile.role,
     preferredLanguage: normalizeLanguage((profile as { preferred_language?: string | null }).preferred_language)
+  };
+}
+
+async function fetchCurrentUserContextProfile(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  userId: string
+): Promise<{
+  data: { id: string; email: string; role: PlatformRole; preferred_language?: string | null } | null;
+  error: { message: string } | null;
+}> {
+  const fullProfileQuery = await supabase
+    .from("users")
+    .select("id,email,role,preferred_language")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!fullProfileQuery.error) {
+    return {
+      data: (fullProfileQuery.data as { id: string; email: string; role: PlatformRole; preferred_language?: string | null } | null) ?? null,
+      error: null
+    };
+  }
+
+  if (!isMissingColumnError(fullProfileQuery.error.message, "users", "preferred_language")) {
+    return { data: null, error: { message: fullProfileQuery.error.message } };
+  }
+
+  warnOptionalFeatureOnce(
+    "my-groups-current-user-preferred-language-missing",
+    "My Groups current-user context is loading without preferred_language because the live public.users schema is behind the app.",
+    fullProfileQuery.error.message
+  );
+
+  const fallbackProfileQuery = await supabase
+    .from("users")
+    .select("id,email,role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (fallbackProfileQuery.error) {
+    return { data: null, error: { message: fallbackProfileQuery.error.message } };
+  }
+
+  const fallbackRow = fallbackProfileQuery.data as { id: string; email: string; role: PlatformRole } | null;
+  return {
+    data: fallbackRow ? { ...fallbackRow, preferred_language: "en" } : null,
+    error: null
   };
 }
 
