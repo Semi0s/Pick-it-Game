@@ -132,3 +132,26 @@ export type MatchWithTeams = Match & {
   homeTeam?: Team;
   awayTeam?: Team;
 };
+
+export type AppUpdateType = "info" | "feature" | "warning" | "tournament" | "maintenance";
+export type AppUpdateImportance = "normal" | "important";
+
+export type AppUpdate = {
+  id: string;
+  title: string;
+  body: string;
+  updateType: AppUpdateType;
+  importance: AppUpdateImportance;
+  linkLabel?: string | null;
+  linkUrl?: string | null;
+  publishedAt: string;
+  expiresAt?: string | null;
+  createdBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AppUpdateWithReadState = AppUpdate & {
+  isRead: boolean;
+  readAt?: string | null;
+};

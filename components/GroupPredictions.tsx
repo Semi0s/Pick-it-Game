@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Globe, Network, SquareCheckBig, Trophy } from "lucide-react";
+import { Network, SquareCheckBig, Trophy } from "lucide-react";
 import { showAppToast } from "@/lib/app-toast";
+import { InlineDisclosureButton } from "@/components/player-management/Shared";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import {
   getExplainerLanguageForUser,
@@ -30,18 +31,9 @@ type GroupPredictionsProps = {
 };
 
 const stages: ("all" | MatchStage)[] = ["all", "group"];
-const EXPLAINER_LANGUAGES = ["en", "es", "fr", "pt", "de"] as const;
-
-const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
-  en: "English",
-  es: "Español",
-  fr: "Français",
-  pt: "Português",
-  de: "Deutsch"
-};
 
 const EXPLAINER_TITLE_COPY: Record<ExplainerLanguage, string> = {
-  en: "Scroll down and pick a score for every match.",
+  en: "Predict all the match scores below",
   es: "Desplázate hacia abajo y elige un marcador para cada partido.",
   fr: "Faites défiler et choisissez un score pour chaque match.",
   pt: "Role para baixo e escolha um placar para cada partida.",
@@ -94,7 +86,7 @@ export function GroupPredictions({
   const [pendingScrollMatchId, setPendingScrollMatchId] = useState<string | null>(null);
   const [focusedMatchId, setFocusedMatchId] = useState<string | null>(null);
   const [isKnockoutSeeded, setIsKnockoutSeeded] = useState(initialKnockoutSeeded ?? false);
-  const [explainerLanguage, setExplainerLanguage] = useState<ExplainerLanguage>(() => {
+  const [explainerLanguage] = useState<ExplainerLanguage>(() => {
     if (typeof window !== "undefined") {
       try {
         const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
@@ -108,17 +100,10 @@ export function GroupPredictions({
 
     return getExplainerLanguageForUser(user);
   });
-  const [isExplainerLanguageMenuOpen, setIsExplainerLanguageMenuOpen] = useState(false);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const matchCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dateSectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, explainerLanguage);
-    } catch (error) {
-      console.warn("Could not persist play explainer language.", error);
-    }
-  }, [explainerLanguage]);
 
   useEffect(() => {
     if (initialMatches) {
@@ -413,65 +398,35 @@ export function GroupPredictions({
       <section className="rounded-lg bg-gray-100 p-5">
         <div className="flex items-start justify-between gap-3">
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">My Picks</p>
-          <div className="flex shrink-0 items-start gap-2">
-            <div className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsExplainerLanguageMenuOpen((current) => !current)}
-                className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light sm:px-3 sm:py-2"
-                aria-haspopup="menu"
-                aria-expanded={isExplainerLanguageMenuOpen}
-                aria-label={`Translate title and explainer text. Current language: ${EXPLAINER_LANGUAGE_LABELS[explainerLanguage]}`}
-              >
-                <Globe aria-hidden className="h-3.5 w-3.5 text-accent-dark" />
-                <span>{explainerLanguage.toUpperCase()}</span>
-                <ChevronDown aria-hidden className="h-3.5 w-3.5 text-gray-500" />
-              </button>
-              {isExplainerLanguageMenuOpen ? (
-                <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
-                  {EXPLAINER_LANGUAGES.map((language) => (
-                    <button
-                      key={language}
-                      type="button"
-                      onClick={() => {
-                        setExplainerLanguage(language);
-                        setIsExplainerLanguageMenuOpen(false);
-                      }}
-                      className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm font-semibold transition ${
-                        language === explainerLanguage
-                          ? "bg-accent-light text-accent-dark"
-                          : "text-gray-700 hover:bg-gray-50"
-                      }`}
-                      role="menuitem"
-                    >
-                      <span>{EXPLAINER_LANGUAGE_LABELS[language]}</span>
-                      <span className="text-xs font-black uppercase">{language}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            <div
-              className={`rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2 ${
-                hasCompletedAllPicks ? "bg-amber-50 text-amber-800" : "bg-white text-gray-700"
-              }`}
-            >
+          <div
+            className={`shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2 ${
+              hasCompletedAllPicks ? "bg-amber-50 text-amber-800" : "bg-white text-gray-700"
+            }`}
+          >
               {savedCount} of {matches.length} picks saved
-            </div>
           </div>
         </div>
         <div className="mt-3">
           <h2 className="text-3xl font-black leading-tight">{EXPLAINER_TITLE_COPY[explainerLanguage]}</h2>
-          <ul className="mt-3 min-w-0 space-y-0.5 text-sm leading-5 text-gray-600">
-            {EXPLAINER_COPY[explainerLanguage].map((line) => (
-              <li key={line} className="flex gap-2">
-                <span className="shrink-0 text-gray-500">&bull;</span>
-                <span>{line}</span>
-              </li>
-            ))}
-          </ul>
+          <div className="mt-3 flex justify-start">
+            <InlineDisclosureButton
+              isOpen={isMoreOpen}
+              label="Read More / Click Here"
+              onClick={() => setIsMoreOpen((current) => !current)}
+            />
+          </div>
+          {isMoreOpen ? (
+            <ul className="mt-3 min-w-0 space-y-0.5 text-sm leading-5 text-gray-600">
+              {EXPLAINER_COPY[explainerLanguage].map((line) => (
+                <li key={line} className="flex gap-2">
+                  <span className="shrink-0 text-gray-500">&bull;</span>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
-        <div className="mt-4 max-w-xl">
+        <div className="mt-4 mx-auto max-w-xl">
           <button
             type="button"
             onClick={handlePrimaryAction}
@@ -512,53 +467,61 @@ export function GroupPredictions({
             </Link>
           </div>
         </div>
-        <div className="mt-4 space-y-3">
-          <div className="grid gap-3 lg:grid-cols-3">
-            <label>
-              <span className="text-sm font-bold text-gray-700">Find a team</span>
-              <input
-                value={teamSearch}
-                onChange={(event) => setTeamSearch(event.target.value)}
-                placeholder="Search by team name or code"
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-              />
-            </label>
-            <label>
-              <span className="text-sm font-bold text-gray-700">Stage</span>
-              <select
-                value={stageFilter}
-                onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
-              >
-                {stages.map((stage) => (
-                  <option key={stage} value={stage}>
-                    {stage === "all" ? "All stages" : formatStage(stage)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span className="text-sm font-bold text-gray-700">Date</span>
-              <select
-                value={dateFilter}
-                onChange={(event) => setDateFilter(event.target.value)}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
-              >
-                <option value="all">All dates</option>
-                {dateOptions.map((date) => (
-                  <option key={date} value={date}>
-                    {formatDateLabel(date)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+        <div className="mt-4">
+          <InlineDisclosureButton
+            isOpen={isSearchOpen}
+            label="Search for a match / Click Here"
+            onClick={() => setIsSearchOpen((current) => !current)}
+          />
+          {isSearchOpen ? (
+            <div className="mt-3 grid gap-3 lg:grid-cols-3">
+              <label>
+                <span className="text-sm font-bold text-gray-700">Find a team</span>
+                <input
+                  value={teamSearch}
+                  onChange={(event) => setTeamSearch(event.target.value)}
+                  placeholder="Search by team name or code"
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                />
+              </label>
+              <label>
+                <span className="text-sm font-bold text-gray-700">Stage</span>
+                <select
+                  value={stageFilter}
+                  onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+                >
+                  {stages.map((stage) => (
+                    <option key={stage} value={stage}>
+                      {stage === "all" ? "All stages" : formatStage(stage)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="text-sm font-bold text-gray-700">Date</span>
+                <select
+                  value={dateFilter}
+                  onChange={(event) => setDateFilter(event.target.value)}
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+                >
+                  <option value="all">All dates</option>
+                  {dateOptions.map((date) => (
+                    <option key={date} value={date}>
+                      {formatDateLabel(date)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
         </div>
-        <p className="mt-4 text-sm font-semibold text-gray-600">
-          Showing {visibleMatches.length} of {filteredMatches.length} matches
-          {filteredMatches.length !== matches.length ? ` (${matches.length} total in the schedule)` : ""}.
-        </p>
       </section>
+
+      <p className="text-sm font-semibold text-gray-600">
+        Showing {visibleMatches.length} of {filteredMatches.length} matches
+        {filteredMatches.length !== matches.length ? ` (${matches.length} total in the schedule)` : ""}.
+      </p>
 
       {renderMatchPager()}
 

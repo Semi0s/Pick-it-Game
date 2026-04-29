@@ -2,14 +2,17 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { CalendarDays, CircleHelp, ListOrdered, Network, Sparkles, SquareCheckBig, Trophy } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { CalendarDays, ListOrdered, Network, Sparkles, Trophy } from "lucide-react";
 import { fetchDashboardGroupAccessAction } from "@/app/my-groups/actions";
-import { AdminStatsSection, AdminToolsSection, AdminMessage } from "@/components/admin/AdminHomeClient";
+import { AppUpdatesCard } from "@/components/AppUpdatesCard";
+import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
+import { DashboardHero } from "@/components/dashboard/DashboardHero";
+import { DashboardNoGroupsPanel } from "@/components/dashboard/DashboardNoGroupsPanel";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { showAppToast } from "@/lib/app-toast";
-import { InviteEntryForm, normalizeInviteTokenInput } from "@/components/player-management/Shared";
+import { normalizeInviteTokenInput } from "@/components/player-management/Shared";
 import {
   getExplainerLanguageForUser,
   normalizeExplainerLanguage,
@@ -53,20 +56,7 @@ export function DashboardOverview() {
   } | null>(null);
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
-  const [displayLanguage, setDisplayLanguage] = useState<ExplainerLanguage>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
-        if (storedValue) {
-          return normalizeExplainerLanguage(storedValue);
-        }
-      } catch (error) {
-        console.warn("Could not restore dashboard helper language.", error);
-      }
-    }
-
-    return getExplainerLanguageForUser(user);
-  });
+  const [displayLanguage, setDisplayLanguage] = usePersistentExplainerLanguage(user);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
 
   const refreshPredictions = useCallback(async () => {
@@ -103,24 +93,6 @@ export function DashboardOverview() {
       isMounted = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    try {
-      const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
-      if (storedValue) {
-        setDisplayLanguage(normalizeExplainerLanguage(storedValue));
-        return;
-      }
-    } catch (error) {
-      console.warn("Could not restore dashboard helper language.", error);
-    }
-
-    setDisplayLanguage(getExplainerLanguageForUser(user));
-  }, [user]);
 
   useEffect(() => {
     if (!user) {
@@ -212,11 +184,20 @@ export function DashboardOverview() {
     };
   }, [user?.role]);
 
-  const openMatches = groupMatches.filter((match) => canEditPrediction(match.status));
-  const completedCount = groupMatches.filter((match) =>
-    predictions.some((prediction) => prediction.matchId === match.id)
-  ).length;
-  const nextOpenMatch = [...openMatches].sort((left, right) => +new Date(left.kickoffTime) - +new Date(right.kickoffTime))[0] ?? null;
+  const savedMatchIds = useMemo(() => new Set(predictions.map((prediction) => prediction.matchId)), [predictions]);
+  const openMatches = useMemo(
+    () => groupMatches.filter((match) => canEditPrediction(match.status)),
+    [groupMatches]
+  );
+  const completedCount = useMemo(
+    () => groupMatches.filter((match) => savedMatchIds.has(match.id)).length,
+    [groupMatches, savedMatchIds]
+  );
+  const nextOpenMatch = useMemo(
+    () =>
+      [...openMatches].sort((left, right) => +new Date(left.kickoffTime) - +new Date(right.kickoffTime))[0] ?? null,
+    [openMatches]
+  );
   const heroCtaLabel = completedCount > 0 ? "My Next Pick" : "My Picks";
   const heroCtaHref = "/groups?focus=next";
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
@@ -259,89 +240,37 @@ export function DashboardOverview() {
 
   return (
     <div className="space-y-5">
-      <section
-        className="relative rounded-lg bg-gray-100 p-5"
-      >
-        <div>
-          <Link
-            href="/help"
-            className="absolute right-2 top-0 inline-flex items-center gap-2 px-2 py-2 text-sm font-bold text-gray-800 transition hover:text-accent-dark sm:right-3"
-          >
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-accent-light text-accent-dark">
-              <CircleHelp aria-hidden className="h-4 w-4" />
-            </span>
-            {dashboardCopy.help}
-          </Link>
-          <p className="text-4xl font-black uppercase leading-none tracking-wide text-accent-dark">{dashboardCopy.hello}</p>
-          <h2 className="mt-2 text-4xl font-black leading-tight text-gray-950 sm:text-5xl">
-            {user?.name ?? "Player"}
-          </h2>
-          <Link
-            href={heroCtaHref}
-            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-base font-bold text-white transition hover:bg-accent-dark sm:w-auto"
-          >
-            <SquareCheckBig aria-hidden className="h-4 w-4 text-white" />
-            {heroCtaLabel}
-          </Link>
-        </div>
-      </section>
+      <DashboardHero
+        name={user?.name ?? "Player"}
+        ctaHref={heroCtaHref}
+        ctaLabel={heroCtaLabel}
+        displayLanguage={displayLanguage}
+        dashboardCopy={dashboardCopy}
+        onSelectLanguage={setDisplayLanguage}
+      />
 
-      <section className="rounded-lg border border-gray-200 bg-white p-4">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Updates</p>
-        <p className="mt-2 text-sm leading-6 text-gray-600">
-          Upcoming important news and information will be presented in this card, including testing days and new feature announcements. Stay in tune and visit often for the latest updates.
-        </p>
-      </section>
+      <AppUpdatesCard />
 
       {user?.role === "admin" ? (
-        <section className="space-y-3 rounded-lg border border-accent-light bg-accent-light/40 p-4">
-          <div>
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Admin</p>
-            <h3 className="mt-1 text-xl font-black text-gray-950">Manage the challenge.</h3>
-          </div>
-          {adminError ? <AdminMessage tone="error" message={adminError} /> : null}
-          <AdminToolsSection />
-          <AdminStatsSection counts={adminCounts} />
-        </section>
+        <DashboardAdminPanel
+          adminCounts={adminCounts}
+          adminError={adminError}
+          isSuperAdmin={user.accessLevel === "super_admin"}
+        />
       ) : null}
 
       {user && groupAccess && !groupAccess.hasAnyGroups ? (
-        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm font-bold uppercase tracking-wide text-amber-800">Group Access</p>
-          <h3 className="mt-1 text-xl font-black text-gray-950">You are not in any groups right now.</h3>
-          <p className="mt-2 text-sm font-semibold leading-6 text-gray-700">
-            Your account and predictions are still here. Ask a manager for a new invite link to join another group, or jump back into scoring while you wait.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link
-              href="/my-groups"
-              className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-            >
-              Open My Groups
-            </Link>
-            <Link
-              href="/groups"
-              className="inline-flex items-center justify-center rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:bg-accent-dark"
-            >
-              Go to Score Picks
-            </Link>
-          </div>
-          <div className="mt-4">
-            <InviteEntryForm
-              value={inviteEntryValue}
-              onValueChange={(value) => {
-                setInviteEntryValue(value);
-                if (inviteEntryError) {
-                  setInviteEntryError(null);
-                }
-              }}
-              onSubmit={handleInviteEntrySubmit}
-              submitLabel="Open Invite"
-              description="Paste a fresh group invite link or token to jump straight back into signup or joining."
-            />
-          </div>
-          {inviteEntryError ? <div className="mt-3"><AdminMessage tone="error" message={inviteEntryError} /></div> : null}
-        </section>
+        <DashboardNoGroupsPanel
+          inviteEntryValue={inviteEntryValue}
+          inviteEntryError={inviteEntryError}
+          onInviteEntryChange={(value) => {
+            setInviteEntryValue(value);
+            if (inviteEntryError) {
+              setInviteEntryError(null);
+            }
+          }}
+          onInviteEntrySubmit={handleInviteEntrySubmit}
+        />
       ) : null}
 
       <section className="grid grid-cols-3 overflow-hidden rounded-lg border border-gray-200 bg-white">
@@ -428,6 +357,56 @@ function DashboardLinkCard({ href, icon: Icon, title, copy }: DashboardLinkCardP
       <p className="mt-1 text-sm leading-6 text-gray-600">{copy}</p>
     </Link>
   );
+}
+
+function usePersistentExplainerLanguage(user: { preferredLanguage?: string | null } | null | undefined) {
+  const [displayLanguage, setDisplayLanguage] = useState<ExplainerLanguage>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
+        if (storedValue) {
+          return normalizeExplainerLanguage(storedValue);
+        }
+      } catch (error) {
+        console.warn("Could not restore dashboard helper language.", error);
+      }
+    }
+
+    return getExplainerLanguageForUser(user);
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
+      if (storedValue) {
+        setDisplayLanguage(normalizeExplainerLanguage(storedValue));
+        return;
+      }
+    } catch (error) {
+      console.warn("Could not restore dashboard helper language.", error);
+    }
+
+    setDisplayLanguage(getExplainerLanguageForUser(user));
+  }, [user]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, displayLanguage);
+      window.dispatchEvent(new CustomEvent("pickit:helper-language-changed"));
+    } catch (error) {
+      console.warn("Could not persist dashboard helper language.", error);
+    }
+  }, [displayLanguage]);
+
+  return [displayLanguage, setDisplayLanguage] as const;
 }
 
 function formatNextMatchCountdown(kickoffTime: string | null) {

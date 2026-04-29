@@ -9,6 +9,7 @@ import { NotificationsBell } from "@/components/NotificationsBell";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { APP_TOAST_EVENT, markAppToastsReady, type AppToastDetail } from "@/lib/app-toast";
 import { getStrings } from "@/lib/strings";
+import { PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, type SupportedLanguage } from "@/lib/i18n";
 import {
   fetchCurrentUserTrophies,
   fetchPendingTrophyCelebrations,
@@ -32,12 +33,14 @@ const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TROPHY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_TOAST_DURATION_MS = 4200;
 const DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-shown:";
+const HELPER_LANGUAGE_CHANGED_EVENT = "pickit:helper-language-changed";
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading } = useCurrentUser();
-  const copy = getStrings(user?.preferredLanguage);
+  const [dockLanguage, setDockLanguage] = useState<SupportedLanguage>(user?.preferredLanguage === "es" ? "es" : "en");
+  const copy = getStrings(dockLanguage);
   const navItems = [
     { href: "/groups", label: copy.myPicks, ariaLabel: copy.myPicks, icon: SquareCheckBig },
     { href: "/my-groups", label: copy.myGroups, ariaLabel: copy.myGroups, icon: UsersRound },
@@ -85,6 +88,56 @@ export function AppShell({ children }: AppShellProps) {
       router.replace("/login");
     }
   }, [isLoading, router, user]);
+
+  useEffect(() => {
+    if (!user) {
+      setDockLanguage("en");
+      return;
+    }
+
+    const fallbackLanguage: SupportedLanguage = user.preferredLanguage === "es" ? "es" : "en";
+
+    const syncDockLanguage = () => {
+      if (typeof window === "undefined") {
+        setDockLanguage(fallbackLanguage);
+        return;
+      }
+
+      try {
+        const helperLanguage = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
+        if (helperLanguage === "en" || helperLanguage === "es") {
+          setDockLanguage(helperLanguage);
+          return;
+        }
+      } catch (error) {
+        console.warn("Could not read helper language for dock labels.", error);
+      }
+
+      setDockLanguage(fallbackLanguage);
+    };
+
+    syncDockLanguage();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY) {
+        syncDockLanguage();
+      }
+    };
+
+    const handleHelperLanguageChange = () => {
+      syncDockLanguage();
+    };
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("focus", handleHelperLanguageChange);
+    window.addEventListener(HELPER_LANGUAGE_CHANGED_EVENT, handleHelperLanguageChange as EventListener);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", handleHelperLanguageChange);
+      window.removeEventListener(HELPER_LANGUAGE_CHANGED_EVENT, handleHelperLanguageChange as EventListener);
+    };
+  }, [user]);
 
   useEffect(() => {
     if (!isLoading && user?.needsLegalAcceptance) {
@@ -317,7 +370,7 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-4 py-5">
+      <main className="mx-auto max-w-4xl px-4 pb-5 pt-6">
         {readinessBanner ? (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
             {readinessBanner}
@@ -355,10 +408,10 @@ export function AppShell({ children }: AppShellProps) {
 
       <nav
         className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white"
-        style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 0.35rem)" }}
+        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
       >
         <div aria-hidden className="absolute inset-0 bg-white" />
-        <div className="relative grid w-full grid-cols-4 gap-1.5 px-2 pt-2 md:mx-auto md:max-w-4xl">
+        <div className="relative grid w-full grid-cols-4 gap-1.5 px-2 pb-1 pt-2 md:mx-auto md:max-w-4xl">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;

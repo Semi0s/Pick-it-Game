@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { InlineDisclosureButton } from "@/components/player-management/Shared";
 import {
   awardManagedGroupTrophyAction,
   listManagedGroupPlayersAction,
@@ -34,6 +35,7 @@ const DEFAULT_SWITCHER_STATE = {
 
 const LEADERBOARD_SWITCHER_STORAGE_KEY = "leaderboard-switcher-state";
 const LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY = "leaderboard-activity-disclosure";
+const LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY = "leaderboard-leader-summary-state";
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TWO_LINE_CLAMP_STYLE = {
   display: "-webkit-box",
@@ -72,6 +74,10 @@ export function LeaderboardClient() {
   } | null>(null);
   const [globalStandingLabel, setGlobalStandingLabel] = useState<string | null>(null);
   const [hasExplicitSwitcherPreference, setHasExplicitSwitcherPreference] = useState(false);
+  const [isIntroMoreOpen, setIsIntroMoreOpen] = useState(false);
+  const [leaderSummaryStateByContext, setLeaderSummaryStateByContext] = useState<
+    Record<string, { isOpen: boolean; showAllLeaders: boolean }>
+  >({});
 
   const requestUrl = useMemo(() => {
     const params = new URLSearchParams();
@@ -155,6 +161,30 @@ export function LeaderboardClient() {
 
   useEffect(() => {
     try {
+      const storedValue = window.sessionStorage.getItem(LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY);
+      if (!storedValue) {
+        return;
+      }
+
+      const parsed = JSON.parse(storedValue) as Record<string, { isOpen?: boolean; showAllLeaders?: boolean }>;
+      setLeaderSummaryStateByContext(
+        Object.fromEntries(
+          Object.entries(parsed).map(([key, value]) => [
+            key,
+            {
+              isOpen: Boolean(value?.isOpen),
+              showAllLeaders: Boolean(value?.showAllLeaders)
+            }
+          ])
+        )
+      );
+    } catch (caughtError) {
+      console.warn("Could not restore leaderboard leader summary state.", caughtError);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
       window.localStorage.setItem(
         LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY,
         isActivityExpanded ? "open" : "closed"
@@ -163,6 +193,17 @@ export function LeaderboardClient() {
       console.warn("Could not save leaderboard activity disclosure state.", caughtError);
     }
   }, [isActivityExpanded]);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(
+        LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY,
+        JSON.stringify(leaderSummaryStateByContext)
+      );
+    } catch (caughtError) {
+      console.warn("Could not save leaderboard leader summary state.", caughtError);
+    }
+  }, [leaderSummaryStateByContext]);
 
   useEffect(() => {
     let isMounted = true;
@@ -342,6 +383,14 @@ export function LeaderboardClient() {
     () => switcher?.managers.find((manager) => manager.id === selectedManagerId)?.label ?? null,
     [selectedManagerId, switcher?.managers]
   );
+  const leaderSummaryContextKey = useMemo(
+    () => `${activeView}:${selectedGroupId || "none"}:${selectedManagerId || "none"}`,
+    [activeView, selectedGroupId, selectedManagerId]
+  );
+  const leaderSummaryState = leaderSummaryStateByContext[leaderSummaryContextKey] ?? {
+    isOpen: false,
+    showAllLeaders: false
+  };
 
   const isGlobalView = activeView === "global";
   const isGroupView = shouldShowGroupSelector(activeView) && Boolean(selectedGroupId);
@@ -369,11 +418,20 @@ export function LeaderboardClient() {
           ) : null}
         </div>
         <div className="mt-3 min-w-0">
-          <h2 className="text-3xl font-black leading-tight">Your standing</h2>
-          <p className="mt-3 text-sm leading-6 text-gray-600">
-            A quick snapshot of your current rank, total points, and recent movement across global and group
-            leaderboards.
-          </p>
+          <h2 className="text-3xl font-black leading-tight">Compare your standings against the rest</h2>
+          <div className="mt-3 flex justify-start">
+            <InlineDisclosureButton
+              isOpen={isIntroMoreOpen}
+              label="Read More / Click Here"
+              onClick={() => setIsIntroMoreOpen((current) => !current)}
+            />
+          </div>
+          {isIntroMoreOpen ? (
+            <p className="mt-3 text-sm leading-6 text-gray-600">
+              A quick snapshot of your current rank, total points, and recent movement across global and group
+              leaderboards.
+            </p>
+          ) : null}
         </div>
       </section>
 
@@ -473,7 +531,7 @@ export function LeaderboardClient() {
 
       <section className="sticky top-[73px] z-10 rounded-lg border border-gray-200 bg-white/95 p-4 backdrop-blur">
         <div className="flex flex-wrap gap-2">
-          {(switcher?.tabs ?? [{ value: "global", label: "Global" }]).map((tab) => (
+          {(switcher?.tabs ?? [{ value: "global", label: "Global Standings" }]).map((tab) => (
             <button
               key={tab.value}
               type="button"
@@ -491,10 +549,7 @@ export function LeaderboardClient() {
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {shouldShowGroupSelector(activeView) ? (
               <div className="sm:col-span-2">
-                <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
-                  {activeView === "managed_groups" ? "My Managed Group Leaderboards" : "My Group Leaderboards"}
-                </p>
-                <div className="mt-2 flex gap-3 overflow-x-auto pb-1">
+                <div className="flex gap-3 overflow-x-auto pb-1">
                   {availableGroupOptions.length > 0 ? (
                     availableGroupOptions.map((group) => (
                       <button
@@ -506,21 +561,18 @@ export function LeaderboardClient() {
                             ? "border-accent bg-accent-light"
                             : "border-gray-200 bg-gray-50 hover:border-accent-light hover:bg-white"
                         }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-black text-gray-950">{group.label}</p>
-                            <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-gray-500">
-                              {group.context === "managed" ? "Managed Group" : "Joined Group"}
-                            </p>
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-base font-black text-gray-950">{group.label}</p>
+                            </div>
+                            {group.rankDelta ? (
+                              <span className={`text-xs font-black ${getMovementTone(group.rankDelta)}`}>
+                                {formatRankMovement(group.rankDelta)}
+                              </span>
+                            ) : null}
                           </div>
-                          {group.rankDelta ? (
-                            <span className={`text-xs font-black ${getMovementTone(group.rankDelta)}`}>
-                              {formatRankMovement(group.rankDelta)}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="mt-3 grid grid-cols-3 gap-3 text-xs font-semibold text-gray-600">
+                        <div className="mt-2 grid grid-cols-3 gap-3 text-xs font-semibold text-gray-600">
                           <div>
                             <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">Rank</p>
                             <p className="mt-1 text-sm font-black text-gray-950">
@@ -808,6 +860,42 @@ export function LeaderboardClient() {
 
       {shouldRenderLeaderboardRows ? (
         <section className="space-y-2">
+          {!isLoading && !error && leaders.length > 1 ? (
+            <LeaderSummaryCard
+              leaders={leaders}
+              sharedScore={sharedLeaderScore}
+              isOpen={leaderSummaryState.isOpen}
+              showAllLeaders={leaderSummaryState.showAllLeaders}
+              onToggleOpen={() =>
+                setLeaderSummaryStateByContext((current) => ({
+                  ...current,
+                  [leaderSummaryContextKey]: {
+                    isOpen: !leaderSummaryState.isOpen,
+                    showAllLeaders: leaderSummaryState.isOpen ? false : leaderSummaryState.showAllLeaders
+                  }
+                }))
+              }
+              onShowAllLeaders={() =>
+                setLeaderSummaryStateByContext((current) => ({
+                  ...current,
+                  [leaderSummaryContextKey]: {
+                    isOpen: leaderSummaryState.isOpen,
+                    showAllLeaders: true
+                  }
+                }))
+              }
+              onShowFewerLeaders={() =>
+                setLeaderSummaryStateByContext((current) => ({
+                  ...current,
+                  [leaderSummaryContextKey]: {
+                    isOpen: leaderSummaryState.isOpen,
+                    showAllLeaders: false
+                  }
+                }))
+              }
+            />
+          ) : null}
+
           <div className="px-1 pt-1">
             <h3 className="text-base font-black text-gray-950">Leaderboard</h3>
           </div>
@@ -821,10 +909,6 @@ export function LeaderboardClient() {
             <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
               Could not load the live leaderboard right now: {error}
             </p>
-          ) : null}
-
-          {!isLoading && !error && leaders.length > 0 ? (
-            <LeaderSummaryCard leaders={leaders} sharedScore={sharedLeaderScore} />
           ) : null}
 
           {users.map((profile, index) => (
@@ -1229,12 +1313,12 @@ function getPlaceholderTitle(activeView: LeaderboardSwitcherView) {
     return "My Managed Groups";
   }
   if (activeView === "groups") {
-    return "Group Standings";
+    return "My Group Scores";
   }
   if (activeView === "managers") {
     return "Managers";
   }
-  return "Global";
+  return "Global Standings";
 }
 
 function getPlaceholderCopy(
@@ -1275,9 +1359,9 @@ function GroupStandingsSection({
 
   return (
     <section className="space-y-2">
-      <div className="px-1 pt-1">
-        <h3 className="text-base font-black text-gray-950">Group Standings</h3>
-      </div>
+          <div className="px-1 pt-1">
+            <h3 className="text-base font-black text-gray-950">My Group Scores</h3>
+          </div>
 
       {isLoading ? (
         <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
@@ -1377,48 +1461,82 @@ function GroupStandingsSection({
 
 function LeaderSummaryCard({
   leaders,
-  sharedScore
+  sharedScore,
+  isOpen,
+  showAllLeaders,
+  onToggleOpen,
+  onShowAllLeaders,
+  onShowFewerLeaders
 }: {
   leaders: LeaderboardListItem[];
   sharedScore: number | null;
+  isOpen: boolean;
+  showAllLeaders: boolean;
+  onToggleOpen: () => void;
+  onShowAllLeaders: () => void;
+  onShowFewerLeaders: () => void;
 }) {
-  const visibleLeaders = leaders.slice(0, 4);
-  const hiddenLeaderCount = Math.max(0, leaders.length - visibleLeaders.length);
+  const previewLeaders = showAllLeaders ? leaders : leaders.slice(0, 4);
+  const hiddenLeaderCount = Math.max(0, leaders.length - previewLeaders.length);
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">
-            {leaders.length > 1 ? "Leaders" : "Leader"}
-          </p>
-          <p className="mt-1 text-sm font-semibold text-gray-600">
-            {leaders.length > 1 ? "Sharing rank 1 right now." : "Currently holding rank 1."}
-          </p>
+        <div className="flex min-w-0 items-center gap-2">
+          <h3 className="text-base font-black uppercase tracking-wide text-accent-dark">SEE WHO IS LEADING</h3>
+          <div className="shrink-0 rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+            Shared score: {sharedScore ?? "—"} pts
+          </div>
         </div>
-        <div className="shrink-0 rounded-md bg-gray-100 px-3 py-2 text-right">
-          <p className="text-sm font-black text-gray-900">{sharedScore ?? "—"} pts</p>
-          <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">Shared score</p>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <InlineDisclosureButton
+            isOpen={isOpen}
+            label="See More"
+            onClick={onToggleOpen}
+          />
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {visibleLeaders.map((leader) => (
-          <Link
-            key={leader.id}
-            href={`/leaderboard/${leader.id}`}
-            className="inline-flex max-w-full items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-          >
-            <Avatar name={leader.name} avatarUrl={leader.avatarUrl} size="sm" />
-            <span className="truncate">{leader.name}</span>
-          </Link>
-        ))}
-        {hiddenLeaderCount > 0 ? (
-          <span className="inline-flex items-center rounded-md bg-gray-100 px-3 py-2 text-sm font-bold text-gray-600">
-            +{hiddenLeaderCount} more
-          </span>
-        ) : null}
-      </div>
+      {isOpen ? (
+        <>
+          <p className="mt-1 min-w-0 text-sm leading-6 text-gray-600">
+            {leaders.length > 1
+              ? `${leaders.length} players are sharing rank 1 right now.`
+              : "One player is holding rank 1 right now."}
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {previewLeaders.map((leader) => (
+              <Link
+                key={leader.id}
+                href={`/leaderboard/${leader.id}`}
+                className="inline-flex max-w-full items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+              >
+                <Avatar name={leader.name} avatarUrl={leader.avatarUrl} size="sm" />
+                <span className="truncate">{leader.name}</span>
+              </Link>
+            ))}
+            {hiddenLeaderCount > 0 ? (
+              <button
+                type="button"
+                onClick={onShowAllLeaders}
+                className="inline-flex items-center rounded-md bg-accent-light px-3 py-2 text-sm font-bold text-accent-dark transition hover:bg-accent/20"
+              >
+                +{hiddenLeaderCount} more
+              </button>
+            ) : null}
+            {showAllLeaders && leaders.length > 4 ? (
+              <button
+                type="button"
+                onClick={onShowFewerLeaders}
+                className="inline-flex items-center rounded-md bg-accent-light px-3 py-2 text-sm font-bold text-accent-dark transition hover:bg-accent/20"
+              >
+                Show less
+              </button>
+            ) : null}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

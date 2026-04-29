@@ -2522,9 +2522,13 @@ function hashInviteToken(token: string) {
 }
 
 function buildGroupInviteClaimUrl(token: string, language?: string | null, helperLanguage?: string | null) {
-  const path = appendExplainerLanguageToPath(
+  const inviteReturnPath = appendExplainerLanguageToPath(
     appendLanguageToPath(`/my-groups?invite=${token}`, language),
     helperLanguage
   );
-  return `${getPublicSiteUrl()}${path}`;
+  const loginPath = appendLanguageToPath(
+    `/login?mode=signup&flow=invite&next=${encodeURIComponent(inviteReturnPath)}`,
+    language
+  );
+  return `${getPublicSiteUrl()}${loginPath}`;
 }

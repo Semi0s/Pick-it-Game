@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authenticateWithEmail, isUsingDemoAuthFallback, sendCurrentUserPasswordReset } from "@/lib/auth-client";
 
@@ -34,6 +34,10 @@ export function LoginForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingReset, setIsSendingReset] = useState(false);
   const isDemoFallback = isUsingDemoAuthFallback();
+
+  useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -98,8 +102,21 @@ export function LoginForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       {!isDemoFallback ? (
         <div className="rounded-md border border-accent-light bg-white px-3 py-3 text-accent-dark">
-          <p className="text-base font-black uppercase tracking-wide">Invite-only access</p>
-          <p className="mt-1 text-sm font-medium">Sign up with the email that was invited to the pool.</p>
+          <p className="border-b border-accent-light pb-2 text-base font-black uppercase tracking-wide">
+            Invite-only access - Limited membership
+          </p>
+          <p className="mt-3 text-sm font-medium">Sign up with the email you were invited to the pool.</p>
+          <p className="mt-3 text-sm font-medium text-gray-700">If you would like to be placed on the waiting list please visit:</p>
+          <div className="mt-2 flex justify-center">
+            <a
+              href="https://www.semiosdesign.com/pick-it-game"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
+            >
+              Add Me To The List
+            </a>
+          </div>
         </div>
       ) : null}
 

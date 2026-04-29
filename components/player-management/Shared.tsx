@@ -1,5 +1,7 @@
 "use client";
 
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 
 export type PlayerManagementPermissions = {
@@ -11,6 +13,28 @@ export type PlayerManagementPermissions = {
   canEditManagerLimits: boolean;
   canCreateUnlimitedGroups: boolean;
 };
+
+export function InlineDisclosureButton({
+  isOpen,
+  label,
+  onClick
+}: {
+  isOpen: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={isOpen}
+      className="inline-flex items-center gap-1 px-0 py-0 text-[10px] font-semibold uppercase tracking-wide text-gray-700 transition hover:text-accent-dark"
+    >
+      {isOpen ? <ChevronUp aria-hidden className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden className="h-3.5 w-3.5" />}
+      {label}
+    </button>
+  );
+}
 
 export function normalizeInviteTokenInput(value: string) {
   const trimmedValue = value.trim();
@@ -40,6 +64,8 @@ export function ManagementIntro({
   statusChip?: string | null;
   secondaryNote?: string | null;
 }) {
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+
   return (
     <section className="rounded-lg bg-gray-100 p-5">
       <div className="flex items-start justify-between gap-3">
@@ -52,9 +78,20 @@ export function ManagementIntro({
       </div>
       <div className="mt-3 min-w-0">
         <h2 className="text-3xl font-black leading-tight">{title}</h2>
-        <p className="mt-3 text-sm leading-6 text-gray-600">{description}</p>
-        {secondaryNote ? (
-          <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">{secondaryNote}</p>
+        <div className="mt-3 flex justify-start">
+          <InlineDisclosureButton
+            isOpen={isMoreOpen}
+            label="Read More / Click Here"
+            onClick={() => setIsMoreOpen((current) => !current)}
+          />
+        </div>
+        {isMoreOpen ? (
+          <div className="mt-3">
+            <p className="text-sm leading-6 text-gray-600">{description}</p>
+            {secondaryNote ? (
+              <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">{secondaryNote}</p>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </section>

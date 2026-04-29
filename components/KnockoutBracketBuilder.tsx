@@ -47,12 +47,12 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
   const [pendingMatchId, setPendingMatchId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "error" | "success"; text: string } | null>(null);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
+  const [isPhaseNavOpen, setIsPhaseNavOpen] = useState(false);
   const [isSectionExpanded, setIsSectionExpanded] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState<-1 | 0 | 1>(0);
   const [transitionReady, setTransitionReady] = useState(true);
   const touchStartXRef = useRef<number | null>(null);
-  const pinchStartDistanceRef = useRef<number | null>(null);
-  const pinchGestureHandledRef = useRef(false);
+  const touchStartYRef = useRef<number | null>(null);
   const pointerStartXRef = useRef<number | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -89,11 +89,44 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
 
   return (
     <section className="space-y-4">
+      <div className="rounded-lg border border-gray-200 bg-white p-3 sm:p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Phase Navigation</p>
+            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Jump to each knockout phase here</p>
+          </div>
+          <InlinePhaseDisclosureButton
+            isOpen={isPhaseNavOpen}
+            onClick={() => setIsPhaseNavOpen((current) => !current)}
+          />
+        </div>
+        {isPhaseNavOpen ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {slides.map((slide, index) => {
+              const isActive = index === activeSlideIndex;
+              return (
+                <button
+                  key={slide.id}
+                  type="button"
+                  onClick={() => goToSlide(index)}
+                  className={`inline-flex items-center rounded-md px-3 py-2 text-sm font-bold transition ${
+                    isActive
+                      ? "bg-accent text-white"
+                      : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
+                  }`}
+                >
+                  {slide.title}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div
-          className="touch-none select-none bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_18%,#f8fafc_100%)]"
+          className="touch-pan-y select-none bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_18%,#f8fafc_100%)]"
           onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           onTouchCancel={handleTouchCancel}
           onPointerDown={handlePointerDown}
@@ -198,55 +231,34 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
   }
 
   function handleTouchStart(event: TouchEvent<HTMLDivElement>) {
-    if (event.touches.length >= 2) {
-      pinchStartDistanceRef.current = getTouchDistance(event.touches[0], event.touches[1]);
-      pinchGestureHandledRef.current = false;
+    const firstTouch = event.touches[0];
+    if (!firstTouch) {
       touchStartXRef.current = null;
+      touchStartYRef.current = null;
       return;
     }
 
-    pinchStartDistanceRef.current = null;
-    pinchGestureHandledRef.current = false;
-    touchStartXRef.current = event.touches[0]?.clientX ?? null;
-  }
-
-  function handleTouchMove(event: TouchEvent<HTMLDivElement>) {
-    if (event.touches.length < 2 || pinchStartDistanceRef.current == null || pinchGestureHandledRef.current) {
-      return;
-    }
-
-    const currentDistance = getTouchDistance(event.touches[0], event.touches[1]);
-    const ratio = currentDistance / Math.max(pinchStartDistanceRef.current, 1);
-
-    if (ratio >= 1.12) {
-      pinchGestureHandledRef.current = true;
-      goToSlide(Math.min(activeSlideIndex + 1, slides.length - 1));
-      return;
-    }
-
-    if (ratio <= 0.9) {
-      pinchGestureHandledRef.current = true;
-      goToSlide(Math.max(activeSlideIndex - 1, 0));
-    }
+    touchStartXRef.current = firstTouch.clientX;
+    touchStartYRef.current = firstTouch.clientY;
   }
 
   function handleTouchEnd(event: TouchEvent<HTMLDivElement>) {
-    if (pinchGestureHandledRef.current || pinchStartDistanceRef.current != null) {
-      if (event.touches.length < 2) {
-        pinchStartDistanceRef.current = null;
-        pinchGestureHandledRef.current = false;
-      }
-      return;
-    }
-
     const startX = touchStartXRef.current;
+    const startY = touchStartYRef.current;
     touchStartXRef.current = null;
-    if (startX == null) {
+    touchStartYRef.current = null;
+    if (startX == null || startY == null) {
       return;
     }
 
     const endX = event.changedTouches[0]?.clientX ?? startX;
+    const endY = event.changedTouches[0]?.clientY ?? startY;
     const deltaX = endX - startX;
+    const deltaY = endY - startY;
+    if (Math.abs(deltaY) > Math.abs(deltaX)) {
+      return;
+    }
+
     if (Math.abs(deltaX) < 36) {
       return;
     }
@@ -260,8 +272,7 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
 
   function handleTouchCancel() {
     touchStartXRef.current = null;
-    pinchStartDistanceRef.current = null;
-    pinchGestureHandledRef.current = false;
+    touchStartYRef.current = null;
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
@@ -312,11 +323,24 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
   }
 }
 
-function getTouchDistance(
-  firstTouch: { clientX: number; clientY: number },
-  secondTouch: { clientX: number; clientY: number }
-) {
-  return Math.hypot(secondTouch.clientX - firstTouch.clientX, secondTouch.clientY - firstTouch.clientY);
+function InlinePhaseDisclosureButton({
+  isOpen,
+  onClick
+}: {
+  isOpen: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={isOpen}
+      className="inline-flex items-center gap-1 px-0 py-0 text-[10px] font-semibold uppercase tracking-wide text-gray-700 transition hover:text-accent-dark"
+    >
+      {isOpen ? <ChevronUp aria-hidden className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden className="h-3.5 w-3.5" />}
+      See More
+    </button>
+  );
 }
 
 function BracketStageViewport({

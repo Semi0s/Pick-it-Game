@@ -110,10 +110,20 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
   useEffect(() => {
     let isMounted = true;
 
+    const preferredLanguage = user?.preferredLanguage ?? null;
+    if (
+      currentLegalDocument &&
+      (!preferredLanguage || currentLegalDocument.language === preferredLanguage)
+    ) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
     async function loadCurrentLegalDocument() {
       const document = await fetchCurrentLegalDocumentForProfile(user?.preferredLanguage);
       if (isMounted) {
-        setCurrentLegalDocument(document);
+        setCurrentLegalDocument(document ?? currentLegalDocument);
       }
     }
 
@@ -122,7 +132,7 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
     return () => {
       isMounted = false;
     };
-  }, [user?.preferredLanguage]);
+  }, [currentLegalDocument, user?.preferredLanguage]);
 
   useEffect(() => {
     let isMounted = true;
@@ -155,29 +165,30 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
     <section className="space-y-5">
       <div className="rounded-lg bg-gray-100 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-4">
-            <Avatar name={user.name} avatarUrl={user.avatarUrl} size="lg" className="rounded-lg" />
-            <div className="min-w-0">
-              <h2 className="truncate text-2xl font-black">{user.name}</h2>
-              <p className="mt-1 text-sm font-bold text-accent-dark">
-                {getAccessLevelLabel(user)}
-                {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
-              </p>
-              <p className="truncate text-sm font-medium text-gray-600">{user.email}</p>
-              <div className="mt-2">
-                {user.homeTeamId ? (
-                  <HomeTeamBadge teamId={user.homeTeamId} />
-                ) : (
-                  <p className="text-sm font-semibold text-gray-500">No home team selected</p>
-                )}
-              </div>
-            </div>
-          </div>
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Profile</p>
           <div className="rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
             Membership Active
           </div>
         </div>
-        <div className="mt-4">
+        <div className="mt-4 flex min-w-0 items-center gap-4">
+          <Avatar name={user.name} avatarUrl={user.avatarUrl} size="lg" className="rounded-lg" />
+          <div className="min-w-0">
+            <h2 className="truncate text-3xl font-black leading-tight">{user.name}</h2>
+            <p className="mt-2 text-sm text-accent-dark">
+              {getAccessLevelLabel(user)}
+              {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
+            </p>
+            <p className="truncate text-sm text-gray-600">{user.email}</p>
+            <div className="mt-2">
+              {user.homeTeamId ? (
+                <HomeTeamBadge teamId={user.homeTeamId} />
+              ) : (
+                <p className="text-sm text-gray-500">No home team selected</p>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 mx-auto max-w-xl text-center">
           <input
             ref={avatarInputRef}
             type="file"
@@ -201,12 +212,12 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
               event.target.value = "";
             }}
           />
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               disabled={isUploadingAvatar}
               onClick={() => avatarInputRef.current?.click()}
-              className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
             >
               {isUploadingAvatar ? "Uploading..." : user.avatarUrl ? "Update Avatar" : "Upload Avatar"}
             </button>
@@ -228,13 +239,15 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
                   }
                   setIsUploadingAvatar(false);
                 }}
-                className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+                className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
               >
                 {isUploadingAvatar ? "Working..." : "Remove Avatar"}
               </button>
-            ) : null}
+            ) : (
+              <div />
+            )}
           </div>
-          <p className="mt-2 text-xs font-semibold text-gray-500">Optional. If upload fails, your initials stay in place.</p>
+          <p className="mt-2 text-center text-xs text-gray-500">Optional. If upload fails, your initials stay in place.</p>
         </div>
       </div>
 

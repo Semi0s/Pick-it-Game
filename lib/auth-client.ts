@@ -464,7 +464,10 @@ export async function fetchCurrentLegalDocumentForProfile(
       return null;
     }
 
-    console.error("Could not load current legal document for profile.", error);
+    console.warn("Could not refresh current legal document for profile.", {
+      message: error.message ?? null,
+      details: error
+    });
     return null;
   }
 

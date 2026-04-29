@@ -696,6 +696,13 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const inviteSignupPath = inviteToken
     ? `/login?mode=signup&flow=invite&lang=${resolvedInviteLanguage}&next=${encodeURIComponent(inviteReturnPath ?? "/my-groups")}`
     : "/login?mode=signup";
+  const normalizedInviteEmail = invitePreview?.email?.trim().toLowerCase() ?? "";
+  const normalizedCurrentUserEmail = currentUser?.email?.trim().toLowerCase() ?? "";
+  const isInviteEmailMatch = Boolean(
+    normalizedInviteEmail &&
+      normalizedCurrentUserEmail &&
+      normalizedInviteEmail === normalizedCurrentUserEmail
+  );
 
   return (
     <section className="space-y-5">
@@ -778,10 +785,30 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               {invitePreviewMessage ? (
                 <AdminMessage tone={invitePreviewMessage.tone} message={invitePreviewMessage.text} />
               ) : null}
-              {isSignedIn && invitePreview.status === "pending" ? (
+              {isSignedIn && invitePreview.status === "pending" && isInviteEmailMatch ? (
                 <ActionButton type="button" onClick={handleAcceptInvite} disabled={isAcceptingInvite} tone="accent" fullWidth>
                   {isAcceptingInvite ? "Joining..." : "Join Group"}
                 </ActionButton>
+              ) : isSignedIn && invitePreview.status === "pending" ? (
+                <div className="space-y-3">
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                    This invite is for {invitePreview.email}. You are currently signed in as {currentUser?.email}. Please use the invited account to continue.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Link
+                      href={inviteSignupPath}
+                      className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
+                    >
+                      Create Account
+                    </Link>
+                    <Link
+                      href={inviteLoginPath}
+                      className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                    >
+                      Switch Account
+                    </Link>
+                  </div>
+                </div>
               ) : isSignedIn ? (
                 <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">
                   This invite has already been handled for your account.
@@ -793,16 +820,16 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   </p>
                   <div className="grid grid-cols-2 gap-3">
                     <Link
-                      href={inviteLoginPath}
-                      className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-                    >
-                      Sign In
-                    </Link>
-                    <Link
                       href={inviteSignupPath}
                       className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
                     >
                       Create Account
+                    </Link>
+                    <Link
+                      href={inviteLoginPath}
+                      className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                    >
+                      Sign In
                     </Link>
                   </div>
                 </div>
@@ -1869,7 +1896,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                           <div>
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Details</h4>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
-                              Capacity, access, and delete controls.
+                              Capacity and delete controls.
                             </p>
                           </div>
                           <button
@@ -1898,16 +1925,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               <ManagementDatum label="Group limit" value={`${group.membershipLimit} members`} />
                               <ManagementDatum label="Members" value={resolvedMemberCount ?? "—"} />
                               <ManagementDatum label="Pending invites" value={resolvedPendingInviteCount ?? "—"} />
-                              <ManagementDatum
-                                label="Your access"
-                                value={
-                                  group.userRole === "super_admin"
-                                    ? "Super Admin"
-                                    : group.userRole === "manager"
-                                      ? "Manager"
-                                      : "Player"
-                                }
-                              />
                             </ManagementGrid>
                             <ActionButton
                               tone="danger"

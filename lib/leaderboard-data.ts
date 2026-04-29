@@ -170,8 +170,8 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
       switcher: {
         accessLevel: "player",
         tabs: [
-          { value: "global", label: "Global" },
-          { value: "my_groups", label: "My Groups" }
+          { value: "my_groups", label: "My Groups" },
+          { value: "global", label: "Global Standings" }
         ],
         groups: [],
         joinedGroups: [],
@@ -575,20 +575,21 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
   const tabs: LeaderboardSwitcherContext["tabs"] =
     accessLevel === "super_admin"
       ? [
-          { value: "global", label: "Global" },
+          { value: "global", label: "Global Standings" },
           { value: "managers", label: "Managers" },
-          { value: "groups", label: "Group Standings" }
+          { value: "groups", label: "My Group Scores" }
         ]
       : accessLevel === "manager"
         ? [
-            { value: "global", label: "Global" },
-            { value: "managed_groups", label: "My Managed Groups" },
             { value: "my_groups", label: "My Groups" },
-            { value: "groups", label: "Group Standings" }
+            { value: "managed_groups", label: "My Managed Groups" },
+            { value: "groups", label: "My Group Scores" },
+            { value: "global", label: "Global Standings" }
           ]
         : [
-            { value: "global", label: "Global" },
-            { value: "my_groups", label: "My Groups" }
+            { value: "my_groups", label: "My Groups" },
+            { value: "groups", label: "My Group Scores" },
+            { value: "global", label: "Global Standings" }
           ];
 
   return {

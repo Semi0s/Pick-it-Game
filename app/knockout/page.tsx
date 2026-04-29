@@ -69,10 +69,10 @@ export default async function KnockoutPage({
     <AppShell>
       <ManagementIntro
         eyebrow="Knockout Picks"
-        title={isSeeded ? "Build your bracket, then compare it." : "Knockout picks coming soon."}
+        title={isSeeded ? "Create a bracket to stay in the game until the end" : "Knockout picks coming soon"}
         description={
           isSeeded
-            ? "Swipe, pinch, or spread your fingers to navigate the phases, then tap to select the winning team."
+            ? "Swipe through the phases, then tap to select the winning team."
             : "We will open knockout picks once the full Round of 32 through Final bracket has been seeded."
         }
         secondaryNote={isSeeded ? "Picks unlock as teams are confirmed" : null}

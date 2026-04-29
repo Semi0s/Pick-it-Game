@@ -18,8 +18,8 @@ export default async function LoginPage({
   return (
     <main className="min-h-screen bg-white px-4 py-8">
       <section className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-md flex-col justify-center">
-        <div className="mb-8">
-          <div className="mx-auto mb-6 w-full max-w-72 sm:max-w-80">
+        <div className="mb-8 rounded-lg border border-gray-200 bg-gray-50 p-4">
+          <div className="mx-auto mb-6 max-w-64 sm:max-w-72">
             <Image
               src="/images/pickit-logo.png"
               alt="PICK-IT! Bracket Challenge World Cup 2026"
@@ -29,12 +29,7 @@ export default async function LoginPage({
               className="h-auto w-full rounded-lg"
             />
           </div>
-          <p className="mt-3 text-center text-base leading-7 text-gray-600">
-            Sign in, make your group picks, and get ready for a friendly family table with real bragging rights.
-          </p>
-        </div>
 
-        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
           <LoginForm
             confirmed={confirmed}
             reset={reset}
@@ -44,6 +39,24 @@ export default async function LoginPage({
             callbackError={callbackError}
             nextPath={next}
           />
+        </div>
+
+        <div className="mt-6 flex justify-center">
+          <a
+            href="https://www.semiosdesign.com"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex flex-col items-center gap-2 text-center text-xs font-normal tracking-wide text-gray-500 transition hover:text-accent-dark"
+          >
+            <span>Game Developed by semi0s</span>
+            <Image
+              src="/images/semios-orange-icon.png"
+              alt="semi0s"
+              width={24}
+              height={24}
+              className="h-5 w-5 rounded-sm"
+            />
+          </a>
         </div>
       </section>
     </main>
