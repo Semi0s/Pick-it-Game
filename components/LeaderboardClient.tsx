@@ -349,7 +349,7 @@ export function LeaderboardClient() {
   return (
     <div className="space-y-5">
       <section className="relative rounded-lg bg-gray-100 p-5">
-        <div className={globalStandingLabel ? "pr-28 sm:pr-36" : undefined}>
+        <div className={globalStandingLabel ? "pr-20 sm:pr-24" : undefined}>
           <div className="min-w-0">
             <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Leaderboard</p>
             <h2 className="mt-2 text-3xl font-black leading-tight">Your standing</h2>
@@ -360,31 +360,31 @@ export function LeaderboardClient() {
           </div>
         </div>
         {globalStandingLabel ? (
-          <div className="absolute right-5 top-5 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
+          <div className="absolute right-5 top-5 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
             {globalStandingLabel}
           </div>
         ) : null}
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex flex-wrap justify-start gap-1.5 sm:gap-2">
           <Link
             href="/groups?focus=next"
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+            className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
           >
-            <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+            <SquareCheckBig aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
             My Next Pick
           </Link>
           <Link
             href="/knockout"
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+            className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
           >
-            <Network aria-hidden className="h-4 w-4 text-accent-dark" />
+            <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
             My Knockout Picks
           </Link>
           <Link
             href="/trophies"
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+            className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
           >
-            <span className="relative inline-flex h-5 w-5 items-center justify-center text-accent-dark">
-              <Trophy aria-hidden className="h-4 w-4" />
+            <span className="relative inline-flex h-4.5 w-4.5 items-center justify-center text-accent-dark sm:h-5 sm:w-5">
+              <Trophy aria-hidden className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
               <SquareCheckBig aria-hidden className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-[2px] bg-white" />
             </span>
             My Side Picks

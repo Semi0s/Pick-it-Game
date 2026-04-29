@@ -173,7 +173,7 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
               </div>
             </div>
           </div>
-          <div className="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
+          <div className="rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
             Membership Active
           </div>
         </div>

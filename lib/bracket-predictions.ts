@@ -68,6 +68,7 @@ type TeamRow = {
   id: string;
   name: string;
   short_name?: string | null;
+  flag_emoji?: string | null;
 };
 
 type BracketEditState =
@@ -132,6 +133,7 @@ export type BracketTeamOption = {
   id: string;
   name: string;
   shortName: string;
+  flagEmoji?: string;
 };
 
 export type KnockoutBracketMatchView = {
@@ -539,7 +541,7 @@ export async function fetchGroupBracketComparisonView(
 
   const { data: teams, error: teamsError } =
     teamIds.size > 0
-      ? await adminSupabase.from("teams").select("id,name,short_name").in("id", Array.from(teamIds))
+      ? await adminSupabase.from("teams").select("id,name,short_name,flag_emoji").in("id", Array.from(teamIds))
       : { data: [], error: null };
 
   if (teamsError) {
@@ -775,7 +777,7 @@ async function fetchKnockoutData(adminSupabase: ReturnType<typeof createAdminCli
 
   const { data: teams, error: teamsError } =
     teamIds.size > 0
-      ? await adminSupabase.from("teams").select("id,name,short_name").in("id", Array.from(teamIds))
+      ? await adminSupabase.from("teams").select("id,name,short_name,flag_emoji").in("id", Array.from(teamIds))
       : { data: [], error: null };
 
   if (teamsError) {
@@ -788,7 +790,8 @@ async function fetchKnockoutData(adminSupabase: ReturnType<typeof createAdminCli
       {
         id: team.id,
         name: team.name || team.short_name || team.id,
-        shortName: team.short_name || team.name || team.id
+        shortName: team.short_name || team.name || team.id,
+        flagEmoji: team.flag_emoji || undefined
       }
     ])
   );

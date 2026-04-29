@@ -379,82 +379,82 @@ export function GroupPredictions({
 
   return (
     <div className="space-y-6">
-      <section className="relative rounded-lg bg-gray-100 p-5">
-        <div className="pr-52 sm:pr-64">
-          <div>
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Play</p>
-            <h2 className="mt-2 text-3xl font-black leading-tight">{EXPLAINER_TITLE_COPY[explainerLanguage]}</h2>
-            <div className="mt-3">
-              <ul className="min-w-0 flex-1 space-y-1 text-base leading-7 text-gray-600">
-                {EXPLAINER_COPY[explainerLanguage].map((line) => (
-                  <li key={line}>&bull; {line}</li>
-                ))}
-              </ul>
+      <section className="rounded-lg bg-gray-100 p-5">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Play</p>
+          <div className="flex shrink-0 items-start gap-2">
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsExplainerLanguageMenuOpen((current) => !current)}
+                className="inline-flex items-center gap-1 rounded-full border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light sm:px-3 sm:py-2"
+                aria-haspopup="menu"
+                aria-expanded={isExplainerLanguageMenuOpen}
+                aria-label={`Translate title and explainer text. Current language: ${EXPLAINER_LANGUAGE_LABELS[explainerLanguage]}`}
+              >
+                <Globe aria-hidden className="h-3.5 w-3.5 text-accent-dark" />
+                <span>{explainerLanguage.toUpperCase()}</span>
+                <ChevronDown aria-hidden className="h-3.5 w-3.5 text-gray-500" />
+              </button>
+              {isExplainerLanguageMenuOpen ? (
+                <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+                  {EXPLAINER_LANGUAGES.map((language) => (
+                    <button
+                      key={language}
+                      type="button"
+                      onClick={() => {
+                        setExplainerLanguage(language);
+                        setIsExplainerLanguageMenuOpen(false);
+                      }}
+                      className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm font-semibold transition ${
+                        language === explainerLanguage
+                          ? "bg-accent-light text-accent-dark"
+                          : "text-gray-700 hover:bg-gray-50"
+                      }`}
+                      role="menuitem"
+                    >
+                      <span>{EXPLAINER_LANGUAGE_LABELS[language]}</span>
+                      <span className="text-xs font-black uppercase">{language}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div
+              className={`rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2 ${
+                hasCompletedAllPicks ? "bg-amber-50 text-amber-800" : "bg-white text-gray-700"
+              }`}
+            >
+              {savedCount} of {matches.length} picks saved
             </div>
           </div>
         </div>
-        <div className="absolute right-5 top-5 flex items-start gap-2">
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              onClick={() => setIsExplainerLanguageMenuOpen((current) => !current)}
-              className="inline-flex items-center gap-1 rounded-full border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
-              aria-haspopup="menu"
-              aria-expanded={isExplainerLanguageMenuOpen}
-              aria-label={`Translate title and explainer text. Current language: ${EXPLAINER_LANGUAGE_LABELS[explainerLanguage]}`}
-            >
-              <Globe aria-hidden className="h-3.5 w-3.5 text-accent-dark" />
-              <span>{explainerLanguage.toUpperCase()}</span>
-              <ChevronDown aria-hidden className="h-3.5 w-3.5 text-gray-500" />
-            </button>
-            {isExplainerLanguageMenuOpen ? (
-              <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
-                {EXPLAINER_LANGUAGES.map((language) => (
-                  <button
-                    key={language}
-                    type="button"
-                    onClick={() => {
-                      setExplainerLanguage(language);
-                      setIsExplainerLanguageMenuOpen(false);
-                    }}
-                    className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm font-semibold transition ${
-                      language === explainerLanguage
-                        ? "bg-accent-light text-accent-dark"
-                        : "text-gray-700 hover:bg-gray-50"
-                    }`}
-                    role="menuitem"
-                  >
-                    <span>{EXPLAINER_LANGUAGE_LABELS[language]}</span>
-                    <span className="text-xs font-black uppercase">{language}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <div
-            className={`rounded-md px-3 py-2 text-sm font-semibold ${
-            hasCompletedAllPicks ? "bg-amber-50 text-amber-800" : "bg-white text-gray-700"
-            }`}
-          >
-            {savedCount} of {matches.length} picks saved
+        <div className="mt-3">
+          <h2 className="text-3xl font-black leading-tight">{EXPLAINER_TITLE_COPY[explainerLanguage]}</h2>
+          <div className="mt-3">
+            <ul className="min-w-0 space-y-1 text-sm font-semibold leading-6 text-gray-600">
+              {EXPLAINER_COPY[explainerLanguage].map((line) => (
+                <li key={line}>&bull; {line}</li>
+              ))}
+            </ul>
           </div>
         </div>
         <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-start gap-1.5 sm:gap-2">
             {nextPredictionMatchId ? (
               <button
                 type="button"
                 onClick={handlePrimaryAction}
-                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
               >
                 {shouldPromoteKnockout ? (
                   isKnockoutSeeded ? (
-                    <Network aria-hidden className="h-4 w-4 text-accent-dark" />
+                    <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
                   ) : (
-                    <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+                    <SquareCheckBig aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
                   )
                 ) : (
-                  <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+                  <SquareCheckBig aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
                 )}
                 {primaryActionLabel}
               </button>
@@ -462,16 +462,16 @@ export function GroupPredictions({
               <button
                 type="button"
                 onClick={handlePrimaryAction}
-                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
               >
                 {shouldPromoteKnockout ? (
                   isKnockoutSeeded ? (
-                    <Network aria-hidden className="h-4 w-4 text-accent-dark" />
+                    <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
                   ) : (
-                    <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+                    <SquareCheckBig aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
                   )
                 ) : (
-                  <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+                  <SquareCheckBig aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
                 )}
                 {primaryActionLabel}
               </button>
@@ -479,18 +479,18 @@ export function GroupPredictions({
             {shouldShowSecondaryKnockoutButton ? (
               <Link
                 href="/knockout"
-                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
               >
-                <Network aria-hidden className="h-4 w-4 text-accent-dark" />
+                <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
                 My Knockout Picks
               </Link>
             ) : null}
             <Link
               href="/trophies"
-              className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+              className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
             >
-              <span className="relative inline-flex h-5 w-5 items-center justify-center text-accent-dark">
-                <Trophy aria-hidden className="h-4 w-4" />
+              <span className="relative inline-flex h-4.5 w-4.5 items-center justify-center text-accent-dark sm:h-5 sm:w-5">
+                <Trophy aria-hidden className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
                 <SquareCheckBig aria-hidden className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-[2px] bg-white" />
               </span>
               My Side Picks

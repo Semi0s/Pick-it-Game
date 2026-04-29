@@ -40,7 +40,7 @@ export function ManagementIntro({
 }) {
   return (
     <section className="relative rounded-lg bg-gray-100 p-5">
-      <div className={statusChip ? "pr-28 sm:pr-40" : undefined}>
+      <div className={statusChip ? "pr-20 sm:pr-24" : undefined}>
         <div className="min-w-0">
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{eyebrow}</p>
           <h2 className="mt-2 text-3xl font-black leading-tight">{title}</h2>
@@ -48,7 +48,7 @@ export function ManagementIntro({
         </div>
       </div>
       {statusChip ? (
-        <div className="absolute right-5 top-5 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
+        <div className="absolute right-5 top-5 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
           {statusChip}
         </div>
       ) : null}

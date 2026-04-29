@@ -543,7 +543,7 @@ function FocusedRoundView({
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-[0.82fr_1.18fr_0.82fr] gap-3 px-1 sm:grid-cols-[0.8fr_1.2fr_0.8fr] sm:gap-4">
+      <div className="grid grid-cols-[0.55fr_1.9fr_0.55fr] gap-2 px-1 sm:grid-cols-[0.52fr_1.96fr_0.52fr] sm:gap-3">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">{slide.previousLabel ?? "Path"}</p>
         <p className="text-center text-[10px] font-bold uppercase tracking-[0.18em] text-accent-dark">{slide.currentMatches[0]?.stageLabel ?? slide.title}</p>
         <p className="text-right text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">{slide.previousLabel ?? "Path"}</p>
@@ -551,7 +551,7 @@ function FocusedRoundView({
       {alignedRows.map((row) => (
         <div
           key={row.current.matchId}
-          className="relative grid grid-cols-[0.82fr_1.18fr_0.82fr] gap-3 sm:grid-cols-[0.8fr_1.2fr_0.8fr] sm:gap-4"
+          className="relative grid grid-cols-[0.55fr_1.9fr_0.55fr] gap-2 sm:grid-cols-[0.52fr_1.96fr_0.52fr] sm:gap-3"
         >
           <div
             aria-hidden
@@ -591,14 +591,14 @@ function FinaleRoundView({
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-[0.82fr_1.18fr_0.82fr] gap-3 px-1 sm:grid-cols-[0.8fr_1.2fr_0.8fr] sm:gap-4">
+      <div className="grid grid-cols-[0.55fr_1.9fr_0.55fr] gap-2 px-1 sm:grid-cols-[0.52fr_1.96fr_0.52fr] sm:gap-3">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">{slide.previousLabel ?? "Path"}</p>
         <p className="text-center text-[10px] font-bold uppercase tracking-[0.18em] text-amber-700">{finalMatch?.stageLabel ?? slide.title}</p>
         <p className="text-right text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">{slide.previousLabel ?? "Path"}</p>
       </div>
       <ChampionCard champion={slide.champion} />
       {finalRow ? (
-        <div className="relative grid grid-cols-[0.82fr_1.18fr_0.82fr] gap-3 sm:grid-cols-[0.8fr_1.2fr_0.8fr] sm:gap-4">
+        <div className="relative grid grid-cols-[0.55fr_1.9fr_0.55fr] gap-2 sm:grid-cols-[0.52fr_1.96fr_0.52fr] sm:gap-3">
           <div
             aria-hidden
             className="pointer-events-none absolute left-[calc(50%-2rem)] right-[calc(50%-2rem)] top-1/2 h-px -translate-y-1/2 bg-gradient-to-r from-amber-300/30 via-amber-400/40 to-amber-300/30"
@@ -629,23 +629,18 @@ function RoundRailCard({
 }) {
   return (
     <div
-      className={`rounded-lg border border-gray-200 bg-white/70 p-2 transition duration-500 ease-out ${getRailMotionClasses(
+      className={`flex min-h-full items-center rounded-lg border border-gray-200 bg-white/70 p-1.5 transition duration-500 ease-out ${getRailMotionClasses(
         motion,
         side
       )} ${side === "right" ? "text-right" : ""}`}
     >
       {match ? (
-        <>
-          <p className={`text-[10px] font-bold uppercase tracking-wide text-gray-400 ${side === "right" ? "text-right" : ""}`}>
-            {match.title.replace(/^Match\s+/i, "")}
-          </p>
-          <div className="mt-2 space-y-1">
+        <div className="w-full space-y-1">
             <ProjectedTeamChip team={match.homeTeam} placeholderLabel={match.homeSourceLabel} side={side} />
             <ProjectedTeamChip team={match.awayTeam} placeholderLabel={match.awaySourceLabel} side={side} />
-          </div>
-        </>
+        </div>
       ) : (
-        <div className="flex min-h-[112px] items-center justify-center rounded-md bg-gray-50/70 px-2 text-[11px] font-semibold text-gray-400">
+        <div className="flex min-h-[92px] w-full items-center justify-center rounded-md bg-gray-50/70 px-1 text-[10px] font-semibold text-gray-400">
           Waiting
         </div>
       )}
@@ -701,7 +696,7 @@ function CenterSeamMatch({
         isPending={isPending}
         onSelect={onSelect}
         density={hero ? "hero" : "expanded"}
-        side="left"
+        side="center"
       />
     </div>
   );
@@ -718,7 +713,7 @@ function CurrentRoundMatchCard({
   isPending: boolean;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   density: "compact" | "expanded" | "hero";
-  side?: "left" | "right";
+  side?: "left" | "right" | "center";
 }) {
   const hasPlaceholderSlot = !match.homeTeam || !match.awayTeam;
   const isCompact = density === "compact";
@@ -735,7 +730,7 @@ function CurrentRoundMatchCard({
       }`}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className={`min-w-0 ${side === "right" ? "text-right" : ""}`}>
+        <div className={`min-w-0 ${side === "right" ? "text-right" : side === "center" ? "text-center" : ""}`}>
           <p className={`${isCompact ? "text-xs" : "text-sm"} font-black text-gray-950`}>{match.title}</p>
           <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
             {formatKickoff(match.kickoffTime)}
@@ -817,7 +812,7 @@ function TeamChoiceButton({
   isDisabled: boolean;
   onClick: () => void;
   density: "compact" | "expanded" | "hero";
-  side: "left" | "right";
+  side: "left" | "right" | "center";
 }) {
   const isCompact = density === "compact";
   const isPlaceholder = !team;
@@ -834,7 +829,13 @@ function TeamChoiceButton({
           : isEliminated
             ? "border-gray-200 bg-gray-50/80 text-gray-400"
             : "border-gray-200 bg-white hover:border-accent-light hover:bg-gray-50"
-      } ${side === "right" ? "justify-end text-right" : "justify-between text-left"} ${isCompact ? "px-2 py-1.5" : "px-3 py-2.5"} disabled:cursor-not-allowed disabled:opacity-75`}
+      } ${
+        side === "right"
+          ? "justify-end text-right"
+          : side === "center"
+            ? "justify-center text-center"
+            : "justify-between text-left"
+      } ${isCompact ? "px-2 py-1.5" : "px-3 py-2.5"} disabled:cursor-not-allowed disabled:opacity-75`}
     >
       {side === "right" ? (
         <>
@@ -848,6 +849,16 @@ function TeamChoiceButton({
             </span>
           </span>
         </>
+      ) : side === "center" ? (
+        <span className="flex min-w-0 flex-1 flex-col items-center text-center">
+          <span className={`block truncate ${isCompact ? "text-xs" : "text-sm"} font-black ${isEliminated ? "text-gray-400" : "text-gray-950"}`}>
+            {team?.name ?? placeholderLabel ?? "Waiting on previous result"}
+          </span>
+          <span className={`mt-0.5 block text-[11px] font-semibold uppercase tracking-wide ${isEliminated ? "text-gray-400" : "text-gray-500"}`}>
+            {team ? team.shortName : "Placeholder"}
+          </span>
+          {isSelected ? <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-accent" /> : null}
+        </span>
       ) : (
         <>
           <span className="min-w-0">
@@ -874,9 +885,17 @@ function ProjectedTeamChip({
   placeholderLabel: string | null;
   side: "left" | "right";
 }) {
+  const fallbackCode = placeholderLabel ? placeholderLabel.replace(/\s+/g, " ").trim().slice(0, 3).toUpperCase() : "TBD";
   return (
-    <div className={`rounded-md bg-gray-50 px-2 py-2 ${side === "right" ? "text-right" : ""}`}>
-      <p className="truncate text-[11px] font-bold text-gray-900">{team?.shortName ?? team?.name ?? placeholderLabel ?? "TBD"}</p>
+    <div
+      className={`flex min-h-[40px] items-center rounded-md bg-gray-50 px-1.5 py-1.5 ${
+        side === "right" ? "justify-end text-right" : "justify-start text-left"
+      }`}
+    >
+      <p className="inline-flex items-center justify-center gap-1 self-center text-[11px] font-black uppercase tracking-wide text-gray-900">
+        {team?.flagEmoji ? <span aria-hidden className="text-xs leading-none">{team.flagEmoji}</span> : null}
+        <span className="truncate">{team?.shortName ?? fallbackCode}</span>
+      </p>
     </div>
   );
 }
