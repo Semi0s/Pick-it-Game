@@ -66,3 +66,12 @@ export function upsertStoredPrediction(nextPrediction: Prediction) {
 
   window.localStorage.setItem(PREDICTION_KEY, JSON.stringify(predictions));
 }
+
+export function replaceStoredPredictionsForUser(userId: string, nextPredictions: Prediction[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const existingPredictions = getAllStoredPredictions().filter((prediction) => prediction.userId !== userId);
+  window.localStorage.setItem(PREDICTION_KEY, JSON.stringify([...existingPredictions, ...nextPredictions]));
+}

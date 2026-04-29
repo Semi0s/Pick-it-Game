@@ -354,10 +354,11 @@ export function AppShell({ children }: AppShellProps) {
       ) : null}
 
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white shadow-[0_-10px_24px_rgba(15,23,42,0.05)]"
-        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white"
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 0.35rem)" }}
       >
-        <div className="grid w-full grid-cols-4 gap-1.5 px-2 pt-2 pb-1 md:mx-auto md:max-w-4xl">
+        <div aria-hidden className="absolute inset-0 bg-white" />
+        <div className="relative grid w-full grid-cols-4 gap-1.5 px-2 pt-2 md:mx-auto md:max-w-4xl">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
@@ -367,7 +368,7 @@ export function AppShell({ children }: AppShellProps) {
                 key={item.href}
                 href={item.href}
                 aria-label={item.ariaLabel}
-                className={`flex min-h-[4.75rem] w-full min-w-0 touch-manipulation select-none flex-col items-center justify-center gap-1 rounded-md px-2 py-3 text-xs font-bold leading-none transition-[background-color,color,transform] duration-150 active:scale-[0.98] sm:text-sm ${
+                className={`flex min-h-[4.75rem] w-full min-w-0 touch-manipulation select-none flex-col items-center justify-center gap-1 rounded-md px-2 py-3 text-xs font-bold leading-none transition-colors duration-100 sm:text-sm ${
                   isActive ? "bg-accent-light text-accent-dark" : "text-gray-600"
                 }`}
                 style={{ WebkitTapHighlightColor: "transparent" }}

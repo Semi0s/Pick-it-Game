@@ -38,7 +38,7 @@ export default async function LoginPage({
           <LoginForm
             confirmed={confirmed}
             reset={reset}
-            initialMode={mode === "signup" ? "signup" : "login"}
+            initialMode={mode === "signup" || (!mode && flow === "invite") ? "signup" : "login"}
             flow={flow}
             language={language}
             callbackError={callbackError}

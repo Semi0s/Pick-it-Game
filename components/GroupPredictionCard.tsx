@@ -23,6 +23,7 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
   const predictionStateLabel = getPredictionStateLabel(match.status);
   const [homeScore, setHomeScore] = useState(getInitialScore(prediction?.predictedHomeScore));
   const [awayScore, setAwayScore] = useState(getInitialScore(prediction?.predictedAwayScore));
+  const [hasStartedEditing, setHasStartedEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(prediction?.updatedAt ?? null);
@@ -31,20 +32,24 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
     Boolean(prediction) &&
     (homeScore !== getInitialScore(prediction?.predictedHomeScore) ||
       awayScore !== getInitialScore(prediction?.predictedAwayScore));
+  const canSubmitNewPrediction = Boolean(prediction) ? hasUnsavedScoreChange : hasStartedEditing;
   const usePrimaryButton = !prediction || hasUnsavedScoreChange;
 
   useEffect(() => {
     setHomeScore(getInitialScore(prediction?.predictedHomeScore));
     setAwayScore(getInitialScore(prediction?.predictedAwayScore));
     setLastSavedAt(prediction?.updatedAt ?? null);
+    setHasStartedEditing(false);
   }, [prediction]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (locked || isSaving) {
+    if (locked || isSaving || !canSubmitNewPrediction) {
       if (locked) {
         setSaveError("Predictions locked.");
+      } else if (!canSubmitNewPrediction) {
+        setSaveError(prediction ? "Adjust a score before saving again." : "Adjust a score before saving this pick.");
       }
       return;
     }
@@ -161,7 +166,7 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
 
       <button
         type="submit"
-        disabled={!canEdit || isSaving}
+        disabled={!canEdit || isSaving || !canSubmitNewPrediction}
         className={`mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-3 text-base font-bold transition disabled:cursor-not-allowed disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600 ${
           usePrimaryButton
             ? "border-accent bg-accent text-white hover:border-accent-dark hover:bg-accent-dark"
@@ -182,29 +187,36 @@ export function GroupPredictionCard({ match, prediction, userId, onSave }: Group
                 : "Save pick"}
       </button>
 
-      {isSaving ? (
-        <p className="mt-3 rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
-          Saving...
-        </p>
-      ) : saveError ? (
-        <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
-          Failed to save. {saveError}
-        </p>
-      ) : !canEdit ? (
-        <p className="mt-3 rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
-          Predictions locked.
-        </p>
+      <div className="mt-3 min-h-[3rem]">
+        {isSaving ? (
+          <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
+            Saving...
+          </p>
+        ) : saveError ? (
+          <p className="rounded-md bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+            Failed to save. {saveError}
+          </p>
+        ) : !canEdit ? (
+          <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
+            Predictions locked.
+          </p>
       ) : lastSavedAt && !hasUnsavedScoreChange ? (
-        <p className="mt-3 rounded-md bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">
+        <p className="rounded-md bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">
           Saved · Last saved {formatSavedAt(lastSavedAt)}
         </p>
+      ) : !canSubmitNewPrediction ? (
+        <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
+          {prediction ? "Adjust a score to update this pick." : "Adjust a score to save this pick."}
+        </p>
       ) : null}
+      </div>
     </form>
   );
 
   function handleScoreChange(nextHomeScore: string, nextAwayScore: string) {
     setHomeScore(normalizeScore(nextHomeScore));
     setAwayScore(normalizeScore(nextAwayScore));
+    setHasStartedEditing(true);
     if (saveError) {
       setSaveError("");
     }

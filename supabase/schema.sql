@@ -824,6 +824,11 @@ drop policy if exists "Admins can read all predictions" on public.predictions;
 drop policy if exists "Authenticated users can read predictions after kickoff" on public.predictions;
 drop policy if exists "Authenticated users can read predictions for live or final matches" on public.predictions;
 
+create policy "Users can read own predictions"
+on public.predictions for select
+to authenticated
+using (user_id = auth.uid());
+
 create policy "Authenticated users can read predictions for live or final matches"
 on public.predictions for select
 to authenticated

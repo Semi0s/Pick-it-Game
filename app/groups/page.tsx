@@ -3,6 +3,7 @@ import { GroupPageClient } from "@/components/GroupPageClient";
 import { fetchKnockoutStructureStatus } from "@/lib/bracket-predictions";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { normalizeLanguage } from "@/lib/i18n";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import type { MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
 
@@ -51,6 +52,7 @@ export default async function GroupsPage() {
   let initialKnockoutSeeded: boolean | undefined;
 
   if (authUser) {
+    const adminSupabase = createAdminClient();
     const [userResult, matchesResult, predictionsResult, knockoutStatusResult] = await Promise.all([
       supabase
         .from("users")
@@ -61,7 +63,7 @@ export default async function GroupsPage() {
         .from("matches")
         .select("id,status,home_score,away_score,winner_team_id")
         .eq("stage", "group"),
-      supabase
+      adminSupabase
         .from("predictions")
         .select(
           "id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded,updated_at"

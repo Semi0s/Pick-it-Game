@@ -36,7 +36,7 @@ export function ProfileSetupForm() {
 
   useEffect(() => {
     if (!isLoading && user && !user.needsLegalAcceptance && !user.needsProfileSetup) {
-      router.replace("/groups");
+      router.replace("/dashboard");
     }
   }, [isLoading, router, user]);
 
@@ -71,7 +71,7 @@ export function ProfileSetupForm() {
       return;
     }
 
-    router.replace("/groups");
+    router.replace("/dashboard");
     router.refresh();
   }
 

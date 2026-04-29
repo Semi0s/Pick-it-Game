@@ -939,7 +939,7 @@ function resolveAllowedView(
     return requestedView;
   }
 
-  return "global";
+  return getDefaultLeaderboardView(switcher);
 }
 
 function resolveAllowedGroupId(
@@ -973,6 +973,18 @@ export function getGroupOptionsForView(
   }
 
   return [];
+}
+
+export function getDefaultLeaderboardView(switcher: LeaderboardSwitcherContext): LeaderboardSwitcherView {
+  if (switcher.managedGroups.length > 0 && switcher.tabs.some((tab) => tab.value === "managed_groups")) {
+    return "managed_groups";
+  }
+
+  if (switcher.joinedGroups.length > 0 && switcher.tabs.some((tab) => tab.value === "my_groups")) {
+    return "my_groups";
+  }
+
+  return switcher.tabs[0]?.value ?? "global";
 }
 
 function assignRanks(entries: Array<{ user_id: string; total_points: number }>) {

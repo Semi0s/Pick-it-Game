@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { CalendarDays, CircleHelp, ListOrdered, Network, Sparkles, SquareCheckBig, Trophy } from "lucide-react";
 import { fetchDashboardGroupAccessAction } from "@/app/my-groups/actions";
 import { AdminStatsSection, AdminToolsSection, AdminMessage } from "@/components/admin/AdminHomeClient";
@@ -69,6 +69,21 @@ export function DashboardOverview() {
   });
   const [predictions, setPredictions] = useState<Prediction[]>([]);
 
+  const refreshPredictions = useCallback(async () => {
+    if (!user) {
+      setPredictions([]);
+      return;
+    }
+
+    try {
+      const items = await fetchPlayerPredictions(user.id);
+      setPredictions(items);
+    } catch (error) {
+      console.error("Could not refresh dashboard predictions.", { userId: user.id, error });
+      setPredictions((currentPredictions) => currentPredictions);
+    }
+  }, [user]);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -113,25 +128,36 @@ export function DashboardOverview() {
       return;
     }
 
-    let isMounted = true;
     setPredictions(getStoredPredictions(user.id));
-
-    fetchPlayerPredictions(user.id)
-      .then((items) => {
-        if (isMounted) {
-          setPredictions(items);
-        }
-      })
+    refreshPredictions()
       .catch(() => {
-        if (isMounted) {
-          setPredictions(getStoredPredictions(user.id));
-        }
+        setPredictions(getStoredPredictions(user.id));
       });
+  }, [refreshPredictions, user]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !user) {
+      return;
+    }
+
+    function handleWindowFocus() {
+      refreshPredictions().catch(() => undefined);
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refreshPredictions().catch(() => undefined);
+      }
+    }
+
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      isMounted = false;
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [user]);
+  }, [refreshPredictions, user]);
 
   useEffect(() => {
     if (!user) {

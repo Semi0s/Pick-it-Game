@@ -92,6 +92,7 @@ export function GroupPredictions({
   const [teamSearch, setTeamSearch] = useState("");
   const [matchWindowStart, setMatchWindowStart] = useState(0);
   const [pendingScrollMatchId, setPendingScrollMatchId] = useState<string | null>(null);
+  const [focusedMatchId, setFocusedMatchId] = useState<string | null>(null);
   const [isKnockoutSeeded, setIsKnockoutSeeded] = useState(initialKnockoutSeeded ?? false);
   const [explainerLanguage, setExplainerLanguage] = useState<ExplainerLanguage>(() => {
     if (typeof window !== "undefined") {
@@ -109,6 +110,7 @@ export function GroupPredictions({
   });
   const [isExplainerLanguageMenuOpen, setIsExplainerLanguageMenuOpen] = useState(false);
   const matchCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const dateSectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     try {
@@ -142,12 +144,10 @@ export function GroupPredictions({
   }, [initialMatches]);
 
   useEffect(() => {
-    if (initialPredictions) {
-      return;
-    }
-
     let isMounted = true;
-    setPredictions(getStoredPredictions(user.id));
+    if (!initialPredictions) {
+      setPredictions(getStoredPredictions(user.id));
+    }
 
     fetchPlayerPredictions(user.id)
       .then((items) => {
@@ -282,6 +282,7 @@ export function GroupPredictions({
       setTeamSearch("");
       setMatchWindowStart(getWindowStartForMatch([...matches].sort(sortMatchesByKickoff), matchId));
       setPendingScrollMatchId(matchId);
+      setFocusedMatchId(matchId);
     },
     [matches]
   );
@@ -297,28 +298,58 @@ export function GroupPredictions({
       return;
     }
 
-    const targetNode = matchCardRefs.current[pendingScrollMatchId];
-    if (!targetNode) {
+    const targetMatch = visibleMatches.find((match) => match.id === pendingScrollMatchId);
+    if (!targetMatch) {
       return;
     }
 
-    targetNode.scrollIntoView({ behavior: "smooth", block: "start" });
+    const targetDateKey = getMatchDateKey(targetMatch.kickoffTime);
+    const dateMatches = filteredMatchesByDate[targetDateKey] ?? [];
+    const isFirstMatchForDate = dateMatches[0]?.id === pendingScrollMatchId;
+    const targetNode = matchCardRefs.current[pendingScrollMatchId];
+    const sectionNode = dateSectionRefs.current[targetDateKey];
+
+    if (!targetNode && !sectionNode) {
+      return;
+    }
+
+    if (isFirstMatchForDate && sectionNode) {
+      sectionNode.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (targetNode) {
+      targetNode.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     setPendingScrollMatchId(null);
-  }, [visibleMatches, pendingScrollMatchId]);
+  }, [filteredMatchesByDate, pendingScrollMatchId, visibleMatches]);
 
   async function handleSave(prediction: Prediction) {
     const savedPrediction = await savePlayerPrediction(prediction);
+    let nextPredictions: Prediction[] = [];
+
     setPredictions((currentPredictions) => {
       const existingIndex = currentPredictions.findIndex(
         (item) => item.userId === savedPrediction.userId && item.matchId === savedPrediction.matchId
       );
 
       if (existingIndex < 0) {
-        return [...currentPredictions, savedPrediction];
+        nextPredictions = [...currentPredictions, savedPrediction];
+        return nextPredictions;
       }
 
-      return currentPredictions.map((item, index) => (index === existingIndex ? savedPrediction : item));
+      nextPredictions = currentPredictions.map((item, index) => (index === existingIndex ? savedPrediction : item));
+      return nextPredictions;
     });
+
+    const sortedMatches = [...matches].sort(sortMatchesByKickoff);
+    const savedMatchIds = new Set(nextPredictions.map((item) => item.matchId));
+    const nextUnsavedOpenMatch = sortedMatches.find(
+      (match) => canEditPrediction(match.status) && !savedMatchIds.has(match.id)
+    );
+
+    if (nextUnsavedOpenMatch) {
+      jumpToMatch(nextUnsavedOpenMatch.id);
+    }
+
     fetchPredictionsForMatches(filteredMatches.map((match) => match.id)).then(setSocialPredictions);
     return savedPrediction;
   }
@@ -440,61 +471,44 @@ export function GroupPredictions({
             ))}
           </ul>
         </div>
-        <div className="mt-4 overflow-x-auto pb-1">
-          <div className="inline-flex min-w-full flex-nowrap items-center justify-start gap-1.5 sm:gap-2">
-            {nextPredictionMatchId ? (
-              <button
-                type="button"
-                onClick={handlePrimaryAction}
-                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
-              >
-                {shouldPromoteKnockout ? (
-                  isKnockoutSeeded ? (
-                    <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
-                  ) : (
-                    <SquareCheckBig aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
-                  )
-                ) : (
-                  <SquareCheckBig aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
-                )}
-                {primaryActionLabel}
-              </button>
+        <div className="mt-4 max-w-xl">
+          <button
+            type="button"
+            onClick={handlePrimaryAction}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
+          >
+            {shouldPromoteKnockout ? (
+              isKnockoutSeeded ? (
+                <Network aria-hidden className="h-4 w-4 shrink-0 text-white" />
+              ) : (
+                <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
+              )
             ) : (
-              <button
-                type="button"
-                onClick={handlePrimaryAction}
-                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
-              >
-                {shouldPromoteKnockout ? (
-                  isKnockoutSeeded ? (
-                    <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
-                  ) : (
-                    <SquareCheckBig aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
-                  )
-                ) : (
-                  <SquareCheckBig aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
-                )}
-                {primaryActionLabel}
-              </button>
+              <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
             )}
+            {primaryActionLabel}
+          </button>
+          <div className="mt-2 grid grid-cols-2 gap-2">
             {shouldShowSecondaryKnockoutButton ? (
               <Link
                 href="/knockout"
-                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
+                className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-sm"
               >
                 <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
-                My Knockout Picks
+                <span className="truncate">My Knockout Picks</span>
               </Link>
-            ) : null}
+            ) : (
+              <div />
+            )}
             <Link
               href="/trophies"
-              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
+              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-sm"
             >
               <span className="relative inline-flex h-4.5 w-4.5 items-center justify-center text-accent-dark sm:h-5 sm:w-5">
                 <Trophy aria-hidden className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
                 <SquareCheckBig aria-hidden className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-[2px] bg-white" />
               </span>
-              My Side Picks
+              <span className="truncate">My Side Picks</span>
             </Link>
           </div>
         </div>
@@ -553,7 +567,11 @@ export function GroupPredictions({
 
         return (
           <section key={date} className="space-y-3">
-            <div>
+            <div
+              ref={(node) => {
+                dateSectionRefs.current[date] = node;
+              }}
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-xl font-black">{formatDateLabel(date)}</h3>
@@ -578,6 +596,11 @@ export function GroupPredictions({
                     matchCardRefs.current[match.id] = node;
                   }}
                 >
+                  {focusedMatchId === match.id && dateMatches[0]?.id !== match.id ? (
+                    <div className="rounded-md bg-gray-100 px-3 py-2 text-sm font-bold text-gray-700">
+                      {formatDateLabel(date)}
+                    </div>
+                  ) : null}
                   <GroupPredictionCard
                     match={match}
                     prediction={predictions.find((item) => item.matchId === match.id)}

@@ -71,6 +71,7 @@ export function LeaderboardClient() {
     tier?: "bronze" | "silver" | "gold" | "special" | null;
   } | null>(null);
   const [globalStandingLabel, setGlobalStandingLabel] = useState<string | null>(null);
+  const [hasExplicitSwitcherPreference, setHasExplicitSwitcherPreference] = useState(false);
 
   const requestUrl = useMemo(() => {
     const params = new URLSearchParams();
@@ -107,6 +108,7 @@ export function LeaderboardClient() {
       const queryGroupId = searchParams.get("groupId");
       const queryManagerId = searchParams.get("managerId");
       if (queryView || queryGroupId || queryManagerId) {
+        setHasExplicitSwitcherPreference(true);
         if (queryView) {
           setActiveView(queryView as LeaderboardSwitcherView);
         }
@@ -121,6 +123,7 @@ export function LeaderboardClient() {
 
       const storedValue = window.sessionStorage.getItem(LEADERBOARD_SWITCHER_STORAGE_KEY);
       if (storedValue) {
+        setHasExplicitSwitcherPreference(true);
         const parsed = JSON.parse(storedValue) as typeof DEFAULT_SWITCHER_STATE;
         if (parsed.activeView) {
           setActiveView(parsed.activeView);
@@ -283,11 +286,19 @@ export function LeaderboardClient() {
       return;
     }
 
+    if (!hasExplicitSwitcherPreference) {
+      const preferredView = getDefaultLeaderboardViewLocal(switcher);
+      if (activeView !== preferredView) {
+        setActiveView(preferredView);
+      }
+      return;
+    }
+
     const allowedViews = new Set(switcher.tabs.map((tab) => tab.value));
     if (!allowedViews.has(activeView)) {
       setActiveView(switcher.tabs[0]?.value ?? "global");
     }
-  }, [activeView, switcher]);
+  }, [activeView, hasExplicitSwitcherPreference, switcher]);
 
   const availableGroupOptions = useMemo(
     () => (switcher ? getGroupOptionsForView(switcher, activeView) : []),
@@ -1160,6 +1171,18 @@ function getGroupOptionsForView(
   }
 
   return [];
+}
+
+function getDefaultLeaderboardViewLocal(switcher: LeaderboardSwitcherContext): LeaderboardSwitcherView {
+  if (switcher.managedGroups.length > 0 && switcher.tabs.some((tab) => tab.value === "managed_groups")) {
+    return "managed_groups";
+  }
+
+  if (switcher.joinedGroups.length > 0 && switcher.tabs.some((tab) => tab.value === "my_groups")) {
+    return "my_groups";
+  }
+
+  return switcher.tabs[0]?.value ?? "global";
 }
 
 function shouldShowManagerSelector(activeView: LeaderboardSwitcherView) {

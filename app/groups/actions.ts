@@ -36,6 +36,21 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
   }
 
   const adminSupabase = createAdminClient();
+  const { data: existingPrediction, error: existingPredictionError } = await adminSupabase
+    .from("predictions")
+    .select("id,predicted_home_score,predicted_away_score,predicted_winner_team_id,predicted_is_draw,updated_at")
+    .eq("user_id", userResult.userId)
+    .eq("match_id", input.matchId)
+    .maybeSingle();
+
+  if (existingPredictionError) {
+    console.warn("Could not load existing prediction before save.", {
+      userId: userResult.userId,
+      matchId: input.matchId,
+      message: existingPredictionError.message
+    });
+  }
+
   const { data: match, error: matchError } = await adminSupabase
     .from("matches")
     .select("id,home_team_id,away_team_id,kickoff_time,status")
@@ -55,6 +70,20 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
   }
 
   const derivedOutcome = deriveOutcome(matchRow, input.predictedHomeScore, input.predictedAwayScore);
+  console.info("Group prediction save requested.", {
+    userId: userResult.userId,
+    matchId: matchRow.id,
+    action: existingPrediction?.id ? "update" : "create",
+    previousHomeScore: existingPrediction?.predicted_home_score ?? null,
+    previousAwayScore: existingPrediction?.predicted_away_score ?? null,
+    nextHomeScore: input.predictedHomeScore ?? null,
+    nextAwayScore: input.predictedAwayScore ?? null,
+    previousWinnerTeamId: existingPrediction?.predicted_winner_team_id ?? null,
+    nextWinnerTeamId: derivedOutcome.predictedWinnerTeamId,
+    previousIsDraw: existingPrediction?.predicted_is_draw ?? null,
+    nextIsDraw: derivedOutcome.predictedIsDraw
+  });
+
   const { data, error } = await adminSupabase
     .from("predictions")
     .upsert(
@@ -75,8 +104,29 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
     .single();
 
   if (error) {
+    console.error("Group prediction save failed.", {
+      userId: userResult.userId,
+      matchId: matchRow.id,
+      action: existingPrediction?.id ? "update" : "create",
+      nextHomeScore: input.predictedHomeScore ?? null,
+      nextAwayScore: input.predictedAwayScore ?? null,
+      message: error.message
+    });
     return { ok: false, message: error.message };
   }
+
+  console.info("Group prediction save completed.", {
+    userId: userResult.userId,
+    matchId: data.match_id,
+    action: existingPrediction?.id ? "update" : "create",
+    predictionId: data.id,
+    savedHomeScore: data.predicted_home_score ?? null,
+    savedAwayScore: data.predicted_away_score ?? null,
+    savedWinnerTeamId: data.predicted_winner_team_id ?? null,
+    savedIsDraw: data.predicted_is_draw,
+    previousUpdatedAt: existingPrediction?.updated_at ?? null,
+    savedUpdatedAt: data.updated_at ?? null
+  });
 
   return {
     ok: true,
