@@ -497,7 +497,7 @@ function FocusedRoundView({
             <RoundRailCard
               match={row.leftSource}
               side="left"
-              motion="static"
+              motion="flat"
               provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
               onClick={onRetreat}
               ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
@@ -513,7 +513,7 @@ function FocusedRoundView({
             <RoundRailCard
               match={row.rightSource}
               side="right"
-              motion="static"
+              motion="flat"
               provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
               onClick={onRetreat}
               ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
@@ -556,7 +556,7 @@ function FinaleRoundView({
               <RoundRailCard
                 match={finalRow.leftSource}
                 side="left"
-                motion="static"
+                motion="flat"
                 provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
                 onClick={onRetreat}
                 ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
@@ -572,7 +572,7 @@ function FinaleRoundView({
               <RoundRailCard
                 match={finalRow.rightSource}
                 side="right"
-                motion="static"
+                motion="flat"
                 provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
                 onClick={onRetreat}
                 ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}

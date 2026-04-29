@@ -71,15 +71,14 @@ export function NotificationsBell() {
       </button>
 
       {isOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-black/35 md:items-start md:justify-end md:p-6">
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/35 px-4 pb-4 pt-24 sm:pt-28">
           <button
             type="button"
             aria-label="Close notifications"
             onClick={() => setIsOpen(false)}
             className="absolute inset-0"
           />
-          <div className="relative w-full rounded-t-2xl bg-white p-4 shadow-2xl md:mt-14 md:max-w-sm md:rounded-2xl md:p-5">
-            <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-gray-200 md:hidden" aria-hidden="true" />
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-4 shadow-2xl sm:p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-black text-gray-950">Notifications</p>
@@ -95,7 +94,7 @@ export function NotificationsBell() {
               </button>
             </div>
 
-            <div className="mt-4 max-h-[70vh] space-y-2 overflow-y-auto pr-1 md:max-h-[28rem]">
+            <div className="mt-4 max-h-[calc(100vh-9rem)] space-y-2 overflow-y-auto pr-1 sm:max-h-[28rem]">
               {isLoading ? (
                 <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">Loading...</p>
               ) : notifications.length === 0 ? (

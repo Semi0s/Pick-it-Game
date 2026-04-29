@@ -1,5 +1,11 @@
 {
-  "/api/admin/system-readiness/route": "app/api/admin/system-readiness/route.js",
   "/api/notifications/route": "app/api/notifications/route.js",
-  "/dashboard/page": "app/dashboard/page.js"
+  "/api/admin/system-readiness/route": "app/api/admin/system-readiness/route.js",
+  "/api/leaderboard/route": "app/api/leaderboard/route.js",
+  "/login/page": "app/login/page.js",
+  "/profile/page": "app/profile/page.js",
+  "/my-groups/page": "app/my-groups/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/groups/page": "app/groups/page.js",
+  "/leaderboard/page": "app/leaderboard/page.js"
 }

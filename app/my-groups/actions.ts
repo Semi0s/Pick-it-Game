@@ -286,6 +286,20 @@ export type FetchMyGroupsResult =
       message: string;
     };
 
+export type FetchDashboardGroupAccessResult =
+  | {
+      ok: true;
+      groupAccess: {
+        joinedGroupCount: number;
+        managedGroupCount: number;
+        hasAnyGroups: boolean;
+      };
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export type GroupInvitePreviewResult =
   | {
       ok: true;
@@ -1518,7 +1532,7 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
     const adminSupabase = createAdminClient();
     const [managerLimits, groups, joinedGroupCount] = await Promise.all([
       getManagerLimits(adminSupabase, currentUser.userId),
-      fetchManagedGroups(adminSupabase, currentUser.userId, currentUser.role),
+      fetchVisibleGroups(adminSupabase, currentUser.userId, currentUser.role),
       fetchJoinedPlayerGroupCount(adminSupabase, currentUser.userId)
     ]);
 
@@ -1542,7 +1556,7 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
       groupAccess: {
         joinedGroupCount,
         managedGroupCount: groups.length,
-        hasAnyGroups: joinedGroupCount > 0
+        hasAnyGroups: joinedGroupCount > 0 || groups.length > 0
       },
       groups
     };
@@ -1550,6 +1564,35 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not load your groups."
+    };
+  }
+}
+
+export async function fetchDashboardGroupAccessAction(): Promise<FetchDashboardGroupAccessResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const [joinedGroupCount, managedGroupCount] = await Promise.all([
+      fetchJoinedPlayerGroupCount(adminSupabase, currentUser.userId),
+      fetchManagedGroupCount(adminSupabase, currentUser.userId, currentUser.role)
+    ]);
+
+    return {
+      ok: true,
+      groupAccess: {
+        joinedGroupCount,
+        managedGroupCount,
+        hasAnyGroups: joinedGroupCount > 0 || managedGroupCount > 0
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load your group access."
     };
   }
 }
@@ -1707,13 +1750,22 @@ async function getActiveOwnedGroupCount(adminSupabase: ReturnType<typeof createA
   return count ?? 0;
 }
 
-async function fetchManagedGroups(
+async function fetchManagedGroupCount(
   adminSupabase: ReturnType<typeof createAdminClient>,
   userId: string,
   role: PlatformRole
-): Promise<MyManagedGroup[]> {
-  const membershipRoleByGroup =
-    role === "admin" ? new Map<string, GroupMemberRole>() : await fetchMembershipRolesByGroup(adminSupabase, userId);
+) {
+  if (role === "admin") {
+    const { count, error } = await adminSupabase.from("groups").select("id", { count: "exact", head: true });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return count ?? 0;
+  }
+
+  const membershipRoleByGroup = await fetchMembershipRolesByGroup(adminSupabase, userId);
   const managedIds = Array.from(
     new Set(
       Array.from(membershipRoleByGroup.entries())
@@ -1722,46 +1774,16 @@ async function fetchManagedGroups(
     )
   );
 
-  const { data: groups, error: groupsError } = role === "admin"
-    ? await adminSupabase
-        .from("groups")
-        .select("id,name,membership_limit,status,owner_user_id")
-        .order("created_at", { ascending: false })
-    : await adminSupabase
-        .from("groups")
-        .select("id,name,membership_limit,status,owner_user_id")
-        .or(`owner_user_id.eq.${userId},id.in.(${managedIds.length > 0 ? managedIds.join(",") : "00000000-0000-0000-0000-000000000000"})`)
-        .order("created_at", { ascending: false });
+  const { count, error } = await adminSupabase
+    .from("groups")
+    .select("id", { count: "exact", head: true })
+    .or(`owner_user_id.eq.${userId},id.in.(${managedIds.length > 0 ? managedIds.join(",") : "00000000-0000-0000-0000-000000000000"})`);
 
-  if (groupsError) {
-    throw new Error(groupsError.message);
+  if (error) {
+    throw new Error(error.message);
   }
 
-  const groupRows = (groups ?? []) as Array<{
-    id: string;
-    name: string;
-    membership_limit: number;
-    status: GroupStatus;
-    owner_user_id?: string | null;
-  }>;
-
-  if (groupRows.length === 0) {
-    return [];
-  }
-
-  return groupRows.map((group) => ({
-    id: group.id,
-    name: group.name,
-    membershipLimit: group.membership_limit,
-    status: group.status,
-    canManage: true,
-    userRole:
-      role === "admin"
-        ? "super_admin"
-        : membershipRoleByGroup.get(group.id) === "manager"
-          ? "manager"
-          : "manager"
-  }));
+  return count ?? 0;
 }
 
 async function fetchManagedGroupDetails(

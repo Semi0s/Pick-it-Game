@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { CalendarDays, CircleHelp, ListOrdered, Network, Sparkles, SquareCheckBig, Trophy } from "lucide-react";
-import { fetchMyGroupsAction } from "@/app/my-groups/actions";
+import { fetchDashboardGroupAccessAction } from "@/app/my-groups/actions";
 import { AdminStatsSection, AdminToolsSection, AdminMessage } from "@/components/admin/AdminHomeClient";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
@@ -16,9 +16,10 @@ import {
   PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
   type ExplainerLanguage
 } from "@/lib/i18n";
+import { fetchPlayerPredictions } from "@/lib/player-predictions";
 import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
-import type { MatchWithTeams } from "@/lib/types";
+import type { MatchWithTeams, Prediction } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: string }> = {
@@ -29,10 +30,10 @@ const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: s
   de: { hello: "Hallo", help: "Hilfe" }
 };
 
-const DASHBOARD_LOGO_HINT_STORAGE_KEY = "pickit:dashboard-logo-hint-seen";
+const DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-shown";
 
 const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
-  en: "Tap the PICK-IT! logo to return here.",
+  en: "Tap the PICK-IT logo above to return to this page again.",
   es: "Toca el logo de PICK-IT! para volver aquí.",
   fr: "Touchez le logo PICK-IT! pour revenir ici.",
   pt: "Toque no logo do PICK-IT! para voltar aqui.",
@@ -45,10 +46,14 @@ export function DashboardOverview() {
   const [groupMatches, setGroupMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
   const [adminCounts, setAdminCounts] = useState<AdminCounts | null>(null);
   const [adminError, setAdminError] = useState<string | null>(null);
-  const [groupAccess, setGroupAccess] = useState<{ hasAnyGroups: boolean; joinedGroupCount: number } | null>(null);
+  const [groupAccess, setGroupAccess] = useState<{
+    hasAnyGroups: boolean;
+    joinedGroupCount: number;
+    managedGroupCount: number;
+  } | null>(null);
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
-  const [displayLanguage] = useState<ExplainerLanguage>(() => {
+  const [displayLanguage, setDisplayLanguage] = useState<ExplainerLanguage>(() => {
     if (typeof window !== "undefined") {
       try {
         const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
@@ -62,7 +67,7 @@ export function DashboardOverview() {
 
     return getExplainerLanguageForUser(user);
   });
-  const predictions = user ? getStoredPredictions(user.id) : [];
+  const [predictions, setPredictions] = useState<Prediction[]>([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -85,13 +90,57 @@ export function DashboardOverview() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
+      if (storedValue) {
+        setDisplayLanguage(normalizeExplainerLanguage(storedValue));
+        return;
+      }
+    } catch (error) {
+      console.warn("Could not restore dashboard helper language.", error);
+    }
+
+    setDisplayLanguage(getExplainerLanguageForUser(user));
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setPredictions([]);
+      return;
+    }
+
+    let isMounted = true;
+    setPredictions(getStoredPredictions(user.id));
+
+    fetchPlayerPredictions(user.id)
+      .then((items) => {
+        if (isMounted) {
+          setPredictions(items);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setPredictions(getStoredPredictions(user.id));
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
+
+  useEffect(() => {
     if (!user) {
       setGroupAccess(null);
       return;
     }
 
     let isMounted = true;
-    fetchMyGroupsAction()
+    fetchDashboardGroupAccessAction()
       .then((result) => {
         if (!isMounted || !result.ok) {
           return;
@@ -99,7 +148,8 @@ export function DashboardOverview() {
 
         setGroupAccess({
           hasAnyGroups: result.groupAccess.hasAnyGroups,
-          joinedGroupCount: result.groupAccess.joinedGroupCount
+          joinedGroupCount: result.groupAccess.joinedGroupCount,
+          managedGroupCount: result.groupAccess.managedGroupCount
         });
       })
       .catch(() => {
@@ -136,24 +186,6 @@ export function DashboardOverview() {
     };
   }, [user?.role]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    try {
-      if (window.sessionStorage.getItem(DASHBOARD_LOGO_HINT_STORAGE_KEY) === "true") {
-        return;
-      }
-
-      window.sessionStorage.setItem(DASHBOARD_LOGO_HINT_STORAGE_KEY, "true");
-      showAppToast({ tone: "tip", text: DASHBOARD_LOGO_HINT_COPY[displayLanguage], durationMs: 5200 });
-    } catch (error) {
-      console.warn("Could not persist dashboard logo hint state.", error);
-      showAppToast({ tone: "tip", text: DASHBOARD_LOGO_HINT_COPY[displayLanguage], durationMs: 5200 });
-    }
-  }, [displayLanguage]);
-
   const openMatches = groupMatches.filter((match) => canEditPrediction(match.status));
   const completedCount = groupMatches.filter((match) =>
     predictions.some((prediction) => prediction.matchId === match.id)
@@ -162,6 +194,32 @@ export function DashboardOverview() {
   const heroCtaLabel = completedCount > 0 ? "My Next Pick" : "My Picks";
   const heroCtaHref = "/groups?focus=next";
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !user || groupMatches.length === 0) {
+      return;
+    }
+
+    const hasReachedHalfway = completedCount >= Math.ceil(groupMatches.length / 2);
+    if (hasReachedHalfway) {
+      return;
+    }
+
+    const storageKey = `${DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX}:${user.id}`;
+
+    try {
+      if (window.sessionStorage.getItem(storageKey) === "true") {
+        return;
+      }
+
+      window.sessionStorage.setItem(storageKey, "true");
+      showAppToast({ tone: "tip", text: DASHBOARD_LOGO_HINT_COPY[displayLanguage], durationMs: 5200 });
+    } catch (error) {
+      console.warn("Could not persist dashboard logo hint state.", error);
+      showAppToast({ tone: "tip", text: DASHBOARD_LOGO_HINT_COPY[displayLanguage], durationMs: 5200 });
+    }
+  }, [completedCount, displayLanguage, groupMatches.length, user]);
+
   function handleInviteEntrySubmit() {
     const token = normalizeInviteTokenInput(inviteEntryValue);
     if (!token) {

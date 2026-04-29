@@ -7,7 +7,7 @@ import { BarChart3, CircleUserRound, SquareCheckBig, UsersRound } from "lucide-r
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
-import { APP_TOAST_EVENT, type AppToastDetail } from "@/lib/app-toast";
+import { APP_TOAST_EVENT, markAppToastsReady, type AppToastDetail } from "@/lib/app-toast";
 import { getStrings } from "@/lib/strings";
 import {
   fetchCurrentUserTrophies,
@@ -31,6 +31,7 @@ type AppShellProps = {
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TROPHY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_TOAST_DURATION_MS = 4200;
+const DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-shown:";
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
@@ -50,22 +51,30 @@ export function AppShell({ children }: AppShellProps) {
   const lastTrophySignatureRef = useRef<string>("");
 
   useEffect(() => {
-    const handleToast = (event: Event) => {
-      const customEvent = event as CustomEvent<AppToastDetail>;
-      const detail = customEvent.detail;
+    const dismissToastLater = (id: string, durationMs?: number) => {
+      window.setTimeout(() => {
+        setToasts((current) => current.filter((toast) => toast.id !== id));
+      }, durationMs ?? DEFAULT_TOAST_DURATION_MS);
+    };
+
+    const enqueueToast = (detail: AppToastDetail) => {
       if (!detail?.text) {
         return;
       }
 
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       setToasts((current) => [...current, { id, tone: detail.tone, text: detail.text }]);
+      dismissToastLater(id, detail.durationMs);
+    };
 
-      window.setTimeout(() => {
-        setToasts((current) => current.filter((toast) => toast.id !== id));
-      }, detail.durationMs ?? DEFAULT_TOAST_DURATION_MS);
+    const handleToast = (event: Event) => {
+      const customEvent = event as CustomEvent<AppToastDetail>;
+      enqueueToast(customEvent.detail);
     };
 
     window.addEventListener(APP_TOAST_EVENT, handleToast as EventListener);
+    const pendingToasts = markAppToastsReady();
+    pendingToasts.forEach(enqueueToast);
     return () => {
       window.removeEventListener(APP_TOAST_EVENT, handleToast as EventListener);
     };
@@ -284,6 +293,18 @@ export function AppShell({ children }: AppShellProps) {
             <button
               type="button"
               onClick={async () => {
+                if (typeof window !== "undefined") {
+                  try {
+                    for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+                      const key = window.sessionStorage.key(index);
+                      if (key?.startsWith(DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX)) {
+                        window.sessionStorage.removeItem(key);
+                      }
+                    }
+                  } catch (error) {
+                    console.warn("Could not clear dashboard hint session state.", error);
+                  }
+                }
                 await signOutCurrentUser();
                 router.replace("/login");
                 router.refresh();
@@ -332,11 +353,11 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       ) : null}
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white shadow-[0_-10px_24px_rgba(15,23,42,0.05)]">
-        <div
-          className="grid w-full grid-cols-4 gap-1.5 px-2 pt-2 md:mx-auto md:max-w-4xl"
-          style={{ paddingBottom: "max(0.35rem, env(safe-area-inset-bottom, 0px))" }}
-        >
+      <nav
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white shadow-[0_-10px_24px_rgba(15,23,42,0.05)]"
+        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      >
+        <div className="grid w-full grid-cols-4 gap-1.5 px-2 pt-2 pb-1 md:mx-auto md:max-w-4xl">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
