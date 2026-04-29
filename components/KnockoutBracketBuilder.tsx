@@ -3,6 +3,7 @@
 import { ChevronDown, ChevronUp, Clock3, Trophy } from "lucide-react";
 import { PointerEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
 import { saveBracketPredictionAction } from "@/app/knockout/actions";
+import { HorizontalChoiceRail, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
 import { showAppToast } from "@/lib/app-toast";
 import { formatDateTimeWithZone } from "@/lib/date-time";
 import {
@@ -41,14 +42,17 @@ type MatchAlignmentRow = {
 };
 
 type RailMotion = "open-left" | "open-right" | "rolled-left" | "rolled-right" | "flat";
+const KNOCKOUT_PHASE_NAV_STORAGE_KEY = "knockout-phase-nav";
+const KNOCKOUT_SECTION_STORAGE_KEY = "knockout-section";
+const KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY = "knockout-active-slide";
 
 export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracketBuilderProps) {
   const [predictions, setPredictions] = useState<BracketPrediction[]>(initialView.predictions);
   const [pendingMatchId, setPendingMatchId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "error" | "success"; text: string } | null>(null);
-  const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-  const [isPhaseNavOpen, setIsPhaseNavOpen] = useState(false);
-  const [isSectionExpanded, setIsSectionExpanded] = useState(false);
+  const [activeSlideIndex, setActiveSlideIndex] = useSessionJsonState<number>(KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY, 0);
+  const [isPhaseNavOpen, setIsPhaseNavOpen] = useSessionDisclosureState(KNOCKOUT_PHASE_NAV_STORAGE_KEY, false);
+  const [isSectionExpanded, setIsSectionExpanded] = useSessionDisclosureState(KNOCKOUT_SECTION_STORAGE_KEY, false);
   const [transitionDirection, setTransitionDirection] = useState<-1 | 0 | 1>(0);
   const [transitionReady, setTransitionReady] = useState(true);
   const touchStartXRef = useRef<number | null>(null);
@@ -75,6 +79,10 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
     };
   }, []);
 
+  useEffect(() => {
+    setActiveSlideIndex((current) => Math.max(0, Math.min(current, slides.length - 1)));
+  }, [setActiveSlideIndex, slides.length]);
+
   if (!initialView.isSeeded) {
     return (
       <section className="rounded-lg border border-gray-200 bg-white p-5">
@@ -93,7 +101,9 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Phase Navigation</p>
-            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Jump to each knockout phase here</p>
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-700">
+              Jump to each knockout phase here
+            </p>
           </div>
           <InlinePhaseDisclosureButton
             isOpen={isPhaseNavOpen}
@@ -101,7 +111,7 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
           />
         </div>
         {isPhaseNavOpen ? (
-          <div className="mt-3 flex flex-wrap gap-2">
+          <HorizontalChoiceRail className="mt-3" showControls={slides.length > 1}>
             {slides.map((slide, index) => {
               const isActive = index === activeSlideIndex;
               return (
@@ -119,7 +129,7 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
                 </button>
               );
             })}
-          </div>
+          </HorizontalChoiceRail>
         ) : null}
       </div>
 

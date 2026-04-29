@@ -2,20 +2,23 @@
 
 import { ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
+import { HorizontalChoiceRail, useSessionDisclosureState } from "@/components/player-management/Shared";
 import type { GroupBracketComparisonView, BracketHealthStatus } from "@/lib/bracket-predictions";
+const KNOCKOUT_GROUP_COMPARISON_STORAGE_KEY = "knockout-group-comparison";
+const KNOCKOUT_GROUP_DETAIL_STORAGE_KEY = "knockout-group-detail";
 
 type KnockoutGroupComparisonProps = {
   view: GroupBracketComparisonView;
 };
 
 export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [isExpanded, setIsExpanded] = useSessionDisclosureState(KNOCKOUT_GROUP_COMPARISON_STORAGE_KEY, false);
+  const [isDetailOpen, setIsDetailOpen] = useSessionDisclosureState(KNOCKOUT_GROUP_DETAIL_STORAGE_KEY, false);
 
   useEffect(() => {
     setIsDetailOpen(false);
-  }, [view.selectedGroupId, view.selectedPlayerId]);
+  }, [setIsDetailOpen, view.selectedGroupId, view.selectedPlayerId]);
 
   if (view.groups.length === 0) {
     return (
@@ -46,7 +49,7 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
                 {view.selectedGroupId ? "No champion picks have been saved for this group yet." : "Choose a group to compare bracket picks."}
               </p>
             )}
-            <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+            <HorizontalChoiceRail className="mt-4" showControls={view.groups.length > 1}>
               {view.groups.map((group) => {
                 const isActive = group.id === view.selectedGroupId;
                 return (
@@ -61,7 +64,7 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
                   </Link>
                 );
               })}
-            </div>
+            </HorizontalChoiceRail>
           </div>
           <button
             type="button"

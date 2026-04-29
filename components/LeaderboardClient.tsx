@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { InlineDisclosureButton } from "@/components/player-management/Shared";
+import { InlineDisclosureButton, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
+import type { ReactNode } from "react";
 import {
   awardManagedGroupTrophyAction,
   listManagedGroupPlayersAction,
@@ -33,9 +34,22 @@ const DEFAULT_SWITCHER_STATE = {
   selectedManagerId: ""
 };
 
+type LeaderboardSubselectionState = {
+  groupByView: Partial<Record<LeaderboardSwitcherView, string>>;
+  managerByView: Partial<Record<LeaderboardSwitcherView, string>>;
+};
+
+const DEFAULT_SUBSELECTION_STATE: LeaderboardSubselectionState = {
+  groupByView: {},
+  managerByView: {}
+};
+
 const LEADERBOARD_SWITCHER_STORAGE_KEY = "leaderboard-switcher-state";
+const LEADERBOARD_VIEW_DISCLOSURE_STORAGE_KEY = "leaderboard-view-disclosure";
+const LEADERBOARD_INTRO_DISCLOSURE_STORAGE_KEY = "leaderboard-intro-disclosure";
 const LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY = "leaderboard-activity-disclosure";
 const LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY = "leaderboard-leader-summary-state";
+const LEADERBOARD_SUBSELECTION_STORAGE_KEY = "leaderboard-subselection-state";
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TWO_LINE_CLAMP_STYLE = {
   display: "-webkit-box",
@@ -56,13 +70,17 @@ export function LeaderboardClient() {
   const [selectedGroupId, setSelectedGroupId] = useState(DEFAULT_SWITCHER_STATE.selectedGroupId);
   const [selectedManagerId, setSelectedManagerId] = useState(DEFAULT_SWITCHER_STATE.selectedManagerId);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeReactionKey, setActiveReactionKey] = useState<string | null>(null);
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [activeCommentEventId, setActiveCommentEventId] = useState<string | null>(null);
   const [lastCommentAtByEvent, setLastCommentAtByEvent] = useState<Record<string, number>>({});
-  const [isActivityExpanded, setIsActivityExpanded] = useState(false);
+  const [isActivityExpanded, setIsActivityExpanded] = useSessionDisclosureState(
+    LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY,
+    false
+  );
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [managedAwardGroup, setManagedAwardGroup] = useState<ManagedGroupDetails | null>(null);
   const [managedTrophySheetTarget, setManagedTrophySheetTarget] = useState<{ groupId: string; userId: string } | null>(null);
@@ -74,10 +92,31 @@ export function LeaderboardClient() {
   } | null>(null);
   const [globalStandingLabel, setGlobalStandingLabel] = useState<string | null>(null);
   const [hasExplicitSwitcherPreference, setHasExplicitSwitcherPreference] = useState(false);
-  const [isIntroMoreOpen, setIsIntroMoreOpen] = useState(false);
+  const [hasRestoredSwitcherPreference, setHasRestoredSwitcherPreference] = useState(false);
+  const [hasRestoredLeaderSummaryState, setHasRestoredLeaderSummaryState] = useState(false);
+  const [subselectionState, setSubselectionState] = useSessionJsonState<LeaderboardSubselectionState>(
+    LEADERBOARD_SUBSELECTION_STORAGE_KEY,
+    DEFAULT_SUBSELECTION_STATE
+  );
+  const [isIntroMoreOpen, setIsIntroMoreOpen] = useSessionDisclosureState(
+    LEADERBOARD_INTRO_DISCLOSURE_STORAGE_KEY,
+    false
+  );
+  const [isSwitcherOpen, setIsSwitcherOpen] = useSessionDisclosureState(LEADERBOARD_VIEW_DISCLOSURE_STORAGE_KEY, false);
   const [leaderSummaryStateByContext, setLeaderSummaryStateByContext] = useState<
     Record<string, { isOpen: boolean; showAllLeaders: boolean }>
   >({});
+  const hasLoadedLeaderboardRef = useRef(false);
+  const lastSelectedGroupIdRef = useRef("");
+  const lastSelectedManagerIdRef = useRef("");
+
+  if (selectedGroupId) {
+    lastSelectedGroupIdRef.current = selectedGroupId;
+  }
+
+  if (selectedManagerId) {
+    lastSelectedManagerIdRef.current = selectedManagerId;
+  }
 
   const requestUrl = useMemo(() => {
     const params = new URLSearchParams();
@@ -124,40 +163,28 @@ export function LeaderboardClient() {
         if (queryManagerId) {
           setSelectedManagerId(queryManagerId);
         }
-        return;
-      }
-
-      const storedValue = window.sessionStorage.getItem(LEADERBOARD_SWITCHER_STORAGE_KEY);
-      if (storedValue) {
-        setHasExplicitSwitcherPreference(true);
-        const parsed = JSON.parse(storedValue) as typeof DEFAULT_SWITCHER_STATE;
-        if (parsed.activeView) {
-          setActiveView(parsed.activeView);
-        }
-        if (parsed.selectedGroupId) {
-          setSelectedGroupId(parsed.selectedGroupId);
-        }
-        if (parsed.selectedManagerId) {
-          setSelectedManagerId(parsed.selectedManagerId);
+      } else {
+        const storedValue = window.sessionStorage.getItem(LEADERBOARD_SWITCHER_STORAGE_KEY);
+        if (storedValue) {
+          setHasExplicitSwitcherPreference(true);
+          const parsed = JSON.parse(storedValue) as typeof DEFAULT_SWITCHER_STATE;
+          if (parsed.activeView) {
+            setActiveView(parsed.activeView);
+          }
+          if (parsed.selectedGroupId) {
+            setSelectedGroupId(parsed.selectedGroupId);
+          }
+          if (parsed.selectedManagerId) {
+            setSelectedManagerId(parsed.selectedManagerId);
+          }
         }
       }
     } catch (caughtError) {
       console.warn("Could not restore leaderboard switcher state.", caughtError);
+    } finally {
+      setHasRestoredSwitcherPreference(true);
     }
   }, [searchParams]);
-
-  useEffect(() => {
-    try {
-      const storedValue = window.localStorage.getItem(LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY);
-      if (!storedValue) {
-        return;
-      }
-
-      setIsActivityExpanded(storedValue === "open");
-    } catch (caughtError) {
-      console.warn("Could not restore leaderboard activity disclosure state.", caughtError);
-    }
-  }, []);
 
   useEffect(() => {
     try {
@@ -180,21 +207,16 @@ export function LeaderboardClient() {
       );
     } catch (caughtError) {
       console.warn("Could not restore leaderboard leader summary state.", caughtError);
+    } finally {
+      setHasRestoredLeaderSummaryState(true);
     }
   }, []);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY,
-        isActivityExpanded ? "open" : "closed"
-      );
-    } catch (caughtError) {
-      console.warn("Could not save leaderboard activity disclosure state.", caughtError);
+    if (!hasRestoredLeaderSummaryState) {
+      return;
     }
-  }, [isActivityExpanded]);
 
-  useEffect(() => {
     try {
       window.sessionStorage.setItem(
         LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY,
@@ -203,14 +225,18 @@ export function LeaderboardClient() {
     } catch (caughtError) {
       console.warn("Could not save leaderboard leader summary state.", caughtError);
     }
-  }, [leaderSummaryStateByContext]);
+  }, [hasRestoredLeaderSummaryState, leaderSummaryStateByContext]);
 
   useEffect(() => {
     let isMounted = true;
 
-    function loadLeaderboard(showLoading = false) {
-      if (showLoading) {
+    function loadLeaderboard() {
+      const shouldShowLoading = !hasLoadedLeaderboardRef.current;
+
+      if (shouldShowLoading) {
         setIsLoading(true);
+      } else {
+        setIsRefreshing(true);
       }
 
       fetch(requestUrl, { cache: "no-store" })
@@ -236,17 +262,15 @@ export function LeaderboardClient() {
           setDailyWinners(result.dailyWinners);
           setActivityFeed(result.activityFeed);
           setError(null);
+          hasLoadedLeaderboardRef.current = true;
           setIsLoading(false);
+          setIsRefreshing(false);
         })
         .catch((caughtError: Error) => {
           if (isMounted) {
-            setUsers([]);
-            setGroupStandings([]);
-            setSwitcher(null);
-            setDailyWinners([]);
-            setActivityFeed([]);
             setError(caughtError.message);
             setIsLoading(false);
+            setIsRefreshing(false);
           }
         });
     }
@@ -257,7 +281,7 @@ export function LeaderboardClient() {
       }
     }
 
-    loadLeaderboard(true);
+    loadLeaderboard();
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 
@@ -351,17 +375,57 @@ export function LeaderboardClient() {
       return;
     }
 
-    if (!selectedGroupId && availableGroupOptions.length > 0) {
+    const rememberedGroupId = subselectionState.groupByView[activeView];
+    const currentGroupIsValid = selectedGroupId
+      ? availableGroupOptions.some((group) => group.id === selectedGroupId)
+      : false;
+
+    if (currentGroupIsValid) {
+      return;
+    }
+
+    if (rememberedGroupId && availableGroupOptions.some((group) => group.id === rememberedGroupId)) {
+      setSelectedGroupId(rememberedGroupId);
+      return;
+    }
+
+    if (availableGroupOptions.length > 0) {
       setSelectedGroupId(availableGroupOptions[0]!.id);
       return;
     }
 
-    if (selectedGroupId && !availableGroupOptions.some((group) => group.id === selectedGroupId)) {
-      setSelectedGroupId(availableGroupOptions[0]?.id ?? "");
+    if (selectedGroupId) {
+      setSelectedGroupId("");
     }
-  }, [activeView, availableGroupOptions, selectedGroupId, switcher]);
+  }, [activeView, availableGroupOptions, selectedGroupId, subselectionState.groupByView, switcher]);
 
   useEffect(() => {
+    if (!switcher || !shouldShowManagerSelector(activeView)) {
+      return;
+    }
+
+    const availableManagerIds = new Set(switcher.managers.map((manager) => manager.id));
+    const rememberedManagerId = subselectionState.managerByView[activeView] ?? "";
+
+    if (selectedManagerId && availableManagerIds.has(selectedManagerId)) {
+      return;
+    }
+
+    if (rememberedManagerId && availableManagerIds.has(rememberedManagerId)) {
+      setSelectedManagerId(rememberedManagerId);
+      return;
+    }
+
+    if (selectedManagerId) {
+      setSelectedManagerId("");
+    }
+  }, [activeView, selectedManagerId, subselectionState.managerByView, switcher]);
+
+  useEffect(() => {
+    if (!hasRestoredSwitcherPreference) {
+      return;
+    }
+
     const nextState = {
       activeView,
       selectedGroupId,
@@ -373,7 +437,47 @@ export function LeaderboardClient() {
     } catch (caughtError) {
       console.warn("Could not persist leaderboard switcher state.", caughtError);
     }
-  }, [activeView, selectedGroupId, selectedManagerId]);
+  }, [activeView, hasRestoredSwitcherPreference, selectedGroupId, selectedManagerId]);
+
+  useEffect(() => {
+    if (!shouldShowGroupSelector(activeView) || !selectedGroupId) {
+      return;
+    }
+
+    setSubselectionState((current) => {
+      if (current.groupByView[activeView] === selectedGroupId) {
+        return current;
+      }
+
+      return {
+        ...current,
+        groupByView: {
+          ...current.groupByView,
+          [activeView]: selectedGroupId
+        }
+      };
+    });
+  }, [activeView, selectedGroupId, setSubselectionState]);
+
+  useEffect(() => {
+    if (!shouldShowManagerSelector(activeView)) {
+      return;
+    }
+
+    setSubselectionState((current) => {
+      if (current.managerByView[activeView] === selectedManagerId) {
+        return current;
+      }
+
+      return {
+        ...current,
+        managerByView: {
+          ...current.managerByView,
+          [activeView]: selectedManagerId
+        }
+      };
+    });
+  }, [activeView, selectedManagerId, setSubselectionState]);
 
   const selectedGroupLabel = useMemo(
     () => availableGroupOptions.find((group) => group.id === selectedGroupId)?.label ?? null,
@@ -383,9 +487,11 @@ export function LeaderboardClient() {
     () => switcher?.managers.find((manager) => manager.id === selectedManagerId)?.label ?? null,
     [selectedManagerId, switcher?.managers]
   );
+  const stableLeaderSummaryGroupId = selectedGroupId || lastSelectedGroupIdRef.current;
+  const stableLeaderSummaryManagerId = selectedManagerId || lastSelectedManagerIdRef.current;
   const leaderSummaryContextKey = useMemo(
-    () => `${activeView}:${selectedGroupId || "none"}:${selectedManagerId || "none"}`,
-    [activeView, selectedGroupId, selectedManagerId]
+    () => getLeaderSummaryContextKey(activeView, stableLeaderSummaryGroupId, stableLeaderSummaryManagerId),
+    [activeView, stableLeaderSummaryGroupId, stableLeaderSummaryManagerId]
   );
   const leaderSummaryState = leaderSummaryStateByContext[leaderSummaryContextKey] ?? {
     isOpen: false,
@@ -405,6 +511,7 @@ export function LeaderboardClient() {
   const activeManagedTrophyMember = managedAwardGroup && managedTrophySheetTarget
     ? managedAwardGroup.members.find((member) => member.userId === managedTrophySheetTarget.userId) ?? null
     : null;
+  const shouldShowGroupCarouselControls = shouldShowGroupSelector(activeView) && availableGroupOptions.length > 1;
 
   return (
     <div className="space-y-5">
@@ -423,6 +530,7 @@ export function LeaderboardClient() {
             <InlineDisclosureButton
               isOpen={isIntroMoreOpen}
               label="Read More / Click Here"
+              variant="subtle"
               onClick={() => setIsIntroMoreOpen((current) => !current)}
             />
           </div>
@@ -529,104 +637,132 @@ export function LeaderboardClient() {
         </section>
       ) : null}
 
-      <section className="sticky top-[73px] z-10 rounded-lg border border-gray-200 bg-white/95 p-4 backdrop-blur">
-        <div className="flex flex-wrap gap-2">
-          {(switcher?.tabs ?? [{ value: "global", label: "Global Standings" }]).map((tab) => (
-            <button
-              key={tab.value}
-              type="button"
-              onClick={() => setActiveView(tab.value)}
-              className={`rounded-md px-3 py-2 text-sm font-bold ${
-                activeView === tab.value ? "bg-accent text-white" : "bg-gray-100 text-gray-700"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+      <section
+        className={`sticky top-[73px] z-10 overflow-hidden rounded-lg border border-gray-200 bg-white/95 p-4 backdrop-blur transition-opacity ${
+          isRefreshing ? "opacity-90" : "opacity-100"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">VIEW</p>
+            {switcher ? (
+              <p className="mt-1 text-xs font-semibold text-gray-500">
+                {getSwitcherSummary(activeView, switcher, selectedGroupLabel, selectedManagerLabel)}
+              </p>
+            ) : null}
+          </div>
+          <InlineDisclosureButton
+            isOpen={isSwitcherOpen}
+            label="Open"
+            onClick={() => setIsSwitcherOpen((current) => !current)}
+          />
         </div>
 
-        {(shouldShowGroupSelector(activeView) || shouldShowManagerSelector(activeView)) && switcher ? (
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            {shouldShowGroupSelector(activeView) ? (
-              <div className="sm:col-span-2">
-                <div className="flex gap-3 overflow-x-auto pb-1">
-                  {availableGroupOptions.length > 0 ? (
-                    availableGroupOptions.map((group) => (
-                      <button
-                        key={group.id}
-                        type="button"
-                        onClick={() => setSelectedGroupId(group.id)}
-                        className={`min-w-[220px] shrink-0 rounded-lg border px-3 py-3 text-left transition ${
-                          selectedGroupId === group.id
-                            ? "border-accent bg-accent-light"
-                            : "border-gray-200 bg-gray-50 hover:border-accent-light hover:bg-white"
-                        }`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="truncate text-base font-black text-gray-950">{group.label}</p>
+        {isSwitcherOpen ? (
+          <>
+            <LeaderboardChoiceRail
+              className="mt-2"
+              prevLabel="Show previous leaderboard views"
+              nextLabel="Show more leaderboard views"
+              activeItemKey={activeView}
+              onActiveItemChange={(nextKey) => setActiveView(nextKey as LeaderboardSwitcherView)}
+            >
+              {(switcher?.tabs ?? [{ value: "global", label: "Global Standings" }]).map((tab) => (
+                <button
+                  key={tab.value}
+                  type="button"
+                  onClick={() => setActiveView(tab.value)}
+                  data-choice-key={tab.value}
+                  data-choice-active={activeView === tab.value ? "true" : "false"}
+                  className={`shrink-0 rounded-md px-3 py-2 text-sm font-bold ${
+                    activeView === tab.value ? "bg-accent text-white" : "bg-gray-100 text-gray-700"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </LeaderboardChoiceRail>
+
+            {(shouldShowGroupSelector(activeView) || shouldShowManagerSelector(activeView)) && switcher ? (
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {shouldShowGroupSelector(activeView) ? (
+                  <div className="overflow-hidden rounded-md sm:col-span-2">
+                    <LeaderboardChoiceRail
+                      showControls={shouldShowGroupCarouselControls}
+                      prevLabel="Show previous groups"
+                      nextLabel="Show more groups"
+                      contentClassName="flex gap-2 pb-1"
+                      activeItemKey={selectedGroupId}
+                      onActiveItemChange={(nextKey) => setSelectedGroupId(nextKey)}
+                    >
+                      {availableGroupOptions.length > 0 ? (
+                        availableGroupOptions.map((group) => (
+                          <button
+                            key={group.id}
+                            type="button"
+                            onClick={() => setSelectedGroupId(group.id)}
+                            data-choice-key={group.id}
+                            data-choice-active={selectedGroupId === group.id ? "true" : "false"}
+                            className={`w-[min(12.25rem,calc(100vw-7.25rem))] max-w-full shrink-0 rounded-lg border px-2.5 py-2 text-left transition sm:w-[196px] ${
+                              selectedGroupId === group.id
+                                ? "border-accent bg-accent-light"
+                                : "border-gray-200 bg-gray-50 hover:border-accent-light hover:bg-white"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                              <p className="truncate text-sm font-black leading-5 text-gray-950">{group.label}</p>
                             </div>
                             {group.rankDelta ? (
-                              <span className={`text-xs font-black ${getMovementTone(group.rankDelta)}`}>
+                              <span className={`text-[11px] font-black ${getMovementTone(group.rankDelta)}`}>
                                 {formatRankMovement(group.rankDelta)}
                               </span>
                             ) : null}
                           </div>
-                        <div className="mt-2 grid grid-cols-3 gap-3 text-xs font-semibold text-gray-600">
-                          <div>
-                            <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">Rank</p>
-                            <p className="mt-1 text-sm font-black text-gray-950">
-                              {group.rank ? `#${group.rank}` : "—"}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">Players</p>
-                            <p className="mt-1 text-sm font-black text-gray-950">{group.totalPlayers}</p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">Points</p>
-                            <p className="mt-1 text-sm font-black text-gray-950">
-                              {group.points !== null ? group.points : "—"}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    ))
-                  ) : (
-                    <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
-                      {activeView === "managed_groups"
-                        ? "You are not managing any groups yet."
-                        : "You have not joined any groups yet."}
-                    </p>
-                  )}
-                </div>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] font-semibold text-gray-600">
+                              <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
+                                {group.rank ? `#${group.rank}` : "—"}
+                              </span>
+                              <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
+                                {group.totalPlayers} players
+                              </span>
+                              <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
+                                {group.points !== null ? `${group.points} pts` : "— pts"}
+                              </span>
+                            </div>
+                          </button>
+                        ))
+                      ) : (
+                        <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                          {activeView === "managed_groups"
+                            ? "You are not managing any groups yet."
+                            : "You have not joined any groups yet."}
+                        </p>
+                      )}
+                    </LeaderboardChoiceRail>
+                  </div>
+                ) : null}
+
+                {shouldShowManagerSelector(activeView) ? (
+                  <label className="block">
+                    <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Manager</span>
+                    <select
+                      value={selectedManagerId}
+                      onChange={(event) => setSelectedManagerId(event.target.value)}
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                    >
+                      <option value="">Choose a manager</option>
+                      {switcher.managers.map((manager) => (
+                        <option key={manager.id} value={manager.id}>
+                          {manager.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
               </div>
             ) : null}
-
-            {shouldShowManagerSelector(activeView) ? (
-              <label className="block">
-                <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Manager</span>
-                <select
-                  value={selectedManagerId}
-                  onChange={(event) => setSelectedManagerId(event.target.value)}
-                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                >
-                  <option value="">Choose a manager</option>
-                  {switcher.managers.map((manager) => (
-                    <option key={manager.id} value={manager.id}>
-                      {manager.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-          </div>
-        ) : null}
-
-        {switcher ? (
-          <p className="mt-3 text-xs font-semibold text-gray-500">
-            {getSwitcherSummary(activeView, switcher, selectedGroupLabel, selectedManagerLabel)}
-          </p>
+          </>
         ) : null}
       </section>
 
@@ -639,16 +775,11 @@ export function LeaderboardClient() {
                 {activityFeed.length} recent update{activityFeed.length === 1 ? "" : "s"}
               </p>
             </div>
-            <button
-              type="button"
+            <InlineDisclosureButton
+              isOpen={isActivityExpanded}
+              label="Open"
               onClick={() => setIsActivityExpanded((current) => !current)}
-              className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-              aria-expanded={isActivityExpanded}
-              aria-label={isActivityExpanded ? "Hide recent activity" : "Show recent activity"}
-            >
-              {isActivityExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-              {isActivityExpanded ? "Hide" : "Open"}
-            </button>
+            />
           </div>
           {isActivityExpanded ? (
             <div className="mt-3 space-y-2">
@@ -871,7 +1002,7 @@ export function LeaderboardClient() {
                   ...current,
                   [leaderSummaryContextKey]: {
                     isOpen: !leaderSummaryState.isOpen,
-                    showAllLeaders: leaderSummaryState.isOpen ? false : leaderSummaryState.showAllLeaders
+                    showAllLeaders: leaderSummaryState.showAllLeaders
                   }
                 }))
               }
@@ -956,7 +1087,7 @@ export function LeaderboardClient() {
                     size="md"
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-start justify-between gap-3">
+                    <span className="flex w-full items-start justify-between gap-3">
                       <span className="min-w-0">
                         {isTiedFirst ? (
                           <span className="mb-1 inline-flex items-center rounded-md bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700">
@@ -970,9 +1101,9 @@ export function LeaderboardClient() {
                           {isCurrentUser ? " (You)" : ""}
                         </span>
                       </span>
-                      <span className="flex shrink-0 flex-col items-end gap-1">
+                      <span className="ml-auto flex shrink-0 flex-col items-end gap-1">
                         <span
-                          className={`rounded-md px-2 py-1 text-sm font-black ${pointsTone}`}
+                          className={`inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-semibold ${pointsTone}`}
                         >
                           {profile.totalPoints} points
                         </span>
@@ -1321,6 +1452,22 @@ function getPlaceholderTitle(activeView: LeaderboardSwitcherView) {
   return "Global Standings";
 }
 
+function getLeaderSummaryContextKey(
+  activeView: LeaderboardSwitcherView,
+  selectedGroupId: string,
+  selectedManagerId: string
+) {
+  if (activeView === "my_groups" || activeView === "managed_groups") {
+    return `${activeView}:${selectedGroupId || "none"}`;
+  }
+
+  if (activeView === "groups" || activeView === "managers") {
+    return `${activeView}:${selectedManagerId || "none"}`;
+  }
+
+  return activeView;
+}
+
 function getPlaceholderCopy(
   activeView: LeaderboardSwitcherView,
   selectedGroupLabel: string | null,
@@ -1483,7 +1630,7 @@ function LeaderSummaryCard({
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <h3 className="text-base font-black uppercase tracking-wide text-accent-dark">SEE WHO IS LEADING</h3>
+          <h3 className="text-sm font-bold uppercase tracking-wide text-accent-dark">SEE WHO IS LEADING</h3>
           <div className="shrink-0 rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
             Shared score: {sharedScore ?? "—"} pts
           </div>
@@ -1491,7 +1638,7 @@ function LeaderSummaryCard({
         <div className="flex shrink-0 flex-col items-end gap-2">
           <InlineDisclosureButton
             isOpen={isOpen}
-            label="See More"
+            label="Open"
             onClick={onToggleOpen}
           />
         </div>
@@ -1537,6 +1684,190 @@ function LeaderSummaryCard({
           </div>
         </>
       ) : null}
+    </div>
+  );
+}
+
+function LeaderboardChoiceRail({
+  children,
+  className,
+  contentClassName,
+  showControls = true,
+  prevLabel = "Show previous options",
+  nextLabel = "Show more options",
+  activeItemKey,
+  onActiveItemChange
+}: {
+  children: ReactNode;
+  className?: string;
+  contentClassName?: string;
+  showControls?: boolean;
+  prevLabel?: string;
+  nextLabel?: string;
+  activeItemKey?: string;
+  onActiveItemChange?: (key: string) => void;
+}) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const beltRef = useRef<HTMLDivElement | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [offsetX, setOffsetX] = useState(0);
+  const [hasOverflow, setHasOverflow] = useState(false);
+  const [canScrollPrev, setCanScrollPrev] = useState(false);
+  const [canScrollNext, setCanScrollNext] = useState(false);
+  const EDGE_CONTROL_WIDTH = 24;
+  const BELT_GUTTER_WIDTH = 40;
+  const baseScrollerClassName =
+    "flex min-w-max gap-2 px-1 pb-1";
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const belt = beltRef.current;
+    if (!viewport || !belt || !activeItemKey) {
+      return;
+    }
+
+    const updateLayout = () => {
+      const items = Array.from(belt.querySelectorAll<HTMLElement>("[data-choice-key]"));
+      const activeIndex = items.findIndex((item) => item.dataset.choiceKey === activeItemKey);
+      const activeItem = activeIndex >= 0 ? items[activeIndex] : null;
+      if (!activeItem) {
+        setOffsetX(0);
+        setHasOverflow(false);
+        setCanScrollPrev(false);
+        setCanScrollNext(false);
+        return;
+      }
+
+      const viewportWidth = viewport.clientWidth;
+      const beltWidth = belt.scrollWidth;
+      const minOffset = Math.min(0, viewportWidth - beltWidth);
+      const desiredOffset = viewportWidth / 2 - (activeItem.offsetLeft + activeItem.offsetWidth / 2);
+      const clampedOffset = Math.max(minOffset, Math.min(0, desiredOffset));
+      setOffsetX(clampedOffset);
+      setHasOverflow(beltWidth > viewportWidth + 1);
+      setCanScrollPrev(activeIndex > 0);
+      setCanScrollNext(activeIndex < items.length - 1);
+    };
+
+    updateLayout();
+    window.addEventListener("resize", updateLayout);
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(updateLayout);
+      resizeObserver.observe(viewport);
+      resizeObserver.observe(belt);
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateLayout);
+      resizeObserver?.disconnect();
+    };
+  }, [activeItemKey, children]);
+
+  function nudge(direction: "prev" | "next") {
+    const belt = beltRef.current;
+    if (!belt || !onActiveItemChange) {
+      return;
+    }
+
+    const items = Array.from(belt.querySelectorAll<HTMLElement>("[data-choice-key]"));
+    const activeIndex = activeItemKey ? items.findIndex((item) => item.dataset.choiceKey === activeItemKey) : -1;
+    const targetIndex =
+      direction === "next"
+        ? Math.min(activeIndex >= 0 ? activeIndex + 1 : 0, items.length - 1)
+        : Math.max(activeIndex >= 0 ? activeIndex - 1 : 0, 0);
+    const targetKey = items[targetIndex]?.dataset.choiceKey;
+    if (targetKey) {
+      onActiveItemChange(targetKey);
+    }
+  }
+
+  function handleTouchStart(event: React.TouchEvent<HTMLDivElement>) {
+    const touch = event.touches[0];
+    if (!touch) {
+      touchStartRef.current = null;
+      return;
+    }
+
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+  }
+
+  function handleTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start || !onActiveItemChange) {
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    if (!touch) {
+      return;
+    }
+
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (Math.abs(deltaX) < 32 || Math.abs(deltaX) <= Math.abs(deltaY)) {
+      return;
+    }
+
+    nudge(deltaX < 0 ? "next" : "prev");
+  }
+
+  return (
+    <div className={className ?? ""}>
+      <div className="relative min-w-0">
+        {showControls ? (
+          <button
+            type="button"
+            onClick={() => nudge("prev")}
+            disabled={!canScrollPrev}
+            className="absolute inset-y-0 left-0 z-10 inline-flex w-6 items-center justify-center bg-white text-gray-700 transition active:scale-95 hover:bg-accent-light hover:text-accent-dark disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-white"
+            style={{ width: EDGE_CONTROL_WIDTH }}
+            aria-label={prevLabel}
+          >
+            <span aria-hidden>‹</span>
+          </button>
+        ) : null}
+        <div ref={viewportRef} className="min-w-0 overflow-hidden" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+          {showControls ? (
+            <>
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute bottom-0 left-6 top-0 z-[11] w-px bg-gray-200"
+              />
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute bottom-0 right-6 top-0 z-[11] w-px bg-gray-200"
+              />
+            </>
+          ) : null}
+          <div
+            ref={beltRef}
+            className={contentClassName ? `${baseScrollerClassName} ${contentClassName}` : baseScrollerClassName}
+            style={{
+              transform: `translateX(${offsetX}px)`,
+              transition: hasOverflow ? "transform 280ms ease" : undefined,
+              willChange: "transform"
+            }}
+          >
+            {showControls ? <div aria-hidden="true" className="shrink-0" style={{ width: BELT_GUTTER_WIDTH }} /> : null}
+            {children}
+            {showControls ? <div aria-hidden="true" className="shrink-0" style={{ width: BELT_GUTTER_WIDTH }} /> : null}
+          </div>
+        </div>
+        {showControls ? (
+          <button
+            type="button"
+            onClick={() => nudge("next")}
+            disabled={!canScrollNext}
+            className="absolute inset-y-0 right-0 z-10 inline-flex w-6 items-center justify-center bg-white text-gray-700 transition active:scale-95 hover:bg-accent-light hover:text-accent-dark disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-white"
+            style={{ width: EDGE_CONTROL_WIDTH }}
+            aria-label={nextLabel}
+          >
+            <span aria-hidden>›</span>
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Network, SquareCheckBig, Trophy } from "lucide-react";
 import { showAppToast } from "@/lib/app-toast";
-import { InlineDisclosureButton } from "@/components/player-management/Shared";
+import { InlineDisclosureButton, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import {
   getExplainerLanguageForUser,
@@ -31,6 +31,11 @@ type GroupPredictionsProps = {
 };
 
 const stages: ("all" | MatchStage)[] = ["all", "group"];
+const GROUP_PREDICTIONS_MORE_STORAGE_KEY = "group-predictions-more";
+const GROUP_PREDICTIONS_SEARCH_STORAGE_KEY = "group-predictions-search";
+const GROUP_PREDICTIONS_STAGE_FILTER_STORAGE_KEY = "group-predictions-stage-filter";
+const GROUP_PREDICTIONS_DATE_FILTER_STORAGE_KEY = "group-predictions-date-filter";
+const GROUP_PREDICTIONS_TEAM_SEARCH_STORAGE_KEY = "group-predictions-team-search";
 
 const EXPLAINER_TITLE_COPY: Record<ExplainerLanguage, string> = {
   en: "Predict all the match scores below",
@@ -79,9 +84,9 @@ export function GroupPredictions({
   const [predictions, setPredictions] = useState<Prediction[]>(initialPredictions ?? []);
   const [socialPredictions, setSocialPredictions] = useState<SocialPrediction[]>([]);
   const [matches, setMatches] = useState<MatchWithTeams[]>(() => initialMatches ?? getLocalGroupMatches());
-  const [stageFilter, setStageFilter] = useState<"all" | MatchStage>("all");
-  const [dateFilter, setDateFilter] = useState("all");
-  const [teamSearch, setTeamSearch] = useState("");
+  const [stageFilter, setStageFilter] = useSessionJsonState<"all" | MatchStage>(GROUP_PREDICTIONS_STAGE_FILTER_STORAGE_KEY, "all");
+  const [dateFilter, setDateFilter] = useSessionJsonState<string>(GROUP_PREDICTIONS_DATE_FILTER_STORAGE_KEY, "all");
+  const [teamSearch, setTeamSearch] = useSessionJsonState<string>(GROUP_PREDICTIONS_TEAM_SEARCH_STORAGE_KEY, "");
   const [matchWindowStart, setMatchWindowStart] = useState(0);
   const [pendingScrollMatchId, setPendingScrollMatchId] = useState<string | null>(null);
   const [focusedMatchId, setFocusedMatchId] = useState<string | null>(null);
@@ -100,8 +105,8 @@ export function GroupPredictions({
 
     return getExplainerLanguageForUser(user);
   });
-  const [isMoreOpen, setIsMoreOpen] = useState(false);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isMoreOpen, setIsMoreOpen] = useSessionDisclosureState(GROUP_PREDICTIONS_MORE_STORAGE_KEY, false);
+  const [isSearchOpen, setIsSearchOpen] = useSessionDisclosureState(GROUP_PREDICTIONS_SEARCH_STORAGE_KEY, false);
   const matchCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dateSectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -269,7 +274,7 @@ export function GroupPredictions({
       setPendingScrollMatchId(matchId);
       setFocusedMatchId(matchId);
     },
-    [matches]
+    [matches, setDateFilter, setStageFilter, setTeamSearch]
   );
 
   useEffect(() => {
@@ -412,6 +417,7 @@ export function GroupPredictions({
             <InlineDisclosureButton
               isOpen={isMoreOpen}
               label="Read More / Click Here"
+              variant="subtle"
               onClick={() => setIsMoreOpen((current) => !current)}
             />
           </div>
@@ -471,6 +477,7 @@ export function GroupPredictions({
           <InlineDisclosureButton
             isOpen={isSearchOpen}
             label="Search for a match / Click Here"
+            variant="subtle"
             onClick={() => setIsSearchOpen((current) => !current)}
           />
           {isSearchOpen ? (

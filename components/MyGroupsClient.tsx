@@ -133,6 +133,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [expandedPeopleInviteIds, setExpandedPeopleInviteIds] = useState<string[]>([]);
   const [expandedTrophyIds, setExpandedTrophyIds] = useState<string[]>([]);
   const [expandedGroupInfoIds, setExpandedGroupInfoIds] = useState<string[]>([]);
+  const [hasRestoredGroupDisclosureState, setHasRestoredGroupDisclosureState] = useState(false);
+  const [hasRestoredGroupLimitState, setHasRestoredGroupLimitState] = useState(false);
+  const [hasRestoredPeopleInviteState, setHasRestoredPeopleInviteState] = useState(false);
+  const [hasRestoredTrophyState, setHasRestoredTrophyState] = useState(false);
+  const [hasRestoredGroupInfoState, setHasRestoredGroupInfoState] = useState(false);
   const [groupTrophyAwardSelections, setGroupTrophyAwardSelections] = useState<Record<string, Record<string, string>>>(
     {}
   );
@@ -253,17 +258,23 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       }
     } catch (error) {
       console.warn("Could not restore saved group disclosure state.", error);
+    } finally {
+      setHasRestoredGroupDisclosureState(true);
     }
   }, []);
 
   useEffect(() => {
+    if (!hasRestoredGroupDisclosureState) {
+      return;
+    }
+
     try {
       window.sessionStorage.setItem(GROUP_DISCLOSURE_STORAGE_KEY, JSON.stringify(expandedGroupIds));
       window.localStorage.removeItem(GROUP_DISCLOSURE_STORAGE_KEY);
     } catch (error) {
       console.warn("Could not save group disclosure state.", error);
     }
-  }, [expandedGroupIds]);
+  }, [expandedGroupIds, hasRestoredGroupDisclosureState]);
 
   useEffect(() => {
     try {
@@ -278,16 +289,22 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       }
     } catch (error) {
       console.warn("Could not restore saved group limit disclosure state.", error);
+    } finally {
+      setHasRestoredGroupLimitState(true);
     }
   }, []);
 
   useEffect(() => {
+    if (!hasRestoredGroupLimitState) {
+      return;
+    }
+
     try {
       window.sessionStorage.setItem(GROUP_LIMIT_SECTION_STORAGE_KEY, JSON.stringify(expandedGroupLimitIds));
     } catch (error) {
       console.warn("Could not save group limit disclosure state.", error);
     }
-  }, [expandedGroupLimitIds]);
+  }, [expandedGroupLimitIds, hasRestoredGroupLimitState]);
 
   useEffect(() => {
     try {
@@ -302,16 +319,22 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       }
     } catch (error) {
       console.warn("Could not restore saved people disclosure state.", error);
+    } finally {
+      setHasRestoredPeopleInviteState(true);
     }
   }, []);
 
   useEffect(() => {
+    if (!hasRestoredPeopleInviteState) {
+      return;
+    }
+
     try {
       window.sessionStorage.setItem(GROUP_PEOPLE_SECTION_STORAGE_KEY, JSON.stringify(expandedPeopleInviteIds));
     } catch (error) {
       console.warn("Could not save people disclosure state.", error);
     }
-  }, [expandedPeopleInviteIds]);
+  }, [expandedPeopleInviteIds, hasRestoredPeopleInviteState]);
 
   useEffect(() => {
     try {
@@ -326,16 +349,22 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       }
     } catch (error) {
       console.warn("Could not restore saved trophy disclosure state.", error);
+    } finally {
+      setHasRestoredTrophyState(true);
     }
   }, []);
 
   useEffect(() => {
+    if (!hasRestoredTrophyState) {
+      return;
+    }
+
     try {
       window.sessionStorage.setItem(GROUP_TROPHY_SECTION_STORAGE_KEY, JSON.stringify(expandedTrophyIds));
     } catch (error) {
       console.warn("Could not save trophy disclosure state.", error);
     }
-  }, [expandedTrophyIds]);
+  }, [expandedTrophyIds, hasRestoredTrophyState]);
 
   useEffect(() => {
     try {
@@ -350,16 +379,22 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       }
     } catch (error) {
       console.warn("Could not restore saved group info disclosure state.", error);
+    } finally {
+      setHasRestoredGroupInfoState(true);
     }
   }, []);
 
   useEffect(() => {
+    if (!hasRestoredGroupInfoState) {
+      return;
+    }
+
     try {
       window.sessionStorage.setItem(GROUP_INFO_SECTION_STORAGE_KEY, JSON.stringify(expandedGroupInfoIds));
     } catch (error) {
       console.warn("Could not save group info disclosure state.", error);
     }
-  }, [expandedGroupInfoIds]);
+  }, [expandedGroupInfoIds, hasRestoredGroupInfoState]);
 
   useEffect(() => {
     if (!inviteToken) {
@@ -455,6 +490,40 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
           ? "manager"
           : "player"
       : undefined;
+  const hierarchyActiveDetails = useMemo(() => {
+    if (isLoading) {
+      return ["Loading your access..."];
+    }
+
+    if (!summary?.ok) {
+      return [summary?.message ?? "Sign in to manage groups."];
+    }
+
+    if (summary.currentUser.role === "admin") {
+      return [
+        `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
+        "Managed groups: Unlimited",
+        "New group limit: Unlimited",
+        "Scope: All groups"
+      ];
+    }
+
+    if (summary.managerAccess.enabled) {
+      return [
+        `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
+        `Managed groups: ${summary.groupAccess.managedGroupCount} / ${summary.managerAccess.maxGroups}`,
+        `New group limit: ${summary.managerAccess.maxMembersPerGroup} members`,
+        "Scope: Assigned groups only"
+      ];
+    }
+
+    return [
+      `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
+      "Managed groups: None",
+      "New group limit: Not enabled",
+      "Scope: Joined groups only"
+    ];
+  }, [isLoading, summary]);
   const isSuperAdmin = summary?.ok && summary.currentUser.role === "admin";
   const managerGroupLimitReached = Boolean(
     summary?.ok &&
@@ -1955,61 +2024,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       </section>
 
       <section className="space-y-3">
-        <HierarchyPanel activeLevel={activeHierarchyLevel} />
-
-        <ManagementCard
-          title="Your access"
-          subtitle={
-            summary?.ok && summary.currentUser.role === "admin"
-              ? "Unlimited controls inside Groups."
-              : summary?.ok && summary.managerAccess.enabled
-                ? "Your manager limits and current usage."
-                : "Your current group access."
-          }
-        >
-          {isLoading ? (
-            <p className="mt-3 text-sm font-semibold text-gray-600">Loading your access...</p>
-          ) : summary?.ok ? (
-            <ManagementGrid>
-              <ManagementDatum
-                label="Joined groups"
-                value={`${summary.groupAccess.joinedGroupCount}`}
-              />
-              <ManagementDatum
-                label="Managed groups"
-                value={
-                  summary.currentUser.role === "admin"
-                    ? "Unlimited"
-                    : summary.managerAccess.enabled
-                      ? `${summary.groupAccess.managedGroupCount} / ${summary.managerAccess.maxGroups}`
-                      : "None"
-                }
-              />
-              <ManagementDatum
-                label="New group limit"
-                value={
-                  summary.currentUser.role === "admin"
-                    ? "Unlimited"
-                    : summary.managerAccess.enabled
-                      ? `${summary.managerAccess.maxMembersPerGroup} members`
-                      : "Not enabled"
-                }
-              />
-              <ManagementDatum
-                label="Scope"
-                value={
-                  summary.currentUser.role === "admin"
-                    ? "All groups"
-                    : summary.managerAccess.enabled
-                      ? "Assigned groups only"
-                      : "Joined groups only"
-                }
-              />
-            </ManagementGrid>
-          ) : (
-            <p className="mt-3 text-sm font-semibold text-gray-600">{summary?.message ?? "Sign in to manage groups."}</p>
-          )}
-        </ManagementCard>
+        <HierarchyPanel activeLevel={activeHierarchyLevel} activeDetails={hierarchyActiveDetails} />
       </section>
 
       <ManagedTrophyAwardSheet

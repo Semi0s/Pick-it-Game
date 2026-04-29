@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { HorizontalChoiceRail } from "@/components/player-management/Shared";
 import { tournamentCalendar, formatCalendarDate } from "@/lib/tournament-calendar";
 
 type MatchDateNavigatorProps = {
@@ -24,7 +25,7 @@ export function MatchDateNavigator({ availableDateKeys = [] }: MatchDateNavigato
         <h3 className="mt-1 text-xl font-black text-gray-950">Jump by date</h3>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <HorizontalChoiceRail showControls={stageTabs.length > 1}>
         {stageTabs.map((tab) => (
           <a
             key={tab.id}
@@ -34,7 +35,7 @@ export function MatchDateNavigator({ availableDateKeys = [] }: MatchDateNavigato
             {tab.label}
           </a>
         ))}
-      </div>
+      </HorizontalChoiceRail>
 
       <DateStrip id="group-dates" entries={groupDates} availableDates={availableDates} />
       <DateStrip id="knockout-dates" entries={knockoutDates} availableDates={availableDates} />
@@ -56,7 +57,7 @@ function DateStrip({ id, entries, availableDates }: DateStripProps) {
       <p className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500">
         {isGroupStrip ? "Group Stage" : "Knockout Stage"}
       </p>
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <HorizontalChoiceRail showControls={entries.length > 1}>
         {entries.map((entry) => {
           const hasLoadedMatches = availableDates.has(entry.date);
           const href = isGroupStrip ? `#match-date-${entry.date}` : "/knockout";
@@ -96,7 +97,7 @@ function DateStrip({ id, entries, availableDates }: DateStripProps) {
             </a>
           );
         })}
-      </div>
+      </HorizontalChoiceRail>
     </div>
   );
 }
