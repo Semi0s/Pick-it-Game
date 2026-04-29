@@ -1,9 +1,5 @@
 {
-  "/api/notifications/route": "app/api/notifications/route.js",
   "/api/admin/system-readiness/route": "app/api/admin/system-readiness/route.js",
-  "/groups/page": "app/groups/page.js",
-  "/profile/page": "app/profile/page.js",
-  "/leaderboard/page": "app/leaderboard/page.js",
-  "/knockout/page": "app/knockout/page.js",
-  "/my-groups/page": "app/my-groups/page.js"
+  "/api/notifications/route": "app/api/notifications/route.js",
+  "/dashboard/page": "app/dashboard/page.js"
 }

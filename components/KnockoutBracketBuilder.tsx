@@ -1,9 +1,10 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Trophy } from "lucide-react";
+import { ChevronDown, ChevronUp, Clock3, Trophy } from "lucide-react";
 import { PointerEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
 import { saveBracketPredictionAction } from "@/app/knockout/actions";
 import { showAppToast } from "@/lib/app-toast";
+import { formatDateTimeWithZone } from "@/lib/date-time";
 import {
   type BracketTeamOption,
   type KnockoutBracketEditorView,
@@ -47,7 +48,6 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
   const [message, setMessage] = useState<{ tone: "error" | "success"; text: string } | null>(null);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [isSectionExpanded, setIsSectionExpanded] = useState(false);
-  const [isBuilderExpanded, setIsBuilderExpanded] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState<-1 | 0 | 1>(0);
   const [transitionReady, setTransitionReady] = useState(true);
   const touchStartXRef = useRef<number | null>(null);
@@ -89,6 +89,31 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
 
   return (
     <section className="space-y-4">
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+        <div
+          className="touch-none select-none bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_18%,#f8fafc_100%)]"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchCancel}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
+        >
+          <BracketStageViewport
+            slide={slides[activeSlideIndex]}
+            canAdvance={activeSlideIndex < slides.length - 1}
+            canRetreat={activeSlideIndex > 0}
+            onAdvance={() => goToSlide(Math.min(activeSlideIndex + 1, slides.length - 1))}
+            onRetreat={() => goToSlide(Math.max(activeSlideIndex - 1, 0))}
+            direction={transitionDirection}
+            ready={transitionReady}
+            pendingMatchId={pendingMatchId}
+            onSelect={handleSelectWinner}
+          />
+        </div>
+      </div>
+
       <div className="relative rounded-lg border border-gray-200 bg-white p-3 sm:p-4">
         <button
           type="button"
@@ -100,18 +125,20 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
           {isSectionExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
           {isSectionExpanded ? "Hide" : "Open"}
         </button>
-        <div className="pr-24 sm:pr-28">
+        <div className="pr-20 sm:pr-24">
           <div className="min-w-0">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Bracket</p>
-            <h2 className="mt-2 text-2xl font-black leading-tight text-gray-950">Build your bracket.</h2>
-            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
-              Move round by round through the knockout path. The center lane stays large and clear while the edges keep
-              the bracket story visible.
-            </p>
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Tests</p>
           </div>
         </div>
         {isSectionExpanded ? (
           <>
+            <div className="mt-4 min-w-0">
+              <h2 className="text-2xl font-black leading-tight text-gray-950">Build your bracket.</h2>
+              <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
+                Move round by round through the knockout path. The center lane stays large and clear while the edges keep
+                the bracket story visible.
+              </p>
+            </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <div
                 className={`inline-flex rounded-md px-3 py-2 text-sm font-semibold ${
@@ -141,81 +168,7 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
         ) : null}
       </div>
 
-      {isSectionExpanded ? (
-        <div className="space-y-4">
-          <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-black uppercase tracking-wide text-gray-700">Bracket Builder</p>
-              <p className="mt-1 text-sm font-semibold text-gray-600">
-                Swipe or drag through the path and keep the current round in focus.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                const nextOpen = !isBuilderExpanded;
-                setIsBuilderExpanded(nextOpen);
-                if (nextOpen) {
-                  showAppToast({
-                    tone: "success",
-                    text: "Spread two fingers to go deeper. Pinch inward to roll back out.",
-                    durationMs: 3800
-                  });
-                }
-              }}
-              className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-              aria-expanded={isBuilderExpanded}
-              aria-label={isBuilderExpanded ? "Hide bracket builder" : "Open bracket builder"}
-            >
-              {isBuilderExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-              {isBuilderExpanded ? "Hide" : "Open"}
-            </button>
-          </div>
-          {isBuilderExpanded ? (
-            <div className="mt-3 space-y-3">
-              <div
-                className="-mx-4 overflow-hidden border-y border-gray-200 bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_18%,#f8fafc_100%)] touch-none select-none"
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-                onTouchCancel={handleTouchCancel}
-                onPointerDown={handlePointerDown}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerCancel}
-              >
-                <BracketStageViewport
-                  slide={slides[activeSlideIndex]}
-                  canAdvance={activeSlideIndex < slides.length - 1}
-                  canRetreat={activeSlideIndex > 0}
-                  onAdvance={() => goToSlide(Math.min(activeSlideIndex + 1, slides.length - 1))}
-                  onRetreat={() => goToSlide(Math.max(activeSlideIndex - 1, 0))}
-                  direction={transitionDirection}
-                  ready={transitionReady}
-                  pendingMatchId={pendingMatchId}
-                  onSelect={handleSelectWinner}
-                />
-              </div>
-
-              <div className="flex items-center justify-center gap-2">
-                {slides.map((slide, index) => (
-                  <button
-                    key={`${slide.id}-dot`}
-                    type="button"
-                    aria-label={`Open ${slide.title}`}
-                    onClick={() => goToSlide(index)}
-                    className={`rounded-full transition ${
-                      activeSlideIndex === index ? "h-2.5 w-8 bg-accent" : "h-2.5 w-2.5 bg-gray-300"
-                    }`}
-                  />
-                ))}
-              </div>
-            </div>
-          ) : null}
-          </div>
-          {children}
-        </div>
-      ) : null}
+      {isSectionExpanded ? <div className="space-y-4">{children}</div> : null}
     </section>
   );
 
@@ -393,16 +346,9 @@ function BracketStageViewport({
   return (
     <section className="overflow-hidden">
       <div className="border-b border-gray-200 px-3 py-3 sm:px-4 sm:py-4">
-        <p className="text-xs font-bold uppercase tracking-[0.2em] text-accent-dark">{slide.eyebrow}</p>
-        <div className="mt-2 flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h3 className="text-2xl font-black leading-tight text-gray-950">{slide.title}</h3>
-            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">{slide.subtitle}</p>
-          </div>
-          <div className="shrink-0 rounded-md border border-white/80 bg-white/80 px-3 py-2 text-right">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">View</p>
-            <p className="mt-1 text-sm font-black text-gray-900">{activeSlideLabel(slide)}</p>
-          </div>
+        <div className="min-w-0">
+          <h3 className="text-2xl font-black leading-tight text-gray-950">{slide.title}</h3>
+          <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Pick the winning team.</p>
         </div>
       </div>
 
@@ -426,7 +372,7 @@ function BracketStageViewport({
             pendingMatchId={pendingMatchId}
             onSelect={onSelect}
             onAdvance={canAdvance ? onAdvance : undefined}
-            leftRailMotion={leftMotion}
+            onRetreat={canRetreat ? onRetreat : undefined}
           />
         ) : (
           <FocusedRoundView
@@ -435,8 +381,6 @@ function BracketStageViewport({
             onSelect={onSelect}
             onAdvance={canAdvance ? onAdvance : undefined}
             onRetreat={canRetreat ? onRetreat : undefined}
-            leftRailMotion={leftMotion}
-            rightRailMotion={rightMotion}
           />
         )}
       </div>
@@ -469,11 +413,6 @@ function SplitRoundView({
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-[1fr_auto_1fr] gap-2 px-1 sm:gap-3">
-        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">Left side</p>
-        <div />
-        <p className="text-right text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">Right side</p>
-      </div>
       {rows.map((row, index) => (
         <div key={`r32-row-${index}`} className="relative grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-3">
           <div className={`${getRailMotionClasses(leftRailMotion, "left")}`}>
@@ -494,14 +433,17 @@ function SplitRoundView({
               aria-hidden
               className="pointer-events-none absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-gradient-to-r from-accent/25 via-accent/35 to-accent/25"
             />
-            <button
-              type="button"
-              onClick={onAdvance}
-              aria-label="Open the next knockout round"
-              className="relative z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border border-accent/25 bg-white text-accent transition hover:border-accent hover:bg-accent-light"
-            >
-              <span className="h-2 w-2 rounded-full bg-accent" />
-            </button>
+            <div className="relative top-3 z-10 flex flex-col items-center sm:top-4">
+              <button
+                type="button"
+                onClick={onAdvance}
+                aria-label="Open the next knockout round"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-accent/25 bg-white text-accent transition hover:border-accent hover:bg-accent-light"
+              >
+                <span className="h-2 w-2 rounded-full bg-accent" />
+              </button>
+              <span className="mt-0.5 text-[8px] font-bold uppercase tracking-wide text-accent">Next</span>
+            </div>
           </div>
           <div className={`${getRailMotionClasses(rightRailMotion, "right")}`}>
             {row.rightMatch ? (
@@ -527,45 +469,56 @@ function FocusedRoundView({
   pendingMatchId,
   onSelect,
   onAdvance,
-  onRetreat,
-  leftRailMotion,
-  rightRailMotion
+  onRetreat
 }: {
   slide: BracketSlideView;
   pendingMatchId: string | null;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdvance?: () => void;
   onRetreat?: () => void;
-  leftRailMotion: RailMotion;
-  rightRailMotion: RailMotion;
 }) {
   const alignedRows = buildSourceAlignmentRows(slide.currentMatches, slide.previousMatches);
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-[0.55fr_1.9fr_0.55fr] gap-2 px-1 sm:grid-cols-[0.52fr_1.96fr_0.52fr] sm:gap-3">
-        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">{slide.previousLabel ?? "Path"}</p>
-        <p className="text-center text-[10px] font-bold uppercase tracking-[0.18em] text-accent-dark">{slide.currentMatches[0]?.stageLabel ?? slide.title}</p>
-        <p className="text-right text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">{slide.previousLabel ?? "Path"}</p>
-      </div>
-      {alignedRows.map((row) => (
+      {alignedRows.map((row, index) => (
         <div
           key={row.current.matchId}
-          className="relative grid grid-cols-[0.55fr_1.9fr_0.55fr] gap-2 sm:grid-cols-[0.52fr_1.96fr_0.52fr] sm:gap-3"
+          className={`space-y-2 ${
+            index < alignedRows.length - 1 ? "border-b border-gray-200 pb-3" : ""
+          }`}
         >
-          <div
-            aria-hidden
-            className="pointer-events-none absolute left-[calc(50%-2rem)] right-[calc(50%-2rem)] top-1/2 h-px -translate-y-1/2 bg-gradient-to-r from-accent/25 via-accent/35 to-accent/25"
-          />
-          <RoundRailCard match={row.leftSource} side="left" motion={leftRailMotion} />
-          <CenterSeamMatch
-            match={row.current}
-            isPending={pendingMatchId === row.current.matchId}
-            onSelect={onSelect}
-            onAdvance={onAdvance}
-            onRetreat={onRetreat}
-          />
-          <RoundRailCard match={row.rightSource} side="right" motion={rightRailMotion} />
+          <MatchGroupHeader match={row.current} accent="accent" />
+          <div className="relative grid grid-cols-[0.55fr_1.9fr_0.55fr] gap-2 sm:grid-cols-[0.52fr_1.96fr_0.52fr] sm:gap-3">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute left-[calc(50%-1.5rem)] right-[calc(50%-1.5rem)] top-1/2 h-px -translate-y-1/2 bg-gray-200"
+            />
+            <RoundRailCard
+              match={row.leftSource}
+              side="left"
+              motion="static"
+              provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
+              onClick={onRetreat}
+              ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
+            />
+            <CenterSeamMatch
+              match={row.current}
+              isPending={pendingMatchId === row.current.matchId}
+              onSelect={onSelect}
+              onAdvance={onAdvance}
+              onRetreat={onRetreat}
+              showHeader={false}
+            />
+            <RoundRailCard
+              match={row.rightSource}
+              side="right"
+              motion="static"
+              provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
+              onClick={onRetreat}
+              ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
+            />
+          </div>
         </div>
       ))}
     </div>
@@ -577,43 +530,79 @@ function FinaleRoundView({
   pendingMatchId,
   onSelect,
   onAdvance,
-  leftRailMotion
+  onRetreat
 }: {
   slide: BracketSlideView;
   pendingMatchId: string | null;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdvance?: () => void;
-  leftRailMotion: RailMotion;
+  onRetreat?: () => void;
 }) {
-  const finalMatch = slide.currentMatches[0] ?? null;
   const alignedRows = buildSourceAlignmentRows(slide.currentMatches, slide.previousMatches);
   const finalRow = alignedRows[0] ?? null;
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-[0.55fr_1.9fr_0.55fr] gap-2 px-1 sm:grid-cols-[0.52fr_1.96fr_0.52fr] sm:gap-3">
-        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">{slide.previousLabel ?? "Path"}</p>
-        <p className="text-center text-[10px] font-bold uppercase tracking-[0.18em] text-amber-700">{finalMatch?.stageLabel ?? slide.title}</p>
-        <p className="text-right text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">{slide.previousLabel ?? "Path"}</p>
-      </div>
       <ChampionCard champion={slide.champion} />
       {finalRow ? (
-        <div className="relative grid grid-cols-[0.55fr_1.9fr_0.55fr] gap-2 sm:grid-cols-[0.52fr_1.96fr_0.52fr] sm:gap-3">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute left-[calc(50%-2rem)] right-[calc(50%-2rem)] top-1/2 h-px -translate-y-1/2 bg-gradient-to-r from-amber-300/30 via-amber-400/40 to-amber-300/30"
-          />
-          <RoundRailCard match={finalRow.leftSource} side="left" motion={leftRailMotion} />
-          <CenterSeamMatch
-            match={finalRow.current}
-            isPending={pendingMatchId === finalRow.current.matchId}
-            onSelect={onSelect}
-            hero
-            onAdvance={onAdvance}
-          />
-          <RoundRailCard match={finalRow.rightSource} side="right" motion={leftRailMotion === "open-left" ? "open-right" : leftRailMotion} />
+        <div className="rounded-lg border border-gray-200 bg-white p-2 sm:p-3">
+          <MatchGroupHeader match={finalRow.current} accent="amber" />
+          <div className="mt-2 border-t border-gray-100 pt-2 sm:pt-3">
+            <div className="relative grid grid-cols-[0.55fr_1.9fr_0.55fr] gap-2 sm:grid-cols-[0.52fr_1.96fr_0.52fr] sm:gap-3">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute left-[calc(50%-1.5rem)] right-[calc(50%-1.5rem)] top-1/2 h-px -translate-y-1/2 bg-gray-200"
+              />
+              <RoundRailCard
+                match={finalRow.leftSource}
+                side="left"
+                motion="static"
+                provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
+                onClick={onRetreat}
+                ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
+              />
+              <CenterSeamMatch
+                match={finalRow.current}
+                isPending={pendingMatchId === finalRow.current.matchId}
+                onSelect={onSelect}
+                hero
+                onAdvance={onAdvance}
+                showHeader={false}
+              />
+              <RoundRailCard
+                match={finalRow.rightSource}
+                side="right"
+                motion="static"
+                provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
+                onClick={onRetreat}
+                ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
+              />
+            </div>
+          </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function MatchGroupHeader({
+  match,
+  accent
+}: {
+  match: KnockoutBracketMatchView;
+  accent: "accent" | "amber";
+}) {
+  return (
+    <div className="flex items-start justify-between gap-2 px-1 py-1">
+      <div className="min-w-0">
+        <p className="text-sm font-black text-gray-950">{match.title}</p>
+        <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">{formatKickoff(match.kickoffTime)}</p>
+      </div>
+      <MatchStatusBadge
+        status={match.status}
+        canSelectWinner={match.canSelectWinner}
+        accent={accent}
+      />
     </div>
   );
 }
@@ -621,31 +610,51 @@ function FinaleRoundView({
 function RoundRailCard({
   match,
   side,
-  motion
+  motion,
+  provenanceLabel,
+  onClick,
+  ariaLabel
 }: {
   match: KnockoutBracketMatchView | null;
   side: "left" | "right";
   motion: RailMotion;
+  provenanceLabel?: string | null;
+  onClick?: () => void;
+  ariaLabel?: string;
 }) {
-  return (
-    <div
-      className={`flex min-h-full items-center rounded-lg border border-gray-200 bg-white/70 p-1.5 transition duration-500 ease-out ${getRailMotionClasses(
-        motion,
-        side
-      )} ${side === "right" ? "text-right" : ""}`}
-    >
-      {match ? (
-        <div className="w-full space-y-1">
-            <ProjectedTeamChip team={match.homeTeam} placeholderLabel={match.homeSourceLabel} side={side} />
-            <ProjectedTeamChip team={match.awayTeam} placeholderLabel={match.awaySourceLabel} side={side} />
-        </div>
-      ) : (
-        <div className="flex min-h-[92px] w-full items-center justify-center rounded-md bg-gray-50/70 px-1 text-[10px] font-semibold text-gray-400">
-          Waiting
-        </div>
-      )}
+  const classes = `flex min-h-full items-center rounded-lg border p-1.5 transition duration-500 ease-out ${getRailMotionClasses(
+    motion,
+    side
+  )} ${side === "right" ? "text-right" : ""} ${
+    onClick
+      ? "cursor-pointer border-gray-200 bg-white hover:border-accent hover:bg-accent-light"
+      : "border-gray-200 bg-white"
+  }`;
+  const content = match ? (
+    <div className="w-full space-y-1">
+      {provenanceLabel ? (
+        <p className="pb-1 text-center text-[9px] font-bold uppercase tracking-[0.14em] text-gray-400">
+          {provenanceLabel}
+        </p>
+      ) : null}
+      <ProjectedTeamChip team={match.homeTeam} placeholderLabel={match.homeSourceLabel} />
+      <ProjectedTeamChip team={match.awayTeam} placeholderLabel={match.awaySourceLabel} />
+    </div>
+  ) : (
+    <div className="flex min-h-[92px] w-full items-center justify-center rounded-md bg-gray-50/70 px-1 text-[10px] font-semibold text-gray-400">
+      Waiting
     </div>
   );
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} aria-label={ariaLabel ?? "Navigate knockout bracket"} className={classes}>
+        {content}
+      </button>
+    );
+  }
+
+  return <div className={classes}>{content}</div>;
 }
 
 function CenterSeamMatch({
@@ -654,7 +663,8 @@ function CenterSeamMatch({
   onSelect,
   onAdvance,
   onRetreat,
-  hero = false
+  hero = false,
+  showHeader = true
 }: {
   match: KnockoutBracketMatchView;
   isPending: boolean;
@@ -662,20 +672,21 @@ function CenterSeamMatch({
   onAdvance?: () => void;
   onRetreat?: () => void;
   hero?: boolean;
+  showHeader?: boolean;
 }) {
   return (
     <div className="relative flex min-w-0 flex-col">
       <div
         aria-hidden
-        className={`pointer-events-none absolute inset-y-2 -left-3 w-3 rounded-l-full ${hero ? "bg-gradient-to-r from-transparent to-amber-200/45" : "bg-gradient-to-r from-transparent to-accent/10"} sm:-left-4 sm:w-4`}
+        className="pointer-events-none absolute inset-y-2 -left-3 w-3 sm:-left-4 sm:w-4"
       />
       <div
         aria-hidden
-        className={`pointer-events-none absolute inset-y-2 -right-3 w-3 rounded-r-full ${hero ? "bg-gradient-to-l from-transparent to-amber-200/45" : "bg-gradient-to-l from-transparent to-accent/10"} sm:-right-4 sm:w-4`}
+        className="pointer-events-none absolute inset-y-2 -right-3 w-3 sm:-right-4 sm:w-4"
       />
       <div
         aria-hidden
-        className={`pointer-events-none absolute inset-y-3 left-1/2 w-px -translate-x-1/2 ${hero ? "bg-gradient-to-b from-transparent via-amber-300/45 to-transparent" : "bg-gradient-to-b from-transparent via-accent/20 to-transparent"}`}
+        className="pointer-events-none absolute inset-y-3 left-1/2 w-px -translate-x-1/2 bg-gray-200"
       />
       {onAdvance || onRetreat ? (
         <button
@@ -697,6 +708,7 @@ function CenterSeamMatch({
         onSelect={onSelect}
         density={hero ? "hero" : "expanded"}
         side="center"
+        showHeader={showHeader}
       />
     </div>
   );
@@ -707,49 +719,61 @@ function CurrentRoundMatchCard({
   isPending,
   onSelect,
   density,
-  side = "left"
+  side = "left",
+  showHeader = true
 }: {
   match: KnockoutBracketMatchView;
   isPending: boolean;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   density: "compact" | "expanded" | "hero";
   side?: "left" | "right" | "center";
+  showHeader?: boolean;
 }) {
-  const hasPlaceholderSlot = !match.homeTeam || !match.awayTeam;
   const isCompact = density === "compact";
   const isHero = density === "hero";
+  const isEmbeddedCenterCard = side === "center" && !showHeader;
+  const statusBadge =
+    match.status === "final" ? (
+      <span className="shrink-0 rounded-md bg-gray-200 px-2 py-1 text-[11px] font-black text-gray-700">Final</span>
+    ) : match.canSelectWinner ? (
+      <span className="shrink-0 rounded-md bg-green-50 px-2 py-1 text-[11px] font-black text-green-700">Open</span>
+    ) : (
+      <span
+        className="inline-flex shrink-0 items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-gray-500"
+        aria-label="Waiting"
+        title="Waiting"
+      >
+        <Clock3 aria-hidden className="h-3.5 w-3.5" />
+      </span>
+    );
 
   return (
     <div
-      className={`rounded-lg border ${
-        isHero
-          ? "border-amber-200 bg-[linear-gradient(180deg,#fff8eb_0%,#ffffff_100%)] p-4"
-          : isCompact
-            ? "border-gray-200 bg-white p-2"
-            : "border-gray-200 bg-white p-3"
-      }`}
+      className={
+        isEmbeddedCenterCard
+          ? `${isHero ? "p-1" : "p-0.5"}`
+          : `rounded-lg border ${
+              isHero
+                ? "border-amber-200 bg-white p-4"
+                : isCompact
+                  ? "border-gray-200 bg-white p-2"
+                  : "border-gray-200 bg-white p-3"
+            }`
+      }
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className={`min-w-0 ${side === "right" ? "text-right" : side === "center" ? "text-center" : ""}`}>
-          <p className={`${isCompact ? "text-xs" : "text-sm"} font-black text-gray-950`}>{match.title}</p>
-          <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-            {formatKickoff(match.kickoffTime)}
-          </p>
+      {showHeader ? (
+        <div className={`flex items-start gap-2 ${side === "right" ? "flex-row-reverse justify-between" : "justify-between"}`}>
+          <div className={`min-w-0 ${side === "right" ? "text-right" : side === "center" ? "text-center" : ""}`}>
+            <p className={`${isCompact ? "text-xs" : "text-sm"} font-black text-gray-950`}>{match.title}</p>
+            <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+              {formatKickoff(match.kickoffTime)}
+            </p>
+          </div>
+          {statusBadge}
         </div>
-        <span
-          className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-black ${
-            match.status === "final"
-              ? "bg-gray-200 text-gray-700"
-              : match.canSelectWinner
-                ? "bg-green-50 text-green-700"
-                : "bg-gray-100 text-gray-500"
-          }`}
-        >
-          {match.status === "final" ? "Final" : match.canSelectWinner ? "Open" : "Waiting"}
-        </span>
-      </div>
+      ) : null}
 
-      <div className="mt-2 space-y-1.5">
+      <div className={`${showHeader ? "mt-2" : ""} space-y-1.5`}>
         <TeamChoiceButton
           team={match.homeTeam}
           placeholderLabel={match.homeSourceLabel}
@@ -778,12 +802,6 @@ function CurrentRoundMatchCard({
         />
       </div>
 
-      {hasPlaceholderSlot && !match.isLocked ? (
-        <p className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] font-semibold text-gray-600">
-          Picks open once knockout teams are confirmed.
-        </p>
-      ) : null}
-
       {match.status === "final" ? (
         <p className="mt-3 text-[11px] font-bold uppercase tracking-wide text-gray-600">
           {match.isCorrectWinner === true
@@ -794,6 +812,42 @@ function CurrentRoundMatchCard({
         </p>
       ) : null}
     </div>
+  );
+}
+
+function MatchStatusBadge({
+  status,
+  canSelectWinner,
+  accent
+}: {
+  status: KnockoutBracketMatchView["status"];
+  canSelectWinner: boolean;
+  accent: "accent" | "amber";
+}) {
+  if (status === "final") {
+    return <span className="shrink-0 rounded-md bg-gray-200 px-2 py-1 text-[11px] font-black text-gray-700">Final</span>;
+  }
+
+  if (canSelectWinner) {
+    return (
+      <span
+        className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-black ${
+          accent === "amber" ? "bg-amber-50 text-amber-700" : "bg-green-50 text-green-700"
+        }`}
+      >
+        Open
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-gray-500"
+      aria-label="Waiting"
+      title="Waiting"
+    >
+      <Clock3 aria-hidden className="h-3.5 w-3.5" />
+    </span>
   );
 }
 
@@ -878,24 +932,22 @@ function TeamChoiceButton({
 
 function ProjectedTeamChip({
   team,
-  placeholderLabel,
-  side
+  placeholderLabel
 }: {
   team: BracketTeamOption | null;
   placeholderLabel: string | null;
-  side: "left" | "right";
 }) {
   const fallbackCode = placeholderLabel ? placeholderLabel.replace(/\s+/g, " ").trim().slice(0, 3).toUpperCase() : "TBD";
   return (
     <div
-      className={`flex min-h-[40px] items-center rounded-md bg-gray-50 px-1.5 py-1.5 ${
-        side === "right" ? "justify-end text-right" : "justify-start text-left"
-      }`}
+      className="flex min-h-[36px] items-center justify-center rounded-md bg-gray-50 px-1 py-1 text-center"
     >
-      <p className="inline-flex items-center justify-center gap-1 self-center text-[11px] font-black uppercase tracking-wide text-gray-900">
-        {team?.flagEmoji ? <span aria-hidden className="text-xs leading-none">{team.flagEmoji}</span> : null}
-        <span className="truncate">{team?.shortName ?? fallbackCode}</span>
-      </p>
+      <span className="inline-flex flex-col items-center justify-center self-center text-center">
+        {team?.flagEmoji ? <span aria-hidden className="text-[10px] leading-none">{team.flagEmoji}</span> : null}
+        <span className="mt-0.5 text-[9px] font-black uppercase tracking-wide text-gray-900">
+          {team?.shortName ?? fallbackCode}
+        </span>
+      </span>
     </div>
   );
 }
@@ -1044,25 +1096,38 @@ function stageSortValue(stage: KnockoutBracketMatchView["stage"]) {
   }
 }
 
-function activeSlideLabel(slide: BracketSlideView) {
-  if (slide.layout === "split") {
-    return "Full field";
+function formatBracketProvenanceLabel(label: string | null | undefined) {
+  if (!label) {
+    return null;
   }
 
-  if (slide.layout === "finale") {
-    return "Finale";
+  const normalized = label.toLowerCase();
+
+  if (normalized.includes("32")) {
+    return "ROUND OF 32";
   }
 
-  return "Focus";
+  if (normalized.includes("16")) {
+    return "ROUND OF 16";
+  }
+
+  if (normalized.includes("quarter")) {
+    return "QTR. FINALS";
+  }
+
+  if (normalized.includes("semi")) {
+    return "SEMI FINALS";
+  }
+
+  if (normalized.includes("final")) {
+    return "FINAL";
+  }
+
+  return label.toUpperCase();
 }
 
 function formatKickoff(kickoffTime: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date(kickoffTime));
+  return formatDateTimeWithZone(kickoffTime);
 }
 
 function buildBracketSlides(view: KnockoutBracketEditorView): BracketSlideView[] {

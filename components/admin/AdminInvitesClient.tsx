@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createAdminInviteAction } from "@/app/admin/actions";
 import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
 import { fetchAdminInvites, type AdminInvite } from "@/lib/admin-data";
+import { formatDateOnly, formatDateTimeWithZone } from "@/lib/date-time";
 import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { showAppToast } from "@/lib/app-toast";
 import type { UserRole } from "@/lib/types";
@@ -298,21 +299,11 @@ export function AdminHeader({
 }
 
 export function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric"
-  }).format(new Date(value));
+  return formatDateOnly(value);
 }
 
 function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date(value));
+  return formatDateTimeWithZone(value, { includeYear: true });
 }
 
 function formatInviteStatus(status: AdminInvite["status"]) {

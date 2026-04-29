@@ -1,6 +1,6 @@
 "use client";
 
-export type AppToastTone = "success" | "error";
+export type AppToastTone = "success" | "error" | "tip";
 
 export type AppToastDetail = {
   tone: AppToastTone;

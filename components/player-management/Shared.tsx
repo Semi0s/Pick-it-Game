@@ -31,27 +31,32 @@ export function ManagementIntro({
   eyebrow,
   title,
   description,
-  statusChip
+  statusChip,
+  secondaryNote
 }: {
   eyebrow: string;
   title: string;
   description: string;
   statusChip?: string | null;
+  secondaryNote?: string | null;
 }) {
   return (
-    <section className="relative rounded-lg bg-gray-100 p-5">
-      <div className={statusChip ? "pr-20 sm:pr-24" : undefined}>
-        <div className="min-w-0">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{eyebrow}</p>
-          <h2 className="mt-2 text-3xl font-black leading-tight">{title}</h2>
-          <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">{description}</p>
-        </div>
+    <section className="rounded-lg bg-gray-100 p-5">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{eyebrow}</p>
+        {statusChip ? (
+          <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+            {statusChip}
+          </div>
+        ) : null}
       </div>
-      {statusChip ? (
-        <div className="absolute right-5 top-5 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
-          {statusChip}
-        </div>
-      ) : null}
+      <div className="mt-3 min-w-0">
+        <h2 className="text-3xl font-black leading-tight">{title}</h2>
+        <p className="mt-3 text-sm leading-6 text-gray-600">{description}</p>
+        {secondaryNote ? (
+          <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">{secondaryNote}</p>
+        ) : null}
+      </div>
     </section>
   );
 }

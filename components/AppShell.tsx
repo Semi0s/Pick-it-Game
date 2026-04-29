@@ -320,6 +320,8 @@ export function AppShell({ children }: AppShellProps) {
                 className={`pointer-events-auto rounded-lg border px-4 py-3 text-sm font-semibold shadow-lg ${
                   toast.tone === "success"
                     ? "border-accent-light bg-white text-accent-dark"
+                    : toast.tone === "tip"
+                      ? "border-amber-200 bg-amber-50 text-amber-900"
                     : "border-red-200 bg-white text-red-700"
                 }`}
               >

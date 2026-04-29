@@ -700,9 +700,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   return (
     <section className="space-y-5">
       <ManagementIntro
-        eyebrow="Groups"
+        eyebrow="My Groups"
         title="Play in groups and manage them"
-        description="Players see the groups they belong to. Managers get group controls. Super admins get an elevated control layer at the top."
+        description="Players see the groups they belong to. Managers get group controls. Directors get an elevated control layer at the top."
         statusChip={
           summary?.ok
             ? `${summary.groupAccess.joinedGroupCount} joined · ${summary.groupAccess.managedGroupCount} managed`

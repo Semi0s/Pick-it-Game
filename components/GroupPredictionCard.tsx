@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { Check, LockKeyhole } from "lucide-react";
+import { formatDateTimeWithZone } from "@/lib/date-time";
 import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
 import type { MatchWithTeams, Prediction } from "@/lib/types";
 
@@ -296,21 +297,9 @@ function getOutcomeFromScore(homeScore: string, awayScore: string): ScoreOutcome
 }
 
 function formatKickoff(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date(value));
+  return formatDateTimeWithZone(value);
 }
 
 function formatSavedAt(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "America/New_York",
-    timeZoneName: "short"
-  }).format(new Date(value));
+  return formatDateTimeWithZone(value);
 }

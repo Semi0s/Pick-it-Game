@@ -15,6 +15,7 @@ import {
 import { Avatar } from "@/components/Avatar";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { showAppToast } from "@/lib/app-toast";
+import { formatDateOnly } from "@/lib/date-time";
 import {
   ActionButton,
   InlineConfirmation,
@@ -503,7 +504,7 @@ export function AdminGroupsSection({
                             <div className="min-w-0">
                               <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
                               <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
-                              <p className="text-xs font-semibold text-gray-500">Joined {new Date(member.joinedAt).toLocaleDateString("en-US")}</p>
+                              <p className="text-xs font-semibold text-gray-500">Joined {formatDateOnly(member.joinedAt)}</p>
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">

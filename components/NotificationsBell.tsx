@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Bell, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { formatDateTimeWithZone } from "@/lib/date-time";
 import type { UserNotification } from "@/lib/notifications";
 
 type NotificationResponse =
@@ -187,12 +188,5 @@ export function NotificationsBell() {
 }
 
 function formatNotificationTimestamp(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "America/New_York",
-    timeZoneName: "short"
-  }).format(new Date(value));
+  return formatDateTimeWithZone(value);
 }

@@ -1,6 +1,7 @@
 import { KnockoutBracketBuilder } from "@/components/KnockoutBracketBuilder";
 import { KnockoutGroupComparison } from "@/components/KnockoutGroupComparison";
 import { AppShell } from "@/components/AppShell";
+import { ManagementIntro } from "@/components/player-management/Shared";
 import {
   fetchGroupBracketComparisonView,
   fetchKnockoutBracketEditorView,
@@ -66,24 +67,17 @@ export default async function KnockoutPage({
 
   return (
     <AppShell>
-      <section className="relative rounded-lg bg-gray-100 p-5">
-        <div className="pr-20 sm:pr-24">
-          <div className="min-w-0">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Picks</p>
-            <h2 className="mt-2 text-3xl font-black leading-tight">
-              {isSeeded ? "Build your bracket, then compare it." : "Knockout picks coming soon."}
-            </h2>
-            <p className="mt-3 text-base leading-7 text-gray-600">
-              {isSeeded
-                ? "Make one winner pick per knockout match, watch your path advance forward, and stack your bracket against the rest of the group."
-                : "We will open knockout picks once the full Round of 32 through Final bracket has been seeded."}
-            </p>
-          </div>
-        </div>
-        <div className="absolute right-5 top-5 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
-          {phaseChip}
-        </div>
-      </section>
+      <ManagementIntro
+        eyebrow="Knockout Picks"
+        title={isSeeded ? "Build your bracket, then compare it." : "Knockout picks coming soon."}
+        description={
+          isSeeded
+            ? "Swipe, pinch, or spread your fingers to navigate the phases, then tap to select the winning team."
+            : "We will open knockout picks once the full Round of 32 through Final bracket has been seeded."
+        }
+        secondaryNote={isSeeded ? "Picks unlock as teams are confirmed" : null}
+        statusChip={phaseChip}
+      />
 
       {bracketEditorView ? (
         <div className="mt-5">

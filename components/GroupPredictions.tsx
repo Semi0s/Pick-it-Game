@@ -41,11 +41,11 @@ const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
 };
 
 const EXPLAINER_TITLE_COPY: Record<ExplainerLanguage, string> = {
-  en: "Pick every match.",
-  es: "Elige tus partidos.",
-  fr: "Choisissez chaque match.",
-  pt: "Escolha cada partida.",
-  de: "Tippe jedes Spiel."
+  en: "Scroll down and pick a score for every match.",
+  es: "Desplázate hacia abajo y elige un marcador para cada partido.",
+  fr: "Faites défiler et choisissez un score pour chaque match.",
+  pt: "Role para baixo e escolha um placar para cada partida.",
+  de: "Scrolle nach unten und tippe ein Ergebnis für jedes Spiel."
 };
 
 const EXPLAINER_COPY: Record<ExplainerLanguage, string[]> = {
@@ -381,13 +381,13 @@ export function GroupPredictions({
     <div className="space-y-6">
       <section className="rounded-lg bg-gray-100 p-5">
         <div className="flex items-start justify-between gap-3">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Play</p>
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">My Picks</p>
           <div className="flex shrink-0 items-start gap-2">
             <div className="relative shrink-0">
               <button
                 type="button"
                 onClick={() => setIsExplainerLanguageMenuOpen((current) => !current)}
-                className="inline-flex items-center gap-1 rounded-full border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light sm:px-3 sm:py-2"
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light sm:px-3 sm:py-2"
                 aria-haspopup="menu"
                 aria-expanded={isExplainerLanguageMenuOpen}
                 aria-label={`Translate title and explainer text. Current language: ${EXPLAINER_LANGUAGE_LABELS[explainerLanguage]}`}
@@ -431,21 +431,22 @@ export function GroupPredictions({
         </div>
         <div className="mt-3">
           <h2 className="text-3xl font-black leading-tight">{EXPLAINER_TITLE_COPY[explainerLanguage]}</h2>
-          <div className="mt-3">
-            <ul className="min-w-0 space-y-1 text-sm font-semibold leading-6 text-gray-600">
-              {EXPLAINER_COPY[explainerLanguage].map((line) => (
-                <li key={line}>&bull; {line}</li>
-              ))}
-            </ul>
-          </div>
+          <ul className="mt-3 min-w-0 space-y-0.5 text-sm leading-5 text-gray-600">
+            {EXPLAINER_COPY[explainerLanguage].map((line) => (
+              <li key={line} className="flex gap-2">
+                <span className="shrink-0 text-gray-500">&bull;</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
         </div>
-        <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
-          <div className="flex flex-wrap items-center justify-start gap-1.5 sm:gap-2">
+        <div className="mt-4 overflow-x-auto pb-1">
+          <div className="inline-flex min-w-full flex-nowrap items-center justify-start gap-1.5 sm:gap-2">
             {nextPredictionMatchId ? (
               <button
                 type="button"
                 onClick={handlePrimaryAction}
-                className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
               >
                 {shouldPromoteKnockout ? (
                   isKnockoutSeeded ? (
@@ -462,7 +463,7 @@ export function GroupPredictions({
               <button
                 type="button"
                 onClick={handlePrimaryAction}
-                className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
               >
                 {shouldPromoteKnockout ? (
                   isKnockoutSeeded ? (
@@ -479,7 +480,7 @@ export function GroupPredictions({
             {shouldShowSecondaryKnockoutButton ? (
               <Link
                 href="/knockout"
-                className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
               >
                 <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
                 My Knockout Picks
@@ -487,7 +488,7 @@ export function GroupPredictions({
             ) : null}
             <Link
               href="/trophies"
-              className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:gap-2 sm:px-3 sm:text-sm"
             >
               <span className="relative inline-flex h-4.5 w-4.5 items-center justify-center text-accent-dark sm:h-5 sm:w-5">
                 <Trophy aria-hidden className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
@@ -497,7 +498,7 @@ export function GroupPredictions({
             </Link>
           </div>
         </div>
-        <div className="mt-4 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
+        <div className="mt-4 space-y-3">
           <div className="grid gap-3 lg:grid-cols-3">
             <label>
               <span className="text-sm font-bold text-gray-700">Find a team</span>

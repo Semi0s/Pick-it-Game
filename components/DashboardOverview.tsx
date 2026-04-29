@@ -8,6 +8,7 @@ import { fetchMyGroupsAction } from "@/app/my-groups/actions";
 import { AdminStatsSection, AdminToolsSection, AdminMessage } from "@/components/admin/AdminHomeClient";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
+import { showAppToast } from "@/lib/app-toast";
 import { InviteEntryForm, normalizeInviteTokenInput } from "@/components/player-management/Shared";
 import {
   getExplainerLanguageForUser,
@@ -26,6 +27,16 @@ const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: s
   fr: { hello: "Bonjour", help: "Aide" },
   pt: { hello: "Olá", help: "Ajuda" },
   de: { hello: "Hallo", help: "Hilfe" }
+};
+
+const DASHBOARD_LOGO_HINT_STORAGE_KEY = "pickit:dashboard-logo-hint-seen";
+
+const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
+  en: "Tap the PICK-IT! logo to return here.",
+  es: "Toca el logo de PICK-IT! para volver aquí.",
+  fr: "Touchez le logo PICK-IT! pour revenir ici.",
+  pt: "Toque no logo do PICK-IT! para voltar aqui.",
+  de: "Tippe auf das PICK-IT!-Logo, um hierher zurückzukehren."
 };
 
 export function DashboardOverview() {
@@ -125,11 +136,31 @@ export function DashboardOverview() {
     };
   }, [user?.role]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      if (window.sessionStorage.getItem(DASHBOARD_LOGO_HINT_STORAGE_KEY) === "true") {
+        return;
+      }
+
+      window.sessionStorage.setItem(DASHBOARD_LOGO_HINT_STORAGE_KEY, "true");
+      showAppToast({ tone: "tip", text: DASHBOARD_LOGO_HINT_COPY[displayLanguage], durationMs: 5200 });
+    } catch (error) {
+      console.warn("Could not persist dashboard logo hint state.", error);
+      showAppToast({ tone: "tip", text: DASHBOARD_LOGO_HINT_COPY[displayLanguage], durationMs: 5200 });
+    }
+  }, [displayLanguage]);
+
   const openMatches = groupMatches.filter((match) => canEditPrediction(match.status));
   const completedCount = groupMatches.filter((match) =>
     predictions.some((prediction) => prediction.matchId === match.id)
   ).length;
+  const nextOpenMatch = [...openMatches].sort((left, right) => +new Date(left.kickoffTime) - +new Date(right.kickoffTime))[0] ?? null;
   const heroCtaLabel = completedCount > 0 ? "My Next Pick" : "My Picks";
+  const heroCtaHref = "/groups?focus=next";
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
   function handleInviteEntrySubmit() {
     const token = normalizeInviteTokenInput(inviteEntryValue);
@@ -145,14 +176,12 @@ export function DashboardOverview() {
   return (
     <div className="space-y-5">
       <section
-        className="relative overflow-hidden rounded-lg bg-gray-100 bg-cover bg-center p-5"
-        style={{ backgroundImage: "url('/images/pickit-pattern.png')" }}
+        className="relative rounded-lg bg-gray-100 p-5"
       >
-        <div className="absolute inset-0 bg-gray-100/70" />
-        <div className="relative">
+        <div>
           <Link
             href="/help"
-            className="absolute right-0 top-0 inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white/90 px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+            className="absolute right-2 top-0 inline-flex items-center gap-2 px-2 py-2 text-sm font-bold text-gray-800 transition hover:text-accent-dark sm:right-3"
           >
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-accent-light text-accent-dark">
               <CircleHelp aria-hidden className="h-4 w-4" />
@@ -164,13 +193,20 @@ export function DashboardOverview() {
             {user?.name ?? "Player"}
           </h2>
           <Link
-            href="/groups"
-            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-3 text-base font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:w-auto"
+            href={heroCtaHref}
+            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-base font-bold text-white transition hover:bg-accent-dark sm:w-auto"
           >
-            <SquareCheckBig aria-hidden className="h-4 w-4 text-accent-dark" />
+            <SquareCheckBig aria-hidden className="h-4 w-4 text-white" />
             {heroCtaLabel}
           </Link>
         </div>
+      </section>
+
+      <section className="rounded-lg border border-gray-200 bg-white p-4">
+        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Updates</p>
+        <p className="mt-2 text-sm leading-6 text-gray-600">
+          Upcoming important news and information will be presented in this card, including testing days and new feature announcements. Stay in tune and visit often for the latest updates.
+        </p>
       </section>
 
       {user?.role === "admin" ? (
@@ -224,10 +260,22 @@ export function DashboardOverview() {
         </section>
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-3">
-        <StatCard icon={<CalendarDays className="h-5 w-5" />} label="Group matches" value={String(groupMatches.length)} />
-        <StatCard icon={<Sparkles className="h-5 w-5" />} label="Picks saved" value={`${completedCount}/${groupMatches.length}`} />
-        <StatCard icon={<span className="text-xl leading-none">⚽</span>} label="Editable matches" value={String(openMatches.length)} />
+      <section className="grid grid-cols-3 overflow-hidden rounded-lg border border-gray-200 bg-white">
+        <DashboardStatPane
+          icon={<CalendarDays className="h-5 w-5" />}
+          label="Group matches"
+          value={String(groupMatches.length)}
+        />
+        <DashboardStatPane
+          icon={<Sparkles className="h-5 w-5" />}
+          label="Picks saved"
+          value={`${completedCount}/${groupMatches.length}`}
+        />
+        <DashboardStatPane
+          icon={<span className="text-xl leading-none">⏱</span>}
+          label="Next match"
+          value={formatNextMatchCountdown(nextOpenMatch?.kickoffTime ?? null)}
+        />
       </section>
 
       <section className="grid gap-3 sm:grid-cols-3">
@@ -268,9 +316,9 @@ type StatCardProps = {
   value: string;
 };
 
-function StatCard({ icon, label, value }: StatCardProps) {
+function DashboardStatPane({ icon, label, value }: StatCardProps) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
+    <div className="flex min-h-[152px] flex-col items-center justify-center border-r border-gray-200 p-4 text-center last:border-r-0">
       <span className="inline-flex h-5 w-5 items-center justify-center text-accent-dark">{icon}</span>
       <p className="mt-4 text-2xl font-black">{value}</p>
       <p className="mt-1 text-sm font-semibold text-gray-600">{label}</p>
@@ -296,4 +344,30 @@ function DashboardLinkCard({ href, icon: Icon, title, copy }: DashboardLinkCardP
       <p className="mt-1 text-sm leading-6 text-gray-600">{copy}</p>
     </Link>
   );
+}
+
+function formatNextMatchCountdown(kickoffTime: string | null) {
+  if (!kickoffTime) {
+    return "TBD";
+  }
+
+  const diffMs = new Date(kickoffTime).getTime() - Date.now();
+  if (diffMs <= 0) {
+    return "Live";
+  }
+
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+
+  if (days > 0) {
+    return `${days}d ${hours}h`;
+  }
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  return `${minutes}m`;
 }

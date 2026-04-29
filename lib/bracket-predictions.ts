@@ -923,7 +923,7 @@ function getAvailablePredictedTeamsForMatch(
 function buildMatchTitle(stage: CanonicalKnockoutStage, index: number) {
   switch (stage) {
     case "r32":
-      return `Round of 32 Match ${index}`;
+      return `Match ${index}`;
     case "r16":
       return `Round of 16 Match ${index}`;
     case "qf":
