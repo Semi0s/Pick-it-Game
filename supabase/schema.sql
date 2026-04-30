@@ -168,6 +168,7 @@ create table public.app_updates (
   body text not null,
   update_type text not null check (update_type in ('info', 'feature', 'warning', 'tournament', 'maintenance')),
   importance text not null default 'normal' check (importance in ('normal', 'important')),
+  card_tone text not null default 'neutral' check (card_tone in ('neutral', 'sky', 'green', 'amber', 'rose')),
   link_label text,
   link_url text,
   published_at timestamptz not null,

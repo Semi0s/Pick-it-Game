@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
@@ -17,6 +18,7 @@ type UserPredictionsClientProps = {
 };
 
 export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
+  const [isTopCardOpen, setIsTopCardOpen] = useSessionDisclosureState("public-picks-top-card-disclosure", false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [predictions, setPredictions] = useState<SocialPrediction[]>([]);
   const [trophies, setTrophies] = useState<UserTrophy[]>([]);
@@ -79,16 +81,30 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
         <div className="mt-2 flex items-center gap-3">
           <Avatar name={profile?.name ?? "Player"} avatarUrl={profile?.avatarUrl} size="lg" />
           <div className="min-w-0">
-            <h2 className="truncate text-3xl font-black leading-tight">{profile?.name ?? "Player picks"}</h2>
-            {profile?.homeTeamId ? <div className="mt-2"><HomeTeamBadge teamId={profile.homeTeamId} /></div> : null}
+            <h2 className="truncate text-xl font-black leading-tight sm:text-2xl">{profile?.name ?? "Player picks"}</h2>
+            <div className="mt-3 flex justify-start">
+              <InlineDisclosureButton
+                isOpen={isTopCardOpen}
+                label="Read More / Click Here"
+                variant="subtle"
+                onClick={() => setIsTopCardOpen((current) => !current)}
+              />
+            </div>
+            {isTopCardOpen && profile?.homeTeamId ? (
+              <div className="mt-2">
+                <HomeTeamBadge teamId={profile.homeTeamId} />
+              </div>
+            ) : null}
           </div>
         </div>
-        <Link
-          href="/leaderboard"
-          className="mt-4 inline-flex w-full items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 sm:w-auto"
-        >
-          Back to Leaderboard
-        </Link>
+        {isTopCardOpen ? (
+          <Link
+            href="/leaderboard"
+            className="mt-4 inline-flex w-full items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 sm:w-auto"
+          >
+            Back to Leaderboard
+          </Link>
+        ) : null}
       </section>
 
       {!isLoading && trophies.length > 0 ? (

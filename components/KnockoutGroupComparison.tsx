@@ -1,9 +1,8 @@
 "use client";
 
-import { ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo } from "react";
-import { HorizontalChoiceRail, useSessionDisclosureState } from "@/components/player-management/Shared";
+import { HorizontalChoiceRail, InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import type { GroupBracketComparisonView, BracketHealthStatus } from "@/lib/bracket-predictions";
 const KNOCKOUT_GROUP_COMPARISON_STORAGE_KEY = "knockout-group-comparison";
 const KNOCKOUT_GROUP_DETAIL_STORAGE_KEY = "knockout-group-detail";
@@ -66,16 +65,7 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
               })}
             </HorizontalChoiceRail>
           </div>
-          <button
-            type="button"
-            onClick={() => setIsExpanded((current) => !current)}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-            aria-expanded={isExpanded}
-            aria-label={isExpanded ? "Hide group bracket comparison" : "Open group bracket comparison"}
-          >
-            {isExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-            {isExpanded ? "Hide" : "Open"}
-          </button>
+          <InlineDisclosureButton isOpen={isExpanded} onClick={() => setIsExpanded((current) => !current)} />
         </div>
       </div>
 
@@ -200,16 +190,7 @@ function SelectedBracketDetail({
               {meaningfulMatches.length} meaningful match{meaningfulMatches.length === 1 ? "" : "es"} shown
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onToggle}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-            aria-expanded={isOpen}
-            aria-label={isOpen ? "Hide bracket detail" : "Open bracket detail"}
-          >
-            {isOpen ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-            {isOpen ? "Hide" : "Open"}
-          </button>
+          <InlineDisclosureButton isOpen={isOpen} onClick={onToggle} />
         </div>
 
         {isOpen ? (

@@ -412,7 +412,7 @@ export function GroupPredictions({
           </div>
         </div>
         <div className="mt-3">
-          <h2 className="text-3xl font-black leading-tight">{EXPLAINER_TITLE_COPY[explainerLanguage]}</h2>
+          <h2 className="text-xl font-black leading-tight sm:text-2xl">{EXPLAINER_TITLE_COPY[explainerLanguage]}</h2>
           <div className="mt-3 flex justify-start">
             <InlineDisclosureButton
               isOpen={isMoreOpen}
@@ -422,105 +422,107 @@ export function GroupPredictions({
             />
           </div>
           {isMoreOpen ? (
-            <ul className="mt-3 min-w-0 space-y-0.5 text-sm leading-5 text-gray-600">
-              {EXPLAINER_COPY[explainerLanguage].map((line) => (
-                <li key={line} className="flex gap-2">
-                  <span className="shrink-0 text-gray-500">&bull;</span>
-                  <span>{line}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-        <div className="mt-4 mx-auto max-w-xl">
-          <button
-            type="button"
-            onClick={handlePrimaryAction}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
-          >
-            {shouldPromoteKnockout ? (
-              isKnockoutSeeded ? (
-                <Network aria-hidden className="h-4 w-4 shrink-0 text-white" />
-              ) : (
-                <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
-              )
-            ) : (
-              <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
-            )}
-            {primaryActionLabel}
-          </button>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            {shouldShowSecondaryKnockoutButton ? (
-              <Link
-                href="/knockout"
-                className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-sm"
-              >
-                <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
-                <span className="truncate">My Knockout Picks</span>
-              </Link>
-            ) : (
-              <div />
-            )}
-            <Link
-              href="/trophies"
-              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-sm"
-            >
-              <span className="relative inline-flex h-4.5 w-4.5 items-center justify-center text-accent-dark sm:h-5 sm:w-5">
-                <Trophy aria-hidden className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
-                <SquareCheckBig aria-hidden className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-[2px] bg-white" />
-              </span>
-              <span className="truncate">My Side Picks</span>
-            </Link>
-          </div>
-        </div>
-        <div className="mt-4">
-          <InlineDisclosureButton
-            isOpen={isSearchOpen}
-            label="Search for a match / Click Here"
-            variant="subtle"
-            onClick={() => setIsSearchOpen((current) => !current)}
-          />
-          {isSearchOpen ? (
-            <div className="mt-3 grid gap-3 lg:grid-cols-3">
-              <label>
-                <span className="text-sm font-bold text-gray-700">Find a team</span>
-                <input
-                  value={teamSearch}
-                  onChange={(event) => setTeamSearch(event.target.value)}
-                  placeholder="Search by team name or code"
-                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            <>
+              <ul className="mt-3 min-w-0 space-y-0.5 text-sm leading-5 text-gray-600">
+                {EXPLAINER_COPY[explainerLanguage].map((line) => (
+                  <li key={line} className="flex gap-2">
+                    <span className="shrink-0 text-gray-500">&bull;</span>
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-4 mx-auto max-w-xl">
+                <button
+                  type="button"
+                  onClick={handlePrimaryAction}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
+                >
+                  {shouldPromoteKnockout ? (
+                    isKnockoutSeeded ? (
+                      <Network aria-hidden className="h-4 w-4 shrink-0 text-white" />
+                    ) : (
+                      <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
+                    )
+                  ) : (
+                    <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
+                  )}
+                  {primaryActionLabel}
+                </button>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {shouldShowSecondaryKnockoutButton ? (
+                    <Link
+                      href="/knockout"
+                      className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-sm"
+                    >
+                      <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
+                      <span className="truncate">My Knockout Picks</span>
+                    </Link>
+                  ) : (
+                    <div />
+                  )}
+                  <Link
+                    href="/trophies"
+                    className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-sm"
+                  >
+                    <span className="relative inline-flex h-4.5 w-4.5 items-center justify-center text-accent-dark sm:h-5 sm:w-5">
+                      <Trophy aria-hidden className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
+                      <SquareCheckBig aria-hidden className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-[2px] bg-white" />
+                    </span>
+                    <span className="truncate">My Side Picks</span>
+                  </Link>
+                </div>
+              </div>
+              <div className="mt-4">
+                <InlineDisclosureButton
+                  isOpen={isSearchOpen}
+                  label="Search for a match / Click Here"
+                  variant="subtle"
+                  onClick={() => setIsSearchOpen((current) => !current)}
                 />
-              </label>
-              <label>
-                <span className="text-sm font-bold text-gray-700">Stage</span>
-                <select
-                  value={stageFilter}
-                  onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
-                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
-                >
-                  {stages.map((stage) => (
-                    <option key={stage} value={stage}>
-                      {stage === "all" ? "All stages" : formatStage(stage)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span className="text-sm font-bold text-gray-700">Date</span>
-                <select
-                  value={dateFilter}
-                  onChange={(event) => setDateFilter(event.target.value)}
-                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
-                >
-                  <option value="all">All dates</option>
-                  {dateOptions.map((date) => (
-                    <option key={date} value={date}>
-                      {formatDateLabel(date)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+                {isSearchOpen ? (
+                  <div className="mt-3 grid gap-3 lg:grid-cols-3">
+                    <label>
+                      <span className="text-sm font-bold text-gray-700">Find a team</span>
+                      <input
+                        value={teamSearch}
+                        onChange={(event) => setTeamSearch(event.target.value)}
+                        placeholder="Search by team name or code"
+                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                      />
+                    </label>
+                    <label>
+                      <span className="text-sm font-bold text-gray-700">Stage</span>
+                      <select
+                        value={stageFilter}
+                        onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
+                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+                      >
+                        {stages.map((stage) => (
+                          <option key={stage} value={stage}>
+                            {stage === "all" ? "All stages" : formatStage(stage)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span className="text-sm font-bold text-gray-700">Date</span>
+                      <select
+                        value={dateFilter}
+                        onChange={(event) => setDateFilter(event.target.value)}
+                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+                      >
+                        <option value="all">All dates</option>
+                        {dateOptions.map((date) => (
+                          <option key={date} value={date}>
+                            {formatDateLabel(date)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                ) : null}
+              </div>
+            </>
           ) : null}
         </div>
       </section>
@@ -543,25 +545,18 @@ export function GroupPredictions({
               }}
             >
               <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-xl font-black">{formatDateLabel(date)}</h3>
-                  <p className="text-sm font-semibold text-gray-600">
-                    {dateMatches.length} match{dateMatches.length === 1 ? "" : "es"}
-                  </p>
-                </div>
-                {dateMatches.length > 1 ? (
-                  <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold text-gray-600">
-                    {dateMatches.filter((match) => canEditPrediction(match.status)).length} open
-                  </span>
-                ) : null}
+                <h3 className="text-xl font-black">{formatDateLabel(date)}</h3>
+                <p className="text-sm font-semibold text-gray-600">
+                  {dateMatches.length} match{dateMatches.length === 1 ? "" : "es"}
+                </p>
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white divide-y divide-gray-200">
               {dateMatches.map((match) => (
                 <div
                   key={match.id}
-                  className="space-y-2"
+                  className="space-y-2 px-4 py-4"
                   ref={(node) => {
                     matchCardRefs.current[match.id] = node;
                   }}
@@ -573,6 +568,8 @@ export function GroupPredictions({
                   ) : null}
                   <GroupPredictionCard
                     match={match}
+                    matchNumber={filteredMatches.findIndex((item) => item.id === match.id) + 1}
+                    grouped
                     prediction={predictions.find((item) => item.matchId === match.id)}
                     userId={user.id}
                     onSave={handleSave}

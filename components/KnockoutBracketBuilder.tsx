@@ -1,9 +1,13 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Clock3, Trophy } from "lucide-react";
+import { Clock3, Trophy } from "lucide-react";
 import { PointerEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
 import { saveBracketPredictionAction } from "@/app/knockout/actions";
-import { HorizontalChoiceRail, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
+import {
+  InlineDisclosureButton,
+  useSessionDisclosureState,
+  useSessionJsonState
+} from "@/components/player-management/Shared";
 import { showAppToast } from "@/lib/app-toast";
 import { formatDateTimeWithZone } from "@/lib/date-time";
 import {
@@ -105,13 +109,20 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
               Jump to each knockout phase here
             </p>
           </div>
-          <InlinePhaseDisclosureButton
-            isOpen={isPhaseNavOpen}
-            onClick={() => setIsPhaseNavOpen((current) => !current)}
-          />
+          <InlineDisclosureButton isOpen={isPhaseNavOpen} onClick={() => setIsPhaseNavOpen((current) => !current)} />
         </div>
         {isPhaseNavOpen ? (
-          <HorizontalChoiceRail className="mt-3" showControls={slides.length > 1}>
+          <KnockoutPhaseChoiceRail
+            className="mt-3"
+            showControls={slides.length > 1}
+            activeItemKey={slides[activeSlideIndex]?.id}
+            onActiveItemChange={(nextKey) => {
+              const nextIndex = slides.findIndex((slide) => slide.id === nextKey);
+              if (nextIndex >= 0) {
+                goToSlide(nextIndex);
+              }
+            }}
+          >
             {slides.map((slide, index) => {
               const isActive = index === activeSlideIndex;
               return (
@@ -119,6 +130,8 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
                   key={slide.id}
                   type="button"
                   onClick={() => goToSlide(index)}
+                  data-choice-key={slide.id}
+                  data-choice-active={isActive ? "true" : "false"}
                   className={`inline-flex items-center rounded-md px-3 py-2 text-sm font-bold transition ${
                     isActive
                       ? "bg-accent text-white"
@@ -129,7 +142,7 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
                 </button>
               );
             })}
-          </HorizontalChoiceRail>
+          </KnockoutPhaseChoiceRail>
         ) : null}
       </div>
 
@@ -158,16 +171,9 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
       </div>
 
       <div className="relative rounded-lg border border-gray-200 bg-white p-3 sm:p-4">
-        <button
-          type="button"
-          onClick={() => setIsSectionExpanded((current) => !current)}
-          className="absolute right-3 top-3 inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light sm:right-4 sm:top-4"
-          aria-expanded={isSectionExpanded}
-          aria-label={isSectionExpanded ? "Hide knockout bracket" : "Open knockout bracket"}
-        >
-          {isSectionExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-          {isSectionExpanded ? "Hide" : "Open"}
-        </button>
+        <div className="absolute right-3 top-3 sm:right-4 sm:top-4">
+          <InlineDisclosureButton isOpen={isSectionExpanded} onClick={() => setIsSectionExpanded((current) => !current)} />
+        </div>
         <div className="pr-20 sm:pr-24">
           <div className="min-w-0">
             <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Tests</p>
@@ -333,26 +339,6 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
   }
 }
 
-function InlinePhaseDisclosureButton({
-  isOpen,
-  onClick
-}: {
-  isOpen: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-expanded={isOpen}
-      className="inline-flex items-center gap-1 px-0 py-0 text-[10px] font-semibold uppercase tracking-wide text-gray-700 transition hover:text-accent-dark"
-    >
-      {isOpen ? <ChevronUp aria-hidden className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden className="h-3.5 w-3.5" />}
-      See More
-    </button>
-  );
-}
-
 function BracketStageViewport({
   slide,
   canAdvance,
@@ -419,6 +405,176 @@ function BracketStageViewport({
         )}
       </div>
     </section>
+  );
+}
+
+function KnockoutPhaseChoiceRail({
+  children,
+  className,
+  showControls = true,
+  activeItemKey,
+  onActiveItemChange
+}: {
+  children: React.ReactNode;
+  className?: string;
+  showControls?: boolean;
+  activeItemKey?: string;
+  onActiveItemChange?: (key: string) => void;
+}) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const beltRef = useRef<HTMLDivElement | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [offsetX, setOffsetX] = useState(0);
+  const [hasOverflow, setHasOverflow] = useState(false);
+  const [canScrollPrev, setCanScrollPrev] = useState(false);
+  const [canScrollNext, setCanScrollNext] = useState(false);
+  const EDGE_CONTROL_WIDTH = 24;
+  const BELT_GUTTER_WIDTH = 40;
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const belt = beltRef.current;
+    if (!viewport || !belt || !activeItemKey) {
+      return;
+    }
+
+    const updateLayout = () => {
+      const items = Array.from(belt.querySelectorAll<HTMLElement>("[data-choice-key]"));
+      const activeIndex = items.findIndex((item) => item.dataset.choiceKey === activeItemKey);
+      const activeItem = activeIndex >= 0 ? items[activeIndex] : null;
+      if (!activeItem) {
+        setOffsetX(0);
+        setHasOverflow(false);
+        setCanScrollPrev(false);
+        setCanScrollNext(false);
+        return;
+      }
+
+      const viewportWidth = viewport.clientWidth;
+      const beltWidth = belt.scrollWidth;
+      const minOffset = Math.min(0, viewportWidth - beltWidth);
+      const desiredOffset = viewportWidth / 2 - (activeItem.offsetLeft + activeItem.offsetWidth / 2);
+      const clampedOffset = Math.max(minOffset, Math.min(0, desiredOffset));
+      setOffsetX(clampedOffset);
+      setHasOverflow(beltWidth > viewportWidth + 1);
+      setCanScrollPrev(activeIndex > 0);
+      setCanScrollNext(activeIndex < items.length - 1);
+    };
+
+    updateLayout();
+    window.addEventListener("resize", updateLayout);
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(updateLayout);
+      resizeObserver.observe(viewport);
+      resizeObserver.observe(belt);
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateLayout);
+      resizeObserver?.disconnect();
+    };
+  }, [activeItemKey, children]);
+
+  function nudge(direction: "prev" | "next") {
+    const belt = beltRef.current;
+    if (!belt || !onActiveItemChange) {
+      return;
+    }
+
+    const items = Array.from(belt.querySelectorAll<HTMLElement>("[data-choice-key]"));
+    const activeIndex = activeItemKey ? items.findIndex((item) => item.dataset.choiceKey === activeItemKey) : -1;
+    const targetIndex =
+      direction === "next"
+        ? Math.min(activeIndex >= 0 ? activeIndex + 1 : 0, items.length - 1)
+        : Math.max(activeIndex >= 0 ? activeIndex - 1 : 0, 0);
+    const targetKey = items[targetIndex]?.dataset.choiceKey;
+    if (targetKey) {
+      onActiveItemChange(targetKey);
+    }
+  }
+
+  function handleTouchStart(event: TouchEvent<HTMLDivElement>) {
+    const touch = event.touches[0];
+    if (!touch) {
+      touchStartRef.current = null;
+      return;
+    }
+
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+  }
+
+  function handleTouchEnd(event: TouchEvent<HTMLDivElement>) {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start || !onActiveItemChange) {
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    if (!touch) {
+      return;
+    }
+
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (Math.abs(deltaX) < 32 || Math.abs(deltaX) <= Math.abs(deltaY)) {
+      return;
+    }
+
+    nudge(deltaX < 0 ? "next" : "prev");
+  }
+
+  return (
+    <div className={className ?? ""}>
+      <div className="relative min-w-0">
+        {showControls ? (
+          <button
+            type="button"
+            onClick={() => nudge("prev")}
+            disabled={!canScrollPrev}
+            className="absolute inset-y-0 left-0 z-10 inline-flex items-center justify-center bg-white text-gray-700 transition active:scale-95 hover:bg-accent-light hover:text-accent-dark disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-white"
+            style={{ width: EDGE_CONTROL_WIDTH }}
+            aria-label="Show previous knockout phase"
+          >
+            <span aria-hidden>‹</span>
+          </button>
+        ) : null}
+        <div ref={viewportRef} className="min-w-0 overflow-hidden" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+          {showControls ? (
+            <>
+              <div aria-hidden="true" className="pointer-events-none absolute bottom-0 left-6 top-0 z-[11] w-px bg-gray-200" />
+              <div aria-hidden="true" className="pointer-events-none absolute bottom-0 right-6 top-0 z-[11] w-px bg-gray-200" />
+            </>
+          ) : null}
+          <div
+            ref={beltRef}
+            className="flex min-w-max gap-2 px-1 pb-1"
+            style={{
+              transform: `translateX(${offsetX}px)`,
+              transition: hasOverflow ? "transform 280ms ease" : undefined,
+              willChange: "transform"
+            }}
+          >
+            {showControls ? <div aria-hidden="true" className="shrink-0" style={{ width: BELT_GUTTER_WIDTH }} /> : null}
+            {children}
+            {showControls ? <div aria-hidden="true" className="shrink-0" style={{ width: BELT_GUTTER_WIDTH }} /> : null}
+          </div>
+        </div>
+        {showControls ? (
+          <button
+            type="button"
+            onClick={() => nudge("next")}
+            disabled={!canScrollNext}
+            className="absolute inset-y-0 right-0 z-10 inline-flex items-center justify-center bg-white text-gray-700 transition active:scale-95 hover:bg-accent-light hover:text-accent-dark disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-white"
+            style={{ width: EDGE_CONTROL_WIDTH }}
+            aria-label="Show next knockout phase"
+          >
+            <span aria-hidden>›</span>
+          </button>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

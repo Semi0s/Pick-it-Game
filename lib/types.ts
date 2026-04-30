@@ -135,6 +135,7 @@ export type MatchWithTeams = Match & {
 
 export type AppUpdateType = "info" | "feature" | "warning" | "tournament" | "maintenance";
 export type AppUpdateImportance = "normal" | "important";
+export type AppUpdateCardTone = "neutral" | "sky" | "green" | "amber" | "rose";
 
 export type AppUpdate = {
   id: string;
@@ -142,6 +143,7 @@ export type AppUpdate = {
   body: string;
   updateType: AppUpdateType;
   importance: AppUpdateImportance;
+  cardTone: AppUpdateCardTone;
   linkLabel?: string | null;
   linkUrl?: string | null;
   publishedAt: string;

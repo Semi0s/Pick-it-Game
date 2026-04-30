@@ -8,11 +8,12 @@ import {
   type UpsertAppUpdateInput
 } from "@/app/dashboard/actions";
 import { showAppToast } from "@/lib/app-toast";
-import type { AppUpdate, AppUpdateImportance, AppUpdateType } from "@/lib/types";
+import type { AppUpdate, AppUpdateCardTone, AppUpdateImportance, AppUpdateType } from "@/lib/types";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 
 const UPDATE_TYPE_OPTIONS: AppUpdateType[] = ["info", "feature", "warning", "tournament", "maintenance"];
 const IMPORTANCE_OPTIONS: AppUpdateImportance[] = ["normal", "important"];
+const CARD_TONE_OPTIONS: AppUpdateCardTone[] = ["neutral", "sky", "green", "amber", "rose"];
 
 type UpdateDraft = {
   id?: string;
@@ -20,6 +21,7 @@ type UpdateDraft = {
   body: string;
   updateType: AppUpdateType;
   importance: AppUpdateImportance;
+  cardTone: AppUpdateCardTone;
   linkLabel: string;
   linkUrl: string;
   publishedAt: string;
@@ -31,6 +33,7 @@ const EMPTY_DRAFT: UpdateDraft = {
   body: "",
   updateType: "info",
   importance: "normal",
+  cardTone: "neutral",
   linkLabel: "",
   linkUrl: "",
   publishedAt: toDateTimeLocal(new Date()),
@@ -82,6 +85,7 @@ export function AdminUpdatesManager() {
       body: draft.body,
       updateType: draft.updateType,
       importance: draft.importance,
+      cardTone: draft.cardTone,
       linkLabel: draft.linkLabel || null,
       linkUrl: draft.linkUrl || null,
       publishedAt: draft.publishedAt,
@@ -163,6 +167,22 @@ export function AdminUpdatesManager() {
               className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
             >
               {IMPORTANCE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {formatOptionLabel(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-gray-800">Card tone</span>
+            <select
+              value={draft.cardTone}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, cardTone: event.target.value as AppUpdateCardTone }))
+              }
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            >
+              {CARD_TONE_OPTIONS.map((option) => (
                 <option key={option} value={option}>
                   {formatOptionLabel(option)}
                 </option>
@@ -253,6 +273,7 @@ export function AdminUpdatesManager() {
                           body: update.body,
                           updateType: update.updateType,
                           importance: update.importance,
+                          cardTone: update.cardTone,
                           linkLabel: update.linkLabel ?? "",
                           linkUrl: update.linkUrl ?? "",
                           publishedAt: toDateTimeLocal(update.publishedAt),

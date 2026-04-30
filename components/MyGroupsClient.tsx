@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Info } from "lucide-react";
+import { Info } from "lucide-react";
 import {
   acceptGroupInviteAction,
   awardManagedGroupTrophyAction,
@@ -44,6 +44,7 @@ import {
 import {
   ActionButton,
   HierarchyPanel,
+  InlineDisclosureButton,
   InlineConfirmation,
   InviteEntryForm,
   InlineTextConfirmation,
@@ -1025,7 +1026,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       <section className="space-y-3">
         <div>
           <h3 className="text-lg font-bold">Groups</h3>
-          <p className="mt-1 text-sm font-semibold text-gray-600">
+          <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-700">
             {summary?.ok && summary.currentUser.role === "admin"
               ? "See every group, members, invites, and the admin control layer."
               : summary?.ok && summary.managerAccess.enabled
@@ -1104,43 +1105,38 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             return (
               <ManagementCard
                 key={group.id}
-                title={group.name}
-                titleClassName="text-2xl"
-                className="bg-gray-50"
-                subtitle={
-                  group.canManage
-                    ? resolvedMemberCount !== undefined && resolvedPendingInviteCount !== undefined
-                      ? `${resolvedMemberCount} members · ${resolvedPendingInviteCount} pending invites`
-                      : "Open to load members and invites"
-                    : resolvedMemberCount !== undefined
-                      ? `${resolvedMemberCount} members`
-                      : "Open to load members"
-                }
-                badges={
+                title={
                   <>
-                    <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
-                    <ManagementBadge label={`${group.membershipLimit} seats`} tone="neutral" />
-                    {group.userRole === "super_admin" ? (
-                      <ManagementBadge label="super admin" tone="accent" />
-                    ) : group.userRole === "manager" ? (
-                      <ManagementBadge label="manager" tone="accent" />
-                    ) : (
-                      <ManagementBadge label="player" tone="neutral" />
-                    )}
+                    <div className="text-xl font-black leading-tight text-gray-950">{group.name}</div>
+                    <div className="mt-1 truncate text-[10px] font-semibold uppercase tracking-wide text-gray-700">
+                      {group.canManage
+                        ? resolvedMemberCount !== undefined && resolvedPendingInviteCount !== undefined
+                          ? `${resolvedMemberCount} members · ${resolvedPendingInviteCount} pending invites`
+                          : "Open to load members and invites"
+                        : resolvedMemberCount !== undefined
+                          ? `${resolvedMemberCount} members`
+                          : "Open to load members"}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
+                      <ManagementBadge label={`${group.membershipLimit} seats`} tone="neutral" />
+                      {group.userRole === "super_admin" ? (
+                        <ManagementBadge label="super admin" tone="accent" />
+                      ) : group.userRole === "manager" ? (
+                        <ManagementBadge label="manager" tone="accent" />
+                      ) : (
+                        <ManagementBadge label="player" tone="neutral" />
+                      )}
+                    </div>
                   </>
                 }
+                className="bg-gray-50"
                 headerActions={
                   usesDisclosure ? (
-                    <button
-                      type="button"
+                    <InlineDisclosureButton
+                      isOpen={isExpanded}
                       onClick={() => toggleExpandedGroup(group.id)}
-                      className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                      aria-expanded={isExpanded}
-                      aria-label={isExpanded ? `Hide ${group.name} details` : `Open ${group.name} details`}
-                    >
-                      {isExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-                      {isExpanded ? "Hide" : "Open"}
-                    </button>
+                    />
                   ) : null
                 }
               >
@@ -1359,16 +1355,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               {groupMembers.length} members · {groupInvites.length} invites
                             </p>
                           </div>
-                          <button
-                            type="button"
+                          <InlineDisclosureButton
+                            isOpen={isPeopleInvitesExpanded}
                             onClick={() => toggleExpandedSection(group.id, setExpandedPeopleInviteIds)}
-                            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                            aria-expanded={isPeopleInvitesExpanded}
-                            aria-label={isPeopleInvitesExpanded ? `Hide ${group.name} people and invites` : `Open ${group.name} people and invites`}
-                          >
-                            {isPeopleInvitesExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-                            {isPeopleInvitesExpanded ? "Hide" : "Open"}
-                          </button>
+                          />
                         </div>
 
                         {isPeopleInvitesExpanded ? (
@@ -1675,16 +1665,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 : `Your current manager allowance is ${summary?.ok ? summary.managerAccess.maxMembersPerGroup : group.membershipLimit} members per group.`}
                             </p>
                           </div>
-                          <button
-                            type="button"
+                          <InlineDisclosureButton
+                            isOpen={isGroupLimitExpanded}
                             onClick={() => toggleExpandedSection(group.id, setExpandedGroupLimitIds)}
-                            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                            aria-expanded={isGroupLimitExpanded}
-                            aria-label={isGroupLimitExpanded ? `Hide ${group.name} group limit` : `Open ${group.name} group limit`}
-                          >
-                            {isGroupLimitExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-                            {isGroupLimitExpanded ? "Hide" : "Open"}
-                          </button>
+                          />
                         </div>
 
                         {isGroupLimitExpanded ? (
@@ -1737,16 +1721,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               {coreTrophies.length} core · {customTrophies.length} of 10 custom
                             </p>
                           </div>
-                          <button
-                            type="button"
+                          <InlineDisclosureButton
+                            isOpen={isTrophyExpanded}
                             onClick={() => toggleExpandedSection(group.id, setExpandedTrophyIds)}
-                            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                            aria-expanded={isTrophyExpanded}
-                            aria-label={isTrophyExpanded ? `Hide ${group.name} trophies` : `Open ${group.name} trophies`}
-                          >
-                            {isTrophyExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-                            {isTrophyExpanded ? "Hide" : "Open"}
-                          </button>
+                          />
                         </div>
 
                         {isTrophyExpanded ? (
@@ -1968,16 +1946,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               Capacity and delete controls.
                             </p>
                           </div>
-                          <button
-                            type="button"
+                          <InlineDisclosureButton
+                            isOpen={isGroupInfoExpanded}
                             onClick={() => toggleExpandedSection(group.id, setExpandedGroupInfoIds)}
-                            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                            aria-expanded={isGroupInfoExpanded}
-                            aria-label={isGroupInfoExpanded ? `Hide ${group.name} details` : `Open ${group.name} details`}
-                          >
-                            {isGroupInfoExpanded ? <ChevronUp className="h-4 w-4" aria-hidden /> : <ChevronDown className="h-4 w-4" aria-hidden />}
-                            {isGroupInfoExpanded ? "Hide" : "Open"}
-                          </button>
+                          />
                         </div>
 
                         {isGroupInfoExpanded ? (

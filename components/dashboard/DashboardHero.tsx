@@ -111,7 +111,7 @@ export function DashboardHero({
         </div>
       </div>
       <div className="mt-2">
-        <h2 className="mt-2 text-4xl font-black leading-tight text-gray-950 sm:text-5xl">{name}</h2>
+        <h2 className="mt-2 text-xl font-black leading-tight text-gray-950 sm:text-2xl">{name}</h2>
         <div className="mt-5 mx-auto max-w-xl">
           <Link
             href={ctaHref}

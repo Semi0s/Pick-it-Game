@@ -3,7 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
-import type { AppUpdate, AppUpdateImportance, AppUpdateType, AppUpdateWithReadState } from "@/lib/types";
+import type {
+  AppUpdate,
+  AppUpdateCardTone,
+  AppUpdateImportance,
+  AppUpdateType,
+  AppUpdateWithReadState
+} from "@/lib/types";
 
 type AppUpdateRow = {
   id: string;
@@ -11,6 +17,7 @@ type AppUpdateRow = {
   body: string;
   update_type: AppUpdateType;
   importance: AppUpdateImportance;
+  card_tone: AppUpdateCardTone;
   link_label?: string | null;
   link_url?: string | null;
   published_at: string;
@@ -51,6 +58,7 @@ export type UpsertAppUpdateInput = {
   body: string;
   updateType: AppUpdateType;
   importance: AppUpdateImportance;
+  cardTone: AppUpdateCardTone;
   linkLabel?: string | null;
   linkUrl?: string | null;
   publishedAt: string;
@@ -82,7 +90,7 @@ export async function fetchLandingUpdatesAction(): Promise<FetchLandingUpdatesRe
   const nowIso = new Date().toISOString();
   const { data: updates, error: updatesError } = await supabase
     .from("app_updates")
-    .select("id,title,body,update_type,importance,link_label,link_url,published_at,expires_at,created_by,created_at,updated_at")
+    .select("id,title,body,update_type,importance,card_tone,link_label,link_url,published_at,expires_at,created_by,created_at,updated_at")
     .lte("published_at", nowIso)
     .order("published_at", { ascending: false })
     .order("created_at", { ascending: false });
@@ -163,7 +171,7 @@ export async function fetchManagedAppUpdatesAction(): Promise<FetchManagedUpdate
   const adminSupabase = createAdminClient();
   const { data, error } = await adminSupabase
     .from("app_updates")
-    .select("id,title,body,update_type,importance,link_label,link_url,published_at,expires_at,created_by,created_at,updated_at")
+    .select("id,title,body,update_type,importance,card_tone,link_label,link_url,published_at,expires_at,created_by,created_at,updated_at")
     .order("published_at", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -221,6 +229,7 @@ export async function upsertAppUpdateAction(input: UpsertAppUpdateInput): Promis
     body,
     update_type: input.updateType,
     importance: input.importance,
+    card_tone: input.cardTone,
     link_label: linkLabel,
     link_url: validatedLinkUrl,
     published_at: publishedAt,
@@ -268,6 +277,7 @@ function mapAppUpdateRow(row: AppUpdateRow): AppUpdate {
     body: row.body,
     updateType: row.update_type,
     importance: row.importance,
+    cardTone: row.card_tone ?? "neutral",
     linkLabel: row.link_label ?? null,
     linkUrl: row.link_url ?? null,
     publishedAt: row.published_at,

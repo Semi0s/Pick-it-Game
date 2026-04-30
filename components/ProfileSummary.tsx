@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import {
   clearCurrentUserAvatar,
@@ -55,6 +56,7 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
     bracketPoints: 0,
     correctPicks: 0
   });
+  const [isTopCardOpen, setIsTopCardOpen] = useSessionDisclosureState("profile-top-card-disclosure", false);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -173,22 +175,35 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
         <div className="mt-4 flex min-w-0 items-center gap-4">
           <Avatar name={user.name} avatarUrl={user.avatarUrl} size="lg" className="rounded-lg" />
           <div className="min-w-0">
-            <h2 className="truncate text-3xl font-black leading-tight">{user.name}</h2>
-            <p className="mt-2 text-sm text-accent-dark">
-              {getAccessLevelLabel(user)}
-              {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
-            </p>
-            <p className="truncate text-sm text-gray-600">{user.email}</p>
-            <div className="mt-2">
-              {user.homeTeamId ? (
-                <HomeTeamBadge teamId={user.homeTeamId} />
-              ) : (
-                <p className="text-sm text-gray-500">No home team selected</p>
-              )}
+            <h2 className="truncate text-xl font-black leading-tight sm:text-2xl">{user.name}</h2>
+            <div className="mt-3 flex justify-start">
+              <InlineDisclosureButton
+                isOpen={isTopCardOpen}
+                label="Read More / Click Here"
+                variant="subtle"
+                onClick={() => setIsTopCardOpen((current) => !current)}
+              />
             </div>
+            {isTopCardOpen ? (
+              <>
+                <p className="mt-2 text-sm text-accent-dark">
+                  {getAccessLevelLabel(user)}
+                  {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
+                </p>
+                <p className="truncate text-sm text-gray-600">{user.email}</p>
+                <div className="mt-2">
+                  {user.homeTeamId ? (
+                    <HomeTeamBadge teamId={user.homeTeamId} />
+                  ) : (
+                    <p className="text-sm text-gray-500">No home team selected</p>
+                  )}
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
-        <div className="mt-4 mx-auto max-w-xl text-center">
+        {isTopCardOpen ? (
+          <div className="mt-4 mx-auto max-w-xl text-center">
           <input
             ref={avatarInputRef}
             type="file"
@@ -248,7 +263,8 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
             )}
           </div>
           <p className="mt-2 text-center text-xs text-gray-500">Optional. If upload fails, your initials stay in place.</p>
-        </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-lg border border-gray-200 p-4">

@@ -21,10 +21,11 @@ export function InlineDisclosureButton({
   variant = "chip"
 }: {
   isOpen: boolean;
-  label: string;
+  label?: string;
   onClick: () => void;
   variant?: "chip" | "subtle";
 }) {
+  const resolvedLabel = label ?? (isOpen ? "Close" : "Open");
   const className =
     variant === "subtle"
       ? "inline-flex items-center gap-1 px-0 py-0 text-[10px] font-semibold uppercase tracking-wide text-gray-700 transition hover:text-accent-dark"
@@ -38,7 +39,7 @@ export function InlineDisclosureButton({
       className={className}
     >
       {isOpen ? <ChevronUp aria-hidden className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden className="h-3.5 w-3.5" />}
-      {label}
+      {resolvedLabel}
     </button>
   );
 }
@@ -208,7 +209,10 @@ export function ManagementIntro({
   description,
   statusChip,
   secondaryNote,
-  disclosureStorageKey
+  disclosureStorageKey,
+  disclosureVariant = "subtle",
+  disclosurePlacement = "below-title",
+  statusChipPlacement = "top-right"
 }: {
   eyebrow: string;
   title: string;
@@ -216,6 +220,9 @@ export function ManagementIntro({
   statusChip?: string | null;
   secondaryNote?: string | null;
   disclosureStorageKey?: string;
+  disclosureVariant?: "chip" | "subtle";
+  disclosurePlacement?: "top-right" | "below-title";
+  statusChipPlacement?: "top-right" | "below-title";
 }) {
   const [isMoreOpen, setIsMoreOpen] = useSessionDisclosureState(
     disclosureStorageKey ?? `management-intro:${eyebrow.toLowerCase().replace(/\s+/g, "-")}`,
@@ -226,22 +233,37 @@ export function ManagementIntro({
     <section className="rounded-lg bg-gray-100 p-5">
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{eyebrow}</p>
-        {statusChip ? (
+        {disclosurePlacement === "top-right" ? (
+          <InlineDisclosureButton
+            isOpen={isMoreOpen}
+            variant={disclosureVariant}
+            onClick={() => setIsMoreOpen((current) => !current)}
+          />
+        ) : statusChip && statusChipPlacement === "top-right" ? (
           <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
             {statusChip}
           </div>
         ) : null}
       </div>
       <div className="mt-3 min-w-0">
-        <h2 className="text-3xl font-black leading-tight">{title}</h2>
-        <div className="mt-3 flex justify-start">
-          <InlineDisclosureButton
-            isOpen={isMoreOpen}
-            label="Read More / Click Here"
-            variant="subtle"
-            onClick={() => setIsMoreOpen((current) => !current)}
-          />
-        </div>
+        <h2 className="text-xl font-black leading-tight sm:text-2xl">{title}</h2>
+        {statusChip && statusChipPlacement === "below-title" ? (
+          <div className="mt-3 flex justify-start">
+            <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+              {statusChip}
+            </div>
+          </div>
+        ) : null}
+        {disclosurePlacement === "below-title" ? (
+          <div className="mt-3 flex justify-start">
+            <InlineDisclosureButton
+              isOpen={isMoreOpen}
+              label="Read More / Click Here"
+              variant={disclosureVariant}
+              onClick={() => setIsMoreOpen((current) => !current)}
+            />
+          </div>
+        ) : null}
         {isMoreOpen ? (
           <div className="mt-3">
             <p className="text-sm leading-6 text-gray-600">{description}</p>

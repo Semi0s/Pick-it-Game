@@ -525,7 +525,7 @@ export function LeaderboardClient() {
           ) : null}
         </div>
         <div className="mt-3 min-w-0">
-          <h2 className="text-3xl font-black leading-tight">Compare your standings against the rest</h2>
+          <h2 className="text-xl font-black leading-tight sm:text-2xl">Compare your standings against the rest</h2>
           <div className="mt-3 flex justify-start">
             <InlineDisclosureButton
               isOpen={isIntroMoreOpen}
@@ -642,18 +642,34 @@ export function LeaderboardClient() {
           isRefreshing ? "opacity-90" : "opacity-100"
         }`}
       >
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">VIEW</p>
-            {switcher ? (
-              <p className="mt-1 text-xs font-semibold text-gray-500">
-                {getSwitcherSummary(activeView, switcher, selectedGroupLabel, selectedManagerLabel)}
-              </p>
-            ) : null}
+            {switcher && shouldInlineSwitcherSummary(activeView) ? (
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">VIEWING:</p>
+                <p className="min-w-0 text-sm font-bold uppercase tracking-wide text-gray-700">
+                  {getSwitcherSummary(activeView, switcher, selectedGroupLabel, selectedManagerLabel)}
+                </p>
+              </div>
+            ) : (
+              <>
+                <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">VIEWING:</p>
+                {switcher ? (
+                  <p
+                    className={`mt-1 min-w-0 ${
+                      isSwitcherSummarySelection(activeView, selectedGroupLabel, selectedManagerLabel)
+                        ? "text-sm font-bold uppercase tracking-wide text-gray-700"
+                        : "text-[10px] font-semibold uppercase tracking-wide text-gray-700"
+                    }`}
+                  >
+                    {getSwitcherSummary(activeView, switcher, selectedGroupLabel, selectedManagerLabel)}
+                  </p>
+                ) : null}
+              </>
+            )}
           </div>
           <InlineDisclosureButton
             isOpen={isSwitcherOpen}
-            label="Open"
             onClick={() => setIsSwitcherOpen((current) => !current)}
           />
         </div>
@@ -777,7 +793,6 @@ export function LeaderboardClient() {
             </div>
             <InlineDisclosureButton
               isOpen={isActivityExpanded}
-              label="Open"
               onClick={() => setIsActivityExpanded((current) => !current)}
             />
           </div>
@@ -1416,24 +1431,44 @@ function getSwitcherSummary(
 
   if (activeView === "managers") {
     return selectedManagerLabel
-      ? `Manager focus: ${selectedManagerLabel}`
+      ? selectedManagerLabel
       : "Choose a manager to preview the next leaderboard view.";
   }
 
   if (shouldShowGroupSelector(activeView)) {
     const availableGroupCount = getGroupOptionsForView(switcher, activeView).length;
     return selectedGroupLabel
-      ? `Group focus: ${selectedGroupLabel}`
+      ? selectedGroupLabel
       : `Choose from ${availableGroupCount} available ${availableGroupCount === 1 ? "group" : "groups"}.`;
   }
 
   if (activeView === "groups") {
     return switcher.accessLevel === "manager"
-      ? "Compare the groups you manage by average points per player."
-      : "Compare every group by average points per player.";
+      ? "Compare the standings for groups you manage"
+      : "Compare the standings for every group";
   }
 
   return "Leaderboard context switcher ready.";
+}
+
+function isSwitcherSummarySelection(
+  activeView: LeaderboardSwitcherView,
+  selectedGroupLabel: string | null,
+  selectedManagerLabel: string | null
+) {
+  if (activeView === "managers") {
+    return Boolean(selectedManagerLabel);
+  }
+
+  if (shouldShowGroupSelector(activeView)) {
+    return Boolean(selectedGroupLabel);
+  }
+
+  return false;
+}
+
+function shouldInlineSwitcherSummary(activeView: LeaderboardSwitcherView) {
+  return activeView === "my_groups" || activeView === "managed_groups";
 }
 
 function getPlaceholderTitle(activeView: LeaderboardSwitcherView) {
@@ -1628,17 +1663,13 @@ function LeaderSummaryCard({
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <h3 className="text-sm font-bold uppercase tracking-wide text-accent-dark">SEE WHO IS LEADING</h3>
-          <div className="shrink-0 rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
-            Shared score: {sharedScore ?? "—"} pts
-          </div>
+          <h3 className="text-sm font-bold uppercase tracking-wide text-accent-dark">WHO IS #1</h3>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-2">
+        <div className="flex shrink-0 items-center">
           <InlineDisclosureButton
             isOpen={isOpen}
-            label="Open"
             onClick={onToggleOpen}
           />
         </div>
@@ -1646,6 +1677,11 @@ function LeaderSummaryCard({
 
       {isOpen ? (
         <>
+          <div className="mt-2">
+            <div className="inline-flex shrink-0 rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+              Shared score: {sharedScore ?? "—"} pts
+            </div>
+          </div>
           <p className="mt-1 min-w-0 text-sm leading-6 text-gray-600">
             {leaders.length > 1
               ? `${leaders.length} players are sharing rank 1 right now.`
