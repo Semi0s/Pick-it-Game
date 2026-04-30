@@ -39,7 +39,9 @@ export function DashboardHero({
             Pick the match scores and earn points the more accurate you predict them.
           </p>
           <p className="text-sm leading-6 text-gray-600">
-            Don&apos;t get left on the bench! Get your first set of picks in before June 11.
+            Don&apos;t get left on the bench!
+            <br />
+            Get your first set of picks in before June 11.
           </p>
         </div>
         <div className="mt-5 mx-auto max-w-xl">

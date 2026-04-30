@@ -32,6 +32,7 @@ import { formatDate } from "@/components/admin/AdminInvitesClient";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { showAppToast } from "@/lib/app-toast";
+import { getRoleBadgeLabel } from "@/lib/access-levels";
 import {
   appendExplainerLanguageToPath,
   appendLanguageToPath,
@@ -922,7 +923,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
           subtitle="Full system control lives here without adding another dock tab."
           badges={
             <>
-              <ManagementBadge label="super admin" tone="accent" />
+              <ManagementBadge label={getRoleBadgeLabel("super admin")} tone="accent" />
               <ManagementBadge label="unlimited" tone="accent" />
             </>
           }
@@ -1136,11 +1137,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
                       <ManagementBadge label={`${group.membershipLimit} seats`} tone="neutral" />
                       {group.userRole === "super_admin" ? (
-                        <ManagementBadge label="super admin" tone="accent" />
+                        <ManagementBadge label={getRoleBadgeLabel("super admin")} tone="accent" />
                       ) : group.userRole === "manager" ? (
-                        <ManagementBadge label="manager" tone="accent" />
+                        <ManagementBadge label={getRoleBadgeLabel("manager")} tone="accent" />
                       ) : (
-                        <ManagementBadge label="player" tone="neutral" />
+                        <ManagementBadge label={getRoleBadgeLabel("player")} tone="neutral" />
                       )}
                     </div>
                   </>
