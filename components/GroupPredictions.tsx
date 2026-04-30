@@ -93,6 +93,19 @@ const AUTO_PICK_SUCCESS_COPY = {
   es: "Auto Pick sugirió este marcador. Revísalo y guarda para confirmar."
 } as const;
 
+const AUTO_PICK_SOURCE_COPY = {
+  en: {
+    teamStrength: "Suggested using team-strength probabilities.",
+    market: "Suggested using market probabilities.",
+    neutral: "Suggested using neutral fallback probabilities."
+  },
+  es: {
+    teamStrength: "Sugerido usando probabilidades de fuerza de equipo.",
+    market: "Sugerido usando probabilidades de mercado.",
+    neutral: "Sugerido usando probabilidades neutras."
+  }
+} as const;
+
 const AUTO_PICK_EMPTY_COPY = {
   en: "No open matches available right now.",
   es: "No hay partidos disponibles en este momento."
@@ -705,6 +718,19 @@ export function GroupPredictions({
                         ? autoPickDraft
                         : undefined
                     }
+                    autoPickHint={
+                      autoPickDraft?.matchId === match.id && activeAutoPickToken === autoPickDraft.token
+                        ? {
+                            sourceText: getAutoPickSourceText(autoPickDraft.source, autoPickLanguage),
+                            probabilityText: formatAutoPickProbabilityText(
+                              match,
+                              autoPickDraft.homeWinProbability,
+                              autoPickDraft.drawProbability,
+                              autoPickDraft.awayWinProbability
+                            )
+                          }
+                        : undefined
+                    }
                     userId={user.id}
                     onSave={handleSave}
                   />
@@ -798,4 +824,28 @@ function matchesTeamSearch(match: MatchWithTeams, normalizedQuery: string) {
     .map((value) => value!.toLowerCase());
 
   return searchableValues.some((value) => value.includes(normalizedQuery));
+}
+
+function getAutoPickSourceText(source: string, language: "en" | "es") {
+  if (source === "manual" || source === "polymarket") {
+    return AUTO_PICK_SOURCE_COPY[language].market;
+  }
+
+  if (source === "ranking") {
+    return AUTO_PICK_SOURCE_COPY[language].teamStrength;
+  }
+
+  return AUTO_PICK_SOURCE_COPY[language].neutral;
+}
+
+function formatAutoPickProbabilityText(
+  match: MatchWithTeams,
+  homeWinProbability: number,
+  drawProbability: number,
+  awayWinProbability: number
+) {
+  const homeLabel = match.homeTeam?.shortName ?? match.homeTeam?.name ?? "Home";
+  const awayLabel = match.awayTeam?.shortName ?? match.awayTeam?.name ?? "Away";
+
+  return `${homeLabel} ${Math.round(homeWinProbability * 100)}% · Draw ${Math.round(drawProbability * 100)}% · ${awayLabel} ${Math.round(awayWinProbability * 100)}%`;
 }

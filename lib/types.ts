@@ -66,6 +66,7 @@ export type Team = {
   shortName: string;
   groupName: string;
   fifaRank: number;
+  fifaPoints?: number | null;
   flagEmoji: string;
 };
 
@@ -158,6 +159,9 @@ export type AutoPickResult = {
   outcome: AutoPickOutcome;
   totalTier: AutoPickTotalTier;
   source: string;
+  homeWinProbability: number;
+  drawProbability: number;
+  awayWinProbability: number;
 };
 
 export type AutoPickDraft = AutoPickResult & {

@@ -14,6 +14,10 @@ type GroupPredictionCardProps = {
   grouped?: boolean;
   prediction?: Prediction;
   prefillSuggestion?: AutoPickDraft;
+  autoPickHint?: {
+    sourceText: string;
+    probabilityText?: string;
+  };
   userId: string;
   onSave: (prediction: Prediction) => Promise<Prediction>;
 };
@@ -24,6 +28,7 @@ export function GroupPredictionCard({
   grouped = false,
   prediction,
   prefillSuggestion,
+  autoPickHint,
   userId,
   onSave
 }: GroupPredictionCardProps) {
@@ -314,6 +319,13 @@ export function GroupPredictionCard({
           </>
         )}
       </button>
+
+      {prefillSuggestion && autoPickHint ? (
+        <p className="mt-1 text-center text-[10px] font-semibold leading-tight tracking-wide text-gray-500">
+          <span>{autoPickHint.sourceText}</span>
+          {autoPickHint.probabilityText ? <span className="block mt-0.5">{autoPickHint.probabilityText}</span> : null}
+        </p>
+      ) : null}
 
       {isSaving || saveError || !canEdit ? (
         <div className="mt-3 min-h-[3rem]">
