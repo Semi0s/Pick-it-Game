@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createAdminInviteAction } from "@/app/admin/actions";
 import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
 import { fetchAdminInvites, type AdminInvite } from "@/lib/admin-data";
+import { getRoleBadgeLabel } from "@/lib/access-levels";
 import { formatDateOnly, formatDateTimeWithZone } from "@/lib/date-time";
 import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { showAppToast } from "@/lib/app-toast";
@@ -246,7 +247,7 @@ export function AdminInvitesSection({
               subtitle={invite.email}
               badges={
                 <>
-                  <ManagementBadge label={invite.role} tone={invite.role === "admin" ? "accent" : "neutral"} />
+                  <ManagementBadge label={getRoleBadgeLabel(invite.role)} tone={invite.role === "admin" ? "accent" : "neutral"} />
                   <ManagementBadge label={formatInviteStatus(invite.status)} tone={getInviteStatusTone(invite.status)} />
                 </>
               }

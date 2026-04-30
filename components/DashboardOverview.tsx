@@ -56,7 +56,7 @@ export function DashboardOverview() {
   } | null>(null);
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
-  const [displayLanguage, setDisplayLanguage] = usePersistentExplainerLanguage(user);
+  const [displayLanguage] = usePersistentExplainerLanguage(user);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
 
   const refreshPredictions = useCallback(async () => {
@@ -244,9 +244,7 @@ export function DashboardOverview() {
         name={user?.name ?? "Player"}
         ctaHref={heroCtaHref}
         ctaLabel={heroCtaLabel}
-        displayLanguage={displayLanguage}
         dashboardCopy={dashboardCopy}
-        onSelectLanguage={setDisplayLanguage}
       />
 
       <AppUpdatesCard />

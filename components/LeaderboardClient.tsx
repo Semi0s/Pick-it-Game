@@ -45,7 +45,6 @@ const DEFAULT_SUBSELECTION_STATE: LeaderboardSubselectionState = {
 };
 
 const LEADERBOARD_SWITCHER_STORAGE_KEY = "leaderboard-switcher-state";
-const LEADERBOARD_VIEW_DISCLOSURE_STORAGE_KEY = "leaderboard-view-disclosure";
 const LEADERBOARD_INTRO_DISCLOSURE_STORAGE_KEY = "leaderboard-intro-disclosure";
 const LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY = "leaderboard-activity-disclosure";
 const LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY = "leaderboard-leader-summary-state";
@@ -70,7 +69,6 @@ export function LeaderboardClient() {
   const [selectedGroupId, setSelectedGroupId] = useState(DEFAULT_SWITCHER_STATE.selectedGroupId);
   const [selectedManagerId, setSelectedManagerId] = useState(DEFAULT_SWITCHER_STATE.selectedManagerId);
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeReactionKey, setActiveReactionKey] = useState<string | null>(null);
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
@@ -102,7 +100,6 @@ export function LeaderboardClient() {
     LEADERBOARD_INTRO_DISCLOSURE_STORAGE_KEY,
     false
   );
-  const [isSwitcherOpen, setIsSwitcherOpen] = useSessionDisclosureState(LEADERBOARD_VIEW_DISCLOSURE_STORAGE_KEY, false);
   const [leaderSummaryStateByContext, setLeaderSummaryStateByContext] = useState<
     Record<string, { isOpen: boolean; showAllLeaders: boolean }>
   >({});
@@ -235,8 +232,6 @@ export function LeaderboardClient() {
 
       if (shouldShowLoading) {
         setIsLoading(true);
-      } else {
-        setIsRefreshing(true);
       }
 
       fetch(requestUrl, { cache: "no-store" })
@@ -264,13 +259,11 @@ export function LeaderboardClient() {
           setError(null);
           hasLoadedLeaderboardRef.current = true;
           setIsLoading(false);
-          setIsRefreshing(false);
         })
         .catch((caughtError: Error) => {
           if (isMounted) {
             setError(caughtError.message);
             setIsLoading(false);
-            setIsRefreshing(false);
           }
         });
     }
@@ -507,7 +500,6 @@ export function LeaderboardClient() {
   const canSelfAwardTrophies = user?.role === "admin";
   const leaders = useMemo(() => users.filter((profile) => profile.rank === 1), [users]);
   const sharedLeaderScore = leaders[0]?.totalPoints ?? null;
-  const tiedFirstPlayerIds = useMemo(() => new Set(leaders.length > 1 ? leaders.map((profile) => profile.id) : []), [leaders]);
   const activeManagedTrophyMember = managedAwardGroup && managedTrophySheetTarget
     ? managedAwardGroup.members.find((member) => member.userId === managedTrophySheetTarget.userId) ?? null
     : null;
@@ -529,7 +521,6 @@ export function LeaderboardClient() {
           <div className="mt-3 flex justify-start">
             <InlineDisclosureButton
               isOpen={isIntroMoreOpen}
-              label="Read More / Click Here"
               variant="subtle"
               onClick={() => setIsIntroMoreOpen((current) => !current)}
             />
@@ -637,149 +628,8 @@ export function LeaderboardClient() {
         </section>
       ) : null}
 
-      <section
-        className={`sticky top-[73px] z-10 overflow-hidden rounded-lg border border-gray-200 bg-white/95 p-4 backdrop-blur transition-opacity ${
-          isRefreshing ? "opacity-90" : "opacity-100"
-        }`}
-      >
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            {switcher && shouldInlineSwitcherSummary(activeView) ? (
-              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">VIEWING:</p>
-                <p className="min-w-0 text-sm font-bold uppercase tracking-wide text-gray-700">
-                  {getSwitcherSummary(activeView, switcher, selectedGroupLabel, selectedManagerLabel)}
-                </p>
-              </div>
-            ) : (
-              <>
-                <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">VIEWING:</p>
-                {switcher ? (
-                  <p
-                    className={`mt-1 min-w-0 ${
-                      isSwitcherSummarySelection(activeView, selectedGroupLabel, selectedManagerLabel)
-                        ? "text-sm font-bold uppercase tracking-wide text-gray-700"
-                        : "text-[10px] font-semibold uppercase tracking-wide text-gray-700"
-                    }`}
-                  >
-                    {getSwitcherSummary(activeView, switcher, selectedGroupLabel, selectedManagerLabel)}
-                  </p>
-                ) : null}
-              </>
-            )}
-          </div>
-          <InlineDisclosureButton
-            isOpen={isSwitcherOpen}
-            onClick={() => setIsSwitcherOpen((current) => !current)}
-          />
-        </div>
-
-        {isSwitcherOpen ? (
-          <>
-            <LeaderboardChoiceRail
-              className="mt-2"
-              prevLabel="Show previous leaderboard views"
-              nextLabel="Show more leaderboard views"
-              activeItemKey={activeView}
-              onActiveItemChange={(nextKey) => setActiveView(nextKey as LeaderboardSwitcherView)}
-            >
-              {(switcher?.tabs ?? [{ value: "global", label: "Global Standings" }]).map((tab) => (
-                <button
-                  key={tab.value}
-                  type="button"
-                  onClick={() => setActiveView(tab.value)}
-                  data-choice-key={tab.value}
-                  data-choice-active={activeView === tab.value ? "true" : "false"}
-                  className={`shrink-0 rounded-md px-3 py-2 text-sm font-bold ${
-                    activeView === tab.value ? "bg-accent text-white" : "bg-gray-100 text-gray-700"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </LeaderboardChoiceRail>
-
-            {(shouldShowGroupSelector(activeView) || shouldShowManagerSelector(activeView)) && switcher ? (
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                {shouldShowGroupSelector(activeView) ? (
-                  <div className="overflow-hidden rounded-md sm:col-span-2">
-                    <LeaderboardChoiceRail
-                      showControls={shouldShowGroupCarouselControls}
-                      prevLabel="Show previous groups"
-                      nextLabel="Show more groups"
-                      contentClassName="flex gap-2 pb-1"
-                      activeItemKey={selectedGroupId}
-                      onActiveItemChange={(nextKey) => setSelectedGroupId(nextKey)}
-                    >
-                      {availableGroupOptions.length > 0 ? (
-                        availableGroupOptions.map((group) => (
-                          <button
-                            key={group.id}
-                            type="button"
-                            onClick={() => setSelectedGroupId(group.id)}
-                            data-choice-key={group.id}
-                            data-choice-active={selectedGroupId === group.id ? "true" : "false"}
-                            className={`w-[min(12.25rem,calc(100vw-7.25rem))] max-w-full shrink-0 rounded-lg border px-2.5 py-2 text-left transition sm:w-[196px] ${
-                              selectedGroupId === group.id
-                                ? "border-accent bg-accent-light"
-                                : "border-gray-200 bg-gray-50 hover:border-accent-light hover:bg-white"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                              <p className="truncate text-sm font-black leading-5 text-gray-950">{group.label}</p>
-                            </div>
-                            {group.rankDelta ? (
-                              <span className={`text-[11px] font-black ${getMovementTone(group.rankDelta)}`}>
-                                {formatRankMovement(group.rankDelta)}
-                              </span>
-                            ) : null}
-                          </div>
-                            <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] font-semibold text-gray-600">
-                              <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
-                                {group.rank ? `#${group.rank}` : "—"}
-                              </span>
-                              <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
-                                {group.totalPlayers} players
-                              </span>
-                              <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
-                                {group.points !== null ? `${group.points} pts` : "— pts"}
-                              </span>
-                            </div>
-                          </button>
-                        ))
-                      ) : (
-                        <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
-                          {activeView === "managed_groups"
-                            ? "You are not managing any groups yet."
-                            : "You have not joined any groups yet."}
-                        </p>
-                      )}
-                    </LeaderboardChoiceRail>
-                  </div>
-                ) : null}
-
-                {shouldShowManagerSelector(activeView) ? (
-                  <label className="block">
-                    <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Manager</span>
-                    <select
-                      value={selectedManagerId}
-                      onChange={(event) => setSelectedManagerId(event.target.value)}
-                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                    >
-                      <option value="">Choose a manager</option>
-                      {switcher.managers.map((manager) => (
-                        <option key={manager.id} value={manager.id}>
-                          {manager.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
-              </div>
-            ) : null}
-          </>
-        ) : null}
+      <section className="px-1">
+        {renderSwitcherControls()}
       </section>
 
       {!isLoading && !error && activityFeed.length > 0 ? (
@@ -1060,7 +910,6 @@ export function LeaderboardClient() {
           {users.map((profile, index) => (
             (() => {
               const isCurrentUser = profile.id === user?.id;
-              const isTiedFirst = tiedFirstPlayerIds.has(profile.id);
               const isLightlyHighlighted = index < 3;
               const rowTone = isCurrentUser
                 ? "border-accent bg-accent-light"
@@ -1104,11 +953,6 @@ export function LeaderboardClient() {
                   <span className="min-w-0 flex-1">
                     <span className="flex w-full items-start justify-between gap-3">
                       <span className="min-w-0">
-                        {isTiedFirst ? (
-                          <span className="mb-1 inline-flex items-center rounded-md bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700">
-                            T1
-                          </span>
-                        ) : null}
                         <span
                           className="min-w-0 truncate text-base font-black text-gray-950"
                         >
@@ -1356,6 +1200,114 @@ export function LeaderboardClient() {
       setActiveManagedTrophyKey(null);
     }
   }
+
+  function renderSwitcherControls(className?: string) {
+    return (
+      <div className={className ?? ""}>
+        <LeaderboardChoiceRail
+          prevLabel="Show previous leaderboard views"
+          nextLabel="Show more leaderboard views"
+          activeItemKey={activeView}
+          onActiveItemChange={(nextKey) => setActiveView(nextKey as LeaderboardSwitcherView)}
+        >
+          {(switcher?.tabs ?? [{ value: "global", label: "Global Standings" }]).map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setActiveView(tab.value)}
+              data-choice-key={tab.value}
+              data-choice-active={activeView === tab.value ? "true" : "false"}
+              className={`shrink-0 rounded-md px-3 py-2 text-sm font-bold ${
+                activeView === tab.value ? "bg-accent text-white" : "bg-gray-100 text-gray-700"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </LeaderboardChoiceRail>
+
+        {(shouldShowGroupSelector(activeView) || shouldShowManagerSelector(activeView)) && switcher ? (
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {shouldShowGroupSelector(activeView) ? (
+              <div className="overflow-hidden rounded-md sm:col-span-2">
+                <LeaderboardChoiceRail
+                  showControls={shouldShowGroupCarouselControls}
+                  prevLabel="Show previous groups"
+                  nextLabel="Show more groups"
+                  contentClassName="flex gap-2 pb-1"
+                  activeItemKey={selectedGroupId}
+                  onActiveItemChange={(nextKey) => setSelectedGroupId(nextKey)}
+                >
+                  {availableGroupOptions.length > 0 ? (
+                    availableGroupOptions.map((group) => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        onClick={() => setSelectedGroupId(group.id)}
+                        data-choice-key={group.id}
+                        data-choice-active={selectedGroupId === group.id ? "true" : "false"}
+                        className={`w-[min(12.25rem,calc(100vw-7.25rem))] max-w-full shrink-0 rounded-lg border px-2.5 py-2 text-left transition sm:w-[196px] ${
+                          selectedGroupId === group.id
+                            ? "border-accent bg-accent-light"
+                            : "border-gray-200 bg-gray-50 hover:border-accent-light hover:bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-black leading-5 text-gray-950">{group.label}</p>
+                          </div>
+                          {group.rankDelta ? (
+                            <span className={`text-[11px] font-black ${getMovementTone(group.rankDelta)}`}>
+                              {formatRankMovement(group.rankDelta)}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] font-semibold text-gray-600">
+                          <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
+                            {group.rank ? `#${group.rank}` : "—"}
+                          </span>
+                          <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
+                            {group.totalPlayers} players
+                          </span>
+                          <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
+                            {group.points !== null ? `${group.points} pts` : "— pts"}
+                          </span>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                      {activeView === "managed_groups"
+                        ? "You are not managing any groups yet."
+                        : "You have not joined any groups yet."}
+                    </p>
+                  )}
+                </LeaderboardChoiceRail>
+              </div>
+            ) : null}
+
+            {shouldShowManagerSelector(activeView) ? (
+              <label className="block">
+                <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Manager</span>
+                <select
+                  value={selectedManagerId}
+                  onChange={(event) => setSelectedManagerId(event.target.value)}
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                >
+                  <option value="">Choose a manager</option>
+                  {switcher.managers.map((manager) => (
+                    <option key={manager.id} value={manager.id}>
+                      {manager.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 }
 
 function LeaderboardPlaceholder({
@@ -1417,58 +1369,6 @@ function getDefaultLeaderboardViewLocal(switcher: LeaderboardSwitcherContext): L
 
 function shouldShowManagerSelector(activeView: LeaderboardSwitcherView) {
   return activeView === "managers";
-}
-
-function getSwitcherSummary(
-  activeView: LeaderboardSwitcherView,
-  switcher: LeaderboardSwitcherContext,
-  selectedGroupLabel: string | null,
-  selectedManagerLabel: string | null
-) {
-  if (activeView === "global") {
-    return "Global rankings stay live by default.";
-  }
-
-  if (activeView === "managers") {
-    return selectedManagerLabel
-      ? selectedManagerLabel
-      : "Choose a manager to preview the next leaderboard view.";
-  }
-
-  if (shouldShowGroupSelector(activeView)) {
-    const availableGroupCount = getGroupOptionsForView(switcher, activeView).length;
-    return selectedGroupLabel
-      ? selectedGroupLabel
-      : `Choose from ${availableGroupCount} available ${availableGroupCount === 1 ? "group" : "groups"}.`;
-  }
-
-  if (activeView === "groups") {
-    return switcher.accessLevel === "manager"
-      ? "Compare the standings for groups you manage"
-      : "Compare the standings for every group";
-  }
-
-  return "Leaderboard context switcher ready.";
-}
-
-function isSwitcherSummarySelection(
-  activeView: LeaderboardSwitcherView,
-  selectedGroupLabel: string | null,
-  selectedManagerLabel: string | null
-) {
-  if (activeView === "managers") {
-    return Boolean(selectedManagerLabel);
-  }
-
-  if (shouldShowGroupSelector(activeView)) {
-    return Boolean(selectedGroupLabel);
-  }
-
-  return false;
-}
-
-function shouldInlineSwitcherSummary(activeView: LeaderboardSwitcherView) {
-  return activeView === "my_groups" || activeView === "managed_groups";
 }
 
 function getPlaceholderTitle(activeView: LeaderboardSwitcherView) {
@@ -1665,7 +1565,7 @@ function LeaderSummaryCard({
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <h3 className="text-sm font-bold uppercase tracking-wide text-accent-dark">WHO IS #1</h3>
+          <h3 className="text-sm font-bold uppercase tracking-wide text-accent-dark">WHO&apos;S #1</h3>
         </div>
         <div className="flex shrink-0 items-center">
           <InlineDisclosureButton

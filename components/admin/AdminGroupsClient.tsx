@@ -15,6 +15,7 @@ import {
 import { Avatar } from "@/components/Avatar";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { showAppToast } from "@/lib/app-toast";
+import { getRoleBadgeLabel } from "@/lib/access-levels";
 import { formatDateOnly } from "@/lib/date-time";
 import {
   ActionButton,
@@ -508,7 +509,7 @@ export function AdminGroupsSection({
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <ManagementBadge label={member.role} tone={member.role === "manager" ? "warning" : "neutral"} />
+                            <ManagementBadge label={getRoleBadgeLabel(member.role)} tone={member.role === "manager" ? "warning" : "neutral"} />
                             <ActionButton
                               tone="danger"
                               disabled={activeKey === `remove-${group.id}-${member.userId}`}

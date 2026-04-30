@@ -1,9 +1,7 @@
 import { KnockoutBracketBuilder } from "@/components/KnockoutBracketBuilder";
-import { KnockoutGroupComparison } from "@/components/KnockoutGroupComparison";
 import { AppShell } from "@/components/AppShell";
 import { ManagementIntro } from "@/components/player-management/Shared";
 import {
-  fetchGroupBracketComparisonView,
   fetchKnockoutBracketEditorView,
   fetchKnockoutStructureStatus
 } from "@/lib/bracket-predictions";
@@ -11,14 +9,7 @@ import { createClient as createServerSupabaseClient } from "@/lib/supabase/serve
 
 export const dynamic = "force-dynamic";
 
-export default async function KnockoutPage({
-  searchParams
-}: {
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  const resolvedSearchParams = searchParams ? await searchParams : {};
-  const selectedGroupId = typeof resolvedSearchParams.group === "string" ? resolvedSearchParams.group : undefined;
-  const selectedPlayerId = typeof resolvedSearchParams.player === "string" ? resolvedSearchParams.player : undefined;
+export default async function KnockoutPage() {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user }
@@ -42,26 +33,6 @@ export default async function KnockoutPage({
         predictions: []
       }))
     : null;
-  const comparisonView =
-    user
-      ? await fetchGroupBracketComparisonView(user.id, selectedGroupId, selectedPlayerId).catch(() => ({
-          groups: [],
-          selectedGroupId: null,
-          selectedGroupName: null,
-          selectedPlayerId: null,
-          mostPickedChampion: null,
-          members: [],
-          selectedPlayerBracket: null
-        }))
-      : {
-          groups: [],
-          selectedGroupId: null,
-          selectedGroupName: null,
-          selectedPlayerId: null,
-          mostPickedChampion: null,
-          members: [],
-          selectedPlayerBracket: null
-      };
   const isSeeded = knockoutStatus.isFullySeeded;
   const phaseChip = getKnockoutPhaseChip(knockoutStatus.counts);
 
@@ -81,9 +52,7 @@ export default async function KnockoutPage({
 
       {bracketEditorView ? (
         <div className="mt-5">
-          <KnockoutBracketBuilder initialView={bracketEditorView}>
-            <KnockoutGroupComparison view={comparisonView} />
-          </KnockoutBracketBuilder>
+          <KnockoutBracketBuilder initialView={bracketEditorView} />
         </div>
       ) : null}
     </AppShell>

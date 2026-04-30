@@ -104,13 +104,18 @@ export function LoginForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       {!isDemoFallback ? (
         <div className="rounded-md border border-accent-light bg-white px-3 py-3 text-accent-dark">
-          <div className="flex items-start justify-between gap-3">
-            <p className="text-base font-black uppercase tracking-wide">Invite-only access - Limited membership</p>
+          <div className="flex flex-col items-center text-center">
+            <div>
+              <p className="text-base font-black uppercase tracking-wide">Invite-only access</p>
+              <p className="text-base font-black uppercase tracking-wide">Limited membership</p>
+            </div>
+            <div className="mt-3">
             <InlineDisclosureButton
               isOpen={isInviteInfoOpen}
-              label="See More"
+              variant="subtle"
               onClick={() => setIsInviteInfoOpen((current) => !current)}
             />
+            </div>
           </div>
           {isInviteInfoOpen ? (
             <>

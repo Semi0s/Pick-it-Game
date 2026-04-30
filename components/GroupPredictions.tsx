@@ -36,6 +36,8 @@ const GROUP_PREDICTIONS_SEARCH_STORAGE_KEY = "group-predictions-search";
 const GROUP_PREDICTIONS_STAGE_FILTER_STORAGE_KEY = "group-predictions-stage-filter";
 const GROUP_PREDICTIONS_DATE_FILTER_STORAGE_KEY = "group-predictions-date-filter";
 const GROUP_PREDICTIONS_TEAM_SEARCH_STORAGE_KEY = "group-predictions-team-search";
+const PREDICTION_SCROLL_TOP_OFFSET = 120;
+const POST_SAVE_ADVANCE_DELAY_MS = 225;
 
 const EXPLAINER_TITLE_COPY: Record<ExplainerLanguage, string> = {
   en: "Predict all the match scores below",
@@ -109,6 +111,15 @@ export function GroupPredictions({
   const [isSearchOpen, setIsSearchOpen] = useSessionDisclosureState(GROUP_PREDICTIONS_SEARCH_STORAGE_KEY, false);
   const matchCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dateSectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const pendingAdvanceTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pendingAdvanceTimeoutRef.current !== null) {
+        window.clearTimeout(pendingAdvanceTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (initialMatches) {
@@ -303,11 +314,16 @@ export function GroupPredictions({
       return;
     }
 
-    if (isFirstMatchForDate && sectionNode) {
-      sectionNode.scrollIntoView({ behavior: "smooth", block: "start" });
-    } else if (targetNode) {
-      targetNode.scrollIntoView({ behavior: "smooth", block: "start" });
+    const scrollTarget = (isFirstMatchForDate ? sectionNode : targetNode) ?? targetNode ?? sectionNode;
+    if (!scrollTarget) {
+      return;
     }
+
+    const targetTop = scrollTarget.getBoundingClientRect().top + window.scrollY - PREDICTION_SCROLL_TOP_OFFSET;
+    window.scrollTo({
+      top: Math.max(0, targetTop),
+      behavior: "smooth"
+    });
 
     setPendingScrollMatchId(null);
   }, [filteredMatchesByDate, pendingScrollMatchId, visibleMatches]);
@@ -337,7 +353,14 @@ export function GroupPredictions({
     );
 
     if (nextUnsavedOpenMatch) {
-      jumpToMatch(nextUnsavedOpenMatch.id);
+      if (pendingAdvanceTimeoutRef.current !== null) {
+        window.clearTimeout(pendingAdvanceTimeoutRef.current);
+      }
+
+      pendingAdvanceTimeoutRef.current = window.setTimeout(() => {
+        jumpToMatch(nextUnsavedOpenMatch.id);
+        pendingAdvanceTimeoutRef.current = null;
+      }, POST_SAVE_ADVANCE_DELAY_MS);
     }
 
     fetchPredictionsForMatches(filteredMatches.map((match) => match.id)).then(setSocialPredictions);
@@ -416,7 +439,6 @@ export function GroupPredictions({
           <div className="mt-3 flex justify-start">
             <InlineDisclosureButton
               isOpen={isMoreOpen}
-              label="Read More / Click Here"
               variant="subtle"
               onClick={() => setIsMoreOpen((current) => !current)}
             />
@@ -475,7 +497,6 @@ export function GroupPredictions({
               <div className="mt-4">
                 <InlineDisclosureButton
                   isOpen={isSearchOpen}
-                  label="Search for a match / Click Here"
                   variant="subtle"
                   onClick={() => setIsSearchOpen((current) => !current)}
                 />
@@ -545,8 +566,13 @@ export function GroupPredictions({
               }}
             >
               <div className="flex items-center justify-between">
-                <h3 className="text-xl font-black">{formatDateLabel(date)}</h3>
-                <p className="text-sm font-semibold text-gray-600">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center rounded-md bg-accent-light px-2.5 py-1.5 text-xs font-semibold text-accent-dark sm:px-3 sm:py-2">
+                    {formatWeekdayLabel(date)}
+                  </span>
+                  <h3 className="text-xl font-black">{formatDateLabel(date)}</h3>
+                </div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-700">
                   {dateMatches.length} match{dateMatches.length === 1 ? "" : "es"}
                 </p>
               </div>
@@ -640,6 +666,12 @@ function formatDateLabel(date: string) {
     month: "short",
     day: "numeric",
     year: "numeric"
+  }).format(new Date(`${date}T12:00:00Z`));
+}
+
+function formatWeekdayLabel(date: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short"
   }).format(new Date(`${date}T12:00:00Z`));
 }
 

@@ -19,6 +19,7 @@ import {
 } from "@/app/admin/actions";
 import type { AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import type { LeaderboardFeatureSettingKey, LeaderboardFeatureSettings } from "@/lib/app-settings";
+import { getRoleBadgeLabel } from "@/lib/access-levels";
 import type { LegalDocument } from "@/lib/legal";
 import type { SystemReadinessReport } from "@/lib/system-readiness";
 import { showAppToast } from "@/lib/app-toast";
@@ -556,7 +557,7 @@ export function AdminPlayersClient() {
                 subtitle={player.email}
                 badges={
                   <>
-                    <ManagementBadge label={player.roleLabel === "admin" ? "super admin" : "player"} tone={player.roleLabel === "admin" ? "accent" : "neutral"} />
+                    <ManagementBadge label={getRoleBadgeLabel(player.roleLabel === "admin" ? "super admin" : "player")} tone={player.roleLabel === "admin" ? "accent" : "neutral"} />
                     <ManagementBadge
                       label={
                         player.roleLabel === "admin"

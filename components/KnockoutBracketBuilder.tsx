@@ -3,11 +3,7 @@
 import { Clock3, Trophy } from "lucide-react";
 import { PointerEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
 import { saveBracketPredictionAction } from "@/app/knockout/actions";
-import {
-  InlineDisclosureButton,
-  useSessionDisclosureState,
-  useSessionJsonState
-} from "@/components/player-management/Shared";
+import { useSessionJsonState } from "@/components/player-management/Shared";
 import { showAppToast } from "@/lib/app-toast";
 import { formatDateTimeWithZone } from "@/lib/date-time";
 import {
@@ -19,7 +15,6 @@ import type { BracketPrediction } from "@/lib/types";
 
 type KnockoutBracketBuilderProps = {
   initialView: KnockoutBracketEditorView;
-  children?: React.ReactNode;
 };
 
 type BracketSlideView = {
@@ -46,17 +41,13 @@ type MatchAlignmentRow = {
 };
 
 type RailMotion = "open-left" | "open-right" | "rolled-left" | "rolled-right" | "flat";
-const KNOCKOUT_PHASE_NAV_STORAGE_KEY = "knockout-phase-nav";
-const KNOCKOUT_SECTION_STORAGE_KEY = "knockout-section";
 const KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY = "knockout-active-slide";
 
-export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracketBuilderProps) {
+export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderProps) {
   const [predictions, setPredictions] = useState<BracketPrediction[]>(initialView.predictions);
   const [pendingMatchId, setPendingMatchId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "error" | "success"; text: string } | null>(null);
   const [activeSlideIndex, setActiveSlideIndex] = useSessionJsonState<number>(KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY, 0);
-  const [isPhaseNavOpen, setIsPhaseNavOpen] = useSessionDisclosureState(KNOCKOUT_PHASE_NAV_STORAGE_KEY, false);
-  const [isSectionExpanded, setIsSectionExpanded] = useSessionDisclosureState(KNOCKOUT_SECTION_STORAGE_KEY, false);
   const [transitionDirection, setTransitionDirection] = useState<-1 | 0 | 1>(0);
   const [transitionReady, setTransitionReady] = useState(true);
   const touchStartXRef = useRef<number | null>(null);
@@ -66,9 +57,6 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
 
   const view = useMemo(() => deriveEditorView(initialView, predictions), [initialView, predictions]);
   const slides = useMemo(() => buildBracketSlides(view), [view]);
-  const totalMatches = view.stages.reduce((sum, stage) => sum + stage.matches.length, 0);
-  const savedPickCount = predictions.length;
-
   useEffect(() => {
     if (message) {
       showAppToast(message);
@@ -101,50 +89,36 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
 
   return (
     <section className="space-y-4">
-      <div className="rounded-lg border border-gray-200 bg-white p-3 sm:p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Phase Navigation</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-700">
-              Jump to each knockout phase here
-            </p>
-          </div>
-          <InlineDisclosureButton isOpen={isPhaseNavOpen} onClick={() => setIsPhaseNavOpen((current) => !current)} />
-        </div>
-        {isPhaseNavOpen ? (
-          <KnockoutPhaseChoiceRail
-            className="mt-3"
-            showControls={slides.length > 1}
-            activeItemKey={slides[activeSlideIndex]?.id}
-            onActiveItemChange={(nextKey) => {
-              const nextIndex = slides.findIndex((slide) => slide.id === nextKey);
-              if (nextIndex >= 0) {
-                goToSlide(nextIndex);
-              }
-            }}
-          >
-            {slides.map((slide, index) => {
-              const isActive = index === activeSlideIndex;
-              return (
-                <button
-                  key={slide.id}
-                  type="button"
-                  onClick={() => goToSlide(index)}
-                  data-choice-key={slide.id}
-                  data-choice-active={isActive ? "true" : "false"}
-                  className={`inline-flex items-center rounded-md px-3 py-2 text-sm font-bold transition ${
-                    isActive
-                      ? "bg-accent text-white"
-                      : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
-                  }`}
-                >
-                  {slide.title}
-                </button>
-              );
-            })}
-          </KnockoutPhaseChoiceRail>
-        ) : null}
-      </div>
+      <KnockoutPhaseChoiceRail
+        showControls={slides.length > 1}
+        activeItemKey={slides[activeSlideIndex]?.id}
+        onActiveItemChange={(nextKey) => {
+          const nextIndex = slides.findIndex((slide) => slide.id === nextKey);
+          if (nextIndex >= 0) {
+            goToSlide(nextIndex);
+          }
+        }}
+      >
+        {slides.map((slide, index) => {
+          const isActive = slide.id === slides[activeSlideIndex]?.id;
+          return (
+            <button
+              key={slide.id}
+              type="button"
+              onClick={() => goToSlide(index)}
+              data-choice-key={slide.id}
+              data-choice-active={isActive ? "true" : "false"}
+              className={`inline-flex items-center rounded-md px-3 py-2 text-sm font-bold transition ${
+                isActive
+                  ? "bg-accent text-white"
+                  : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
+              }`}
+            >
+              {slide.title}
+            </button>
+          );
+        })}
+      </KnockoutPhaseChoiceRail>
 
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div
@@ -169,55 +143,6 @@ export function KnockoutBracketBuilder({ initialView, children }: KnockoutBracke
           />
         </div>
       </div>
-
-      <div className="relative rounded-lg border border-gray-200 bg-white p-3 sm:p-4">
-        <div className="absolute right-3 top-3 sm:right-4 sm:top-4">
-          <InlineDisclosureButton isOpen={isSectionExpanded} onClick={() => setIsSectionExpanded((current) => !current)} />
-        </div>
-        <div className="pr-20 sm:pr-24">
-          <div className="min-w-0">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Tests</p>
-          </div>
-        </div>
-        {isSectionExpanded ? (
-          <>
-            <div className="mt-4 min-w-0">
-              <h2 className="text-2xl font-black leading-tight text-gray-950">Build your bracket.</h2>
-              <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
-                Move round by round through the knockout path. The center lane stays large and clear while the edges keep
-                the bracket story visible.
-              </p>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <div
-                className={`inline-flex rounded-md px-3 py-2 text-sm font-semibold ${
-                  view.isLocked ? "bg-gray-100 text-gray-700" : "bg-accent-light text-accent-dark"
-                }`}
-              >
-                {view.isLocked ? "Locked" : "Open"}
-              </div>
-              <div className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
-                {savedPickCount} of {totalMatches} picks saved
-              </div>
-              <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-                {view.bracketPoints} pts · {view.correctPicks} correct
-              </div>
-            </div>
-            {!view.isLocked && view.firstRoundOf32Kickoff ? (
-              <p className="mt-4 rounded-md border border-accent-light bg-accent-light/40 px-3 py-3 text-sm font-semibold text-accent-dark">
-                Picks stay open until {formatKickoff(view.firstRoundOf32Kickoff)}.
-              </p>
-            ) : null}
-            {view.isLocked ? (
-              <p className="mt-4 rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-700">
-                Knockout picks are locked because the first knockout match has started.
-              </p>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-
-      {isSectionExpanded ? <div className="space-y-4">{children}</div> : null}
     </section>
   );
 

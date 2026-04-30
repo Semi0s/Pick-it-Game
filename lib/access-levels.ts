@@ -17,14 +17,44 @@ export function getAccessLevel(user: Pick<UserProfile, "accessLevel" | "role">):
 export function getAccessLevelLabel(user: Pick<UserProfile, "accessLevel" | "role">) {
   const accessLevel = getAccessLevel(user);
   if (accessLevel === "super_admin") {
-    return "Super Admin";
+    return "SA";
   }
 
   if (accessLevel === "manager") {
-    return "Manager";
+    return "M";
   }
 
-  return "Player";
+  return "P";
+}
+
+export function getRoleBadgeLabel(role: string | null | undefined) {
+  if (!role) {
+    return "";
+  }
+
+  const normalizedRole = role.trim().toLowerCase().replace(/[_\s-]+/g, " ");
+
+  if (normalizedRole === "super admin" || normalizedRole === "super_admin") {
+    return "SA";
+  }
+
+  if (normalizedRole === "manager") {
+    return "M";
+  }
+
+  if (normalizedRole === "director") {
+    return "D";
+  }
+
+  if (normalizedRole === "admin") {
+    return "A";
+  }
+
+  if (normalizedRole === "player") {
+    return "P";
+  }
+
+  return role;
 }
 
 export function getAccessLevelDescription(user: Pick<UserProfile, "accessLevel" | "role">) {

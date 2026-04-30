@@ -85,7 +85,6 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
             <div className="mt-3 flex justify-start">
               <InlineDisclosureButton
                 isOpen={isTopCardOpen}
-                label="Read More / Click Here"
                 variant="subtle"
                 onClick={() => setIsTopCardOpen((current) => !current)}
               />

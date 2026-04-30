@@ -54,7 +54,8 @@ import {
   ManagementEmptyState,
   ManagementGrid,
   ManagementIntro,
-  normalizeInviteTokenInput
+  normalizeInviteTokenInput,
+  useSessionDisclosureState
 } from "@/components/player-management/Shared";
 
 type MyGroupsClientProps = {
@@ -70,6 +71,7 @@ const GROUP_LIMIT_SECTION_STORAGE_KEY = "my-groups-expanded-group-limit-sections
 const GROUP_PEOPLE_SECTION_STORAGE_KEY = "my-groups-expanded-group-people-sections";
 const GROUP_TROPHY_SECTION_STORAGE_KEY = "my-groups-expanded-group-trophy-sections";
 const GROUP_INFO_SECTION_STORAGE_KEY = "my-groups-expanded-group-info-sections";
+const CREATE_GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-create-group";
 const TROPHY_PROMPTS = [
   { name: "Office Oracle", icon: "🧠", description: "Sees the result before the rest of the room does." },
   { name: "The Messi of Marketing", icon: "🐐", description: "Turns bold calls into highlight reels." },
@@ -134,6 +136,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [expandedPeopleInviteIds, setExpandedPeopleInviteIds] = useState<string[]>([]);
   const [expandedTrophyIds, setExpandedTrophyIds] = useState<string[]>([]);
   const [expandedGroupInfoIds, setExpandedGroupInfoIds] = useState<string[]>([]);
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = useSessionDisclosureState(CREATE_GROUP_DISCLOSURE_STORAGE_KEY, false);
   const [hasRestoredGroupDisclosureState, setHasRestoredGroupDisclosureState] = useState(false);
   const [hasRestoredGroupLimitState, setHasRestoredGroupLimitState] = useState(false);
   const [hasRestoredPeopleInviteState, setHasRestoredPeopleInviteState] = useState(false);
@@ -995,30 +998,42 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             onSubmit={handleCreateGroup}
             className="space-y-4 rounded-lg border border-green-200 bg-green-50 p-4 transition-colors"
           >
-            <h3 className="text-lg font-bold">{summary?.ok && summary.currentUser.role === "admin" ? "Create a group (Unlimited)" : "Create a group"}</h3>
-            <label className="block">
-              <span className="text-sm font-bold text-gray-800">Group name</span>
-              <input
-                required
-                value={groupName}
-                onChange={(event) => setGroupName(event.target.value)}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-bold">
+                {summary?.ok && summary.currentUser.role === "admin" ? "Create a group (Unlimited)" : "Create a group"}
+              </h3>
+              <InlineDisclosureButton
+                isOpen={isCreateGroupOpen}
+                onClick={() => setIsCreateGroupOpen((current) => !current)}
               />
-            </label>
-            <label className="block">
-              <span className="text-sm font-bold text-gray-800">Membership limit</span>
-              <input
-                type="number"
-                min={1}
-                value={membershipLimit}
-                onChange={(event) => setMembershipLimit(event.target.value)}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                placeholder="Leave blank for the default"
-              />
-            </label>
-            <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
-              {isCreatingGroup ? "Creating..." : "Create Group"}
-            </ActionButton>
+            </div>
+            {isCreateGroupOpen ? (
+              <>
+                <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Group name</span>
+                  <input
+                    required
+                    value={groupName}
+                    onChange={(event) => setGroupName(event.target.value)}
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Membership limit</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={membershipLimit}
+                    onChange={(event) => setMembershipLimit(event.target.value)}
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                    placeholder="Leave blank for the default"
+                  />
+                </label>
+                <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
+                  {isCreatingGroup ? "Creating..." : "Create Group"}
+                </ActionButton>
+              </>
+            ) : null}
           </form>
         )
       ) : null}

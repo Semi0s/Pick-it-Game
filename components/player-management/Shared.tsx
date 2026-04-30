@@ -25,7 +25,8 @@ export function InlineDisclosureButton({
   onClick: () => void;
   variant?: "chip" | "subtle";
 }) {
-  const resolvedLabel = label ?? (isOpen ? "Close" : "Open");
+  const resolvedLabel =
+    label ?? (variant === "subtle" ? (isOpen ? "Less" : "More") : isOpen ? "Close" : "Open");
   const className =
     variant === "subtle"
       ? "inline-flex items-center gap-1 px-0 py-0 text-[10px] font-semibold uppercase tracking-wide text-gray-700 transition hover:text-accent-dark"
@@ -258,7 +259,6 @@ export function ManagementIntro({
           <div className="mt-3 flex justify-start">
             <InlineDisclosureButton
               isOpen={isMoreOpen}
-              label="Read More / Click Here"
               variant={disclosureVariant}
               onClick={() => setIsMoreOpen((current) => !current)}
             />

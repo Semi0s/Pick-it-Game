@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { BarChart3, CircleUserRound, SquareCheckBig, UsersRound } from "lucide-react";
+import { BarChart3, ChevronDown, CircleUserRound, Globe, SquareCheckBig, UsersRound } from "lucide-react";
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { APP_TOAST_EVENT, markAppToastsReady, type AppToastDetail } from "@/lib/app-toast";
 import { getStrings } from "@/lib/strings";
-import { PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, type SupportedLanguage } from "@/lib/i18n";
+import { PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, normalizeExplainerLanguage, type ExplainerLanguage, type SupportedLanguage } from "@/lib/i18n";
 import {
   fetchCurrentUserTrophies,
   fetchPendingTrophyCelebrations,
@@ -34,12 +34,34 @@ const TROPHY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_TOAST_DURATION_MS = 4200;
 const DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-shown:";
 const HELPER_LANGUAGE_CHANGED_EVENT = "pickit:helper-language-changed";
+const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
+  en: "English",
+  es: "Español",
+  fr: "Français",
+  pt: "Português",
+  de: "Deutsch"
+};
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading } = useCurrentUser();
   const [dockLanguage, setDockLanguage] = useState<SupportedLanguage>(user?.preferredLanguage === "es" ? "es" : "en");
+  const [displayLanguage, setDisplayLanguage] = useState<ExplainerLanguage>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
+        if (storedValue) {
+          return normalizeExplainerLanguage(storedValue);
+        }
+      } catch (error) {
+        console.warn("Could not restore helper language in app shell.", error);
+      }
+    }
+
+    return "en";
+  });
+  const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const copy = getStrings(dockLanguage);
   const navItems = [
     { href: "/groups", label: copy.myPicks, ariaLabel: copy.myPicks, icon: SquareCheckBig },
@@ -52,6 +74,78 @@ export function AppShell({ children }: AppShellProps) {
   const [readinessBanner, setReadinessBanner] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Array<{ id: string; tone: AppToastDetail["tone"]; text: string }>>([]);
   const lastTrophySignatureRef = useRef<string>("");
+  const languageMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isLanguageMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!languageMenuRef.current?.contains(event.target as Node)) {
+        setIsLanguageMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsLanguageMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isLanguageMenuOpen]);
+
+  useEffect(() => {
+    if (!user) {
+      setDisplayLanguage("en");
+      return;
+    }
+
+    const syncDisplayLanguage = () => {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      try {
+        const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
+        if (storedValue) {
+          setDisplayLanguage(normalizeExplainerLanguage(storedValue));
+          return;
+        }
+      } catch (error) {
+        console.warn("Could not read helper language in app shell.", error);
+      }
+
+      setDisplayLanguage(user.preferredLanguage === "es" ? "es" : "en");
+    };
+
+    syncDisplayLanguage();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY) {
+        syncDisplayLanguage();
+      }
+    };
+
+    const handleHelperLanguageChange = () => {
+      syncDisplayLanguage();
+    };
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener(HELPER_LANGUAGE_CHANGED_EVENT, handleHelperLanguageChange as EventListener);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener(HELPER_LANGUAGE_CHANGED_EVENT, handleHelperLanguageChange as EventListener);
+    };
+  }, [user]);
 
   useEffect(() => {
     const dismissToastLater = (id: string, durationMs?: number) => {
@@ -343,6 +437,47 @@ export function AppShell({ children }: AppShellProps) {
                 {getAccessLevelLabel(user)}
               </span>
             ) : null}
+            <div ref={languageMenuRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setIsLanguageMenuOpen((current) => !current)}
+                className="inline-flex h-10 items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light sm:px-2.5 sm:py-1.5"
+                aria-haspopup="menu"
+                aria-expanded={isLanguageMenuOpen}
+                aria-label={`Translate helper copy. Current language: ${EXPLAINER_LANGUAGE_LABELS[displayLanguage]}`}
+              >
+                <Globe aria-hidden className="h-3.5 w-3.5 text-accent-dark" />
+                <span>{displayLanguage.toUpperCase()}</span>
+                <ChevronDown aria-hidden className="h-3.5 w-3.5 text-gray-500" />
+              </button>
+              {isLanguageMenuOpen ? (
+                <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+                  {(Object.keys(EXPLAINER_LANGUAGE_LABELS) as ExplainerLanguage[]).map((language) => (
+                    <button
+                      key={language}
+                      type="button"
+                      onClick={() => {
+                        setDisplayLanguage(language);
+                        setIsLanguageMenuOpen(false);
+                        try {
+                          window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, language);
+                          window.dispatchEvent(new CustomEvent(HELPER_LANGUAGE_CHANGED_EVENT));
+                        } catch (error) {
+                          console.warn("Could not persist helper language in app shell.", error);
+                        }
+                      }}
+                      className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm font-semibold transition ${
+                        language === displayLanguage ? "bg-accent-light text-accent-dark" : "text-gray-700 hover:bg-gray-50"
+                      }`}
+                      role="menuitem"
+                    >
+                      <span>{EXPLAINER_LANGUAGE_LABELS[language]}</span>
+                      <span className="text-xs font-black uppercase">{language}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <button
               type="button"
               onClick={async () => {

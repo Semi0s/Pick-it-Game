@@ -43,6 +43,7 @@ export function GroupPredictionCard({
   const canSubmitNewPrediction = Boolean(prediction) ? hasUnsavedScoreChange : true;
   const usePrimaryButton = !prediction || hasUnsavedScoreChange;
   const isSavedState = Boolean(lastSavedAt) && !hasUnsavedScoreChange && !isSaving && !saveError && canEdit;
+  const matchLabel = matchNumber ? `Match ${matchNumber}` : "Match";
 
   useEffect(() => {
     setHomeScore(getInitialScore(prediction?.predictedHomeScore));
@@ -105,12 +106,12 @@ export function GroupPredictionCard({
               : "border-gray-200 bg-gray-50"
       }`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+        <div className="min-h-11 flex items-center">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {matchNumber ? (
               <span
-                className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-black ${
+                className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg font-black ${
                   isFinal ? "bg-gray-100 text-gray-900" : "bg-accent text-white"
                 }`}
               >
@@ -155,9 +156,9 @@ export function GroupPredictionCard({
         </p>
       ) : null}
 
-      <div className="mt-4">
+      <div className="mt-2">
         <div
-          className={`rounded-md border px-3 py-3 ${
+          className={`relative rounded-md border px-3 py-3 ${
             isFinal
               ? "border-gray-600 bg-gray-700"
               : isLive
@@ -165,10 +166,15 @@ export function GroupPredictionCard({
                 : "border-gray-200 bg-white"
           }`}
         >
-          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4">
+          <span
+            aria-hidden
+            className={`pointer-events-none absolute bottom-0 left-1/2 top-0 -translate-x-1/2 border-l ${
+              isFinal ? "border-gray-500" : isLive ? "border-amber-200" : "border-gray-200"
+            }`}
+          />
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
           <ScoreInput
             flag={match.homeTeam?.flagEmoji}
-            shortName={match.homeTeam?.shortName ?? "Home"}
             fullName={match.homeTeam?.name ?? match.homeTeam?.shortName ?? "Home"}
             value={homeScore}
             disabled={locked}
@@ -177,14 +183,20 @@ export function GroupPredictionCard({
             isHighlighted={scoreOutcome === "home" || scoreOutcome === "draw"}
             onChange={(value) => handleScoreChange(value, awayScore)}
           />
-          <span className={`text-sm font-black ${isFinal ? "text-gray-300" : isLive ? "text-amber-700" : "text-gray-400"}`}>
-            vs.
+          <span
+            className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-[10px] font-black uppercase ${
+              isFinal
+                ? "border-gray-500 bg-white text-gray-500"
+                : isLive
+                  ? "border-amber-200 bg-white text-amber-700"
+                  : "border-gray-200 bg-white text-gray-400"
+            }`}
+          >
+            vs
           </span>
           <ScoreInput
             flag={match.awayTeam?.flagEmoji}
-            shortName={match.awayTeam?.shortName ?? "Away"}
             fullName={match.awayTeam?.name ?? match.awayTeam?.shortName ?? "Away"}
-            align="right"
             value={awayScore}
             disabled={locked}
             isFinal={isFinal}
@@ -199,30 +211,42 @@ export function GroupPredictionCard({
       <button
         type="submit"
         disabled={!canEdit || isSaving || !canSubmitNewPrediction}
-        className={`mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-3 text-base font-bold transition disabled:cursor-not-allowed ${
+        className={`mt-1.5 inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-3 font-bold transition disabled:cursor-not-allowed ${
           usePrimaryButton
-            ? "border-accent bg-accent text-white hover:border-accent-dark hover:bg-accent-dark"
+            ? "border-accent bg-accent text-sm text-white hover:border-accent-dark hover:bg-accent-dark"
             : isSavedState
-              ? "border-gray-200 bg-transparent text-gray-700 hover:border-gray-300 hover:bg-gray-100 disabled:border-gray-200 disabled:bg-transparent disabled:text-gray-700"
-              : "border-gray-300 bg-gray-300 text-gray-600 disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600"
+              ? "border-gray-200 bg-transparent text-gray-500 hover:border-gray-300 hover:bg-gray-100 disabled:border-gray-200 disabled:bg-transparent disabled:text-gray-500"
+              : "border-gray-300 bg-gray-300 text-sm text-gray-600 disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600"
         }`}
       >
-        {!isSaving && !saveError && lastSavedAt && !hasUnsavedScoreChange ? <Check aria-hidden className="h-5 w-5" /> : null}
-        {!canEdit
-          ? "Predictions locked"
-          : isSaving
-            ? "Saving..."
-            : saveError
-              ? "Failed to save"
-              : lastSavedAt && !hasUnsavedScoreChange
-              ? "Saved"
-              : prediction
-                ? "Update pick"
-                : "Save pick"}
+        {isSavedState ? (
+          <span className="flex flex-col items-center justify-center leading-tight">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              Adjust the scores to update prediction.
+            </span>
+            <span className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              {matchLabel} Saved {formatSavedAt(lastSavedAt!)}
+            </span>
+          </span>
+        ) : (
+          <>
+            {!isSaving && !saveError && lastSavedAt && !hasUnsavedScoreChange ? <Check aria-hidden className="h-5 w-5" /> : null}
+            {!canEdit
+              ? "Predictions locked"
+              : isSaving
+                ? "Saving..."
+                : saveError
+                  ? "Failed to save"
+                  : prediction
+                    ? `Update ${matchLabel}`
+                    : `Save ${matchLabel}`}
+          </>
+        )}
       </button>
 
-      <div className="mt-3 min-h-[3rem]">
-        {isSaving ? (
+      {isSaving || saveError || !canEdit ? (
+        <div className="mt-3 min-h-[3rem]">
+          {isSaving ? (
           <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
             Saving...
           </p>
@@ -234,16 +258,9 @@ export function GroupPredictionCard({
           <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
             Predictions locked.
           </p>
-      ) : lastSavedAt && !hasUnsavedScoreChange ? (
-        <p className="rounded-md bg-gray-100 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-700">
-          Saved · Last saved {formatSavedAt(lastSavedAt)}
-        </p>
-      ) : !canSubmitNewPrediction ? (
-        <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
-          Adjust a score to update this pick.
-        </p>
+          ) : null}
+        </div>
       ) : null}
-      </div>
     </form>
   );
 
@@ -258,9 +275,7 @@ export function GroupPredictionCard({
 
 type ScoreInputProps = {
   flag?: string;
-  shortName: string;
   fullName: string;
-  align?: "left" | "right";
   value: string;
   disabled: boolean;
   isFinal?: boolean;
@@ -271,9 +286,7 @@ type ScoreInputProps = {
 
 function ScoreInput({
   flag,
-  shortName,
   fullName,
-  align = "left",
   value,
   disabled,
   isFinal,
@@ -281,18 +294,20 @@ function ScoreInput({
   isHighlighted,
   onChange
 }: ScoreInputProps) {
+  const badgeTone = isFinal
+    ? "bg-gray-600 text-gray-100"
+    : isLive
+      ? "bg-gray-100 text-gray-700"
+      : "bg-gray-100 text-gray-600";
+
   const teamCopy = (
-    <span className={`min-w-0 flex-1 ${align === "right" ? "text-right" : ""}`}>
-      <span
-        className={`block truncate text-sm font-black ${
-          isFinal ? "text-gray-100" : isHighlighted ? "text-accent-dark" : isLive ? "text-amber-900" : "text-gray-700"
-        }`}
-      >
-        {flag} {shortName}
+    <span className="min-w-0 text-center">
+      <span className={`inline-flex min-w-8 items-center justify-center rounded-sm px-1.5 py-0.5 text-lg leading-none ${badgeTone}`}>
+        {flag}
       </span>
       <span
-        className={`block truncate text-[10px] font-semibold uppercase tracking-wide ${
-          isFinal ? "text-gray-300" : isHighlighted ? "text-accent-dark" : isLive ? "text-amber-800" : "text-gray-500"
+        className={`mt-1 block truncate text-sm font-semibold ${
+          isFinal ? "text-gray-100" : isLive ? "text-gray-900" : "text-gray-900"
         }`}
       >
         {fullName}
@@ -308,7 +323,7 @@ function ScoreInput({
       disabled={disabled}
       value={value}
       onChange={(event) => onChange(event.target.value === "" ? "0" : event.target.value)}
-      className={`h-12 w-16 shrink-0 rounded-md border bg-white px-2 text-center text-xl font-black outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:bg-gray-100 ${
+      className={`h-8 w-20 shrink-0 rounded-md border-2 bg-white px-0 text-center text-xl font-black leading-none outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:bg-gray-100 ${
         isFinal
           ? "border-gray-400 text-gray-950"
           : isLive
@@ -317,24 +332,15 @@ function ScoreInput({
               : "border-amber-300 text-gray-950"
             : isHighlighted
               ? "border-accent text-accent-dark"
-              : "border-gray-300 text-gray-950"
+              : "border-gray-300 text-gray-300"
       }`}
     />
   );
 
   return (
-    <label className={`flex items-center gap-2 ${align === "right" ? "justify-end" : ""}`}>
-      {align === "right" ? (
-        <>
-          {scoreInput}
-          {teamCopy}
-        </>
-      ) : (
-        <>
-          {teamCopy}
-          {scoreInput}
-        </>
-      )}
+    <label className="flex flex-col items-center gap-2 text-center">
+      {scoreInput}
+      {teamCopy}
     </label>
   );
 }
