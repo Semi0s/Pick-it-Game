@@ -1,12 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { CircleHelp, SquareCheckBig } from "lucide-react";
+import { CircleHelp, Sparkles, SquareCheckBig } from "lucide-react";
 
 type DashboardHeroProps = {
   name: string;
   ctaHref: string;
   ctaLabel: string;
+  autoPickLabel: string;
+  autoPickLoadingLabel: string;
+  isAutoPicking: boolean;
+  onAutoPick: () => void;
   dashboardCopy: { hello: string; help: string };
 };
 
@@ -14,6 +18,10 @@ export function DashboardHero({
   name,
   ctaHref,
   ctaLabel,
+  autoPickLabel,
+  autoPickLoadingLabel,
+  isAutoPicking,
+  onAutoPick,
   dashboardCopy
 }: DashboardHeroProps) {
   return (
@@ -45,13 +53,24 @@ export function DashboardHero({
           </p>
         </div>
         <div className="mt-5 mx-auto max-w-xl">
-          <Link
-            href={ctaHref}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
-          >
-            <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
-            {ctaLabel}
-          </Link>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Link
+              href={ctaHref}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
+            >
+              <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
+              {ctaLabel}
+            </Link>
+            <button
+              type="button"
+              onClick={onAutoPick}
+              disabled={isAutoPicking}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Sparkles aria-hidden className="h-4 w-4 shrink-0 text-accent-dark" />
+              {isAutoPicking ? autoPickLoadingLabel : autoPickLabel}
+            </button>
+          </div>
         </div>
       </div>
     </section>

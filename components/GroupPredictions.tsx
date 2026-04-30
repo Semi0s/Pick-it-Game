@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Network, SquareCheckBig, Trophy } from "lucide-react";
+import { Network, Sparkles, SquareCheckBig, Trophy } from "lucide-react";
 import { showAppToast } from "@/lib/app-toast";
 import { InlineDisclosureButton, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
+import { buildAutoPickDraft } from "@/lib/auto-pick";
+import { fetchNextAutoPick, restoreStoredAutoPickDraft } from "@/lib/auto-pick-client";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import {
   getExplainerLanguageForUser,
@@ -19,7 +21,7 @@ import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
 import { fetchPredictionsForMatches, type SocialPrediction } from "@/lib/social-predictions";
 import { getMatchDateKey } from "@/lib/tournament-calendar";
-import type { MatchStage, MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
+import type { AutoPickDraft, MatchStage, MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
 import { GroupPredictionCard } from "@/components/GroupPredictionCard";
 import { SocialPredictionList } from "@/components/SocialPredictionList";
 
@@ -38,6 +40,7 @@ const GROUP_PREDICTIONS_DATE_FILTER_STORAGE_KEY = "group-predictions-date-filter
 const GROUP_PREDICTIONS_TEAM_SEARCH_STORAGE_KEY = "group-predictions-team-search";
 const PREDICTION_SCROLL_TOP_OFFSET = 120;
 const POST_SAVE_ADVANCE_DELAY_MS = 225;
+const AUTO_PICK_REVEAL_DELAY_MS = 650;
 
 const EXPLAINER_TITLE_COPY: Record<ExplainerLanguage, string> = {
   en: "Predict all the match scores below",
@@ -75,6 +78,26 @@ const EXPLAINER_COPY: Record<ExplainerLanguage, string[]> = {
   ]
 };
 
+const AUTO_PICK_LABEL_COPY = {
+  en: "Auto Pick Next Match",
+  es: "Auto Elegir Próximo Partido"
+} as const;
+
+const AUTO_PICK_LOADING_COPY = {
+  en: "Auto Picking...",
+  es: "Eligiendo..."
+} as const;
+
+const AUTO_PICK_SUCCESS_COPY = {
+  en: "Auto Pick suggested this score. Review and save to confirm.",
+  es: "Auto Pick sugirió este marcador. Revísalo y guarda para confirmar."
+} as const;
+
+const AUTO_PICK_EMPTY_COPY = {
+  en: "No open matches available right now.",
+  es: "No hay partidos disponibles en este momento."
+} as const;
+
 export function GroupPredictions({
   user,
   initialMatches,
@@ -93,6 +116,9 @@ export function GroupPredictions({
   const [pendingScrollMatchId, setPendingScrollMatchId] = useState<string | null>(null);
   const [focusedMatchId, setFocusedMatchId] = useState<string | null>(null);
   const [isKnockoutSeeded, setIsKnockoutSeeded] = useState(initialKnockoutSeeded ?? false);
+  const [autoPickDraft, setAutoPickDraft] = useState<AutoPickDraft | null>(null);
+  const [activeAutoPickToken, setActiveAutoPickToken] = useState<string | null>(null);
+  const [isAutoPicking, setIsAutoPicking] = useState(false);
   const [explainerLanguage] = useState<ExplainerLanguage>(() => {
     if (typeof window !== "undefined") {
       try {
@@ -112,14 +138,21 @@ export function GroupPredictions({
   const matchCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dateSectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pendingAdvanceTimeoutRef = useRef<number | null>(null);
+  const hasConsumedStoredAutoPickRef = useRef(false);
+  const autoPickRevealTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
       if (pendingAdvanceTimeoutRef.current !== null) {
         window.clearTimeout(pendingAdvanceTimeoutRef.current);
       }
+      if (autoPickRevealTimeoutRef.current !== null) {
+        window.clearTimeout(autoPickRevealTimeoutRef.current);
+      }
     };
   }, []);
+
+  const autoPickLanguage = explainerLanguage === "es" ? "es" : "en";
 
   useEffect(() => {
     if (initialMatches) {
@@ -330,6 +363,10 @@ export function GroupPredictions({
 
   async function handleSave(prediction: Prediction) {
     const savedPrediction = await savePlayerPrediction(prediction);
+    if (autoPickDraft?.matchId === savedPrediction.matchId) {
+      setAutoPickDraft(null);
+      setActiveAutoPickToken(null);
+    }
     let nextPredictions: Prediction[] = [];
 
     setPredictions((currentPredictions) => {
@@ -366,6 +403,61 @@ export function GroupPredictions({
     fetchPredictionsForMatches(filteredMatches.map((match) => match.id)).then(setSocialPredictions);
     return savedPrediction;
   }
+
+  async function handleAutoPickAction() {
+    setIsAutoPicking(true);
+
+    try {
+      const suggestion = await fetchNextAutoPick();
+      const draft = buildAutoPickDraft(suggestion);
+      triggerAutoPickDraft(draft);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : AUTO_PICK_EMPTY_COPY[autoPickLanguage];
+      const localizedMessage = message === AUTO_PICK_EMPTY_COPY.en ? AUTO_PICK_EMPTY_COPY[autoPickLanguage] : message;
+      showAppToast({
+        tone: localizedMessage === AUTO_PICK_EMPTY_COPY[autoPickLanguage] ? "tip" : "error",
+        text: localizedMessage
+      });
+    } finally {
+      setIsAutoPicking(false);
+    }
+  }
+
+  const triggerAutoPickDraft = useCallback(
+    (draft: AutoPickDraft) => {
+      setAutoPickDraft(draft);
+      setActiveAutoPickToken(null);
+      jumpToMatch(draft.matchId);
+
+      if (autoPickRevealTimeoutRef.current !== null) {
+        window.clearTimeout(autoPickRevealTimeoutRef.current);
+      }
+
+      autoPickRevealTimeoutRef.current = window.setTimeout(() => {
+        setActiveAutoPickToken(draft.token);
+        showAppToast({
+          tone: "tip",
+          text: AUTO_PICK_SUCCESS_COPY[autoPickLanguage]
+        });
+        autoPickRevealTimeoutRef.current = null;
+      }, AUTO_PICK_REVEAL_DELAY_MS);
+    },
+    [autoPickLanguage, jumpToMatch]
+  );
+
+  useEffect(() => {
+    if (hasConsumedStoredAutoPickRef.current) {
+      return;
+    }
+
+    hasConsumedStoredAutoPickRef.current = true;
+    const storedDraft = restoreStoredAutoPickDraft();
+    if (!storedDraft) {
+      return;
+    }
+
+    triggerAutoPickDraft(storedDraft);
+  }, [triggerAutoPickDraft]);
 
   function handlePrimaryAction() {
     if (nextPredictionMatchId) {
@@ -454,22 +546,33 @@ export function GroupPredictions({
                 ))}
               </ul>
               <div className="mt-4 mx-auto max-w-xl">
-                <button
-                  type="button"
-                  onClick={handlePrimaryAction}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
-                >
-                  {shouldPromoteKnockout ? (
-                    isKnockoutSeeded ? (
-                      <Network aria-hidden className="h-4 w-4 shrink-0 text-white" />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={handlePrimaryAction}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
+                  >
+                    {shouldPromoteKnockout ? (
+                      isKnockoutSeeded ? (
+                        <Network aria-hidden className="h-4 w-4 shrink-0 text-white" />
+                      ) : (
+                        <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
+                      )
                     ) : (
                       <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
-                    )
-                  ) : (
-                    <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
-                  )}
-                  {primaryActionLabel}
-                </button>
+                    )}
+                    {primaryActionLabel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAutoPickAction}
+                    disabled={isAutoPicking}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Sparkles aria-hidden className="h-4 w-4 shrink-0 text-accent-dark" />
+                    {isAutoPicking ? AUTO_PICK_LOADING_COPY[autoPickLanguage] : AUTO_PICK_LABEL_COPY[autoPickLanguage]}
+                  </button>
+                </div>
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   {shouldShowSecondaryKnockoutButton ? (
                     <Link
@@ -597,6 +700,11 @@ export function GroupPredictions({
                     matchNumber={filteredMatches.findIndex((item) => item.id === match.id) + 1}
                     grouped
                     prediction={predictions.find((item) => item.matchId === match.id)}
+                    prefillSuggestion={
+                      autoPickDraft?.matchId === match.id && activeAutoPickToken === autoPickDraft.token
+                        ? autoPickDraft
+                        : undefined
+                    }
                     userId={user.id}
                     onSave={handleSave}
                   />

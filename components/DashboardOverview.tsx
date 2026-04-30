@@ -9,6 +9,7 @@ import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
 import { DashboardHero } from "@/components/dashboard/DashboardHero";
 import { DashboardNoGroupsPanel } from "@/components/dashboard/DashboardNoGroupsPanel";
+import { fetchNextAutoPick, storeAutoPickDraft } from "@/lib/auto-pick-client";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { showAppToast } from "@/lib/app-toast";
@@ -43,6 +44,21 @@ const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
   de: "Tippe auf das PICK-IT!-Logo, um hierher zurückzukehren."
 };
 
+const AUTO_PICK_LABEL_COPY = {
+  en: "Auto Pick Next Match",
+  es: "Auto Elegir Próximo Partido"
+} as const;
+
+const AUTO_PICK_LOADING_COPY = {
+  en: "Auto Picking...",
+  es: "Eligiendo..."
+} as const;
+
+const AUTO_PICK_EMPTY_COPY = {
+  en: "No open matches available right now.",
+  es: "No hay partidos disponibles en este momento."
+} as const;
+
 export function DashboardOverview() {
   const router = useRouter();
   const { user } = useCurrentUser();
@@ -58,6 +74,7 @@ export function DashboardOverview() {
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
   const [displayLanguage] = usePersistentExplainerLanguage(user);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [isAutoPicking, setIsAutoPicking] = useState(false);
 
   const refreshPredictions = useCallback(async () => {
     if (!user) {
@@ -201,6 +218,7 @@ export function DashboardOverview() {
   const heroCtaLabel = completedCount > 0 ? "My Next Pick" : "My Picks";
   const heroCtaHref = "/groups?focus=next";
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
+  const autoPickLanguage = displayLanguage === "es" ? "es" : "en";
 
   useEffect(() => {
     if (typeof window === "undefined" || !user || groupMatches.length === 0) {
@@ -238,12 +256,37 @@ export function DashboardOverview() {
     router.push(`/my-groups?invite=${encodeURIComponent(token)}`);
   }
 
+  async function handleAutoPickAction() {
+    setIsAutoPicking(true);
+
+    try {
+      const suggestion = await fetchNextAutoPick();
+      storeAutoPickDraft(suggestion);
+      router.push("/groups");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : AUTO_PICK_EMPTY_COPY[autoPickLanguage];
+      const localizedMessage =
+        message === AUTO_PICK_EMPTY_COPY.en ? AUTO_PICK_EMPTY_COPY[autoPickLanguage] : message;
+
+      showAppToast({
+        tone: localizedMessage === AUTO_PICK_EMPTY_COPY[autoPickLanguage] ? "tip" : "error",
+        text: localizedMessage
+      });
+    } finally {
+      setIsAutoPicking(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <DashboardHero
         name={user?.name ?? "Player"}
         ctaHref={heroCtaHref}
         ctaLabel={heroCtaLabel}
+        autoPickLabel={AUTO_PICK_LABEL_COPY[autoPickLanguage]}
+        autoPickLoadingLabel={AUTO_PICK_LOADING_COPY[autoPickLanguage]}
+        isAutoPicking={isAutoPicking}
+        onAutoPick={handleAutoPickAction}
         dashboardCopy={dashboardCopy}
       />
 

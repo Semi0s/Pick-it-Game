@@ -133,6 +133,37 @@ export type MatchWithTeams = Match & {
   awayTeam?: Team;
 };
 
+export type MatchProbabilitySnapshotSource = "manual" | "polymarket" | "ranking" | "neutral";
+
+export type MatchProbabilitySnapshot = {
+  id: string;
+  matchId: string;
+  source: MatchProbabilitySnapshotSource;
+  homeWinProbability: number;
+  drawProbability: number;
+  awayWinProbability: number;
+  over25Probability?: number | null;
+  confidence?: number | null;
+  sourceUrl?: string | null;
+  fetchedAt: string;
+};
+
+export type AutoPickOutcome = "home" | "draw" | "away";
+export type AutoPickTotalTier = "low" | "medium" | "high";
+
+export type AutoPickResult = {
+  matchId: string;
+  homeScore: number;
+  awayScore: number;
+  outcome: AutoPickOutcome;
+  totalTier: AutoPickTotalTier;
+  source: string;
+};
+
+export type AutoPickDraft = AutoPickResult & {
+  token: string;
+};
+
 export type AppUpdateType = "info" | "feature" | "warning" | "tournament" | "maintenance";
 export type AppUpdateImportance = "normal" | "important";
 export type AppUpdateCardTone = "neutral" | "sky" | "green" | "amber" | "rose";

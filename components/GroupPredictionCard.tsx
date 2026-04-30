@@ -1,10 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, LockKeyhole } from "lucide-react";
 import { formatDateTimeWithZone } from "@/lib/date-time";
 import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
-import type { MatchWithTeams, Prediction } from "@/lib/types";
+import type { AutoPickDraft, MatchWithTeams, Prediction } from "@/lib/types";
 
 type ScoreOutcome = "home" | "draw" | "away";
 
@@ -13,6 +13,7 @@ type GroupPredictionCardProps = {
   matchNumber?: number;
   grouped?: boolean;
   prediction?: Prediction;
+  prefillSuggestion?: AutoPickDraft;
   userId: string;
   onSave: (prediction: Prediction) => Promise<Prediction>;
 };
@@ -22,6 +23,7 @@ export function GroupPredictionCard({
   matchNumber,
   grouped = false,
   prediction,
+  prefillSuggestion,
   userId,
   onSave
 }: GroupPredictionCardProps) {
@@ -35,6 +37,11 @@ export function GroupPredictionCard({
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(prediction?.updatedAt ?? null);
+  const [isAutoFilling, setIsAutoFilling] = useState(false);
+  const autofillIntervalIdsRef = useRef<number[]>([]);
+  const autofillTimeoutIdsRef = useRef<number[]>([]);
+  const homeScoreRef = useRef(homeScore);
+  const awayScoreRef = useRef(awayScore);
   const scoreOutcome = getOutcomeFromScore(homeScore, awayScore);
   const hasUnsavedScoreChange =
     Boolean(prediction) &&
@@ -50,6 +57,62 @@ export function GroupPredictionCard({
     setAwayScore(getInitialScore(prediction?.predictedAwayScore));
     setLastSavedAt(prediction?.updatedAt ?? null);
   }, [prediction]);
+
+  useEffect(() => {
+    homeScoreRef.current = homeScore;
+  }, [homeScore]);
+
+  useEffect(() => {
+    awayScoreRef.current = awayScore;
+  }, [awayScore]);
+
+  useEffect(() => {
+    const intervalIds = autofillIntervalIdsRef.current;
+    const timeoutIds = autofillTimeoutIdsRef.current;
+
+    return () => {
+      clearAutofillAnimation(intervalIds, timeoutIds);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!prefillSuggestion || prefillSuggestion.matchId !== match.id || !canEdit) {
+      return;
+    }
+
+    clearAutofillAnimation(autofillIntervalIdsRef.current, autofillTimeoutIdsRef.current);
+    setSaveError("");
+    setIsAutoFilling(true);
+
+    const homeAnimationDurationMs = 720;
+    const awayAnimationDurationMs = 860;
+    const awayDelayMs = 80;
+
+    animateScoreRoll({
+      delayMs: 0,
+      durationMs: homeAnimationDurationMs,
+      startScore: toNumericScore(homeScoreRef.current),
+      finalScore: prefillSuggestion.homeScore,
+      setScore: setHomeScore,
+      intervalIds: autofillIntervalIdsRef.current,
+      timeoutIds: autofillTimeoutIdsRef.current
+    });
+
+    animateScoreRoll({
+      delayMs: awayDelayMs,
+      durationMs: awayAnimationDurationMs,
+      startScore: toNumericScore(awayScoreRef.current),
+      finalScore: prefillSuggestion.awayScore,
+      setScore: setAwayScore,
+      intervalIds: autofillIntervalIdsRef.current,
+      timeoutIds: autofillTimeoutIdsRef.current
+    });
+
+    const finishTimeoutId = window.setTimeout(() => {
+      setIsAutoFilling(false);
+    }, awayDelayMs + awayAnimationDurationMs + 40);
+    autofillTimeoutIdsRef.current.push(finishTimeoutId);
+  }, [canEdit, match.id, prefillSuggestion]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -112,15 +175,21 @@ export function GroupPredictionCard({
             {matchNumber ? (
               <span
                 className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg font-black ${
-                  isFinal ? "bg-gray-100 text-gray-900" : "bg-accent text-white"
+                  isFinal
+                    ? "bg-gray-100 text-gray-900"
+                    : isSavedState
+                      ? "bg-accent-light text-accent-dark"
+                      : "bg-accent text-white"
                 }`}
               >
                 {matchNumber}
               </span>
             ) : null}
-            <p className={`text-sm font-bold uppercase tracking-wide ${isFinal ? "text-gray-100" : "text-accent-dark"}`}>
-              Pick before:
-            </p>
+            {!isSavedState ? (
+              <p className={`text-sm font-bold uppercase tracking-wide ${isFinal ? "text-gray-100" : "text-accent-dark"}`}>
+                Pick before:
+              </p>
+            ) : null}
             <p
               className={`text-[10px] font-semibold uppercase tracking-wide ${
                 isFinal ? "text-gray-300" : isLive ? "text-amber-800" : "text-gray-500"
@@ -177,7 +246,7 @@ export function GroupPredictionCard({
             flag={match.homeTeam?.flagEmoji}
             fullName={match.homeTeam?.name ?? match.homeTeam?.shortName ?? "Home"}
             value={homeScore}
-            disabled={locked}
+            disabled={locked || isAutoFilling}
             isFinal={isFinal}
             isLive={isLive}
             isHighlighted={scoreOutcome === "home" || scoreOutcome === "draw"}
@@ -198,7 +267,7 @@ export function GroupPredictionCard({
             flag={match.awayTeam?.flagEmoji}
             fullName={match.awayTeam?.name ?? match.awayTeam?.shortName ?? "Away"}
             value={awayScore}
-            disabled={locked}
+            disabled={locked || isAutoFilling}
             isFinal={isFinal}
             isLive={isLive}
             isHighlighted={scoreOutcome === "away" || scoreOutcome === "draw"}
@@ -210,7 +279,7 @@ export function GroupPredictionCard({
 
       <button
         type="submit"
-        disabled={!canEdit || isSaving || !canSubmitNewPrediction}
+        disabled={!canEdit || isSaving || isAutoFilling || !canSubmitNewPrediction}
         className={`mt-1.5 inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-3 font-bold transition disabled:cursor-not-allowed ${
           usePrimaryButton
             ? "border-accent bg-accent text-sm text-white hover:border-accent-dark hover:bg-accent-dark"
@@ -235,6 +304,8 @@ export function GroupPredictionCard({
               ? "Predictions locked"
               : isSaving
                 ? "Saving..."
+                : isAutoFilling
+                  ? "Auto Picking..."
                 : saveError
                   ? "Failed to save"
                   : prediction
@@ -323,7 +394,7 @@ function ScoreInput({
       disabled={disabled}
       value={value}
       onChange={(event) => onChange(event.target.value === "" ? "0" : event.target.value)}
-      className={`h-8 w-20 shrink-0 rounded-md border-2 bg-white px-0 text-center text-xl font-black leading-none outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:bg-gray-100 ${
+      className={`h-8 w-20 shrink-0 rounded-md border-[3px] bg-white px-0 text-center text-xl font-black leading-none outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:bg-gray-100 ${
         isFinal
           ? "border-gray-400 text-gray-950"
           : isLive
@@ -378,4 +449,52 @@ function formatKickoff(value: string) {
 
 function formatSavedAt(value: string) {
   return formatDateTimeWithZone(value);
+}
+
+function animateScoreRoll({
+  delayMs,
+  durationMs,
+  startScore,
+  finalScore,
+  setScore,
+  intervalIds,
+  timeoutIds
+}: {
+  delayMs: number;
+  durationMs: number;
+  startScore: number;
+  finalScore: number;
+  setScore: (value: string) => void;
+  intervalIds: number[];
+  timeoutIds: number[];
+}) {
+  const kickoffTimeoutId = window.setTimeout(() => {
+    let currentValue = Math.max(0, startScore) % 10;
+    setScore(String(currentValue));
+
+    const intervalId = window.setInterval(() => {
+      currentValue = (currentValue + 1 + Math.floor(Math.random() * 2)) % 10;
+      setScore(String(currentValue));
+    }, 70);
+    intervalIds.push(intervalId);
+
+    const settleTimeoutId = window.setTimeout(() => {
+      window.clearInterval(intervalId);
+      setScore(String(Math.max(0, finalScore)));
+    }, durationMs);
+    timeoutIds.push(settleTimeoutId);
+  }, delayMs);
+
+  timeoutIds.push(kickoffTimeoutId);
+}
+
+function clearAutofillAnimation(intervalIds: number[], timeoutIds: number[]) {
+  intervalIds.forEach((intervalId) => window.clearInterval(intervalId));
+  intervalIds.length = 0;
+  timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+  timeoutIds.length = 0;
+}
+
+function toNumericScore(value: string) {
+  return Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
 }

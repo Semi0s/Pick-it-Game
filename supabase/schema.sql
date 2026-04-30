@@ -178,6 +178,27 @@ create table public.app_updates (
   updated_at timestamptz not null default now()
 );
 
+create table public.match_probability_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  match_id text not null references public.matches(id) on delete cascade,
+  source text not null check (source in ('manual', 'polymarket', 'ranking', 'neutral')),
+  home_win_probability double precision not null,
+  draw_probability double precision not null,
+  away_win_probability double precision not null,
+  over_2_5_probability double precision,
+  confidence double precision,
+  source_url text,
+  fetched_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  constraint match_probability_snapshots_probability_range_check check (
+    home_win_probability >= 0 and home_win_probability <= 1
+    and draw_probability >= 0 and draw_probability <= 1
+    and away_win_probability >= 0 and away_win_probability <= 1
+    and (over_2_5_probability is null or (over_2_5_probability >= 0 and over_2_5_probability <= 1))
+    and (confidence is null or (confidence >= 0 and confidence <= 1))
+  )
+);
+
 create table public.user_update_reads (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
@@ -194,6 +215,9 @@ create index app_updates_expires_at_idx
 
 create index user_update_reads_user_id_idx
   on public.user_update_reads (user_id, read_at desc);
+
+create index match_probability_snapshots_match_id_fetched_at_idx
+  on public.match_probability_snapshots (match_id, fetched_at desc);
 
 create table public.user_settings (
   user_id uuid primary key references public.users(id) on delete cascade,
@@ -842,6 +866,7 @@ alter table public.side_picks enable row level security;
 alter table public.leaderboard_entries enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.app_updates enable row level security;
+alter table public.match_probability_snapshots enable row level security;
 alter table public.user_update_reads enable row level security;
 alter table public.user_settings enable row level security;
 alter table public.email_jobs enable row level security;
@@ -1015,6 +1040,17 @@ using (true);
 
 create policy "Admins manage matches"
 on public.matches for all
+to authenticated
+using (public.is_admin())
+with check (public.is_admin());
+
+create policy "Authenticated users can read match probability snapshots"
+on public.match_probability_snapshots for select
+to authenticated
+using (true);
+
+create policy "Admins manage match probability snapshots"
+on public.match_probability_snapshots for all
 to authenticated
 using (public.is_admin())
 with check (public.is_admin());
