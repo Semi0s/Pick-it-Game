@@ -269,10 +269,6 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
 
       <div className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">Profile editing</h3>
-        <p className="mt-2 text-sm leading-6 text-gray-600">
-          Your invite gets you in the door. After that, your display name and username belong to you. Super admins can
-          still make corrections later if something needs cleanup.
-        </p>
         <label className="mt-4 block">
           <span className="text-sm font-bold text-gray-800">Home Team</span>
           <p className="mt-1 text-sm font-semibold text-gray-500">Choose the team you&apos;re backing.</p>
@@ -327,108 +323,6 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
           </select>
         </label>
       </div>
-
-      <div className="rounded-lg border border-gray-200 p-4">
-        <h3 className="text-lg font-bold">Trophies</h3>
-        {isLoadingTrophies ? (
-          <p className="mt-2 text-sm leading-6 text-gray-600">Loading trophies...</p>
-        ) : trophies.length === 0 ? (
-          <p className="mt-2 text-sm leading-6 text-gray-600">No trophies yet</p>
-        ) : (
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            {trophies.map((trophy) => (
-              <div key={`${trophy.id}-${trophy.awardedAt}`} className="flex items-center gap-3 rounded-lg bg-gray-100 px-3 py-3">
-                <TrophyBadge icon={trophy.icon} tier={trophy.tier} size="md" />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-black text-gray-950">{trophy.name}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="rounded-lg border border-gray-200 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-bold">Knockout Bracket</h3>
-            <p className="mt-2 text-sm leading-6 text-gray-600">
-              Your knockout score stays separate from the main leaderboard for now.
-            </p>
-          </div>
-          <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-            {bracketScoreSummary.bracketPoints} pts
-          </div>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-md bg-gray-100 px-4 py-3">
-            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Correct picks</p>
-            <p className="mt-1 text-2xl font-black text-gray-950">{bracketScoreSummary.correctPicks}</p>
-          </div>
-          <div className="rounded-md bg-gray-100 px-4 py-3">
-            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Bracket points</p>
-            <p className="mt-1 text-2xl font-black text-gray-950">{bracketScoreSummary.bracketPoints}</p>
-          </div>
-        </div>
-        <a
-          href="/knockout"
-          className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-        >
-          Open Knockout Picks
-        </a>
-      </div>
-
-      <div className="rounded-lg border border-gray-200 p-4">
-        <h3 className="text-lg font-bold">{copy.termsOfUse}</h3>
-        <div className="mt-4 rounded-md bg-gray-100 px-4 py-4">
-          <p className="text-sm font-bold text-gray-900">
-            {currentLegalDocument?.title ?? user.currentEulaTitle ?? copy.termsOfUse}
-          </p>
-          <p className="mt-1 text-xs font-semibold text-gray-500">
-            {(currentLegalDocument?.body ?? user.currentEulaBody)
-              ? `Showing the active ${copy.termsOfUse.toLowerCase()} in ${
-                  (currentLegalDocument?.language ?? user.currentEulaLanguage) === "es" ? copy.spanish : copy.english
-                }.`
-              : "The active terms are not available in this profile view right now."}
-          </p>
-          {(currentLegalDocument?.body ?? user.currentEulaBody) ? (
-            <div className="mt-3 max-h-56 overflow-y-auto whitespace-pre-wrap text-sm font-semibold leading-6 text-gray-700">
-              {currentLegalDocument?.body ?? user.currentEulaBody}
-            </div>
-          ) : (
-            <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">
-              Use the button below to open the current acceptance screen and review the active terms directly.
-            </p>
-          )}
-        </div>
-        {user.needsLegalAcceptance ? (
-          <a
-            href="/legal/accept?next=/profile"
-            className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-          >
-            Review and Accept Terms
-          </a>
-        ) : (
-          <p className="mt-4 text-sm font-semibold text-gray-600">
-            You&apos;re current on the active terms shown above.
-          </p>
-        )}
-      </div>
-
-      {user.role === "admin" ? (
-        <div className="rounded-lg border border-accent-light bg-accent-light/40 p-4">
-          <h3 className="text-lg font-bold">Super admin access</h3>
-          <p className="mt-2 text-sm leading-6 text-gray-700">
-            Groups is your main operational hub, with deeper player and manager tools available when you need them.
-          </p>
-          <a
-            href="/admin/players"
-            className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-          >
-            Open Player Management
-          </a>
-        </div>
-      ) : null}
 
       <div className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">Notifications</h3>
@@ -550,6 +444,109 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
           {isSendingReset ? "Sending..." : "Reset My Password"}
         </button>
       </div>
+
+      <div className="rounded-lg border border-gray-200 p-4">
+        <h3 className="text-lg font-bold">Trophies</h3>
+        {isLoadingTrophies ? (
+          <p className="mt-2 text-sm leading-6 text-gray-600">Loading trophies...</p>
+        ) : trophies.length === 0 ? (
+          <p className="mt-2 text-sm leading-6 text-gray-600">No trophies yet</p>
+        ) : (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {trophies.map((trophy) => (
+              <div key={`${trophy.id}-${trophy.awardedAt}`} className="flex items-center gap-3 rounded-lg bg-gray-100 px-3 py-3">
+                <TrophyBadge icon={trophy.icon} tier={trophy.tier} size="md" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-black text-gray-950">{trophy.name}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-gray-200 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold">Knockout Bracket</h3>
+            <p className="mt-2 text-sm leading-6 text-gray-600">
+              Your knockout score stays separate from the main leaderboard for now.
+            </p>
+          </div>
+          <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+            {bracketScoreSummary.bracketPoints} pts
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-md bg-gray-100 px-4 py-3">
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Correct picks</p>
+            <p className="mt-1 text-2xl font-black text-gray-950">{bracketScoreSummary.correctPicks}</p>
+          </div>
+          <div className="rounded-md bg-gray-100 px-4 py-3">
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Bracket points</p>
+            <p className="mt-1 text-2xl font-black text-gray-950">{bracketScoreSummary.bracketPoints}</p>
+          </div>
+        </div>
+        <a
+          href="/knockout"
+          className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+        >
+          Open Knockout Picks
+        </a>
+      </div>
+
+      <div className="rounded-lg border border-gray-200 p-4">
+        <h3 className="text-lg font-bold">{copy.termsOfUse}</h3>
+        <div className="mt-4 rounded-md bg-gray-100 px-4 py-4">
+          <p className="text-sm font-bold text-gray-900">
+            {currentLegalDocument?.title ?? user.currentEulaTitle ?? copy.termsOfUse}
+          </p>
+          <p className="mt-1 text-xs font-semibold text-gray-500">
+            {(currentLegalDocument?.body ?? user.currentEulaBody)
+              ? `Showing the active ${copy.termsOfUse.toLowerCase()} in ${
+                  (currentLegalDocument?.language ?? user.currentEulaLanguage) === "es" ? copy.spanish : copy.english
+                }.`
+              : "The active terms are not available in this profile view right now."}
+          </p>
+          {(currentLegalDocument?.body ?? user.currentEulaBody) ? (
+            <div className="mt-3 max-h-56 overflow-y-auto whitespace-pre-wrap text-sm font-semibold leading-6 text-gray-700">
+              {currentLegalDocument?.body ?? user.currentEulaBody}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">
+              Use the button below to open the current acceptance screen and review the active terms directly.
+            </p>
+          )}
+        </div>
+        {user.needsLegalAcceptance ? (
+          <a
+            href="/legal/accept?next=/profile"
+            className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Review and Accept Terms
+          </a>
+        ) : (
+          <p className="mt-4 text-sm font-semibold text-gray-600">
+            You&apos;re current on the active terms shown above.
+          </p>
+        )}
+      </div>
+
+      {user.role === "admin" ? (
+        <div className="rounded-lg border border-accent-light bg-accent-light/40 p-4">
+          <h3 className="text-lg font-bold">Super admin access</h3>
+          <p className="mt-2 text-sm leading-6 text-gray-700">
+            Groups is your main operational hub, with deeper player and manager tools available when you need them.
+          </p>
+          <a
+            href="/admin/players"
+            className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Open Player Management
+          </a>
+        </div>
+      ) : null}
+
     </section>
   );
 }
