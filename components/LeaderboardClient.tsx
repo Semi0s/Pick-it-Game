@@ -505,6 +505,21 @@ export function LeaderboardClient() {
     : null;
   const shouldShowGroupCarouselControls = shouldShowGroupSelector(activeView) && availableGroupOptions.length > 1;
 
+  const handleSelectView = useCallback((nextView: LeaderboardSwitcherView) => {
+    setHasExplicitSwitcherPreference(true);
+    setActiveView(nextView);
+  }, []);
+
+  const handleSelectGroup = useCallback((nextGroupId: string) => {
+    setHasExplicitSwitcherPreference(true);
+    setSelectedGroupId(nextGroupId);
+  }, []);
+
+  const handleSelectManager = useCallback((nextManagerId: string) => {
+    setHasExplicitSwitcherPreference(true);
+    setSelectedManagerId(nextManagerId);
+  }, []);
+
   return (
     <div className="space-y-5">
       <section className="rounded-lg bg-gray-100 p-5">
@@ -1208,13 +1223,13 @@ export function LeaderboardClient() {
           prevLabel="Show previous leaderboard views"
           nextLabel="Show more leaderboard views"
           activeItemKey={activeView}
-          onActiveItemChange={(nextKey) => setActiveView(nextKey as LeaderboardSwitcherView)}
+          onActiveItemChange={(nextKey) => handleSelectView(nextKey as LeaderboardSwitcherView)}
         >
           {(switcher?.tabs ?? [{ value: "global", label: "Global Standings" }]).map((tab) => (
             <button
               key={tab.value}
               type="button"
-              onClick={() => setActiveView(tab.value)}
+              onClick={() => handleSelectView(tab.value)}
               data-choice-key={tab.value}
               data-choice-active={activeView === tab.value ? "true" : "false"}
               className={`shrink-0 rounded-md px-3 py-2 text-sm font-bold ${
@@ -1236,14 +1251,14 @@ export function LeaderboardClient() {
                   nextLabel="Show more groups"
                   contentClassName="flex gap-2 pb-1"
                   activeItemKey={selectedGroupId}
-                  onActiveItemChange={(nextKey) => setSelectedGroupId(nextKey)}
+                  onActiveItemChange={(nextKey) => handleSelectGroup(nextKey)}
                 >
                   {availableGroupOptions.length > 0 ? (
                     availableGroupOptions.map((group) => (
                       <button
                         key={group.id}
                         type="button"
-                        onClick={() => setSelectedGroupId(group.id)}
+                        onClick={() => handleSelectGroup(group.id)}
                         data-choice-key={group.id}
                         data-choice-active={selectedGroupId === group.id ? "true" : "false"}
                         className={`w-[min(12.25rem,calc(100vw-7.25rem))] max-w-full shrink-0 rounded-lg border px-2.5 py-2 text-left transition sm:w-[196px] ${
@@ -1291,7 +1306,7 @@ export function LeaderboardClient() {
                 <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Manager</span>
                 <select
                   value={selectedManagerId}
-                  onChange={(event) => setSelectedManagerId(event.target.value)}
+                  onChange={(event) => handleSelectManager(event.target.value)}
                   className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                 >
                   <option value="">Choose a manager</option>
