@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { BarChart3, ChevronDown, CircleUserRound, Globe, SquareCheckBig, UsersRound } from "lucide-react";
+import { ChevronDown, CircleUserRound, Globe, ListOrdered, SquareCheckBig, UsersRound } from "lucide-react";
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
@@ -66,7 +66,7 @@ export function AppShell({ children }: AppShellProps) {
   const navItems = [
     { href: "/groups", label: copy.myPicks, ariaLabel: copy.myPicks, icon: SquareCheckBig },
     { href: "/my-groups", label: copy.myGroups, ariaLabel: copy.myGroups, icon: UsersRound },
-    { href: "/leaderboard", label: copy.results, ariaLabel: copy.results, icon: BarChart3 },
+    { href: "/leaderboard", label: copy.results, ariaLabel: copy.results, icon: ListOrdered },
     { href: "/profile", label: copy.myProfile, ariaLabel: copy.myProfile, icon: CircleUserRound }
   ];
   const [pendingCelebrationQueue, setPendingCelebrationQueue] = useState<PendingTrophyCelebration[]>([]);

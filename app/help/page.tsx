@@ -2,28 +2,20 @@ import { AppShell } from "@/components/AppShell";
 
 const HELP_SECTIONS = [
   {
-    title: "Get Started",
-    bullets: [
-      "Check your email for an invite",
-      "Tap the link and finish signing up",
-      "Log in and you’re ready to play"
-    ],
-    tip: "Always use the invite link. It connects you to your group automatically."
-  },
-  {
     title: "Make Your Picks",
     bullets: [
       "Predict the score for each match",
-      "That’s it. No extra steps",
+      "Review the score and save to confirm each pick",
       "Your picks lock when the match starts"
-    ]
+    ],
+    tip: "You can use Auto Pick for the next open unsaved match, then review before saving."
   },
   {
     title: "How You Score Points",
     bullets: [
       "Correct winner or draw: +3 points",
-      "Exact score: +8 points total",
-      "Close with the right goal difference: +4 points total"
+      "Exact goal difference with the right outcome: +1 more point",
+      "Exact score with the right outcome: +5 more points"
     ],
     tip: "The closer your prediction, the more you earn."
   },
@@ -31,6 +23,7 @@ const HELP_SECTIONS = [
     title: "Knockout Bracket Scoring",
     bullets: [
       "Knockout picks score the correct winner only",
+      "Round of 32 and third-place picks do not award points",
       "Round of 16: +5 points",
       "Quarterfinals: +10 points",
       "Semifinals: +15 points",
@@ -40,37 +33,38 @@ const HELP_SECTIONS = [
     tip: "Bracket points are tracked separately from your group-stage leaderboard total for now."
   },
   {
-    title: "Compete with Friends",
+    title: "Play in Groups",
     bullets: [
       "You can join one group or multiple groups",
       "Each group has its own leaderboard",
+      "Use group and team filters to focus your picks",
       "See how you rank against your friends"
     ]
   },
   {
-    title: "See the Big Picture",
+    title: "See Your Results",
     bullets: [
-      "Check the global leaderboard",
-      "Compare your performance with all players"
+      "Check global standings and group standings",
+      "Use the leaderboard view controls to change focus"
     ]
   },
   {
-    title: "Track Your Progress",
+    title: "Track Your Predictions",
     bullets: [
-      "View your past picks and results",
-      "Watch your score grow over time",
-      "Aim for the top spot"
+      "Review saved picks once matches lock",
+      "See social picks after kickoff",
+      "Watch your score grow over time"
     ]
   },
   {
     title: "Your Profile",
     bullets: [
-      "See your name and role",
-      "Keep track of your activity"
+      "See your name, role, and home team",
+      "Manage notifications and password settings"
     ]
   },
   {
-    title: "Need Help?",
+    title: "Need Another Invite?",
     bullets: [
       "Didn’t get in properly? Try the invite link again",
       "Still stuck? Ask your group admin for a new invite"
@@ -80,9 +74,10 @@ const HELP_SECTIONS = [
 
 const QUICK_TIPS = [
   "Make your picks before a match starts",
-  "Knockout picks lock when the first knockout match starts",
+  "Auto Pick suggests a score but never saves it for you",
+  "Use the group table on My Picks to preview how your saved scores affect a group",
   "Bracket points are separate from the main leaderboard for now",
-  "Create and manage groups to create different pools"
+  "Create and manage groups to build different pools"
 ] as const;
 
 export default function HelpPage() {

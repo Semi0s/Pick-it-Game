@@ -57,9 +57,10 @@ type UserTrophyRow = {
 
 export type SocialPrediction = Prediction & {
   user: UserProfile;
+  sharedGroupCount?: number;
 };
 
-export async function fetchPredictionsForMatches(matchIds: string[]): Promise<SocialPrediction[]> {
+export async function fetchPredictionsForMatches(matchIds: string[], currentUserId?: string): Promise<SocialPrediction[]> {
   if (matchIds.length === 0) {
     return [];
   }
@@ -70,21 +71,79 @@ export async function fetchPredictionsForMatches(matchIds: string[]): Promise<So
 
   try {
     const supabase = createClient();
-    const { data, error } = await supabase
+    const connectedUsersById = currentUserId ? await fetchConnectedUsersById(supabase, currentUserId) : null;
+    const connectedUserIds = connectedUsersById ? Array.from(connectedUsersById.keys()) : null;
+
+    if (connectedUserIds && connectedUserIds.length === 0) {
+      return [];
+    }
+
+    let predictionsQuery = supabase
       .from("predictions")
       .select("id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded")
       .in("match_id", matchIds)
       .order("created_at", { ascending: true });
 
+    if (connectedUserIds) {
+      predictionsQuery = predictionsQuery.in("user_id", connectedUserIds);
+    }
+
+    const { data, error } = await predictionsQuery;
+
     if (error) {
       throw error;
     }
 
-    return mapPredictionRowsWithUsers(supabase, (data as PredictionRow[]) ?? []);
+    return mapPredictionRowsWithUsers(supabase, (data as PredictionRow[]) ?? [], connectedUsersById);
   } catch (error) {
     console.error("Failed to load public predictions for matches.", error);
     throw error;
   }
+}
+
+async function fetchConnectedUsersById(
+  supabase: ReturnType<typeof createClient>,
+  currentUserId: string
+): Promise<Map<string, number>> {
+  const { data: membershipRows, error: membershipError } = await supabase
+    .from("group_members")
+    .select("group_id")
+    .eq("user_id", currentUserId);
+
+  if (membershipError) {
+    throw membershipError;
+  }
+
+  const groupIds = Array.from(
+    new Set(((membershipRows as Array<{ group_id: string | null }> | null) ?? []).map((row) => row.group_id).filter(Boolean))
+  ) as string[];
+
+  if (groupIds.length === 0) {
+    return new Map();
+  }
+
+  const { data: connectedRows, error: connectedError } = await supabase
+    .from("group_members")
+    .select("group_id,user_id")
+    .in("group_id", groupIds);
+
+  if (connectedError) {
+    throw connectedError;
+  }
+
+  const sharedGroupsByUserId = new Map<string, Set<string>>();
+
+  for (const row of ((connectedRows as Array<{ group_id: string | null; user_id: string | null }> | null) ?? [])) {
+    if (!row.user_id || !row.group_id) {
+      continue;
+    }
+
+    const current = sharedGroupsByUserId.get(row.user_id) ?? new Set<string>();
+    current.add(row.group_id);
+    sharedGroupsByUserId.set(row.user_id, current);
+  }
+
+  return new Map(Array.from(sharedGroupsByUserId.entries()).map(([userId, sharedGroups]) => [userId, sharedGroups.size]));
 }
 
 export async function fetchPredictionsForUser(userId: string): Promise<SocialPrediction[]> {
@@ -204,7 +263,8 @@ function getLocalSocialPredictions(): SocialPrediction[] {
 
 async function mapPredictionRowsWithUsers(
   supabase: ReturnType<typeof createClient>,
-  rows: PredictionRow[]
+  rows: PredictionRow[],
+  connectedUsersById?: Map<string, number> | null
 ): Promise<SocialPrediction[]> {
   const usersById = await fetchUsersByIds(
     supabase,
@@ -227,7 +287,8 @@ async function mapPredictionRowsWithUsers(
         predictedHomeScore: row.predicted_home_score ?? undefined,
         predictedAwayScore: row.predicted_away_score ?? undefined,
         pointsAwarded: row.points_awarded,
-        user: mapUserRow(user)
+        user: mapUserRow(user),
+        sharedGroupCount: connectedUsersById?.get(row.user_id) ?? undefined
       };
     })
     .filter(Boolean) as SocialPrediction[];

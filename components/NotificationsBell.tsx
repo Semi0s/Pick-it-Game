@@ -53,11 +53,7 @@ export function NotificationsBell() {
       <button
         type="button"
         onClick={() => {
-          const nextOpen = !isOpen;
-          setIsOpen(nextOpen);
-          if (nextOpen) {
-            void markAsRead();
-          }
+          setIsOpen((current) => !current);
         }}
         className="relative rounded-full border border-gray-300 bg-white p-2 text-gray-700 transition hover:border-accent hover:bg-accent-light"
         aria-label="Notifications"
@@ -82,16 +78,29 @@ export function NotificationsBell() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-black text-gray-950">Notifications</p>
-                <p className="text-xs font-semibold text-gray-500">Just the moments worth a nudge.</p>
+                <p className="text-xs font-semibold text-gray-500">
+                  {notifications.length} unread notification{notifications.length === 1 ? "" : "s"}
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsOpen(false)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600"
-                aria-label="Close notifications"
-              >
-                <X className="h-4 w-4" aria-hidden />
-              </button>
+              <div className="flex items-center gap-2">
+                {notifications.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => void markAllAsRead()}
+                    className="rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-600 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
+                  >
+                    Mark all read
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setIsOpen(false)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600"
+                  aria-label="Close notifications"
+                >
+                  <X className="h-4 w-4" aria-hidden />
+                </button>
+              </div>
             </div>
 
             <div className="mt-4 max-h-[calc(100vh-9rem)] space-y-2 overflow-y-auto pr-1 sm:max-h-[28rem]">
@@ -106,25 +115,24 @@ export function NotificationsBell() {
                   <Link
                     key={notification.id}
                     href={notification.href}
-                    onClick={() => setIsOpen(false)}
-                    className={`block rounded-md border px-3 py-3 transition ${
-                      notification.readAt
-                        ? "border-gray-200 bg-white text-gray-700"
-                        : "border-accent-light bg-accent-light/40 text-gray-900"
-                    }`}
+                    onClick={() => {
+                      markNotificationAsRead(notification.id);
+                      setIsOpen(false);
+                    }}
+                    className="block rounded-md border border-accent-light bg-accent-light/40 px-3 py-2.5 text-gray-900 transition"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm font-bold">{notification.title}</p>
                         <p className="mt-1 text-sm font-semibold text-gray-700">{notification.body}</p>
                       </div>
-                      {!notification.readAt ? (
-                        <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-accent" />
-                      ) : null}
+                      <div className="flex shrink-0 items-start gap-2">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                          {formatNotificationTimestamp(notification.createdAt)}
+                        </p>
+                        <span className="mt-1 h-2.5 w-2.5 rounded-full bg-accent" />
+                      </div>
                     </div>
-                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                      {formatNotificationTimestamp(notification.createdAt)}
-                    </p>
                   </Link>
                 ))
               )}
@@ -159,7 +167,23 @@ export function NotificationsBell() {
     }
   }
 
-  async function markAsRead() {
+  function markNotificationAsRead(notificationId: string) {
+    setNotifications((current) => current.filter((notification) => notification.id !== notificationId));
+    setUnreadCount((current) => Math.max(0, current - 1));
+
+    void fetch("/api/notifications", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ notificationId }),
+      keepalive: true
+    }).catch((error) => {
+      console.error("Failed to mark notification as read.", error);
+    });
+  }
+
+  async function markAllAsRead() {
     try {
       const response = await fetch("/api/notifications", {
         method: "POST",
@@ -174,12 +198,7 @@ export function NotificationsBell() {
       }
 
       setUnreadCount(0);
-      setNotifications((current) =>
-        current.map((notification) => ({
-          ...notification,
-          readAt: notification.readAt ?? new Date().toISOString()
-        }))
-      );
+      setNotifications([]);
     } catch (error) {
       console.error("Failed to mark notifications as read.", error);
     }

@@ -11,12 +11,28 @@ type SocialPredictionListProps = {
   match: MatchWithTeams;
   predictions: SocialPrediction[];
   currentUserId: string;
+  currentUserPoints: number;
 };
 
 const COLLAPSED_COUNT = 4;
 
-export function SocialPredictionList({ match, predictions, currentUserId }: SocialPredictionListProps) {
-  const otherPredictions = predictions.filter((prediction) => prediction.userId !== currentUserId);
+export function SocialPredictionList({ match, predictions, currentUserId, currentUserPoints }: SocialPredictionListProps) {
+  const otherPredictions = predictions
+    .filter((prediction) => prediction.userId !== currentUserId)
+    .sort((left, right) => {
+      const sharedGroupDifference = (right.sharedGroupCount ?? 0) - (left.sharedGroupCount ?? 0);
+      if (sharedGroupDifference !== 0) {
+        return sharedGroupDifference;
+      }
+
+      const leftPointDistance = Math.abs((left.user.totalPoints ?? 0) - currentUserPoints);
+      const rightPointDistance = Math.abs((right.user.totalPoints ?? 0) - currentUserPoints);
+      if (leftPointDistance !== rightPointDistance) {
+        return leftPointDistance - rightPointDistance;
+      }
+
+      return left.user.name.localeCompare(right.user.name);
+    });
 
   return (
     <details className="rounded-lg border border-gray-200 bg-gray-50 p-3">

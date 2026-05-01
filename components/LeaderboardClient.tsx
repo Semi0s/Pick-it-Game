@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
-import { InlineDisclosureButton, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
+import { InlineDisclosureButton, WindowChoiceRail, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
 import {
   awardManagedGroupTrophyAction,
   listManagedGroupPlayersAction,
@@ -49,6 +48,7 @@ const LEADERBOARD_INTRO_DISCLOSURE_STORAGE_KEY = "leaderboard-intro-disclosure";
 const LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY = "leaderboard-activity-disclosure";
 const LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY = "leaderboard-leader-summary-state";
 const LEADERBOARD_SUBSELECTION_STORAGE_KEY = "leaderboard-subselection-state";
+const LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY = "leaderboard-daily-winner-dismissed";
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TWO_LINE_CLAMP_STYLE = {
   display: "-webkit-box",
@@ -95,6 +95,10 @@ export function LeaderboardClient() {
   const [subselectionState, setSubselectionState] = useSessionJsonState<LeaderboardSubselectionState>(
     LEADERBOARD_SUBSELECTION_STORAGE_KEY,
     DEFAULT_SUBSELECTION_STATE
+  );
+  const [dismissedDailyWinnerKey, setDismissedDailyWinnerKey] = useSessionJsonState<string | null>(
+    LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY,
+    null
   );
   const [isIntroMoreOpen, setIsIntroMoreOpen] = useSessionDisclosureState(
     LEADERBOARD_INTRO_DISCLOSURE_STORAGE_KEY,
@@ -500,6 +504,29 @@ export function LeaderboardClient() {
   const canSelfAwardTrophies = user?.role === "admin";
   const leaders = useMemo(() => users.filter((profile) => profile.rank === 1), [users]);
   const sharedLeaderScore = leaders[0]?.totalPoints ?? null;
+  const activityMentionCount = useMemo(
+    () =>
+      activityFeed.filter(
+        (event) =>
+          event.eventType === "daily_winner" ||
+          event.eventType === "perfect_pick" ||
+          event.eventType === "trophy_awarded"
+      ).length,
+    [activityFeed]
+  );
+  const dailyWinnerDismissKey = useMemo(() => {
+    if (dailyWinners.length === 0) {
+      return "";
+    }
+
+    const winnerIds = dailyWinners
+      .map((winner) => winner.eventId ?? `winner:${winner.userId}`)
+      .sort()
+      .join("|");
+
+    return `${activeView}:${selectedGroupId || "all"}:${winnerIds}`;
+  }, [activeView, dailyWinners, selectedGroupId]);
+  const isDailyWinnerDismissed = Boolean(dailyWinnerDismissKey) && dismissedDailyWinnerKey === dailyWinnerDismissKey;
   const activeManagedTrophyMember = managedAwardGroup && managedTrophySheetTarget
     ? managedAwardGroup.members.find((member) => member.userId === managedTrophySheetTarget.userId) ?? null
     : null;
@@ -549,7 +576,7 @@ export function LeaderboardClient() {
         </div>
       </section>
 
-      {!isLoading && !error && dailyWinners.length > 0 ? (
+      {!isLoading && !error && dailyWinners.length > 0 && !isDailyWinnerDismissed ? (
         <section className="relative overflow-hidden rounded-lg border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-amber-100 p-4 shadow-sm">
           <div
             aria-hidden="true"
@@ -564,24 +591,34 @@ export function LeaderboardClient() {
             ✦
           </div>
           <div className="relative">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
+            <div>
+              <div className="flex items-start justify-between gap-3">
                 <p className="text-sm font-bold uppercase tracking-wide text-amber-700">🏆 Daily Winner</p>
-                <p className="mt-2 text-base font-black text-gray-950">
-                  {dailyWinners.length === 1 ? "Today's standout pick-maker." : "Today's standout group of pick-makers."}
-                </p>
-                <p className="mt-1 text-sm font-semibold text-gray-600">
-                  {dailyWinners.length === 1 ? "Highest points scored today." : "Tied for the highest points scored today."}
-                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  {dailyWinners[0]?.eventId ? (
+                    <a
+                      href={`#activity-${dailyWinners[0].eventId}`}
+                      className="text-xs font-bold text-amber-800 underline-offset-2 hover:underline"
+                    >
+                      See in Recent Activity
+                    </a>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setDismissedDailyWinnerKey(dailyWinnerDismissKey)}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-amber-200 bg-white/90 text-amber-800 transition hover:border-amber-300 hover:bg-amber-50"
+                    aria-label="Dismiss daily winner"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </div>
               </div>
-              {dailyWinners[0]?.eventId ? (
-                <a
-                  href={`#activity-${dailyWinners[0].eventId}`}
-                  className="shrink-0 text-xs font-bold text-amber-800 underline-offset-2 hover:underline"
-                >
-                  See in Recent Activity
-                </a>
-              ) : null}
+              <p className="mt-2 text-base font-black text-gray-950">
+                {dailyWinners.length === 1 ? "Today's standout pick-maker." : "Today's standout group of pick-makers."}
+              </p>
+              <p className="mt-1 text-sm font-semibold text-gray-600">
+                {dailyWinners.length === 1 ? "Highest points scored today." : "Tied for the highest points scored today."}
+              </p>
             </div>
 
             <div className="mt-4 grid gap-3">
@@ -653,7 +690,8 @@ export function LeaderboardClient() {
             <div>
               <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Recent Activity</p>
               <p className="mt-1 text-xs font-semibold text-gray-500">
-                {activityFeed.length} recent update{activityFeed.length === 1 ? "" : "s"}
+                {activityFeed.length} recent update{activityFeed.length === 1 ? "" : "s"} · {activityMentionCount} mention
+                {activityMentionCount === 1 ? "" : "s"}
               </p>
             </div>
             <InlineDisclosureButton
@@ -1388,13 +1426,13 @@ function shouldShowManagerSelector(activeView: LeaderboardSwitcherView) {
 
 function getPlaceholderTitle(activeView: LeaderboardSwitcherView) {
   if (activeView === "my_groups") {
-    return "My Groups";
+    return "Invited / Joined Groups";
   }
   if (activeView === "managed_groups") {
     return "My Managed Groups";
   }
   if (activeView === "groups") {
-    return "My Group Scores";
+    return "Group Standings";
   }
   if (activeView === "managers") {
     return "Managers";
@@ -1436,7 +1474,7 @@ function getPlaceholderCopy(
   }
 
   if (activeView === "groups") {
-    return "Group performance is ranked by average points per player.";
+    return "Standings include groups you joined and groups you manage.";
   }
 
   return "Global leaderboard is ready now.";
@@ -1457,7 +1495,7 @@ function GroupStandingsSection({
   return (
     <section className="space-y-2">
           <div className="px-1 pt-1">
-            <h3 className="text-base font-black text-gray-950">My Group Scores</h3>
+            <h3 className="text-base font-black text-gray-950">Group Standings</h3>
           </div>
 
       {isLoading ? (
@@ -1658,168 +1696,18 @@ function LeaderboardChoiceRail({
   activeItemKey?: string;
   onActiveItemChange?: (key: string) => void;
 }) {
-  const viewportRef = useRef<HTMLDivElement | null>(null);
-  const beltRef = useRef<HTMLDivElement | null>(null);
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
-  const [offsetX, setOffsetX] = useState(0);
-  const [hasOverflow, setHasOverflow] = useState(false);
-  const [canScrollPrev, setCanScrollPrev] = useState(false);
-  const [canScrollNext, setCanScrollNext] = useState(false);
-  const EDGE_CONTROL_WIDTH = 24;
-  const BELT_GUTTER_WIDTH = 40;
-  const baseScrollerClassName =
-    "flex min-w-max gap-2 px-1 pb-1";
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    const belt = beltRef.current;
-    if (!viewport || !belt || !activeItemKey) {
-      return;
-    }
-
-    const updateLayout = () => {
-      const items = Array.from(belt.querySelectorAll<HTMLElement>("[data-choice-key]"));
-      const activeIndex = items.findIndex((item) => item.dataset.choiceKey === activeItemKey);
-      const activeItem = activeIndex >= 0 ? items[activeIndex] : null;
-      if (!activeItem) {
-        setOffsetX(0);
-        setHasOverflow(false);
-        setCanScrollPrev(false);
-        setCanScrollNext(false);
-        return;
-      }
-
-      const viewportWidth = viewport.clientWidth;
-      const beltWidth = belt.scrollWidth;
-      const minOffset = Math.min(0, viewportWidth - beltWidth);
-      const desiredOffset = viewportWidth / 2 - (activeItem.offsetLeft + activeItem.offsetWidth / 2);
-      const clampedOffset = Math.max(minOffset, Math.min(0, desiredOffset));
-      setOffsetX(clampedOffset);
-      setHasOverflow(beltWidth > viewportWidth + 1);
-      setCanScrollPrev(activeIndex > 0);
-      setCanScrollNext(activeIndex < items.length - 1);
-    };
-
-    updateLayout();
-    window.addEventListener("resize", updateLayout);
-    let resizeObserver: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== "undefined") {
-      resizeObserver = new ResizeObserver(updateLayout);
-      resizeObserver.observe(viewport);
-      resizeObserver.observe(belt);
-    }
-
-    return () => {
-      window.removeEventListener("resize", updateLayout);
-      resizeObserver?.disconnect();
-    };
-  }, [activeItemKey, children]);
-
-  function nudge(direction: "prev" | "next") {
-    const belt = beltRef.current;
-    if (!belt || !onActiveItemChange) {
-      return;
-    }
-
-    const items = Array.from(belt.querySelectorAll<HTMLElement>("[data-choice-key]"));
-    const activeIndex = activeItemKey ? items.findIndex((item) => item.dataset.choiceKey === activeItemKey) : -1;
-    const targetIndex =
-      direction === "next"
-        ? Math.min(activeIndex >= 0 ? activeIndex + 1 : 0, items.length - 1)
-        : Math.max(activeIndex >= 0 ? activeIndex - 1 : 0, 0);
-    const targetKey = items[targetIndex]?.dataset.choiceKey;
-    if (targetKey) {
-      onActiveItemChange(targetKey);
-    }
-  }
-
-  function handleTouchStart(event: React.TouchEvent<HTMLDivElement>) {
-    const touch = event.touches[0];
-    if (!touch) {
-      touchStartRef.current = null;
-      return;
-    }
-
-    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
-  }
-
-  function handleTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
-    const start = touchStartRef.current;
-    touchStartRef.current = null;
-    if (!start || !onActiveItemChange) {
-      return;
-    }
-
-    const touch = event.changedTouches[0];
-    if (!touch) {
-      return;
-    }
-
-    const deltaX = touch.clientX - start.x;
-    const deltaY = touch.clientY - start.y;
-    if (Math.abs(deltaX) < 32 || Math.abs(deltaX) <= Math.abs(deltaY)) {
-      return;
-    }
-
-    nudge(deltaX < 0 ? "next" : "prev");
-  }
-
   return (
-    <div className={className ?? ""}>
-      <div className="relative min-w-0">
-        {showControls ? (
-          <button
-            type="button"
-            onClick={() => nudge("prev")}
-            disabled={!canScrollPrev}
-            className="absolute inset-y-0 left-0 z-10 inline-flex w-6 items-center justify-center bg-white text-gray-700 transition active:scale-95 hover:bg-accent-light hover:text-accent-dark disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-white"
-            style={{ width: EDGE_CONTROL_WIDTH }}
-            aria-label={prevLabel}
-          >
-            <span aria-hidden>‹</span>
-          </button>
-        ) : null}
-        <div ref={viewportRef} className="min-w-0 overflow-hidden" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
-          {showControls ? (
-            <>
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute bottom-0 left-6 top-0 z-[11] w-px bg-gray-200"
-              />
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute bottom-0 right-6 top-0 z-[11] w-px bg-gray-200"
-              />
-            </>
-          ) : null}
-          <div
-            ref={beltRef}
-            className={contentClassName ? `${baseScrollerClassName} ${contentClassName}` : baseScrollerClassName}
-            style={{
-              transform: `translateX(${offsetX}px)`,
-              transition: hasOverflow ? "transform 280ms ease" : undefined,
-              willChange: "transform"
-            }}
-          >
-            {showControls ? <div aria-hidden="true" className="shrink-0" style={{ width: BELT_GUTTER_WIDTH }} /> : null}
-            {children}
-            {showControls ? <div aria-hidden="true" className="shrink-0" style={{ width: BELT_GUTTER_WIDTH }} /> : null}
-          </div>
-        </div>
-        {showControls ? (
-          <button
-            type="button"
-            onClick={() => nudge("next")}
-            disabled={!canScrollNext}
-            className="absolute inset-y-0 right-0 z-10 inline-flex w-6 items-center justify-center bg-white text-gray-700 transition active:scale-95 hover:bg-accent-light hover:text-accent-dark disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-white"
-            style={{ width: EDGE_CONTROL_WIDTH }}
-            aria-label={nextLabel}
-          >
-            <span aria-hidden>›</span>
-          </button>
-        ) : null}
-      </div>
-    </div>
+    <WindowChoiceRail
+      className={className}
+      contentClassName={contentClassName}
+      showControls={showControls}
+      prevLabel={prevLabel}
+      nextLabel={nextLabel}
+      activeItemKey={activeItemKey}
+      onActiveItemChange={onActiveItemChange}
+    >
+      {children}
+    </WindowChoiceRail>
   );
 }
 

@@ -82,13 +82,20 @@ export async function POST() {
     }
 
     const savedMatchIds = new Set(((predictionRows as PredictionRow[] | null) ?? []).map((row) => row.match_id));
+    const openMatches = [...matches]
+      .filter((match) => canEditPrediction(match.status))
+      .sort((left, right) => left.kickoffTime.localeCompare(right.kickoffTime));
     const nextMatch =
-      [...matches]
-        .filter((match) => canEditPrediction(match.status) && !savedMatchIds.has(match.id))
-        .sort((left, right) => left.kickoffTime.localeCompare(right.kickoffTime))[0] ?? null;
+      openMatches
+        .filter((match) => !savedMatchIds.has(match.id))[0] ?? null;
 
     if (!nextMatch) {
-      return NextResponse.json({ ok: false, message: "No open matches available right now." }, { status: 404 });
+      const message =
+        openMatches.length > 0
+          ? "You have already saved every open match. You can still edit any saved pick until kickoff."
+          : "No open matches available right now.";
+
+      return NextResponse.json({ ok: false, message }, { status: 404 });
     }
 
     const { data: snapshotRows, error: snapshotsError } = await supabase

@@ -182,6 +182,25 @@ export type CreateGroupInviteResult =
       message: string;
     };
 
+export type CreateGroupInviteShareLinkResult =
+  | {
+      ok: true;
+      invite: {
+        id: string;
+        groupId: string;
+        email: string;
+        status: GroupInviteStatus;
+        expiresAt: string | null;
+      };
+      claimUrl: string;
+      whatsAppUrl: string;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export type AcceptGroupInviteInput = {
   token: string;
 };
@@ -647,6 +666,139 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
   };
 }
 
+export async function createGroupInviteShareLinkAction(
+  input: CreateGroupInviteInput
+): Promise<CreateGroupInviteShareLinkResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const groupId = input.groupId?.trim();
+  const normalizedEmail = normalizeEmail(input.email);
+  if (!groupId || !normalizedEmail) {
+    return { ok: false, message: "A valid group and email are required." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const managedGroup = await getManagedGroup(adminSupabase, groupId, currentUser.userId, currentUser.role);
+  if (!managedGroup) {
+    return { ok: false, message: "You do not manage that group." };
+  }
+
+  const seatCheck = await ensureGroupHasInviteCapacity(adminSupabase, managedGroup.id, managedGroup.membership_limit);
+  if (!seatCheck.ok) {
+    return seatCheck;
+  }
+
+  const existingUserId = await findUserIdByEmail(adminSupabase, normalizedEmail);
+
+  let existingMembership: { id: string } | null = null;
+  let existingMembershipError: { message: string } | null = null;
+
+  if (existingUserId) {
+    const membershipLookup = await adminSupabase
+      .from("group_members")
+      .select("id")
+      .eq("group_id", managedGroup.id)
+      .eq("user_id", existingUserId)
+      .maybeSingle();
+
+    existingMembership = membershipLookup.data;
+    existingMembershipError = membershipLookup.error;
+  }
+
+  if (existingMembershipError) {
+    return { ok: false, message: existingMembershipError.message };
+  }
+
+  if (existingMembership) {
+    return { ok: false, message: "That user is already a member of this group." };
+  }
+
+  if (existingUserId) {
+    const joinLimitResult = await ensureUserCanJoinAnotherGroup(adminSupabase, existingUserId);
+    if (!joinLimitResult.ok) {
+      return joinLimitResult;
+    }
+  }
+
+  const { data: existingPendingInvite, error: existingPendingInviteError } = await adminSupabase
+    .from("group_invites")
+    .select("id")
+    .eq("group_id", managedGroup.id)
+    .eq("normalized_email", normalizedEmail)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (existingPendingInviteError) {
+    return { ok: false, message: existingPendingInviteError.message };
+  }
+
+  if (existingPendingInvite) {
+    return { ok: false, message: "A pending invite already exists for that email in this group." };
+  }
+
+  const token = randomBytes(24).toString("hex");
+  const tokenHash = hashInviteToken(token);
+  const inviteLanguage = normalizeLanguage(input.language ?? currentUser.preferredLanguage);
+  const helperLanguage = normalizeExplainerLanguage(input.helperLanguage ?? inviteLanguage);
+  const customMessage = normalizeGroupInviteCustomMessage(input.customMessage);
+  if (customMessage.length > MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH) {
+    return {
+      ok: false,
+      message: `Keep the custom message under ${MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH} characters.`
+    };
+  }
+
+  const claimUrl = buildGroupInviteClaimUrl(token, inviteLanguage, helperLanguage);
+  const whatsAppUrl = buildWhatsAppShareUrl({
+    claimUrl,
+    groupName: managedGroup.name ?? "Group",
+    invitedEmail: normalizedEmail
+  });
+  const expiresAt = new Date(Date.now() + normalizeExpiryDays(input.expiresInDays) * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await adminSupabase
+    .from("group_invites")
+    .insert({
+      group_id: managedGroup.id,
+      email: normalizedEmail,
+      normalized_email: normalizedEmail,
+      invited_by_user_id: currentUser.userId,
+      suggested_display_name: input.suggestedDisplayName?.trim() || null,
+      custom_message: customMessage || null,
+      language: inviteLanguage,
+      helper_language: helperLanguage,
+      status: "pending",
+      token_hash: tokenHash,
+      expires_at: expiresAt
+    })
+    .select("id,group_id,email,status,expires_at")
+    .single();
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/my-groups");
+  revalidatePath("/dashboard");
+
+  return {
+    ok: true,
+    invite: {
+      id: data.id,
+      groupId: data.group_id,
+      email: data.email,
+      status: data.status,
+      expiresAt: data.expires_at
+    },
+    claimUrl,
+    whatsAppUrl,
+    message: "Share link ready."
+  };
+}
+
 export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Promise<AcceptGroupInviteResult> {
   const currentUser = await getCurrentUserContext();
   if (!currentUser.ok) {
@@ -1093,15 +1245,14 @@ export async function awardManagedGroupTrophyAction(
           trophyIcon: awardedTrophy.icon,
           trophyTier: awardedTrophy.tier ?? "special",
           trophyDescription: null,
-          awardedAt
+          awardedAt,
+          groupName: visibleGroup.name
         }
       ]
     });
 
-    const { error: eventError } = await adminSupabase.from("leaderboard_events").insert({
-      event_type: "trophy_awarded",
-      scope_type: "group",
-      group_id: trimmedGroupId,
+    const eventPayload = {
+      event_type: "trophy_awarded" as const,
       match_id: null,
       user_id: trimmedUserId,
       related_user_id: currentUser.userId,
@@ -1116,15 +1267,28 @@ export async function awardManagedGroupTrophyAction(
         awarded_by_name: awarderName,
         awarded_on: todayWindow.dateKey
       }
-    });
+    };
+
+    const { error: eventError } = await adminSupabase.from("leaderboard_events").insert([
+      {
+        ...eventPayload,
+        scope_type: "group",
+        group_id: trimmedGroupId
+      },
+      {
+        ...eventPayload,
+        scope_type: "global",
+        group_id: null
+      }
+    ]);
 
     if (eventError) {
       return { ok: false, message: eventError.message };
     }
 
     revalidatePath("/my-groups");
-    revalidatePath("/profile");
     revalidatePath("/leaderboard");
+    revalidatePath("/profile");
     revalidatePath("/trophies");
 
     return {
@@ -2531,4 +2695,9 @@ function buildGroupInviteClaimUrl(token: string, language?: string | null, helpe
     language
   );
   return `${getPublicSiteUrl()}${loginPath}`;
+}
+
+function buildWhatsAppShareUrl(input: { claimUrl: string; groupName: string; invitedEmail: string }) {
+  const text = `Join ${input.groupName} on PICK-IT! This invite is for ${input.invitedEmail}. Use this link to sign up: ${input.claimUrl}`;
+  return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }

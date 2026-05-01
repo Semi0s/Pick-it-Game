@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Network, Sparkles, SquareCheckBig, Trophy } from "lucide-react";
 import { showAppToast } from "@/lib/app-toast";
-import { InlineDisclosureButton, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
+import { InlineDisclosureButton, WindowChoiceRail, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
 import { buildAutoPickDraft } from "@/lib/auto-pick";
 import { fetchNextAutoPick, restoreStoredAutoPickDraft } from "@/lib/auto-pick-client";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
@@ -16,13 +16,23 @@ import {
   type ExplainerLanguage
 } from "@/lib/i18n";
 import { fetchPlayerPredictions, savePlayerPrediction } from "@/lib/player-predictions";
-import { formatMatchStage } from "@/lib/match-stage";
 import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
 import { fetchPredictionsForMatches, type SocialPrediction } from "@/lib/social-predictions";
+import {
+  applyGroupStandingsResult,
+  createMiniGroupStandingsRow,
+  formatGroupName,
+  getGroupShortLabel,
+  sortMiniGroupStandingsRows
+} from "@/lib/group-standings";
 import { getMatchDateKey } from "@/lib/tournament-calendar";
-import type { AutoPickDraft, MatchStage, MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
+import type { AutoPickDraft, MatchWithTeams, Prediction, Team, UserProfile } from "@/lib/types";
 import { GroupPredictionCard } from "@/components/GroupPredictionCard";
+import {
+  GroupStandingsMiniTable,
+  type MiniGroupStandingsRow
+} from "@/components/GroupStandingsMiniTable";
 import { SocialPredictionList } from "@/components/SocialPredictionList";
 
 type GroupPredictionsProps = {
@@ -32,12 +42,23 @@ type GroupPredictionsProps = {
   initialKnockoutSeeded?: boolean;
 };
 
-const stages: ("all" | MatchStage)[] = ["all", "group"];
+type DraftPredictionState = {
+  homeScore: number;
+  awayScore: number;
+  shouldCount: boolean;
+};
+
+type PendingScrollTarget = {
+  matchId: string;
+  mode: "match" | "section";
+};
+
+type PredictedGroupRowMovement = "up" | "down";
 const GROUP_PREDICTIONS_MORE_STORAGE_KEY = "group-predictions-more";
-const GROUP_PREDICTIONS_SEARCH_STORAGE_KEY = "group-predictions-search";
-const GROUP_PREDICTIONS_STAGE_FILTER_STORAGE_KEY = "group-predictions-stage-filter";
-const GROUP_PREDICTIONS_DATE_FILTER_STORAGE_KEY = "group-predictions-date-filter";
-const GROUP_PREDICTIONS_TEAM_SEARCH_STORAGE_KEY = "group-predictions-team-search";
+const GROUP_PREDICTIONS_TABLE_STORAGE_KEY = "group-predictions-table";
+const GROUP_PREDICTIONS_GROUP_FILTER_STORAGE_KEY = "group-predictions-group-filter";
+const GROUP_PREDICTIONS_TEAM_FILTER_STORAGE_KEY = "group-predictions-team-filter";
+const GROUP_PREDICTIONS_PAGE_SIZE = 10;
 const PREDICTION_SCROLL_TOP_OFFSET = 120;
 const POST_SAVE_ADVANCE_DELAY_MS = 225;
 const AUTO_PICK_REVEAL_DELAY_MS = 650;
@@ -111,6 +132,14 @@ const AUTO_PICK_EMPTY_COPY = {
   es: "No hay partidos disponibles en este momento."
 } as const;
 
+const AUTO_PICK_ALL_SAVED_COPY = {
+  en: "You have already saved every open match. You can still edit any saved pick until kickoff.",
+  es: "Ya guardaste todos los partidos abiertos. Aun puedes editar cualquier pick guardado hasta el inicio del partido."
+} as const;
+
+const GROUP_FILTER_ALL_KEY = "all";
+const TEAM_FILTER_ALL_KEY = "all";
+
 export function GroupPredictions({
   user,
   initialMatches,
@@ -122,16 +151,22 @@ export function GroupPredictions({
   const [predictions, setPredictions] = useState<Prediction[]>(initialPredictions ?? []);
   const [socialPredictions, setSocialPredictions] = useState<SocialPrediction[]>([]);
   const [matches, setMatches] = useState<MatchWithTeams[]>(() => initialMatches ?? getLocalGroupMatches());
-  const [stageFilter, setStageFilter] = useSessionJsonState<"all" | MatchStage>(GROUP_PREDICTIONS_STAGE_FILTER_STORAGE_KEY, "all");
-  const [dateFilter, setDateFilter] = useSessionJsonState<string>(GROUP_PREDICTIONS_DATE_FILTER_STORAGE_KEY, "all");
-  const [teamSearch, setTeamSearch] = useSessionJsonState<string>(GROUP_PREDICTIONS_TEAM_SEARCH_STORAGE_KEY, "");
+  const [selectedGroup, setSelectedGroup] = useSessionJsonState<string>(
+    GROUP_PREDICTIONS_GROUP_FILTER_STORAGE_KEY,
+    GROUP_FILTER_ALL_KEY
+  );
+  const [selectedTeamId, setSelectedTeamId] = useSessionJsonState<string>(
+    GROUP_PREDICTIONS_TEAM_FILTER_STORAGE_KEY,
+    TEAM_FILTER_ALL_KEY
+  );
   const [matchWindowStart, setMatchWindowStart] = useState(0);
-  const [pendingScrollMatchId, setPendingScrollMatchId] = useState<string | null>(null);
+  const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null);
   const [focusedMatchId, setFocusedMatchId] = useState<string | null>(null);
   const [isKnockoutSeeded, setIsKnockoutSeeded] = useState(initialKnockoutSeeded ?? false);
   const [autoPickDraft, setAutoPickDraft] = useState<AutoPickDraft | null>(null);
   const [activeAutoPickToken, setActiveAutoPickToken] = useState<string | null>(null);
   const [isAutoPicking, setIsAutoPicking] = useState(false);
+  const [draftPredictionStateByMatchId, setDraftPredictionStateByMatchId] = useState<Record<string, DraftPredictionState>>({});
   const [explainerLanguage] = useState<ExplainerLanguage>(() => {
     if (typeof window !== "undefined") {
       try {
@@ -147,12 +182,18 @@ export function GroupPredictions({
     return getExplainerLanguageForUser(user);
   });
   const [isMoreOpen, setIsMoreOpen] = useSessionDisclosureState(GROUP_PREDICTIONS_MORE_STORAGE_KEY, false);
-  const [isSearchOpen, setIsSearchOpen] = useSessionDisclosureState(GROUP_PREDICTIONS_SEARCH_STORAGE_KEY, false);
+  const [isPredictionTableOpen, setIsPredictionTableOpen] = useSessionDisclosureState(
+    GROUP_PREDICTIONS_TABLE_STORAGE_KEY,
+    true
+  );
   const matchCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dateSectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const previousGroupPredictionRowsRef = useRef<MiniGroupStandingsRow[]>([]);
+  const previousPredictedGroupRef = useRef<string>(selectedGroup);
   const pendingAdvanceTimeoutRef = useRef<number | null>(null);
   const hasConsumedStoredAutoPickRef = useRef(false);
   const autoPickRevealTimeoutRef = useRef<number | null>(null);
+  const [movementByTeamId, setMovementByTeamId] = useState<Record<string, PredictedGroupRowMovement>>({});
 
   useEffect(() => {
     return () => {
@@ -173,6 +214,7 @@ export function GroupPredictions({
     }
 
     let isMounted = true;
+
     fetchGroupMatchesForPredictions()
       .then((items) => {
         if (isMounted) {
@@ -242,17 +284,109 @@ export function GroupPredictions({
     };
   }, [initialKnockoutSeeded]);
 
+  const groupStageMatches = useMemo(
+    () => matches.filter((match) => match.stage === "group").sort(sortMatchesByKickoff),
+    [matches]
+  );
+
+  const availableGroups = useMemo(
+    () =>
+      Array.from(
+        new Set(groupStageMatches.map((match) => match.groupName).filter((groupName): groupName is string => Boolean(groupName)))
+      ).sort((left, right) => left.localeCompare(right, undefined, { numeric: true })),
+    [groupStageMatches]
+  );
+
+  useEffect(() => {
+    if (selectedGroup !== GROUP_FILTER_ALL_KEY && !availableGroups.includes(selectedGroup)) {
+      setSelectedGroup(GROUP_FILTER_ALL_KEY);
+    }
+  }, [availableGroups, selectedGroup, setSelectedGroup]);
+
+  const selectedGroupMatches = useMemo(
+    () =>
+      selectedGroup === GROUP_FILTER_ALL_KEY
+        ? groupStageMatches
+        : groupStageMatches.filter((match) => match.groupName === selectedGroup),
+    [groupStageMatches, selectedGroup]
+  );
+
+  const availableTeamsForSelectedGroup = useMemo(() => {
+    if (selectedGroup === GROUP_FILTER_ALL_KEY) {
+      return [];
+    }
+
+    const teamMap = new Map<string, Team>();
+    for (const match of selectedGroupMatches) {
+      if (match.homeTeam?.id) {
+        teamMap.set(match.homeTeam.id, match.homeTeam);
+      }
+      if (match.awayTeam?.id) {
+        teamMap.set(match.awayTeam.id, match.awayTeam);
+      }
+    }
+
+    return Array.from(teamMap.values()).sort((left, right) => left.name.localeCompare(right.name));
+  }, [selectedGroup, selectedGroupMatches]);
+
+  useEffect(() => {
+    if (selectedGroup === GROUP_FILTER_ALL_KEY) {
+      if (selectedTeamId !== TEAM_FILTER_ALL_KEY) {
+        setSelectedTeamId(TEAM_FILTER_ALL_KEY);
+      }
+      return;
+    }
+
+    if (
+      selectedTeamId !== TEAM_FILTER_ALL_KEY &&
+      !availableTeamsForSelectedGroup.some((team) => team.id === selectedTeamId)
+    ) {
+      setSelectedTeamId(TEAM_FILTER_ALL_KEY);
+    }
+  }, [availableTeamsForSelectedGroup, selectedGroup, selectedTeamId, setSelectedTeamId]);
+
+  const filteredMatches = useMemo(() => {
+    if (selectedTeamId === TEAM_FILTER_ALL_KEY) {
+      return selectedGroupMatches;
+    }
+
+    return selectedGroupMatches.filter(
+      (match) => match.homeTeamId === selectedTeamId || match.awayTeamId === selectedTeamId
+    );
+  }, [selectedGroupMatches, selectedTeamId]);
+
+  const filterSignature = `${selectedGroup}|${selectedTeamId}`;
+
+  useEffect(() => {
+    setMatchWindowStart(0);
+  }, [filterSignature]);
+
+  useEffect(() => {
+    setMatchWindowStart((current) =>
+      Math.max(0, Math.min(current, Math.max(filteredMatches.length - GROUP_PREDICTIONS_PAGE_SIZE, 0)))
+    );
+  }, [filteredMatches.length]);
+
+  const visibleMatches = useMemo(
+    () => filteredMatches.slice(matchWindowStart, matchWindowStart + GROUP_PREDICTIONS_PAGE_SIZE),
+    [filteredMatches, matchWindowStart]
+  );
+
+  const hasEarlierMatches = matchWindowStart > 0;
+  const hasLaterMatches = matchWindowStart + visibleMatches.length < filteredMatches.length;
+
   useEffect(() => {
     let isMounted = true;
-    const normalizedTeamSearch = teamSearch.trim().toLowerCase();
-    const filteredMatchIds = matches
-      .filter((match) => (stageFilter === "all" || match.stage === stageFilter))
-      .filter((match) => dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter)
-      .filter((match) => matchesTeamSearch(match, normalizedTeamSearch))
-      .sort(sortMatchesByKickoff)
-      .map((match) => match.id);
+    const filteredMatchIds = filteredMatches.map((match) => match.id);
 
-    fetchPredictionsForMatches(filteredMatchIds).then((items) => {
+    if (filteredMatchIds.length === 0) {
+      setSocialPredictions([]);
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    fetchPredictionsForMatches(filteredMatchIds, user.id).then((items) => {
       if (isMounted) {
         setSocialPredictions(items);
       }
@@ -261,50 +395,32 @@ export function GroupPredictions({
     return () => {
       isMounted = false;
     };
-  }, [matches, stageFilter, dateFilter, teamSearch]);
+  }, [filteredMatches, user.id]);
 
-  const dateOptions = useMemo(
-    () => Array.from(new Set(matches.map((match) => getMatchDateKey(match.kickoffTime)))).sort(),
-    [matches]
-  );
-  const normalizedTeamSearch = teamSearch.trim().toLowerCase();
-  const filteredMatches = useMemo(
+  const filteredMatchesByDate = useMemo(
     () =>
-      matches
-        .filter((match) => {
-          const stageMatches = stageFilter === "all" || match.stage === stageFilter;
-          const dateMatches = dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter;
-          const teamMatches = matchesTeamSearch(match, normalizedTeamSearch);
-          return stageMatches && dateMatches && teamMatches;
-        })
-        .sort(sortMatchesByKickoff),
-    [matches, normalizedTeamSearch, stageFilter, dateFilter]
+      visibleMatches.reduce<Record<string, MatchWithTeams[]>>((groups, match) => {
+        const dateKey = getMatchDateKey(match.kickoffTime);
+        groups[dateKey] = groups[dateKey] ?? [];
+        groups[dateKey].push(match);
+        return groups;
+      }, {}),
+    [visibleMatches]
   );
-  const filterSignature = `${stageFilter}|${dateFilter}|${normalizedTeamSearch}`;
-  useEffect(() => {
-    setMatchWindowStart(getDefaultWindowStart(filteredMatches));
-  }, [filteredMatches, filterSignature]);
 
-  useEffect(() => {
-    setMatchWindowStart((current) => Math.max(0, Math.min(current, Math.max(filteredMatches.length - 10, 0))));
-  }, [filteredMatches.length]);
+  const filteredDates = useMemo(() => Object.keys(filteredMatchesByDate).sort(), [filteredMatchesByDate]);
 
-  const visibleMatches = filteredMatches.slice(matchWindowStart, matchWindowStart + 10);
-  const hasEarlierMatches = matchWindowStart > 0;
-  const hasLaterMatches = matchWindowStart + visibleMatches.length < filteredMatches.length;
-  const filteredMatchesByDate = visibleMatches.reduce<Record<string, MatchWithTeams[]>>((groups, match) => {
-    const dateKey = getMatchDateKey(match.kickoffTime);
-    groups[dateKey] = groups[dateKey] ?? [];
-    groups[dateKey].push(match);
-    return groups;
-  }, {});
-  const filteredDates = Object.keys(filteredMatchesByDate).sort();
+  const savedMatchIds = useMemo(() => new Set(predictions.map((prediction) => prediction.matchId)), [predictions]);
 
-  const savedCount = matches.filter((match) => predictions.some((prediction) => prediction.matchId === match.id)).length;
-  const hasCompletedAllPicks = matches.length > 0 && savedCount >= matches.length;
+  const savedCount = useMemo(
+    () => groupStageMatches.filter((match) => savedMatchIds.has(match.id)).length,
+    [groupStageMatches, savedMatchIds]
+  );
+
+  const hasCompletedAllPicks = groupStageMatches.length > 0 && savedCount >= groupStageMatches.length;
+
   const nextPredictionMatchId = useMemo(() => {
-    const savedMatchIds = new Set(predictions.map((prediction) => prediction.matchId));
-    const nextUnsavedOpenMatch = matches.find(
+    const nextUnsavedOpenMatch = groupStageMatches.find(
       (match) => canEditPrediction(match.status) && !savedMatchIds.has(match.id)
     );
 
@@ -312,8 +428,9 @@ export function GroupPredictions({
       return nextUnsavedOpenMatch.id;
     }
 
-    return matches.find((match) => canEditPrediction(match.status))?.id ?? null;
-  }, [matches, predictions]);
+    return groupStageMatches.find((match) => canEditPrediction(match.status))?.id ?? null;
+  }, [groupStageMatches, savedMatchIds]);
+
   const shouldPromoteKnockout = !nextPredictionMatchId;
   const shouldShowSecondaryKnockoutButton = !shouldPromoteKnockout;
   const primaryActionLabel = nextPredictionMatchId
@@ -322,45 +439,161 @@ export function GroupPredictions({
       ? "My Knockout Picks"
       : "My Results";
 
+  const selectedTeam = useMemo(
+    () => availableTeamsForSelectedGroup.find((team) => team.id === selectedTeamId) ?? null,
+    [availableTeamsForSelectedGroup, selectedTeamId]
+  );
+  const homeTeam = useMemo(() => {
+    if (!user.homeTeamId) {
+      return null;
+    }
+
+    for (const match of groupStageMatches) {
+      if (match.homeTeam?.id === user.homeTeamId) {
+        return match.homeTeam;
+      }
+      if (match.awayTeam?.id === user.homeTeamId) {
+        return match.awayTeam;
+      }
+    }
+
+    return null;
+  }, [groupStageMatches, user.homeTeamId]);
+  const homeTeamGroupName = homeTeam?.groupName ?? null;
+
+  const groupFilterLabel = selectedGroup === GROUP_FILTER_ALL_KEY ? null : formatGroupName(selectedGroup);
+  const teamFilterLabel = selectedTeamId === TEAM_FILTER_ALL_KEY ? null : selectedTeam?.name ?? null;
+
+  const groupPredictionRows = useMemo(() => {
+    if (selectedGroup === GROUP_FILTER_ALL_KEY) {
+      return [];
+    }
+
+    const groupMatches = groupStageMatches.filter((match) => match.groupName === selectedGroup);
+    const teamMap = new Map<string, MiniGroupStandingsRow>();
+
+    for (const match of groupMatches) {
+      if (match.homeTeam?.id) {
+        teamMap.set(match.homeTeam.id, createMiniGroupStandingsRow(match.homeTeam));
+      }
+      if (match.awayTeam?.id) {
+        teamMap.set(match.awayTeam.id, createMiniGroupStandingsRow(match.awayTeam));
+      }
+    }
+
+    const predictionByMatchId = new Map(predictions.map((prediction) => [prediction.matchId, prediction]));
+
+    for (const match of groupMatches) {
+      const draftState = draftPredictionStateByMatchId[match.id];
+      const savedPrediction = predictionByMatchId.get(match.id);
+      const predictedScore = getPredictedScoreForTable(savedPrediction, draftState);
+
+      if (!predictedScore || !match.homeTeamId || !match.awayTeamId) {
+        continue;
+      }
+
+      const homeRow = teamMap.get(match.homeTeamId);
+      const awayRow = teamMap.get(match.awayTeamId);
+
+      if (!homeRow || !awayRow) {
+        continue;
+      }
+
+      applyGroupStandingsResult(homeRow, awayRow, predictedScore.homeScore, predictedScore.awayScore);
+    }
+
+    return Array.from(teamMap.values()).sort(sortMiniGroupStandingsRows);
+  }, [draftPredictionStateByMatchId, groupStageMatches, predictions, selectedGroup]);
+
+  useEffect(() => {
+    if (selectedGroup === GROUP_FILTER_ALL_KEY) {
+      previousGroupPredictionRowsRef.current = [];
+      previousPredictedGroupRef.current = selectedGroup;
+      setMovementByTeamId({});
+      return;
+    }
+
+    const switchedGroups = previousPredictedGroupRef.current !== selectedGroup;
+    if (switchedGroups || previousGroupPredictionRowsRef.current.length === 0) {
+      previousGroupPredictionRowsRef.current = groupPredictionRows;
+      previousPredictedGroupRef.current = selectedGroup;
+      setMovementByTeamId({});
+      return;
+    }
+
+    const previousRanks = new Map(
+      previousGroupPredictionRowsRef.current.map((row, index) => [row.teamId, index])
+    );
+    const previousOrder = previousGroupPredictionRowsRef.current.map((row) => row.teamId);
+    const nextOrder = groupPredictionRows.map((row) => row.teamId);
+    const orderChanged =
+      previousOrder.length === nextOrder.length &&
+      previousOrder.some((teamId, index) => teamId !== nextOrder[index]);
+
+    if (!orderChanged) {
+      previousGroupPredictionRowsRef.current = groupPredictionRows;
+      previousPredictedGroupRef.current = selectedGroup;
+      return;
+    }
+
+    const nextMovements: Record<string, PredictedGroupRowMovement> = {};
+
+    for (const [index, row] of groupPredictionRows.entries()) {
+      const previousRank = previousRanks.get(row.teamId);
+      if (previousRank === undefined || previousRank === index) {
+        continue;
+      }
+
+      nextMovements[row.teamId] = index < previousRank ? "up" : "down";
+    }
+
+    previousGroupPredictionRowsRef.current = groupPredictionRows;
+    previousPredictedGroupRef.current = selectedGroup;
+
+    setMovementByTeamId(nextMovements);
+  }, [groupPredictionRows, selectedGroup]);
+
   const jumpToMatch = useCallback(
-    (matchId: string) => {
-      setStageFilter("all");
-      setDateFilter("all");
-      setTeamSearch("");
-      setMatchWindowStart(getWindowStartForMatch([...matches].sort(sortMatchesByKickoff), matchId));
-      setPendingScrollMatchId(matchId);
+    (matchId: string, mode: "match" | "section" = "match") => {
+      setSelectedGroup(GROUP_FILTER_ALL_KEY);
+      setSelectedTeamId(TEAM_FILTER_ALL_KEY);
+      const targetIndex = groupStageMatches.findIndex((match) => match.id === matchId);
+      const maxWindowStart = Math.max(groupStageMatches.length - GROUP_PREDICTIONS_PAGE_SIZE, 0);
+      setMatchWindowStart(
+        targetIndex >= 0 ? Math.max(0, Math.min(targetIndex, maxWindowStart)) : 0
+      );
+      setPendingScrollTarget({ matchId, mode });
       setFocusedMatchId(matchId);
     },
-    [matches, setDateFilter, setStageFilter, setTeamSearch]
+    [groupStageMatches, setSelectedGroup, setSelectedTeamId]
   );
 
   useEffect(() => {
     if (searchParams.get("focus") === "next" && nextPredictionMatchId) {
-      jumpToMatch(nextPredictionMatchId);
+      jumpToMatch(nextPredictionMatchId, "section");
     }
   }, [jumpToMatch, nextPredictionMatchId, searchParams]);
 
   useEffect(() => {
-    if (!pendingScrollMatchId) {
+    if (!pendingScrollTarget) {
       return;
     }
 
-    const targetMatch = visibleMatches.find((match) => match.id === pendingScrollMatchId);
+    const targetMatch = visibleMatches.find((match) => match.id === pendingScrollTarget.matchId);
     if (!targetMatch) {
       return;
     }
 
     const targetDateKey = getMatchDateKey(targetMatch.kickoffTime);
-    const dateMatches = filteredMatchesByDate[targetDateKey] ?? [];
-    const isFirstMatchForDate = dateMatches[0]?.id === pendingScrollMatchId;
-    const targetNode = matchCardRefs.current[pendingScrollMatchId];
+    const targetNode = matchCardRefs.current[pendingScrollTarget.matchId];
     const sectionNode = dateSectionRefs.current[targetDateKey];
 
     if (!targetNode && !sectionNode) {
       return;
     }
 
-    const scrollTarget = (isFirstMatchForDate ? sectionNode : targetNode) ?? targetNode ?? sectionNode;
+    const scrollTarget =
+      pendingScrollTarget.mode === "section" ? sectionNode ?? targetNode : targetNode ?? sectionNode;
     if (!scrollTarget) {
       return;
     }
@@ -371,8 +604,8 @@ export function GroupPredictions({
       behavior: "smooth"
     });
 
-    setPendingScrollMatchId(null);
-  }, [filteredMatchesByDate, pendingScrollMatchId, visibleMatches]);
+    setPendingScrollTarget(null);
+  }, [pendingScrollTarget, visibleMatches]);
 
   async function handleSave(prediction: Prediction) {
     const savedPrediction = await savePlayerPrediction(prediction);
@@ -380,6 +613,7 @@ export function GroupPredictions({
       setAutoPickDraft(null);
       setActiveAutoPickToken(null);
     }
+
     let nextPredictions: Prediction[] = [];
 
     setPredictions((currentPredictions) => {
@@ -396,10 +630,11 @@ export function GroupPredictions({
       return nextPredictions;
     });
 
-    const sortedMatches = [...matches].sort(sortMatchesByKickoff);
-    const savedMatchIds = new Set(nextPredictions.map((item) => item.matchId));
-    const nextUnsavedOpenMatch = sortedMatches.find(
-      (match) => canEditPrediction(match.status) && !savedMatchIds.has(match.id)
+    const nextSavedMatchIds = new Set(
+      (nextPredictions.length > 0 ? nextPredictions : predictions).map((item) => item.matchId)
+    );
+    const nextUnsavedOpenMatch = groupStageMatches.find(
+      (match) => canEditPrediction(match.status) && !nextSavedMatchIds.has(match.id)
     );
 
     if (nextUnsavedOpenMatch) {
@@ -413,7 +648,7 @@ export function GroupPredictions({
       }, POST_SAVE_ADVANCE_DELAY_MS);
     }
 
-    fetchPredictionsForMatches(filteredMatches.map((match) => match.id)).then(setSocialPredictions);
+    fetchPredictionsForMatches(filteredMatches.map((match) => match.id), user.id).then(setSocialPredictions);
     return savedPrediction;
   }
 
@@ -426,9 +661,18 @@ export function GroupPredictions({
       triggerAutoPickDraft(draft);
     } catch (error) {
       const message = error instanceof Error ? error.message : AUTO_PICK_EMPTY_COPY[autoPickLanguage];
-      const localizedMessage = message === AUTO_PICK_EMPTY_COPY.en ? AUTO_PICK_EMPTY_COPY[autoPickLanguage] : message;
+      const localizedMessage =
+        message === AUTO_PICK_EMPTY_COPY.en
+          ? AUTO_PICK_EMPTY_COPY[autoPickLanguage]
+          : message === AUTO_PICK_ALL_SAVED_COPY.en
+            ? AUTO_PICK_ALL_SAVED_COPY[autoPickLanguage]
+            : message;
       showAppToast({
-        tone: localizedMessage === AUTO_PICK_EMPTY_COPY[autoPickLanguage] ? "tip" : "error",
+        tone:
+          localizedMessage === AUTO_PICK_EMPTY_COPY[autoPickLanguage] ||
+          localizedMessage === AUTO_PICK_ALL_SAVED_COPY[autoPickLanguage]
+            ? "tip"
+            : "error",
         text: localizedMessage
       });
     } finally {
@@ -490,9 +734,42 @@ export function GroupPredictions({
     });
   }
 
+  const handleGroupFilterChange = useCallback(
+    (groupKey: string) => {
+      setSelectedGroup(groupKey);
+      setSelectedTeamId(TEAM_FILTER_ALL_KEY);
+    },
+    [setSelectedGroup, setSelectedTeamId]
+  );
+
+  const handleDraftStateChange = useCallback((matchId: string, draft: DraftPredictionState) => {
+    setDraftPredictionStateByMatchId((current) => {
+      const nextValue = {
+        homeScore: draft.homeScore,
+        awayScore: draft.awayScore,
+        shouldCount: draft.shouldCount
+      };
+      const previousValue = current[matchId];
+
+      if (
+        previousValue &&
+        previousValue.homeScore === nextValue.homeScore &&
+        previousValue.awayScore === nextValue.awayScore &&
+        previousValue.shouldCount === nextValue.shouldCount
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [matchId]: nextValue
+      };
+    });
+  }, []);
+
   const renderMatchPager = () =>
     filteredMatches.length > 0 ? (
-      <section className="rounded-lg border border-gray-200 bg-white p-3">
+      <section className="pt-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm font-black text-gray-900">
@@ -505,7 +782,7 @@ export function GroupPredictions({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => setMatchWindowStart((current) => Math.max(0, current - 10))}
+              onClick={() => setMatchWindowStart((current) => Math.max(0, current - GROUP_PREDICTIONS_PAGE_SIZE))}
               disabled={!hasEarlierMatches}
               className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -514,7 +791,12 @@ export function GroupPredictions({
             <button
               type="button"
               onClick={() =>
-                setMatchWindowStart((current) => Math.min(Math.max(filteredMatches.length - 10, 0), current + 10))
+                setMatchWindowStart((current) =>
+                  Math.min(
+                    Math.max(filteredMatches.length - GROUP_PREDICTIONS_PAGE_SIZE, 0),
+                    current + GROUP_PREDICTIONS_PAGE_SIZE
+                  )
+                )
               }
               disabled={!hasLaterMatches}
               className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
@@ -536,7 +818,7 @@ export function GroupPredictions({
               hasCompletedAllPicks ? "bg-amber-50 text-amber-800" : "bg-white text-gray-700"
             }`}
           >
-              {savedCount} of {matches.length} picks saved
+            {savedCount} of {groupStageMatches.length} picks saved
           </div>
         </div>
         <div className="mt-3">
@@ -558,7 +840,7 @@ export function GroupPredictions({
                   </li>
                 ))}
               </ul>
-              <div className="mt-4 mx-auto max-w-xl">
+              <div className="mx-auto mt-4 max-w-xl">
                 <div className="grid gap-2 sm:grid-cols-2">
                   <button
                     type="button"
@@ -610,64 +892,132 @@ export function GroupPredictions({
                   </Link>
                 </div>
               </div>
-              <div className="mt-4">
-                <InlineDisclosureButton
-                  isOpen={isSearchOpen}
-                  variant="subtle"
-                  onClick={() => setIsSearchOpen((current) => !current)}
-                />
-                {isSearchOpen ? (
-                  <div className="mt-3 grid gap-3 lg:grid-cols-3">
-                    <label>
-                      <span className="text-sm font-bold text-gray-700">Find a team</span>
-                      <input
-                        value={teamSearch}
-                        onChange={(event) => setTeamSearch(event.target.value)}
-                        placeholder="Search by team name or code"
-                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                      />
-                    </label>
-                    <label>
-                      <span className="text-sm font-bold text-gray-700">Stage</span>
-                      <select
-                        value={stageFilter}
-                        onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
-                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
-                      >
-                        {stages.map((stage) => (
-                          <option key={stage} value={stage}>
-                            {stage === "all" ? "All stages" : formatStage(stage)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span className="text-sm font-bold text-gray-700">Date</span>
-                      <select
-                        value={dateFilter}
-                        onChange={(event) => setDateFilter(event.target.value)}
-                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
-                      >
-                        <option value="all">All dates</option>
-                        {dateOptions.map((date) => (
-                          <option key={date} value={date}>
-                            {formatDateLabel(date)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                ) : null}
-              </div>
             </>
           ) : null}
         </div>
       </section>
 
-      <p className="text-sm font-semibold text-gray-600">
-        Showing {visibleMatches.length} of {filteredMatches.length} matches
-        {filteredMatches.length !== matches.length ? ` (${matches.length} total in the schedule)` : ""}.
-      </p>
+      <section className="space-y-3">
+        <div className="space-y-3 pb-2">
+          <PredictionChoiceRail
+            activeItemKey={selectedGroup}
+            onActiveItemChange={handleGroupFilterChange}
+            showControls={availableGroups.length + 1 > 1}
+          >
+            <FilterRailButton
+              optionKey={GROUP_FILTER_ALL_KEY}
+              isActive={selectedGroup === GROUP_FILTER_ALL_KEY}
+              tone="strong"
+              onSelect={handleGroupFilterChange}
+            >
+              All
+            </FilterRailButton>
+            {availableGroups.map((groupName) => (
+              <FilterRailButton
+                key={groupName}
+                optionKey={groupName}
+                isActive={selectedGroup === groupName}
+                tone="strong"
+                isHighlighted={!selectedGroup || selectedGroup !== groupName ? homeTeamGroupName === groupName : false}
+                onSelect={handleGroupFilterChange}
+              >
+                <span className="flex min-w-7 flex-col items-center leading-none">
+                  <span className="text-[8px] font-semibold uppercase tracking-wide">Group</span>
+                  <span className="mt-0.5 text-base font-black">{getGroupShortLabel(groupName)}</span>
+                </span>
+              </FilterRailButton>
+            ))}
+          </PredictionChoiceRail>
+
+          {selectedGroup === GROUP_FILTER_ALL_KEY ? null : (
+            <PredictionChoiceRail
+              activeItemKey={selectedTeamId}
+              onActiveItemChange={setSelectedTeamId}
+              showControls={availableTeamsForSelectedGroup.length + 1 > 1}
+            >
+              <FilterRailButton
+                optionKey={TEAM_FILTER_ALL_KEY}
+                isActive={selectedTeamId === TEAM_FILTER_ALL_KEY}
+                onSelect={setSelectedTeamId}
+              >
+                All Teams
+              </FilterRailButton>
+              {availableTeamsForSelectedGroup.map((team) => (
+                <FilterRailButton
+                  key={team.id}
+                  optionKey={team.id}
+                  isActive={selectedTeamId === team.id}
+                  isHighlighted={selectedTeamId !== team.id && user.homeTeamId === team.id}
+                  onSelect={setSelectedTeamId}
+                >
+                  {team.name}
+                </FilterRailButton>
+              ))}
+            </PredictionChoiceRail>
+          )}
+        </div>
+
+        {selectedGroup !== GROUP_FILTER_ALL_KEY ? (
+          <section className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isPredictionTableOpen) {
+                    setIsPredictionTableOpen(true);
+                  }
+                }}
+                className={`text-[10px] font-bold uppercase tracking-wide transition ${
+                  isPredictionTableOpen
+                    ? "cursor-default text-accent-dark"
+                    : "text-accent-dark hover:text-accent"
+                }`}
+              >
+                See How Your Predictions Affect The Tables
+              </button>
+              <InlineDisclosureButton
+                isOpen={isPredictionTableOpen}
+                variant="subtle"
+                onClick={() => setIsPredictionTableOpen((current) => !current)}
+              />
+            </div>
+
+            {isPredictionTableOpen ? (
+              <GroupStandingsMiniTable
+                rows={groupPredictionRows}
+                homeTeamId={user.homeTeamId ?? null}
+                movementByTeamId={movementByTeamId}
+              />
+            ) : null}
+          </section>
+        ) : null}
+
+        <div className="border-y border-gray-200 py-3">
+          <div className="flex flex-wrap items-center justify-center gap-2 text-center text-sm font-semibold text-gray-600">
+            <span>
+            {filteredMatches.length} of {groupStageMatches.length} matches
+            </span>
+            {groupFilterLabel ? (
+              <>
+                <span aria-hidden className="text-gray-400">-</span>
+                <span className="inline-flex items-center rounded-md border border-gray-300 bg-white px-1 py-0.5 text-gray-700">
+                  <span className="inline-flex items-center gap-1 text-[12px] font-black leading-none">
+                    <span>Group</span>
+                    <span>{getGroupShortLabel(selectedGroup)}</span>
+                  </span>
+                </span>
+                <span>only</span>
+              </>
+            ) : null}
+            {teamFilterLabel ? (
+              <>
+                <span aria-hidden className="text-gray-400">-</span>
+                <span>{teamFilterLabel}</span>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </section>
 
       {renderMatchPager()}
 
@@ -694,7 +1044,7 @@ export function GroupPredictions({
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white divide-y divide-gray-200">
+            <div className="divide-y divide-gray-200 overflow-hidden rounded-lg border border-gray-200 bg-white">
               {dateMatches.map((match) => (
                 <div
                   key={match.id}
@@ -731,6 +1081,8 @@ export function GroupPredictions({
                           }
                         : undefined
                     }
+                    highlightHomeTeamId={user.homeTeamId ?? null}
+                    onDraftStateChange={handleDraftStateChange}
                     userId={user.id}
                     onSave={handleSave}
                   />
@@ -739,6 +1091,7 @@ export function GroupPredictions({
                       match={match}
                       predictions={socialPredictions.filter((item) => item.matchId === match.id)}
                       currentUserId={user.id}
+                      currentUserPoints={user.totalPoints}
                     />
                   ) : null}
                 </div>
@@ -750,7 +1103,7 @@ export function GroupPredictions({
 
       {filteredMatches.length === 0 ? (
         <p className="rounded-lg bg-gray-100 px-4 py-3 text-center text-sm font-semibold text-gray-700">
-          No matches found for the current filters.
+          No matches found for this filter
         </p>
       ) : null}
 
@@ -759,40 +1112,83 @@ export function GroupPredictions({
   );
 }
 
-function getTodayDateKey() {
-  return new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(new Date());
+function PredictionChoiceRail({
+  children,
+  activeItemKey,
+  onActiveItemChange,
+  showControls = true
+}: {
+  children: ReactNode;
+  activeItemKey: string;
+  onActiveItemChange: (key: string) => void;
+  showControls?: boolean;
+}) {
+  return (
+    <WindowChoiceRail
+      activeItemKey={activeItemKey}
+      onActiveItemChange={onActiveItemChange}
+      showControls={showControls}
+    >
+      {children}
+    </WindowChoiceRail>
+  );
 }
 
-function getDefaultWindowStart(matches: MatchWithTeams[]) {
-  if (matches.length <= 10) {
-    return 0;
+function FilterRailButton({
+  children,
+  optionKey,
+  isActive,
+  tone = "default",
+  isHighlighted = false,
+  onSelect
+}: {
+  children: ReactNode;
+  optionKey: string;
+  isActive: boolean;
+  tone?: "default" | "strong";
+  isHighlighted?: boolean;
+  onSelect?: (key: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-choice-key={optionKey}
+      onClick={() => onSelect?.(optionKey)}
+      className={`rounded-md border px-1.5 py-1.5 text-sm font-bold transition ${
+        isActive
+          ? tone === "strong"
+            ? "border-accent bg-accent text-white"
+            : "border-accent bg-accent-light text-accent-dark"
+          : isHighlighted
+            ? "border-amber-200 bg-amber-50 text-gray-800 hover:border-amber-300 hover:bg-amber-100"
+            : "border-gray-300 bg-white text-gray-700 hover:border-accent hover:bg-accent-light"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function getPredictedScoreForTable(prediction: Prediction | undefined, draftState: DraftPredictionState | undefined) {
+  if (draftState?.shouldCount) {
+    return {
+      homeScore: draftState.homeScore,
+      awayScore: draftState.awayScore
+    };
   }
 
-  const todayKey = getTodayDateKey();
-  const nextMatchIndex = matches.findIndex((match) => getMatchDateKey(match.kickoffTime) >= todayKey);
-
-  if (nextMatchIndex >= 0) {
-    return nextMatchIndex;
+  if (prediction && prediction.predictedHomeScore !== undefined && prediction.predictedAwayScore !== undefined) {
+    return {
+      homeScore: prediction.predictedHomeScore,
+      awayScore: prediction.predictedAwayScore
+    };
   }
 
-  return Math.max(matches.length - 10, 0);
+  return null;
 }
 
-function getWindowStartForMatch(matches: MatchWithTeams[], matchId: string) {
-  const targetIndex = matches.findIndex((match) => match.id === matchId);
-  return targetIndex >= 0 ? targetIndex : getDefaultWindowStart(matches);
-}
-
-function sortMatchesByKickoff(a: MatchWithTeams, b: MatchWithTeams) {
-  return a.kickoffTime.localeCompare(b.kickoffTime);
-}
-
-function formatStage(stage: MatchStage) {
-  return formatMatchStage(stage);
+function sortMatchesByKickoff(left: MatchWithTeams, right: MatchWithTeams) {
+  return left.kickoffTime.localeCompare(right.kickoffTime);
 }
 
 function formatDateLabel(date: string) {
@@ -807,23 +1203,6 @@ function formatWeekdayLabel(date: string) {
   return new Intl.DateTimeFormat("en-US", {
     weekday: "short"
   }).format(new Date(`${date}T12:00:00Z`));
-}
-
-function matchesTeamSearch(match: MatchWithTeams, normalizedQuery: string) {
-  if (!normalizedQuery) {
-    return true;
-  }
-
-  const searchableValues = [
-    match.homeTeam?.name,
-    match.homeTeam?.shortName,
-    match.awayTeam?.name,
-    match.awayTeam?.shortName
-  ]
-    .filter(Boolean)
-    .map((value) => value!.toLowerCase());
-
-  return searchableValues.some((value) => value.includes(normalizedQuery));
 }
 
 function getAutoPickSourceText(source: string, language: "en" | "es") {

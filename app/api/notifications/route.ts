@@ -24,9 +24,18 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-    const result = await markCurrentUserNotificationsRead();
+    let notificationId: string | undefined;
+
+    try {
+      const body = (await request.json()) as { notificationId?: string };
+      notificationId = body?.notificationId;
+    } catch {
+      notificationId = undefined;
+    }
+
+    const result = await markCurrentUserNotificationsRead(notificationId);
     if (!result.ok) {
       return NextResponse.json(result, { status: 400 });
     }

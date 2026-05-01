@@ -170,7 +170,7 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
       switcher: {
         accessLevel: "player",
         tabs: [
-          { value: "my_groups", label: "My Groups" },
+          { value: "my_groups", label: "Invited / Joined Groups" },
           { value: "global", label: "Global Standings" }
         ],
         groups: [],
@@ -184,10 +184,7 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
   const [settings, switcher] = await Promise.all([fetchLeaderboardFeatureSettings(), fetchLeaderboardSwitcherContext()]);
   const activeView = resolveAllowedView(request?.view, switcher);
   const selectedGroupId = resolveAllowedGroupId(request?.groupId, switcher, activeView);
-  const groupStandingIds =
-    switcher.accessLevel === "super_admin"
-      ? switcher.groups.map((group) => group.id)
-      : switcher.managedGroups.map((group) => group.id);
+  const groupStandingIds = switcher.groups.map((group) => group.id);
   const groupStandingsPromise = activeView === "groups"
     ? fetchGroupStandingsForAccessibleGroups(
         switcher.accessLevel,
@@ -577,19 +574,19 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
       ? [
           { value: "global", label: "Global Standings" },
           { value: "managers", label: "Managers" },
-          { value: "groups", label: "My Group Scores" }
+          { value: "groups", label: "Group Standings" }
         ]
       : accessLevel === "manager"
         ? [
-            { value: "my_groups", label: "My Groups" },
             { value: "managed_groups", label: "My Managed Groups" },
-            { value: "groups", label: "My Group Scores" },
-            { value: "global", label: "Global Standings" }
+            { value: "my_groups", label: "Invited / Joined Groups" },
+            { value: "global", label: "Global Standings" },
+            { value: "groups", label: "Group Standings" }
           ]
         : [
-            { value: "my_groups", label: "My Groups" },
-            { value: "groups", label: "My Group Scores" },
-            { value: "global", label: "Global Standings" }
+            { value: "my_groups", label: "Invited / Joined Groups" },
+            { value: "global", label: "Global Standings" },
+            { value: "groups", label: "Group Standings" }
           ];
 
   return {

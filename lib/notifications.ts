@@ -110,6 +110,7 @@ export async function fetchCurrentUserNotifications() {
       .from("user_notifications")
       .select("id,user_id,event_id,type,payload,read_at,created_at")
       .eq("user_id", userResult.userId)
+      .is("read_at", null)
       .order("created_at", { ascending: false })
       .limit(NOTIFICATION_LIMIT),
     adminSupabase
@@ -150,18 +151,22 @@ export async function fetchCurrentUserNotifications() {
   };
 }
 
-export async function markCurrentUserNotificationsRead() {
+export async function markCurrentUserNotificationsRead(notificationId?: string) {
   const userResult = await getCurrentNotificationViewerId();
   if (!userResult.ok) {
     return { ok: false as const, message: userResult.message };
   }
 
   const adminSupabase = createAdminClient();
-  const { error } = await adminSupabase
+  let query = adminSupabase
     .from("user_notifications")
     .update({ read_at: new Date().toISOString() })
     .eq("user_id", userResult.userId)
     .is("read_at", null);
+
+  query = notificationId?.trim() ? query.eq("id", notificationId.trim()) : query;
+
+  const { error } = await query;
 
   if (error) {
     if (isMissingUserNotificationsTableError(error.message)) {
@@ -178,6 +183,10 @@ export async function createNotificationsForLeaderboardEvents(
   adminSupabase: ReturnType<typeof createAdminClient>,
   events: NotificationEventSeed[]
 ) {
+  const groupNamesById = await fetchGroupNamesByIds(
+    adminSupabase,
+    events.map((event) => event.group_id).filter(Boolean) as string[]
+  );
   const inserts = selectPreferredNotificationEvents(events)
     .flatMap<NotificationInsert>((event) => {
       if (!event.user_id) {
@@ -201,6 +210,7 @@ export async function createNotificationsForLeaderboardEvents(
       }
 
       if (event.event_type === "daily_winner") {
+        const groupName = event.group_id ? groupNamesById.get(event.group_id) ?? null : null;
         return [
           {
             user_id: event.user_id,
@@ -208,9 +218,10 @@ export async function createNotificationsForLeaderboardEvents(
             type: "daily_winner",
             payload: {
               title: "🏆 Daily Winner",
-              body: "You're today's winner 🏆",
+              body: groupName ? groupName : "Global standings",
               scopeType: event.scope_type,
               groupId: event.group_id,
+              groupName,
               dailyPoints: event.points_delta ?? 0
             }
           }
@@ -281,6 +292,7 @@ export async function createTrophyEarnedNotifications(input: {
     trophyTier?: "bronze" | "silver" | "gold" | "special" | null;
     trophyDescription?: string | null;
     awardedAt: string;
+    groupName?: string | null;
   }>;
 }) {
   const inserts: NotificationInsert[] = input.awards.map((award) => ({
@@ -290,13 +302,14 @@ export async function createTrophyEarnedNotifications(input: {
     read_at: null,
     payload: {
       title: "🏆 Trophy Earned",
-      body: "Trophy earned",
+      body: award.groupName ? award.groupName : "Trophy earned",
       trophyId: award.trophyId,
       trophyName: award.trophyName,
       trophyIcon: award.trophyIcon,
       trophyTier: award.trophyTier ?? "special",
       trophyDescription: award.trophyDescription ?? "",
-      awardedAt: award.awardedAt
+      awardedAt: award.awardedAt,
+      groupName: award.groupName ?? null
     }
   }));
 
@@ -549,6 +562,24 @@ function mapNotificationRow(row: NotificationRow): UserNotification {
     readAt: row.read_at,
     href: "/leaderboard"
   };
+}
+
+async function fetchGroupNamesByIds(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupIds: string[]
+): Promise<Map<string, string>> {
+  const uniqueIds = Array.from(new Set(groupIds)).filter(Boolean);
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+
+  const { data, error } = await adminSupabase.from("groups").select("id,name").in("id", uniqueIds);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return new Map((((data as Array<{ id: string; name: string }> | null) ?? []).map((group) => [group.id, group.name])));
 }
 
 function fallbackTitle(type: NotificationType) {

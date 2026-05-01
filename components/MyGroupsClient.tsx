@@ -10,6 +10,7 @@ import {
   cancelGroupInviteAction,
   createGroupAction,
   createGroupInviteAction,
+  createGroupInviteShareLinkAction,
   createManagedGroupTrophyAction,
   deleteManagedGroupAction,
   fetchManagedGroupDetailAction,
@@ -99,6 +100,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [inviteSuggestions, setInviteSuggestions] = useState<Record<string, InviteAutocompleteOption[]>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
   const [submittingInviteForGroup, setSubmittingInviteForGroup] = useState<string | null>(null);
+  const [shareLinkForGroup, setShareLinkForGroup] = useState<
+    Record<string, { claimUrl: string; whatsAppUrl: string; email: string; expiresAt: string | null }>
+  >({});
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [invitePreviewMessage, setInvitePreviewMessage] = useState<ToastState>(null);
   const [invitePreview, setInvitePreview] = useState<{
@@ -632,6 +636,63 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     setSubmittingInviteForGroup(null);
   }
 
+  async function handleCreateInviteShareLink(group: MyManagedGroup) {
+    setSubmittingInviteForGroup(group.id);
+    setMessage(null);
+
+    const defaultLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
+    const defaultHelperLanguage = normalizeExplainerLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
+    const formState = inviteForms[group.id] ?? {
+      email: "",
+      suggestedDisplayName: "",
+      customMessage: "",
+      language: defaultLanguage,
+      helperLanguage: defaultHelperLanguage
+    };
+
+    const result = await createGroupInviteShareLinkAction({
+      groupId: group.id,
+      email: formState.email,
+      suggestedDisplayName: formState.suggestedDisplayName,
+      customMessage: formState.customMessage,
+      language: formState.language,
+      helperLanguage: formState.helperLanguage
+    });
+
+    setMessage({
+      tone: result.ok ? "success" : "error",
+      text: result.message
+    });
+
+    if (result.ok) {
+      setShareLinkForGroup((current) => ({
+        ...current,
+        [group.id]: {
+          claimUrl: result.claimUrl,
+          whatsAppUrl: result.whatsAppUrl,
+          email: result.invite.email,
+          expiresAt: result.invite.expiresAt
+        }
+      }));
+
+      const resetLanguage = normalizeLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
+      const resetHelperLanguage = normalizeExplainerLanguage(summary?.ok ? summary.currentUser.preferredLanguage : undefined);
+      setInviteForms((current) => ({
+        ...current,
+        [group.id]: {
+          email: "",
+          suggestedDisplayName: "",
+          customMessage: "",
+          language: resetLanguage,
+          helperLanguage: resetHelperLanguage
+        }
+      }));
+      await load();
+    }
+
+    setSubmittingInviteForGroup(null);
+  }
+
   async function handleAcceptInvite() {
     if (!inviteToken) {
       return;
@@ -1100,6 +1161,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const isPeopleInvitesExpanded = expandedPeopleInviteIds.includes(group.id);
             const isTrophyExpanded = expandedTrophyIds.includes(group.id);
             const isGroupInfoExpanded = expandedGroupInfoIds.includes(group.id);
+            const activeShareLink = shareLinkForGroup[group.id] ?? null;
             const managerTrophies = groupTrophies.filter(
               (trophy) => trophy.awardSource === "manager" && trophy.scope === "group"
             );
@@ -1292,9 +1354,43 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                           German also preselect the Play helper text, while the rest of the invite stays in English for now.
                         </p>
                       </label>
-                      <ActionButton type="submit" disabled={submittingInviteForGroup === group.id} fullWidth>
-                        {submittingInviteForGroup === group.id ? "Sending invite..." : "Send Group Invite"}
-                      </ActionButton>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <ActionButton type="submit" disabled={submittingInviteForGroup === group.id} fullWidth>
+                          {submittingInviteForGroup === group.id ? "Sending invite..." : "Send Group Invite"}
+                        </ActionButton>
+                        <ActionButton
+                          type="button"
+                          disabled={submittingInviteForGroup === group.id}
+                          onClick={() => void handleCreateInviteShareLink(group)}
+                          fullWidth
+                        >
+                          {submittingInviteForGroup === group.id ? "Building link..." : "Get Share Link"}
+                        </ActionButton>
+                      </div>
+                      {activeShareLink ? (
+                        <div className="mt-3 space-y-2 rounded-md border border-gray-200 bg-white px-3 py-3">
+                          <p className="text-xs font-semibold text-gray-600">
+                            Share this link with <span className="font-bold text-gray-900">{activeShareLink.email}</span>
+                            {activeShareLink.expiresAt ? ` before ${formatDate(activeShareLink.expiresAt)}.` : "."}
+                          </p>
+                          <p className="break-all text-xs font-semibold text-gray-700">{activeShareLink.claimUrl}</p>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <ActionButton
+                              type="button"
+                              onClick={() => {
+                                void navigator.clipboard.writeText(activeShareLink.claimUrl);
+                                setMessage({ tone: "success", text: "Share link copied." });
+                              }}
+                              fullWidth
+                            >
+                              Copy Link
+                            </ActionButton>
+                            <Link href={activeShareLink.whatsAppUrl} target="_blank" rel="noreferrer" className="inline-flex">
+                              <ActionButton fullWidth>Send via WhatsApp</ActionButton>
+                            </Link>
+                          </div>
+                        </div>
+                      ) : null}
                     </form>
                     <div className="h-2" aria-hidden />
                     </>

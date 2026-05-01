@@ -3,14 +3,22 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CalendarDays, ListOrdered, Network, Sparkles, Trophy } from "lucide-react";
+import { CalendarDays, Network, Sparkles, Trophy } from "lucide-react";
 import { fetchDashboardGroupAccessAction } from "@/app/my-groups/actions";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
+import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
 import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
 import { DashboardHero } from "@/components/dashboard/DashboardHero";
 import { DashboardNoGroupsPanel } from "@/components/dashboard/DashboardNoGroupsPanel";
+import {
+  InlineDisclosureButton,
+  WindowChoiceRail,
+  useSessionDisclosureState,
+  useSessionJsonState
+} from "@/components/player-management/Shared";
 import { fetchNextAutoPick, storeAutoPickDraft } from "@/lib/auto-pick-client";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
+import { buildFinalGroupStandings, getGroupShortLabel } from "@/lib/group-standings";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { showAppToast } from "@/lib/app-toast";
 import { normalizeInviteTokenInput } from "@/components/player-management/Shared";
@@ -27,14 +35,16 @@ import type { MatchWithTeams, Prediction } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: string }> = {
-  en: { hello: "Hello", help: "Help" },
-  es: { hello: "Hola", help: "Ayuda" },
-  fr: { hello: "Bonjour", help: "Aide" },
-  pt: { hello: "Olá", help: "Ajuda" },
-  de: { hello: "Hallo", help: "Hilfe" }
+  en: { hello: "Hello", help: "RULES" },
+  es: { hello: "Hola", help: "RULES" },
+  fr: { hello: "Bonjour", help: "RULES" },
+  pt: { hello: "Olá", help: "RULES" },
+  de: { hello: "Hallo", help: "RULES" }
 };
 
 const DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-shown";
+const DASHBOARD_STANDINGS_GROUP_STORAGE_KEY = "dashboard-standings-group";
+const DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY = "dashboard-standings-disclosure";
 
 const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
   en: "Tap the PICK-IT logo above to return to this page again.",
@@ -75,6 +85,14 @@ export function DashboardOverview() {
   const [displayLanguage] = usePersistentExplainerLanguage(user);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [isAutoPicking, setIsAutoPicking] = useState(false);
+  const [selectedStandingsGroup, setSelectedStandingsGroup] = useSessionJsonState<string>(
+    DASHBOARD_STANDINGS_GROUP_STORAGE_KEY,
+    ""
+  );
+  const [isStandingsOpen, setIsStandingsOpen] = useSessionDisclosureState(
+    DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY,
+    false
+  );
 
   const refreshPredictions = useCallback(async () => {
     if (!user) {
@@ -206,6 +224,24 @@ export function DashboardOverview() {
     () => groupMatches.filter((match) => canEditPrediction(match.status)),
     [groupMatches]
   );
+  const availableStandingsGroups = useMemo(
+    () =>
+      Array.from(
+        new Set(groupMatches.map((match) => match.groupName).filter((groupName): groupName is string => Boolean(groupName)))
+      ).sort((left, right) => left.localeCompare(right, undefined, { numeric: true })),
+    [groupMatches]
+  );
+  const homeTeamGroupName = useMemo(() => {
+    if (!user?.homeTeamId) {
+      return null;
+    }
+
+    const homeTeamMatch = groupMatches.find(
+      (match) => match.homeTeam?.id === user.homeTeamId || match.awayTeam?.id === user.homeTeamId
+    );
+
+    return homeTeamMatch?.groupName ?? null;
+  }, [groupMatches, user?.homeTeamId]);
   const completedCount = useMemo(
     () => groupMatches.filter((match) => savedMatchIds.has(match.id)).length,
     [groupMatches, savedMatchIds]
@@ -219,6 +255,26 @@ export function DashboardOverview() {
   const heroCtaHref = "/groups?focus=next";
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
   const autoPickLanguage = displayLanguage === "es" ? "es" : "en";
+  const resolvedStandingsGroup =
+    homeTeamGroupName && availableStandingsGroups.includes(homeTeamGroupName)
+      ? homeTeamGroupName
+      : selectedStandingsGroup && availableStandingsGroups.includes(selectedStandingsGroup)
+        ? selectedStandingsGroup
+        : availableStandingsGroups[0] ?? "";
+  const tournamentStandingsRows = useMemo(
+    () => (resolvedStandingsGroup ? buildFinalGroupStandings(groupMatches, resolvedStandingsGroup) : []),
+    [groupMatches, resolvedStandingsGroup]
+  );
+
+  useEffect(() => {
+    if (!availableStandingsGroups.length) {
+      return;
+    }
+
+    if (resolvedStandingsGroup !== selectedStandingsGroup) {
+      setSelectedStandingsGroup(resolvedStandingsGroup);
+    }
+  }, [availableStandingsGroups.length, resolvedStandingsGroup, selectedStandingsGroup, setSelectedStandingsGroup]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !user || groupMatches.length === 0) {
@@ -332,13 +388,55 @@ export function DashboardOverview() {
         />
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-3">
-        <DashboardLinkCard
-          href="/leaderboard"
-          icon={ListOrdered}
-          title="Leaderboard"
-          copy="Tap a player to compare group picks."
-        />
+      {availableStandingsGroups.length > 0 ? (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Tournament Standings</p>
+            <InlineDisclosureButton
+              isOpen={isStandingsOpen}
+              variant="subtle"
+              onClick={() => setIsStandingsOpen((current) => !current)}
+            />
+          </div>
+
+          {isStandingsOpen ? (
+            <>
+              <WindowChoiceRail
+                activeItemKey={resolvedStandingsGroup}
+                onActiveItemChange={setSelectedStandingsGroup}
+                showControls={availableStandingsGroups.length > 1}
+              >
+                {availableStandingsGroups.map((groupName) => {
+                  const isActive = resolvedStandingsGroup === groupName;
+
+                  return (
+                    <button
+                      key={groupName}
+                      type="button"
+                      data-choice-key={groupName}
+                    onClick={() => setSelectedStandingsGroup(groupName)}
+                      className={`rounded-md border px-2 py-1.5 text-sm font-bold transition ${
+                        isActive
+                          ? "border-accent bg-accent text-white"
+                          : "border-gray-300 bg-white text-gray-700 hover:border-accent hover:bg-accent-light"
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1 text-[12px] font-black leading-none">
+                        <span>Group</span>
+                        <span>{getGroupShortLabel(groupName)}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </WindowChoiceRail>
+
+              <GroupStandingsMiniTable rows={tournamentStandingsRows} homeTeamId={user?.homeTeamId ?? null} />
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
+      <section className="grid gap-3 sm:grid-cols-2">
         <DashboardLinkCard
           href="/knockout"
           icon={Network}
@@ -354,11 +452,70 @@ export function DashboardOverview() {
       </section>
 
       <section className="rounded-lg border border-gray-200 p-4">
-        <h3 className="text-lg font-bold">Phase 1 scoring preview</h3>
-        <p className="mt-2 text-sm leading-6 text-gray-600">
-          Group-stage picks score 3 points for the correct outcome, plus 1 more for the exact goal difference,
-          or 5 more for the exact score once results are entered.
-        </p>
+        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">How To Play</p>
+        <div className="mt-3 space-y-4 text-sm leading-6 text-gray-600">
+          <div>
+            <p className="font-bold text-gray-950">Make Your Picks</p>
+            <p>Predict the score of every match.</p>
+            <p>You can edit your picks until kickoff.</p>
+            <p>Once a match starts, it is locked and cannot be changed.</p>
+          </div>
+
+          <div>
+            <p className="font-bold uppercase tracking-wide text-gray-950">Match Status</p>
+            <p>Open — You can make or edit picks</p>
+            <p>Locked — Match has started, picks are closed</p>
+            <p>Final — Match is finished, points are awarded</p>
+          </div>
+
+          <div>
+            <p className="font-bold uppercase tracking-wide text-gray-950">Scoring (Group Stage)</p>
+            <p>For each match:</p>
+            <div className="pl-4">
+              <p>Correct winner or draw: +3 points</p>
+              <p>Exact score: +8 points total</p>
+              <p>Correct goal difference (but not exact): +4 points total</p>
+              <p className="mt-2 font-bold text-gray-950">Examples:</p>
+              <p>Pick 2–1, result 2–1 → 8 points</p>
+              <p>Pick 2–1, result 3–2 → 4 points</p>
+              <p>Pick 2–1, result 1–0 → 3 points</p>
+              <p>Wrong outcome → 0 points</p>
+            </div>
+          </div>
+
+          <div>
+            <p className="font-bold uppercase tracking-wide text-gray-950">Group Standings (Prediction Mode)</p>
+            <p>Standings are based on your picks, not real results, until matches are final.</p>
+            <p>This helps you see which teams advance based on your predictions.</p>
+          </div>
+
+          <div>
+            <p className="font-bold uppercase tracking-wide text-gray-950">Leaderboards</p>
+            <p>Global leaderboard includes all players</p>
+            <p>Group leaderboards include only your groups</p>
+            <p>Rankings update after matches are final</p>
+          </div>
+
+          <div>
+            <p className="font-bold uppercase tracking-wide text-gray-950">Knockout Stage</p>
+            <p>You will predict who advances and the score</p>
+            <p>Later rounds may be worth more points</p>
+          </div>
+
+          <div>
+            <p className="font-bold uppercase tracking-wide text-gray-950">Side Picks</p>
+            <p>Optional predictions like Champion, MVP, or Golden Boot</p>
+            <p>These may add bonus points</p>
+          </div>
+
+          <div>
+            <p className="font-bold uppercase tracking-wide text-gray-950">Key Tips</p>
+            <p>No pick = 0 points</p>
+            <p>Picks lock at kickoff</p>
+            <p>Exact scores earn the most points</p>
+            <p>Consistency matters more than randomness</p>
+          </div>
+        </div>
       </section>
     </div>
   );
@@ -372,9 +529,9 @@ type StatCardProps = {
 
 function DashboardStatPane({ icon, label, value }: StatCardProps) {
   return (
-    <div className="flex min-h-[152px] flex-col items-center justify-center border-r border-gray-200 p-4 text-center last:border-r-0">
+    <div className="flex min-h-[112px] flex-col items-center justify-center border-r border-gray-200 px-4 py-3.5 text-center last:border-r-0">
       <span className="inline-flex h-5 w-5 items-center justify-center text-accent-dark">{icon}</span>
-      <p className="mt-4 text-2xl font-black">{value}</p>
+      <p className="mt-3 text-2xl font-black">{value}</p>
       <p className="mt-1 text-sm font-semibold text-gray-600">{label}</p>
     </div>
   );
