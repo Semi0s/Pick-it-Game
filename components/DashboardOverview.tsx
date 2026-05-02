@@ -22,7 +22,12 @@ import {
 } from "@/components/player-management/Shared";
 import { fetchNextAutoPick, storeAutoPickDraft } from "@/lib/auto-pick-client";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
-import { buildFinalGroupStandings, getGroupShortLabel, normalizeGroupKey } from "@/lib/group-standings";
+import {
+  buildFinalGroupStandings,
+  getGroupShortLabel,
+  normalizeGroupKey,
+  resolvePreferredStandingsGroupSelection
+} from "@/lib/group-standings";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { showAppToast } from "@/lib/app-toast";
 import { normalizeInviteTokenInput } from "@/components/player-management/Shared";
@@ -287,16 +292,22 @@ export function DashboardOverview() {
   const heroCtaHref = "/groups?focus=next";
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
   const autoPickLanguage = displayLanguage === "es" ? "es" : "en";
-  const resolvedStandingsGroup =
-    selectedStandingsGroup && availableStandingsGroups.includes(selectedStandingsGroup)
-      ? selectedStandingsGroup
-      : homeTeamGroupName && availableStandingsGroups.includes(homeTeamGroupName)
-        ? homeTeamGroupName
-        : availableStandingsGroups[0] ?? "";
-  const tournamentStandingsRows = useMemo(
-    () => (resolvedStandingsGroup ? buildFinalGroupStandings(groupMatches, resolvedStandingsGroup) : []),
-    [groupMatches, resolvedStandingsGroup]
-  );
+  const { selectedGroup: resolvedStandingsGroup } = resolvePreferredStandingsGroupSelection({
+    availableGroups: availableStandingsGroups,
+    storedGroup: selectedStandingsGroup,
+    homeTeamGroup: homeTeamGroupName
+  });
+  const tournamentStandingsRows = useMemo(() => {
+    const rows = resolvedStandingsGroup ? buildFinalGroupStandings(groupMatches, resolvedStandingsGroup) : [];
+    return rows.map((row, index) => ({
+      ...row,
+      teamCode: row.teamCode ?? row.teamName.slice(0, 3).toUpperCase(),
+      rank: row.rank || index + 1,
+      isHomeTeam: Boolean(user?.homeTeamId && row.teamId === user.homeTeamId),
+      isQualifier: index < 2,
+      isPossibleQualifier: false
+    }));
+  }, [groupMatches, resolvedStandingsGroup, user?.homeTeamId]);
   const standingsMovementByTeamId = useMemo(
     () => (resolvedStandingsGroup ? standingsMovementByGroup[resolvedStandingsGroup] ?? {} : {}),
     [resolvedStandingsGroup, standingsMovementByGroup]
@@ -355,12 +366,16 @@ export function DashboardOverview() {
       return;
     }
 
-    if (!selectedStandingsGroupState.hasStoredValue && resolvedStandingsGroup !== selectedStandingsGroup) {
+    const hasValidStoredSelection =
+      selectedStandingsGroupState.hasStoredValue && availableStandingsGroups.includes(selectedStandingsGroup);
+
+    if (!hasValidStoredSelection && resolvedStandingsGroup !== selectedStandingsGroup) {
       setSelectedStandingsGroup(resolvedStandingsGroup);
     }
   }, [
     availableStandingsGroups.length,
     resolvedStandingsGroup,
+    availableStandingsGroups,
     selectedStandingsGroup,
     selectedStandingsGroupState.hasStoredValue,
     setSelectedStandingsGroup
@@ -525,9 +540,8 @@ export function DashboardOverview() {
 
               <GroupStandingsMiniTable
                 rows={tournamentStandingsRows}
-                homeTeamId={user?.homeTeamId ?? null}
                 movementByTeamId={standingsMovementByTeamId}
-                showMovementColumn
+                emptyState="Standings will appear as group matches go final."
               />
             </>
           ) : null}

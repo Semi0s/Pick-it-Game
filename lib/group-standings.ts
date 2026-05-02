@@ -1,5 +1,6 @@
 import type { MatchWithTeams, Team } from "@/lib/types";
 import type { MiniGroupStandingsRow } from "@/components/GroupStandingsMiniTable";
+import type { GroupStagePredictionForProjection } from "@/lib/knockout-seeding";
 
 export function normalizeGroupKey(value?: string | null) {
   if (!value) {
@@ -18,7 +19,8 @@ export function createMiniGroupStandingsRow(team: Team): MiniGroupStandingsRow {
   return {
     teamId: team.id,
     teamName: team.name,
-    shortName: team.shortName,
+    teamCode: team.shortName,
+    rank: 0,
     played: 0,
     wins: 0,
     draws: 0,
@@ -118,7 +120,113 @@ export function buildFinalGroupStandings(matches: MatchWithTeams[], groupName: s
     applyGroupStandingsResult(homeRow, awayRow, match.homeScore, match.awayScore);
   }
 
-  return Array.from(teamMap.values()).sort(sortMiniGroupStandingsRows);
+  return Array.from(teamMap.values())
+    .sort(sortMiniGroupStandingsRows)
+    .map((row, index) => ({
+      ...row,
+      rank: index + 1
+    }));
+}
+
+export function buildPredictedGroupStandings(
+  matches: MatchWithTeams[],
+  teams: Team[],
+  predictions: GroupStagePredictionForProjection[]
+) {
+  const predictionsByMatchId = new Map(predictions.map((prediction) => [prediction.matchId, prediction]));
+  const groups = Array.from(
+    new Set(
+      teams
+        .map((team) => normalizeGroupKey(team.groupName))
+        .filter((groupName): groupName is string => Boolean(groupName))
+    )
+  ).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const standingsByGroup = new Map<string, MiniGroupStandingsRow[]>();
+
+  for (const groupName of groups) {
+    const groupTeams = teams.filter((team) => normalizeGroupKey(team.groupName) === groupName);
+    const groupMatches = matches.filter(
+      (match) => match.stage === "group" && normalizeGroupKey(match.groupName) === groupName
+    );
+    const rowsByTeamId = new Map<string, MiniGroupStandingsRow>();
+
+    for (const team of groupTeams) {
+      rowsByTeamId.set(team.id, createMiniGroupStandingsRow(team));
+    }
+
+    for (const match of groupMatches) {
+      if (!match.homeTeamId || !match.awayTeamId) {
+        continue;
+      }
+
+      const prediction = predictionsByMatchId.get(match.id);
+      if (
+        prediction?.predictedHomeScore === null ||
+        prediction?.predictedHomeScore === undefined ||
+        prediction?.predictedAwayScore === null ||
+        prediction?.predictedAwayScore === undefined
+      ) {
+        continue;
+      }
+
+      const homeRow = rowsByTeamId.get(match.homeTeamId);
+      const awayRow = rowsByTeamId.get(match.awayTeamId);
+      if (!homeRow || !awayRow) {
+        continue;
+      }
+
+      applyGroupStandingsResult(homeRow, awayRow, prediction.predictedHomeScore, prediction.predictedAwayScore);
+    }
+
+    standingsByGroup.set(
+      groupName,
+      Array.from(rowsByTeamId.values())
+        .sort(sortMiniGroupStandingsRows)
+        .map((row, index) => ({
+          ...row,
+          rank: index + 1
+        }))
+    );
+  }
+
+  return standingsByGroup;
+}
+
+export function resolvePreferredStandingsGroupSelection({
+  availableGroups,
+  storedGroup,
+  homeTeamGroup
+}: {
+  availableGroups: string[];
+  storedGroup?: string | null;
+  homeTeamGroup?: string | null;
+}) {
+  if (storedGroup && availableGroups.includes(storedGroup)) {
+    return {
+      selectedGroup: storedGroup,
+      reason: "stored" as const
+    };
+  }
+
+  if (homeTeamGroup && availableGroups.includes(homeTeamGroup)) {
+    return {
+      selectedGroup: homeTeamGroup,
+      reason: "home-team" as const
+    };
+  }
+
+  return {
+    selectedGroup: availableGroups[0] ?? "",
+    reason: "alphabetical" as const
+  };
+}
+
+export function resolvePreferredStandingsGroup(args: {
+  availableGroups: string[];
+  storedGroup?: string | null;
+  homeTeamGroup?: string | null;
+}) {
+  return resolvePreferredStandingsGroupSelection(args).selectedGroup;
 }
 
 export function getGroupShortLabel(groupName: string) {

@@ -545,7 +545,7 @@ function toQualifiedSeed(groupName: string, row: MiniGroupStandingsRow, finish: 
   return {
     teamId: row.teamId,
     teamName: row.teamName,
-    teamShortName: row.shortName,
+    teamShortName: row.teamCode ?? row.teamName,
     groupName,
     finish,
     points: row.points,

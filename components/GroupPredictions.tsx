@@ -20,11 +20,12 @@ import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
 import { fetchPredictionsForMatches, type SocialPrediction } from "@/lib/social-predictions";
 import {
+  buildPredictedGroupStandings,
   formatGroupName,
   getGroupShortLabel,
-  normalizeGroupKey
+  normalizeGroupKey,
+  resolvePreferredStandingsGroupSelection
 } from "@/lib/group-standings";
-import { buildProjectedGroupStandings } from "@/lib/knockout-seeding";
 import { getMatchDateKey } from "@/lib/tournament-calendar";
 import type { AutoPickDraft, MatchWithTeams, Prediction, Team, UserProfile } from "@/lib/types";
 import { GroupPredictionCard } from "@/components/GroupPredictionCard";
@@ -164,7 +165,7 @@ export function GroupPredictions({
     GROUP_PREDICTIONS_TEAM_FILTER_STORAGE_KEY,
     TEAM_FILTER_ALL_KEY
   );
-  const [lastViewedMiniTableGroup, setLastViewedMiniTableGroup] = useSessionJsonState<string>(
+  const [lastViewedMiniTableGroup, setLastViewedMiniTableGroup, lastViewedMiniTableGroupState] = useSessionJsonState<string>(
     GROUP_PREDICTIONS_MINI_TABLE_GROUP_STORAGE_KEY,
     ""
   );
@@ -469,21 +470,16 @@ export function GroupPredictions({
     return null;
   }, [groupStageMatches, user.homeTeamId]);
   const homeTeamGroupName = normalizeGroupKey(homeTeam?.groupName) ?? null;
-  const miniTableGroup = useMemo(() => {
-    if (homeTeamGroupName && availableGroups.includes(homeTeamGroupName)) {
-      return homeTeamGroupName;
-    }
-
-    if (lastViewedMiniTableGroup && availableGroups.includes(lastViewedMiniTableGroup)) {
-      return lastViewedMiniTableGroup;
-    }
-
-    if (selectedGroup !== GROUP_FILTER_ALL_KEY && availableGroups.includes(selectedGroup)) {
-      return selectedGroup;
-    }
-
-    return availableGroups[0] ?? null;
-  }, [availableGroups, homeTeamGroupName, lastViewedMiniTableGroup, selectedGroup]);
+  const { selectedGroup: resolvedMiniTableGroup } = useMemo(
+    () =>
+      resolvePreferredStandingsGroupSelection({
+        availableGroups,
+        storedGroup: lastViewedMiniTableGroup,
+        homeTeamGroup: homeTeamGroupName
+      }),
+    [availableGroups, homeTeamGroupName, lastViewedMiniTableGroup]
+  );
+  const miniTableGroup = resolvedMiniTableGroup || null;
 
   useEffect(() => {
     if (selectedGroup !== GROUP_FILTER_ALL_KEY && !availableGroups.includes(selectedGroup)) {
@@ -500,6 +496,21 @@ export function GroupPredictions({
       setLastViewedMiniTableGroup(selectedGroup);
     }
   }, [availableGroups, lastViewedMiniTableGroup, selectedGroup, setLastViewedMiniTableGroup]);
+
+  useEffect(() => {
+    const hasValidStoredSelection =
+      lastViewedMiniTableGroupState.hasStoredValue && availableGroups.includes(lastViewedMiniTableGroup);
+
+    if (!hasValidStoredSelection && miniTableGroup && miniTableGroup !== lastViewedMiniTableGroup) {
+      setLastViewedMiniTableGroup(miniTableGroup);
+    }
+  }, [
+    availableGroups,
+    lastViewedMiniTableGroup,
+    lastViewedMiniTableGroupState.hasStoredValue,
+    miniTableGroup,
+    setLastViewedMiniTableGroup
+  ]);
 
   const groupFilterLabel = selectedGroup === GROUP_FILTER_ALL_KEY ? null : formatGroupName(selectedGroup);
   const teamFilterLabel = selectedTeamId === TEAM_FILTER_ALL_KEY ? null : selectedTeam?.name ?? null;
@@ -540,12 +551,18 @@ export function GroupPredictions({
         })
       ).values()
     );
-    const projectedStandings = buildProjectedGroupStandings(groupMatches, groupTeams, projectedPredictions).get(
-      miniTableGroup
+    return (
+      buildPredictedGroupStandings(groupMatches, groupTeams, projectedPredictions).get(miniTableGroup)?.map(
+        (row, index) => ({
+          ...row,
+          rank: row.rank || index + 1,
+          isHomeTeam: Boolean(user.homeTeamId && row.teamId === user.homeTeamId),
+          isQualifier: index < 2,
+          isPossibleQualifier: false
+        })
+      ) ?? []
     );
-
-    return projectedStandings?.rows ?? [];
-  }, [draftPredictionStateByMatchId, groupStageMatches, miniTableGroup, predictions]);
+  }, [draftPredictionStateByMatchId, groupStageMatches, miniTableGroup, predictions, user.homeTeamId]);
   const movementByTeamId = useMemo(
     () => (miniTableGroup ? movementByGroup[miniTableGroup] ?? {} : {}),
     [miniTableGroup, movementByGroup]
@@ -1004,7 +1021,7 @@ export function GroupPredictions({
           )}
         </div>
 
-        {miniTableGroup ? (
+        {selectedGroup !== GROUP_FILTER_ALL_KEY && miniTableGroup ? (
           <section className="space-y-2 bg-gray-100 -mx-4 px-4 py-3 sm:rounded-lg sm:mx-0">
             <div className="flex items-center justify-between gap-3">
               <button
@@ -1030,19 +1047,12 @@ export function GroupPredictions({
             </div>
 
             {isPredictionTableOpen ? (
-              groupPredictionRows.length > 0 ? (
-                <GroupStandingsMiniTable
-                  rows={groupPredictionRows}
-                  homeTeamId={user.homeTeamId ?? null}
-                  movementByTeamId={movementByTeamId}
-                  showPlayedColumn={false}
-                  showMovementColumn
-                />
-              ) : (
-                <p className="text-sm font-semibold text-gray-500">
-                  Group table will appear once teams are available.
-                </p>
-              )
+              <GroupStandingsMiniTable
+                rows={groupPredictionRows}
+                movementByTeamId={movementByTeamId}
+                showPlayedColumn={false}
+                emptyState="Make picks in this group to build your projected table."
+              />
             ) : null}
           </section>
         ) : null}

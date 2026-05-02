@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react";
-import { Dispatch, SetStateAction, useEffect, useRef, useState } from "react";
+import { Dispatch, SetStateAction, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 export type PlayerManagementPermissions = {
@@ -212,7 +212,11 @@ export function WindowChoiceRail({
   const beltRef = useRef<HTMLDivElement | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const isDraggingRef = useRef(false);
+  const minTotalOffsetRef = useRef(0);
+  const centeredOffsetRef = useRef(0);
+  const userOffsetRef = useRef(0);
   const [offsetX, setOffsetX] = useState(0);
+  const [userOffsetX, setUserOffsetX] = useState(0);
   const [dragOffsetX, setDragOffsetX] = useState(0);
   const [hasOverflow, setHasOverflow] = useState(false);
   const [canScrollPrev, setCanScrollPrev] = useState(false);
@@ -220,6 +224,25 @@ export function WindowChoiceRail({
   const edgeControlWidth = 24;
   const beltGutterWidth = 40;
   const baseScrollerClassName = "flex min-w-max gap-2 px-1 pb-1";
+
+  const clampUserOffset = useCallback((nextUserOffset: number) => {
+    const minUserOffset = minTotalOffsetRef.current - centeredOffsetRef.current;
+    const maxUserOffset = 0 - centeredOffsetRef.current;
+    return Math.max(minUserOffset, Math.min(maxUserOffset, nextUserOffset));
+  }, []);
+
+  const updateUserOffset = useCallback(
+    (nextUserOffset: number) => {
+      const clampedOffset = clampUserOffset(nextUserOffset);
+      userOffsetRef.current = clampedOffset;
+      setUserOffsetX(clampedOffset);
+    },
+    [clampUserOffset]
+  );
+
+  useEffect(() => {
+    updateUserOffset(0);
+  }, [activeItemKey, updateUserOffset]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -246,8 +269,11 @@ export function WindowChoiceRail({
       const minOffset = Math.min(0, viewportWidth - beltWidth);
       const desiredOffset = viewportWidth / 2 - (activeItem.offsetLeft + activeItem.offsetWidth / 2);
       const clampedOffset = Math.max(minOffset, Math.min(0, desiredOffset));
+      minTotalOffsetRef.current = minOffset;
+      centeredOffsetRef.current = clampedOffset;
 
       setOffsetX(clampedOffset);
+      updateUserOffset(userOffsetRef.current);
       setHasOverflow(beltWidth > viewportWidth + 1);
       setCanScrollPrev(activeIndex > 0);
       setCanScrollNext(activeIndex < items.length - 1);
@@ -267,7 +293,7 @@ export function WindowChoiceRail({
       window.removeEventListener("resize", updateLayout);
       resizeObserver?.disconnect();
     };
-  }, [activeItemKey, children]);
+  }, [activeItemKey, children, updateUserOffset]);
 
   function nudge(direction: "prev" | "next") {
     const belt = beltRef.current;
@@ -317,7 +343,7 @@ export function WindowChoiceRail({
     }
 
     isDraggingRef.current = true;
-    setDragOffsetX(Math.max(-28, Math.min(28, deltaX * 0.45)));
+    setDragOffsetX(deltaX);
   }
 
   function handleTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
@@ -325,23 +351,26 @@ export function WindowChoiceRail({
     touchStartRef.current = null;
     const wasDragging = isDraggingRef.current;
     isDraggingRef.current = false;
-    setDragOffsetX(0);
-    if (!start || !onActiveItemChange) {
+    if (!start) {
+      setDragOffsetX(0);
       return;
     }
 
     const touch = event.changedTouches[0];
     if (!touch) {
+      setDragOffsetX(0);
       return;
     }
 
     const deltaX = touch.clientX - start.x;
     const deltaY = touch.clientY - start.y;
-    if (!wasDragging || Math.abs(deltaX) < 18 || Math.abs(deltaX) <= Math.abs(deltaY)) {
+    if (!wasDragging || Math.abs(deltaX) <= Math.abs(deltaY)) {
+      setDragOffsetX(0);
       return;
     }
 
-    nudge(deltaX < 0 ? "next" : "prev");
+    updateUserOffset(userOffsetRef.current + deltaX);
+    setDragOffsetX(0);
   }
 
   return (
@@ -381,7 +410,7 @@ export function WindowChoiceRail({
             ref={beltRef}
             className={contentClassName ? `${baseScrollerClassName} ${contentClassName}` : baseScrollerClassName}
             style={{
-              transform: `translateX(${offsetX + dragOffsetX}px)`,
+              transform: `translateX(${offsetX + userOffsetX + dragOffsetX}px)`,
               transition: hasOverflow ? (dragOffsetX !== 0 ? "none" : "transform 180ms ease-out") : undefined,
               willChange: "transform"
             }}
