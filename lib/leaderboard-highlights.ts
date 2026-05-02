@@ -266,70 +266,119 @@ async function syncDailyWinnerEvents({
   }
 
   const existingEvents = (existingEventsData as LeaderboardEventRow[] | null) ?? [];
-  const hasMatchingWinners =
-    existingEvents.length === winners.length &&
-    winners.every((winner) =>
-      existingEvents.some(
-        (event) => event.user_id === winner.userId && (event.points_delta ?? 0) === winner.points
-      )
-    );
+  const existingEventsByUserId = new Map(
+    existingEvents
+      .filter((event) => event.user_id)
+      .map((event) => [event.user_id as string, event])
+  );
+  const desiredWinnerIds = new Set(winners.map((winner) => winner.userId));
+  const staleEventIds = existingEvents
+    .filter((event) => event.user_id && !desiredWinnerIds.has(event.user_id))
+    .map((event) => event.id);
 
-  if (!hasMatchingWinners) {
-    let deleteQuery = adminSupabase
+  if (staleEventIds.length > 0) {
+    const { error: deleteError } = await adminSupabase
       .from("leaderboard_events")
       .delete()
-      .eq("event_type", "daily_winner")
-      .eq("scope_type", scopeType)
-      .contains("metadata", { date: dateKey });
+      .in("id", staleEventIds);
 
-    deleteQuery = scopeType === "group" ? deleteQuery.eq("group_id", groupId) : deleteQuery.is("group_id", null);
-
-    const { error: deleteError } = await deleteQuery;
     if (deleteError) {
       throw new Error(deleteError.message);
     }
-
-    if (winners.length > 0) {
-      const { error: insertError } = await adminSupabase.from("leaderboard_events").insert(
-        winners.map((winner) => ({
-          event_type: "daily_winner",
-          scope_type: scopeType,
-          group_id: groupId,
-          match_id: null,
-          user_id: winner.userId,
-          related_user_id: null,
-          points_delta: winner.points,
-          rank_delta: null,
-          message: `${winner.name} is today's Daily Winner`,
-          metadata: {
-            date: dateKey,
-            daily_points: winner.points
-          }
-        }))
-      );
-
-      if (insertError) {
-        throw new Error(insertError.message);
-      }
-    }
-
-    return syncDailyWinnerEvents({
-      adminSupabase,
-      winners,
-      dateKey,
-      scopeType,
-      groupId
-    });
   }
 
-  await createNotificationsForLeaderboardEvents(adminSupabase, existingEvents);
+  for (const winner of winners) {
+    const existingEvent = existingEventsByUserId.get(winner.userId);
+    const nextMessage = `${winner.name} is today's Daily Winner`;
+    const nextMetadata = {
+      date: dateKey,
+      daily_points: winner.points
+    };
+
+    if (existingEvent) {
+      const currentDate = typeof existingEvent.metadata?.date === "string" ? existingEvent.metadata.date : null;
+      const currentDailyPoints =
+        typeof existingEvent.metadata?.daily_points === "number"
+          ? existingEvent.metadata.daily_points
+          : Number(existingEvent.metadata?.daily_points ?? NaN);
+      const needsUpdate =
+        (existingEvent.points_delta ?? 0) !== winner.points ||
+        existingEvent.message !== nextMessage ||
+        currentDate !== dateKey ||
+        currentDailyPoints !== winner.points;
+
+      if (needsUpdate) {
+        const { error: updateError } = await adminSupabase
+          .from("leaderboard_events")
+          .update({
+            points_delta: winner.points,
+            message: nextMessage,
+            metadata: nextMetadata
+          })
+          .eq("id", existingEvent.id);
+
+        if (updateError) {
+          throw new Error(updateError.message);
+        }
+      } else {
+        console.info(
+          `[leaderboard] Reused existing daily winner event for ${scopeType}:${groupId ?? "global"}:${dateKey}:${winner.userId}`
+        );
+      }
+
+      continue;
+    }
+
+    const { error: insertError } = await adminSupabase.from("leaderboard_events").insert({
+      event_type: "daily_winner",
+      scope_type: scopeType,
+      group_id: groupId,
+      match_id: null,
+      user_id: winner.userId,
+      related_user_id: null,
+      points_delta: winner.points,
+      rank_delta: null,
+      message: nextMessage,
+      metadata: nextMetadata
+    });
+
+    if (insertError) {
+      if (isDuplicateDailyWinnerConflict(insertError)) {
+        console.info(
+          `[leaderboard] Skipped duplicate daily winner event for ${scopeType}:${groupId ?? "global"}:${dateKey}:${winner.userId}`
+        );
+        continue;
+      }
+
+      throw new Error(insertError.message);
+    }
+  }
+
+  let refreshedEventsQuery = adminSupabase
+    .from("leaderboard_events")
+    .select("id,event_type,scope_type,group_id,user_id,points_delta,rank_delta,message,created_at,metadata")
+    .eq("event_type", "daily_winner")
+    .eq("scope_type", scopeType)
+    .contains("metadata", { date: dateKey });
+
+  refreshedEventsQuery =
+    scopeType === "group" ? refreshedEventsQuery.eq("group_id", groupId) : refreshedEventsQuery.is("group_id", null);
+
+  const { data: refreshedEventsData, error: refreshedEventsError } = await refreshedEventsQuery;
+  if (refreshedEventsError) {
+    throw new Error(refreshedEventsError.message);
+  }
+
+  const refreshedEvents = (refreshedEventsData as LeaderboardEventRow[] | null) ?? [];
+
+  await createNotificationsForLeaderboardEvents(adminSupabase, refreshedEvents);
   await awardDailyWinnerTrophy(adminSupabase, winners);
 
-  const eventIds = existingEvents.map((event) => event.id);
+  const eventIds = refreshedEvents.map((event) => event.id);
   const reactionsByEventId = await fetchLeaderboardEventReactions(eventIds);
 
   return winners.map((winner) => {
-    const eventId = existingEvents.find((event) => event.user_id === winner.userId)?.id ?? null;
+    const eventId = refreshedEvents.find((event) => event.user_id === winner.userId)?.id ?? null;
     const congratulateReaction = eventId
       ? (reactionsByEventId.get(eventId) ?? []).find((reaction) => reaction.emoji === "👏")
       : null;
@@ -341,6 +390,16 @@ async function syncDailyWinnerEvents({
       congratulated: congratulateReaction?.reacted ?? false
     };
   });
+}
+
+function isDuplicateDailyWinnerConflict(error: { code?: string | null; message?: string | null }) {
+  const message = error.message?.toLowerCase() ?? "";
+  return (
+    error.code === "23505" &&
+    (message.includes("leaderboard_events_daily_winner_group_unique_idx") ||
+      message.includes("leaderboard_events_daily_winner_global_unique_idx") ||
+      message.includes("duplicate key value"))
+  );
 }
 
 function getDateParts(date: Date, timeZone: string) {

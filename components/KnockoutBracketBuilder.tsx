@@ -75,7 +75,7 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
     setActiveSlideIndex((current) => Math.max(0, Math.min(current, slides.length - 1)));
   }, [setActiveSlideIndex, slides.length]);
 
-  if (!initialView.isSeeded) {
+  if (initialView.mode === "official" && !initialView.isSeeded) {
     return (
       <section className="rounded-lg border border-gray-200 bg-white p-5">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Bracket</p>
@@ -132,6 +132,7 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
         >
           <BracketStageViewport
             slide={slides[activeSlideIndex]}
+            mode={initialView.mode}
             canAdvance={activeSlideIndex < slides.length - 1}
             canRetreat={activeSlideIndex > 0}
             onAdvance={() => goToSlide(Math.min(activeSlideIndex + 1, slides.length - 1))}
@@ -266,6 +267,7 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
 
 function BracketStageViewport({
   slide,
+  mode,
   canAdvance,
   canRetreat,
   onAdvance,
@@ -276,6 +278,7 @@ function BracketStageViewport({
   onSelect
 }: {
   slide: BracketSlideView;
+  mode: KnockoutBracketEditorView["mode"];
   canAdvance: boolean;
   canRetreat: boolean;
   onAdvance: () => void;
@@ -293,7 +296,9 @@ function BracketStageViewport({
       <div className="border-b border-gray-200 px-3 py-3 sm:px-4 sm:py-4">
         <div className="min-w-0">
           <h3 className="text-2xl font-black leading-tight text-gray-950">{slide.title}</h3>
-          <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Pick the winning team.</p>
+          <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
+            {mode === "projected" ? "Choose the winner for every match and be the leader of your group." : "Pick the winning team."}
+          </p>
         </div>
       </div>
 
@@ -387,7 +392,7 @@ function SplitRoundView({
     <div className="space-y-3">
       {rows.map((row, index) => (
         <div key={`r32-row-${index}`} className="relative grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-3">
-          <div className={`${getRailMotionClasses(leftRailMotion, "left")}`}>
+          <div className={`flex h-full min-w-0 w-full items-center ${getRailMotionClasses(leftRailMotion, "left")}`}>
             {row.leftMatch ? (
               <CurrentRoundMatchCard
                 match={row.leftMatch}
@@ -397,14 +402,10 @@ function SplitRoundView({
                 side="left"
               />
             ) : (
-              <div className="min-h-[112px] rounded-lg border border-gray-200 bg-gray-50/70" />
+              <div className="min-h-[112px] w-full rounded-lg border border-gray-200 bg-gray-50/70" />
             )}
           </div>
           <div className="relative flex h-full min-h-[112px] items-center justify-center">
-            <div
-              aria-hidden
-              className="pointer-events-none absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-gradient-to-r from-accent/25 via-accent/35 to-accent/25"
-            />
             <div className="relative top-3 z-10 flex flex-col items-center sm:top-4">
               <button
                 type="button"
@@ -417,7 +418,7 @@ function SplitRoundView({
               <span className="mt-0.5 text-[8px] font-bold uppercase tracking-wide text-accent">Next</span>
             </div>
           </div>
-          <div className={`${getRailMotionClasses(rightRailMotion, "right")}`}>
+          <div className={`flex h-full min-w-0 w-full items-center ${getRailMotionClasses(rightRailMotion, "right")}`}>
             {row.rightMatch ? (
               <CurrentRoundMatchCard
                 match={row.rightMatch}
@@ -427,7 +428,7 @@ function SplitRoundView({
                 side="right"
               />
             ) : (
-              <div className="min-h-[112px] rounded-lg border border-gray-200 bg-gray-50/70" />
+              <div className="min-h-[112px] w-full rounded-lg border border-gray-200 bg-gray-50/70" />
             )}
           </div>
         </div>
@@ -466,14 +467,14 @@ function FocusedRoundView({
               aria-hidden
               className="pointer-events-none absolute left-[calc(50%-1.5rem)] right-[calc(50%-1.5rem)] top-1/2 h-px -translate-y-1/2 bg-gray-200"
             />
-            <RoundRailCard
-              match={row.leftSource}
-              side="left"
-              motion="flat"
-              provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
-              onClick={onRetreat}
-              ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
-            />
+              <RoundRailCard
+                match={row.leftSource}
+                side="left"
+                motion="flat"
+                provenanceLabel={formatBracketProvenanceLabel(row.current.homeSourceLabel)}
+                onClick={onRetreat}
+                ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
+              />
             <CenterSeamMatch
               match={row.current}
               isPending={pendingMatchId === row.current.matchId}
@@ -482,14 +483,14 @@ function FocusedRoundView({
               onRetreat={onRetreat}
               showHeader={false}
             />
-            <RoundRailCard
-              match={row.rightSource}
-              side="right"
-              motion="flat"
-              provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
-              onClick={onRetreat}
-              ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
-            />
+              <RoundRailCard
+                match={row.rightSource}
+                side="right"
+                motion="flat"
+                provenanceLabel={formatBracketProvenanceLabel(row.current.awaySourceLabel)}
+                onClick={onRetreat}
+                ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
+              />
           </div>
         </div>
       ))}
@@ -529,7 +530,7 @@ function FinaleRoundView({
                 match={finalRow.leftSource}
                 side="left"
                 motion="flat"
-                provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
+                provenanceLabel={formatBracketProvenanceLabel(finalRow.current.homeSourceLabel)}
                 onClick={onRetreat}
                 ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
               />
@@ -545,7 +546,7 @@ function FinaleRoundView({
                 match={finalRow.rightSource}
                 side="right"
                 motion="flat"
-                provenanceLabel={formatBracketProvenanceLabel(slide.previousLabel)}
+                provenanceLabel={formatBracketProvenanceLabel(finalRow.current.awaySourceLabel)}
                 onClick={onRetreat}
                 ariaLabel={onRetreat ? `Go back to ${slide.previousLabel ?? "the previous round"}` : undefined}
               />
@@ -564,17 +565,27 @@ function MatchGroupHeader({
   match: KnockoutBracketMatchView;
   accent: "accent" | "amber";
 }) {
+  const matchNumber = getKnockoutMatchNumber(match.title);
+  const hasOfficialTeams = Boolean(match.seededHomeTeam && match.seededAwayTeam);
+  const showInlineProjectedTime = match.viewMode === "projected" && !hasOfficialTeams && match.status !== "final";
   return (
-    <div className="flex items-start justify-between gap-2 px-1 py-1">
-      <div className="min-w-0">
-        <p className="text-sm font-black text-gray-950">{match.title}</p>
-        <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">{formatKickoff(match.kickoffTime)}</p>
+    <div className="grid grid-cols-[auto_1fr] items-start gap-x-2 gap-y-0.5 px-1 py-1">
+      <div className="row-span-2">
+        {matchNumber ? <KnockoutMatchNumberBadge number={matchNumber} /> : <p className="text-sm font-black text-gray-950">{match.title}</p>}
       </div>
-      <MatchStatusBadge
-        status={match.status}
-        canSelectWinner={match.canSelectWinner}
-        accent={accent}
-      />
+      <div className="flex items-center justify-end gap-2">
+        {showInlineProjectedTime ? (
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">{formatKickoff(match.kickoffTime)}</p>
+        ) : null}
+        <MatchStatusBadge
+          status={match.status}
+          canSelectWinner={match.canSelectWinner}
+          hasOfficialTeams={hasOfficialTeams}
+          accent={accent}
+          viewMode={match.viewMode}
+        />
+      </div>
+      {showInlineProjectedTime ? <div /> : <p className="text-right text-[10px] font-semibold uppercase tracking-wide text-gray-500">{formatKickoff(match.kickoffTime)}</p>}
     </div>
   );
 }
@@ -602,15 +613,15 @@ function RoundRailCard({
       ? "cursor-pointer border-gray-200 bg-white hover:border-accent hover:bg-accent-light"
       : "border-gray-200 bg-white"
   }`;
+  const advancingTeam = match ? getAdvancingTeamForRail(match) : null;
   const content = match ? (
     <div className="w-full space-y-1">
       {provenanceLabel ? (
-        <p className="pb-1 text-center text-[9px] font-bold uppercase tracking-[0.14em] text-gray-400">
-          {provenanceLabel}
-        </p>
+        <div className="pb-1 text-center text-[9px] font-bold uppercase tracking-[0.14em] text-gray-400">
+          {renderProvenanceLabel(provenanceLabel)}
+        </div>
       ) : null}
-      <ProjectedTeamChip team={match.homeTeam} placeholderLabel={match.homeSourceLabel} />
-      <ProjectedTeamChip team={match.awayTeam} placeholderLabel={match.awaySourceLabel} />
+      <ProjectedTeamChip team={advancingTeam} placeholderLabel={advancingTeam ? null : "TBD"} />
     </div>
   ) : (
     <div className="flex min-h-[92px] w-full items-center justify-center rounded-md bg-gray-50/70 px-1 text-[10px] font-semibold text-gray-400">
@@ -704,9 +715,16 @@ function CurrentRoundMatchCard({
   const isCompact = density === "compact";
   const isHero = density === "hero";
   const isEmbeddedCenterCard = side === "center" && !showHeader;
+  const matchNumber = getKnockoutMatchNumber(match.title);
+  const hasOfficialTeams = Boolean(match.seededHomeTeam && match.seededAwayTeam);
+  const showInlineProjectedTime = match.viewMode === "projected" && !hasOfficialTeams && match.status !== "final";
   const statusBadge =
     match.status === "final" ? (
       <span className="shrink-0 rounded-md bg-gray-200 px-2 py-1 text-[11px] font-black text-gray-700">Final</span>
+    ) : match.viewMode === "projected" ? (
+      <ProjectedMatchStatusChip
+        hasOfficialTeams={hasOfficialTeams}
+      />
     ) : match.canSelectWinner ? (
       <span className="shrink-0 rounded-md bg-green-50 px-2 py-1 text-[11px] font-black text-green-700">Open</span>
     ) : (
@@ -724,32 +742,54 @@ function CurrentRoundMatchCard({
       className={
         isEmbeddedCenterCard
           ? `${isHero ? "p-1" : "p-0.5"}`
-          : `rounded-lg border ${
+          : `w-full rounded-lg border ${
               isHero
-                ? "border-amber-200 bg-white p-4"
+                ? "border-amber-200 bg-white p-1.5"
                 : isCompact
-                  ? "border-gray-200 bg-white p-2"
-                  : "border-gray-200 bg-white p-3"
+                  ? "border-gray-200 bg-white p-1.5"
+                  : "border-gray-200 bg-white p-1"
             }`
       }
     >
       {showHeader ? (
-        <div className={`flex items-start gap-2 ${side === "right" ? "flex-row-reverse justify-between" : "justify-between"}`}>
-          <div className={`min-w-0 ${side === "right" ? "text-right" : side === "center" ? "text-center" : ""}`}>
-            <p className={`${isCompact ? "text-xs" : "text-sm"} font-black text-gray-950`}>{match.title}</p>
-            <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+        <div className="grid grid-cols-[auto_1fr] items-start gap-x-2 gap-y-0.5">
+          <div className="row-span-2">
+            {matchNumber ? (
+              <KnockoutMatchNumberBadge number={matchNumber} compact={isCompact} />
+            ) : (
+              <p className={`${isCompact ? "text-xs" : "text-sm"} font-black text-gray-950`}>{match.title}</p>
+            )}
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            {showInlineProjectedTime ? (
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                {formatKickoff(match.kickoffTime)}
+              </p>
+            ) : null}
+            {statusBadge}
+          </div>
+          {showInlineProjectedTime ? (
+            <div />
+          ) : (
+            <p className="text-right text-[10px] font-semibold uppercase tracking-wide text-gray-500">
               {formatKickoff(match.kickoffTime)}
             </p>
-          </div>
-          {statusBadge}
+          )}
         </div>
       ) : null}
 
-      <div className={`${showHeader ? "mt-2" : ""} space-y-1.5`}>
+      <div className={`${showHeader ? "mt-0.5" : ""} space-y-0.5`}>
         <TeamChoiceButton
           team={match.homeTeam}
+          officialTeam={match.seededHomeTeam}
           placeholderLabel={match.homeSourceLabel}
+          projectionSource={match.homeResolutionSource}
+          viewMode={match.viewMode}
+          status={match.status}
+          officialScore={match.homeScore}
+          isOfficialWinner={Boolean(match.actualWinnerTeamId && match.seededHomeTeam?.id === match.actualWinnerTeamId)}
           isSelected={Boolean(match.homeTeam?.id && match.predictedWinnerTeamId === match.homeTeam.id)}
+          isCorrectSelection={match.status === "final" && match.homeTeam?.id === match.predictedWinnerTeamId ? match.isCorrectWinner : null}
           isDisabled={!match.homeTeam || !match.canSelectWinner || isPending}
           onClick={() => {
             if (match.homeTeam?.id) {
@@ -757,12 +797,20 @@ function CurrentRoundMatchCard({
             }
           }}
           density={density}
-          side={side}
+          cardSide={side}
+          competitorSide="left"
         />
         <TeamChoiceButton
           team={match.awayTeam}
+          officialTeam={match.seededAwayTeam}
           placeholderLabel={match.awaySourceLabel}
+          projectionSource={match.awayResolutionSource}
+          viewMode={match.viewMode}
+          status={match.status}
+          officialScore={match.awayScore}
+          isOfficialWinner={Boolean(match.actualWinnerTeamId && match.seededAwayTeam?.id === match.actualWinnerTeamId)}
           isSelected={Boolean(match.awayTeam?.id && match.predictedWinnerTeamId === match.awayTeam.id)}
+          isCorrectSelection={match.status === "final" && match.awayTeam?.id === match.predictedWinnerTeamId ? match.isCorrectWinner : null}
           isDisabled={!match.awayTeam || !match.canSelectWinner || isPending}
           onClick={() => {
             if (match.awayTeam?.id) {
@@ -770,12 +818,13 @@ function CurrentRoundMatchCard({
             }
           }}
           density={density}
-          side={side}
+          cardSide={side}
+          competitorSide="right"
         />
       </div>
 
       {match.status === "final" ? (
-        <p className="mt-3 text-[11px] font-bold uppercase tracking-wide text-gray-600">
+        <p className="mt-1.5 text-[11px] font-bold uppercase tracking-wide text-gray-600">
           {match.isCorrectWinner === true
             ? `Correct +${match.awardedPoints}`
             : match.isCorrectWinner === false
@@ -790,14 +839,22 @@ function CurrentRoundMatchCard({
 function MatchStatusBadge({
   status,
   canSelectWinner,
-  accent
+  hasOfficialTeams,
+  accent,
+  viewMode
 }: {
   status: KnockoutBracketMatchView["status"];
   canSelectWinner: boolean;
+  hasOfficialTeams: boolean;
   accent: "accent" | "amber";
+  viewMode: KnockoutBracketMatchView["viewMode"];
 }) {
   if (status === "final") {
     return <span className="shrink-0 rounded-md bg-gray-200 px-2 py-1 text-[11px] font-black text-gray-700">Final</span>;
+  }
+
+  if (viewMode === "projected") {
+    return <ProjectedMatchStatusChip hasOfficialTeams={hasOfficialTeams} />;
   }
 
   if (canSelectWinner) {
@@ -823,83 +880,328 @@ function MatchStatusBadge({
   );
 }
 
+function ProjectedMatchStatusChip({ hasOfficialTeams }: { hasOfficialTeams: boolean }) {
+  if (hasOfficialTeams) {
+    return <span className="shrink-0 rounded-md bg-green-50 px-2 py-1 text-[10px] font-black text-green-700">READY</span>;
+  }
+
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-gray-500"
+      aria-label="Projected bracket preview"
+      title="Projected bracket preview"
+    >
+      <Clock3 aria-hidden className="h-3.5 w-3.5" />
+    </span>
+  );
+}
+
 function TeamChoiceButton({
   team,
+  officialTeam,
   placeholderLabel,
+  projectionSource,
+  viewMode,
+  status,
+  officialScore,
+  isOfficialWinner,
   isSelected,
+  isCorrectSelection,
   isDisabled,
   onClick,
   density,
-  side
+  cardSide,
+  competitorSide
 }: {
   team: BracketTeamOption | null;
+  officialTeam: BracketTeamOption | null;
   placeholderLabel: string | null;
+  projectionSource: KnockoutBracketMatchView["homeResolutionSource"];
+  viewMode: KnockoutBracketMatchView["viewMode"];
+  status: KnockoutBracketMatchView["status"];
+  officialScore: number | null;
+  isOfficialWinner: boolean;
   isSelected: boolean;
+  isCorrectSelection: boolean | null;
   isDisabled: boolean;
   onClick: () => void;
   density: "compact" | "expanded" | "hero";
-  side: "left" | "right" | "center";
+  cardSide: "left" | "right" | "center";
+  competitorSide: "left" | "right";
 }) {
   const isCompact = density === "compact";
-  const isPlaceholder = !team;
-  const isEliminated = !isPlaceholder && !isSelected;
+  const userTeam = team;
+  const isProjectedReadOnly = viewMode === "projected";
+  const layers = getKnockoutCardLayers({
+    competitorSide,
+    userTeam,
+    officialTeam,
+    placeholderLabel,
+    projectionSource,
+    viewMode,
+    status,
+    officialScore,
+    isSelected,
+    isCorrectSelection,
+    isOfficialWinner
+  });
+  const userLayer = layers.userLayer;
+  const realLayer = layers.realLayer;
+  const shouldDimOnlyForMissing = isProjectedReadOnly ? !userLayer.displayCode && !realLayer.displayName : false;
+  const textAlignmentClass =
+    cardSide === "right" ? "text-right" : cardSide === "center" ? "text-center" : "text-left";
+  const justifiyClass =
+    cardSide === "right" ? "justify-end" : cardSide === "center" ? "justify-center" : "justify-between";
+  const isLockedState = isDisabled && !isProjectedReadOnly;
+  const userLayerWidthClass = "basis-[34%]";
+  const realLayerWidthClass = "basis-[66%]";
+  const ariaTeamName = officialTeam?.name ?? userTeam?.name ?? placeholderLabel ?? "this team";
+  const ariaLabel = isProjectedReadOnly
+    ? `Projected knockout preview for ${ariaTeamName}.`
+    : isDisabled
+      ? `${ariaTeamName} is locked for this matchup.`
+      : `Pick ${ariaTeamName} to win this matchup.`;
 
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={isDisabled}
+      aria-label={ariaLabel}
       className={`flex w-full items-center rounded-lg border transition ${
         isSelected
-          ? "border-accent bg-accent-light"
-          : isEliminated
+          ? "border-accent bg-accent text-white"
+          : shouldDimOnlyForMissing
             ? "border-gray-200 bg-gray-50/80 text-gray-400"
-            : "border-gray-200 bg-white hover:border-accent-light hover:bg-gray-50"
-      } ${
-        side === "right"
-          ? "justify-end text-right"
-          : side === "center"
-            ? "justify-center text-center"
-            : "justify-between text-left"
-      } ${isCompact ? "px-2 py-1.5" : "px-3 py-2.5"} disabled:cursor-not-allowed disabled:opacity-75`}
+            : isProjectedReadOnly
+              ? "border-gray-200 bg-white"
+              : "border-gray-200 bg-white hover:border-accent hover:bg-accent-light"
+      } ${justifiyClass} ${textAlignmentClass} overflow-hidden ${
+        isCompact ? "min-h-[56px]" : "min-h-[54px]"
+      } disabled:cursor-not-allowed disabled:opacity-75`}
     >
-      {side === "right" ? (
-        <>
-          {isSelected ? <span className="mr-2 h-2 w-2 shrink-0 rounded-full bg-accent" /> : null}
-          <span className="min-w-0">
-            <span className={`block truncate ${isCompact ? "text-xs" : "text-sm"} font-black ${isEliminated ? "text-gray-400" : "text-gray-950"}`}>
-              {team?.name ?? placeholderLabel ?? "Waiting on previous result"}
-            </span>
-            <span className={`mt-0.5 block text-[11px] font-semibold uppercase tracking-wide ${isEliminated ? "text-gray-400" : "text-gray-500"}`}>
-              {team ? team.shortName : "Placeholder"}
-            </span>
-          </span>
-        </>
-      ) : side === "center" ? (
-        <span className="flex min-w-0 flex-1 flex-col items-center text-center">
-          <span className={`block truncate ${isCompact ? "text-xs" : "text-sm"} font-black ${isEliminated ? "text-gray-400" : "text-gray-950"}`}>
-            {team?.name ?? placeholderLabel ?? "Waiting on previous result"}
-          </span>
-          <span className={`mt-0.5 block text-[11px] font-semibold uppercase tracking-wide ${isEliminated ? "text-gray-400" : "text-gray-500"}`}>
-            {team ? team.shortName : "Placeholder"}
-          </span>
-          {isSelected ? <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-accent" /> : null}
-        </span>
+      {cardSide === "center" ? (
+        renderCenterLayer()
       ) : (
-        <>
-          <span className="min-w-0">
-            <span className={`block truncate ${isCompact ? "text-xs" : "text-sm"} font-black ${isEliminated ? "text-gray-400" : "text-gray-950"}`}>
-              {team?.name ?? placeholderLabel ?? "Waiting on previous result"}
-            </span>
-            <span className={`mt-0.5 block text-[11px] font-semibold uppercase tracking-wide ${isEliminated ? "text-gray-400" : "text-gray-500"}`}>
-              {team ? team.shortName : "Placeholder"}
-            </span>
-          </span>
-          {isSelected ? <span className="ml-2 h-2 w-2 shrink-0 rounded-full bg-accent" /> : null}
-        </>
+        <span className="flex w-full">
+          {getProjectedTileAxis() === "left" ? (
+            <>
+              {renderUserLayer()}
+              <span className="w-px self-stretch bg-gray-200" />
+              {renderRealLayer("right")}
+            </>
+          ) : (
+            <>
+              {renderRealLayer("left")}
+              <span className="w-px self-stretch bg-gray-200" />
+              {renderUserLayer()}
+            </>
+          )}
+        </span>
       )}
     </button>
   );
+
+  function renderCenterLayer() {
+    const centerDisplayLabel = team?.name ?? placeholderLabel ?? "";
+    const centerLabel = status === "final" ? "Final" : status === "live" ? "Live" : isSelected ? "You" : team ? "Pick" : null;
+    const centerHelperLabel =
+      status === "final" || status === "live"
+        ? officialScore != null
+          ? String(officialScore)
+          : null
+        : null;
+
+    return (
+      <span
+        className={`flex w-full flex-col items-center justify-center px-3 py-1 text-center ${
+          isSelected ? "bg-accent text-white" : "bg-white text-gray-950"
+        }`}
+      >
+        {centerLabel ? (
+          <span className={`text-[10px] font-bold uppercase tracking-wide ${isSelected ? "text-white/80" : "text-gray-500"}`}>
+            {centerLabel}
+          </span>
+        ) : null}
+        <span className="mt-0.5 flex items-center gap-1">
+          {team?.flagEmoji ? <span aria-hidden className="text-sm leading-none">{team.flagEmoji}</span> : null}
+          <span className={`${isCompact ? "text-xs" : "text-sm"} font-black`}>
+            {centerDisplayLabel}
+          </span>
+        </span>
+        {centerHelperLabel ? (
+          <span className={`mt-0.5 text-[10px] font-semibold ${isSelected ? "text-white/80" : "text-gray-500"}`}>
+            {centerHelperLabel}
+          </span>
+        ) : null}
+      </span>
+    );
+  }
+
+  function getProjectedTileAxis() {
+    if (cardSide === "left") {
+      return "left" as const;
+    }
+
+    if (cardSide === "right") {
+      return "right" as const;
+    }
+
+    return competitorSide === "left" ? "left" : "right";
+  }
+
+  function renderUserLayer(isStacked = false) {
+    return (
+      <span
+        className={`min-w-0 ${isStacked ? "w-full" : userLayerWidthClass} px-2 py-1 ${
+          userLayer.isSelected
+            ? userLayer.isCorrect === true
+              ? "bg-green-100 text-green-900"
+              : userLayer.isCorrect === false
+                ? "bg-rose-50 text-rose-800"
+                : "bg-accent text-white"
+            : isLockedState
+              ? "bg-gray-100 text-gray-500"
+              : "bg-white text-gray-950"
+        }`}
+      >
+        <span
+          className={`flex h-full flex-col justify-center ${
+            isStacked
+              ? "items-center text-center"
+              : "items-center text-center"
+          }`}
+        >
+          <span className={`text-[9px] font-bold uppercase tracking-wide ${userLayer.isSelected ? "text-white/80" : "text-gray-500"}`}>
+            {userLayer.label}
+          </span>
+          <span className="mt-0.5 flex items-center gap-1">
+            {userLayer.flagEmoji ? <span aria-hidden className="text-sm leading-none">{userLayer.flagEmoji}</span> : null}
+            <span className={`${isCompact ? "text-xs" : "text-sm"} font-black uppercase`}>{userLayer.displayCode}</span>
+          </span>
+          {userLayer.helperText ? (
+            <span className={`mt-0.5 text-[10px] font-semibold ${userLayer.isSelected ? "text-white/80" : "text-gray-500"}`}>
+              {userLayer.helperText}
+            </span>
+          ) : null}
+        </span>
+      </span>
+    );
+  }
+
+  function renderRealLayer(alignment: "left" | "right", isStacked = false) {
+    return (
+      <span className={`min-w-0 ${isStacked ? "w-full" : realLayerWidthClass} bg-gray-50 px-2 py-1`}>
+        <span className={`flex h-full flex-col justify-center ${isStacked ? "items-center text-center" : alignment === "right" ? "items-end text-right" : "items-start text-left"}`}>
+          <span className="text-[9px] font-bold uppercase tracking-wide text-gray-600">{realLayer.label}</span>
+          <span className="mt-0.5 flex items-center gap-1">
+            {realLayer.placeholderBadge ? (
+              <span className="inline-flex items-center rounded-md border border-gray-300 bg-white px-1.5 py-0.5 text-[10px] font-black uppercase text-gray-900">
+                {realLayer.placeholderBadge}
+              </span>
+            ) : null}
+            <span className={`${isCompact ? "text-xs" : "text-sm"} font-black text-gray-950`}>{realLayer.displayName}</span>
+            {realLayer.scoreText ? <span className="text-xs font-black text-gray-700">{realLayer.scoreText}</span> : null}
+          </span>
+          {realLayer.helperText ? (
+            <span className="mt-0.5 text-[10px] font-semibold text-gray-500">{realLayer.helperText}</span>
+          ) : null}
+        </span>
+      </span>
+    );
+  }
+}
+
+function getKnockoutCardLayers({
+  competitorSide,
+  userTeam,
+  officialTeam,
+  placeholderLabel,
+  projectionSource,
+  viewMode,
+  status,
+  officialScore,
+  isSelected,
+  isCorrectSelection,
+  isOfficialWinner
+}: {
+  competitorSide: "left" | "right";
+  userTeam: BracketTeamOption | null;
+  officialTeam: BracketTeamOption | null;
+  placeholderLabel: string | null;
+  projectionSource: KnockoutBracketMatchView["homeResolutionSource"];
+  viewMode: KnockoutBracketMatchView["viewMode"];
+  status: KnockoutBracketMatchView["status"];
+  officialScore: number | null;
+  isSelected: boolean;
+  isCorrectSelection: boolean | null;
+  isOfficialWinner: boolean;
+}) {
+  const isProjected = viewMode === "projected";
+  const userDisplayCode = userTeam ? getTeamDisplayCode(userTeam) : "TBD";
+  const officialPlaceholderCode = formatKnockoutPlaceholderCode(placeholderLabel);
+  const officialDisplayName = officialTeam?.name ?? formatKnockoutPlaceholderText(officialPlaceholderCode);
+  const unresolvedHelper =
+    isProjected && projectionSource === "missing" ? "More group results or picks needed" : null;
+
+  const userLayer = isProjected
+    ? {
+        displayCode: userDisplayCode,
+        flagEmoji: userTeam?.flagEmoji ?? null,
+        label: "Yours",
+        helperText: unresolvedHelper,
+        isSelected: false,
+        isCorrect: null as boolean | null
+      }
+    : {
+        displayCode: isSelected ? userDisplayCode : "Pick",
+        flagEmoji: isSelected ? userTeam?.flagEmoji ?? null : null,
+        label: isSelected ? "You" : "Pick",
+        helperText: null,
+        isSelected,
+        isCorrect: isSelected ? isCorrectSelection : null
+      };
+
+  const realLayer = {
+    displayName: officialDisplayName,
+    label: officialTeam ? "Actual" : null,
+    scoreText: status === "final" || status === "live" ? (officialScore != null ? String(officialScore) : null) : null,
+    helperText: !officialTeam && !isProjected ? (placeholderLabel ?? null) : isOfficialWinner && status === "final" ? "Advanced" : null,
+    placeholderBadge: officialTeam ? null : getKnockoutPlaceholderBadge(placeholderLabel)
+  };
+
+  return {
+    competitorSide,
+    userLayer,
+    realLayer
+  };
+}
+
+function getTeamDisplayCode(team: BracketTeamOption) {
+  const preferred = team.shortName?.trim() || team.name.trim().slice(0, 3);
+  return preferred.toUpperCase();
+}
+
+function KnockoutMatchNumberBadge({ number, compact = false }: { number: number; compact?: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center justify-center rounded-full bg-accent font-black text-white ${
+        compact ? "h-6 w-6 text-xs" : "h-7 w-7 text-sm"
+      }`}
+    >
+      {number}
+    </span>
+  );
+}
+
+function getKnockoutMatchNumber(title: string) {
+  const matchedNumber = title.match(/(\d+)$/);
+  if (!matchedNumber) {
+    return null;
+  }
+
+  const value = Number(matchedNumber[1]);
+  return Number.isFinite(value) ? value : null;
 }
 
 function ProjectedTeamChip({
@@ -909,7 +1211,7 @@ function ProjectedTeamChip({
   team: BracketTeamOption | null;
   placeholderLabel: string | null;
 }) {
-  const fallbackCode = placeholderLabel ? placeholderLabel.replace(/\s+/g, " ").trim().slice(0, 3).toUpperCase() : "TBD";
+  const fallbackCode = formatKnockoutPlaceholderCode(placeholderLabel);
   return (
     <div
       className="flex min-h-[36px] items-center justify-center rounded-md bg-gray-50 px-1 py-1 text-center"
@@ -922,6 +1224,48 @@ function ProjectedTeamChip({
       </span>
     </div>
   );
+}
+
+function formatKnockoutPlaceholderCode(placeholderLabel: string | null) {
+  if (!placeholderLabel) {
+    return "TBD";
+  }
+
+  const normalized = placeholderLabel.replace(/\s+/g, " ").trim();
+  const groupMatch = normalized.match(/^Group\s+([A-Z])\s+(Winner|Runner-up)$/i);
+  if (groupMatch) {
+    return `${groupMatch[1].toUpperCase()}-#${groupMatch[2].toLowerCase() === "winner" ? "1" : "2"}`;
+  }
+
+  const thirdPlaceMatch = normalized.match(/^Best third-place\s+(\d{1,2})$/i);
+  if (thirdPlaceMatch) {
+    return `#3-${thirdPlaceMatch[1]}`;
+  }
+
+  return normalized.slice(0, 3).toUpperCase();
+}
+
+function formatKnockoutPlaceholderText(code: string) {
+  const groupedCode = code.match(/^([A-Z])-(#\d)$/);
+  if (groupedCode) {
+    return groupedCode[2];
+  }
+
+  return code;
+}
+
+function getKnockoutPlaceholderBadge(placeholderLabel: string | null) {
+  if (!placeholderLabel) {
+    return null;
+  }
+
+  const normalized = placeholderLabel.replace(/\s+/g, " ").trim();
+  const groupMatch = normalized.match(/^Group\s+([A-Z])\s+(Winner|Runner-up)$/i);
+  if (groupMatch) {
+    return groupMatch[1].toUpperCase();
+  }
+
+  return null;
 }
 
 function ChampionCard({ champion }: { champion: BracketTeamOption | null }) {
@@ -977,6 +1321,7 @@ function deriveEditorView(initialView: KnockoutBracketEditorView, predictions: B
   const predictionByMatchId = new Map(predictions.map((prediction) => [prediction.matchId, prediction]));
   const allMatches = [...initialView.stages.flatMap((stage) => stage.matches), ...(initialView.thirdPlace ? [initialView.thirdPlace] : [])];
   const teamById = new Map<string, BracketTeamOption>();
+  const isProjected = initialView.mode === "projected";
 
   for (const match of allMatches) {
     for (const team of [match.seededHomeTeam, match.seededAwayTeam, match.homeTeam, match.awayTeam]) {
@@ -992,10 +1337,14 @@ function deriveEditorView(initialView: KnockoutBracketEditorView, predictions: B
   for (const match of orderedMatches) {
     const homeTeam = match.homeSourceMatchId
       ? getAdvancedTeam(match.homeSourceMatchId, resolvedMatches, predictionByMatchId)
-      : match.seededHomeTeam;
+      : isProjected
+        ? match.homeTeam
+        : match.seededHomeTeam;
     const awayTeam = match.awaySourceMatchId
       ? getAdvancedTeam(match.awaySourceMatchId, resolvedMatches, predictionByMatchId)
-      : match.seededAwayTeam;
+      : isProjected
+        ? match.awayTeam
+        : match.seededAwayTeam;
     const predictedWinnerTeamId = predictionByMatchId.get(match.matchId)?.predictedWinnerTeamId ?? null;
     const validPredictedWinnerTeamId =
       predictedWinnerTeamId && [homeTeam?.id, awayTeam?.id].includes(predictedWinnerTeamId)
@@ -1073,29 +1422,58 @@ function formatBracketProvenanceLabel(label: string | null | undefined) {
     return null;
   }
 
-  const normalized = label.toLowerCase();
-
-  if (normalized.includes("32")) {
-    return "ROUND OF 32";
+  const normalized = label.trim().toUpperCase();
+  const winnerRef = normalized.match(/^WINNER OF\s+([A-Z0-9-]+)$/i);
+  if (winnerRef) {
+    return `WIN|${winnerRef[1]
+      .replace(/^R32-/i, "R/32-")
+      .replace(/^R16-/i, "R/16-")
+      .replace(/-(0)(\d)$/i, "-$2")}`;
   }
 
-  if (normalized.includes("16")) {
-    return "ROUND OF 16";
+  if (normalized === "FINAL") {
+    return "WIN|FINAL";
   }
 
-  if (normalized.includes("quarter")) {
-    return "QTR. FINALS";
+  return `WIN|${normalized}`;
+}
+
+function renderProvenanceLabel(label: string) {
+  const [top, bottom] = label.split("|");
+  if (!bottom) {
+    return label;
   }
 
-  if (normalized.includes("semi")) {
-    return "SEMI FINALS";
+  return (
+    <span className="inline-flex flex-col items-center justify-center leading-tight">
+      <span>{top}</span>
+      <span>{bottom}</span>
+    </span>
+  );
+}
+
+function getAdvancingTeamForRail(match: KnockoutBracketMatchView) {
+  if (match.status !== "final" || !match.actualWinnerTeamId) {
+    return null;
   }
 
-  if (normalized.includes("final")) {
-    return "FINAL";
+  if (match.homeTeam?.id === match.actualWinnerTeamId) {
+    return match.homeTeam;
   }
 
-  return label.toUpperCase();
+  if (match.awayTeam?.id === match.actualWinnerTeamId) {
+    return match.awayTeam;
+  }
+
+  if (match.seededHomeTeam?.id === match.actualWinnerTeamId) {
+    return match.seededHomeTeam;
+  }
+
+  if (match.seededAwayTeam?.id === match.actualWinnerTeamId) {
+    return match.seededAwayTeam;
+  }
+
+  return null;
 }
 
 function formatKickoff(kickoffTime: string) {

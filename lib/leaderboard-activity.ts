@@ -36,6 +36,7 @@ export type LeaderboardActivityItem = {
   eventType: LeaderboardEventRow["event_type"];
   message: string;
   createdAt: string;
+  pointsDelta?: number | null;
   userName?: string | null;
   userAvatarUrl?: string | null;
   userHomeTeamId?: string | null;
@@ -125,6 +126,7 @@ async function fetchRecentLeaderboardActivity(options: {
       eventType: event.event_type,
       message: event.message ?? formatFallbackMessage(event),
       createdAt: event.created_at,
+      pointsDelta: event.points_delta,
       userName: userRow?.name ?? null,
       userAvatarUrl: userRow?.avatar_url ?? null,
       userHomeTeamId: userRow?.home_team_id ?? null,
@@ -158,6 +160,7 @@ function buildDailyWinnerActivityItems(winners: DailyWinner[]): LeaderboardActiv
     eventType: "daily_winner",
     message: `${winner.name} is today's Daily Winner`,
     createdAt,
+    pointsDelta: winner.points,
     userName: winner.name,
     userAvatarUrl: winner.avatarUrl ?? null,
     userHomeTeamId: winner.homeTeamId ?? null,

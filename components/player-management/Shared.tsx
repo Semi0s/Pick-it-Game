@@ -211,7 +211,9 @@ export function WindowChoiceRail({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const beltRef = useRef<HTMLDivElement | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const isDraggingRef = useRef(false);
   const [offsetX, setOffsetX] = useState(0);
+  const [dragOffsetX, setDragOffsetX] = useState(0);
   const [hasOverflow, setHasOverflow] = useState(false);
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
@@ -292,12 +294,38 @@ export function WindowChoiceRail({
       return;
     }
 
+    isDraggingRef.current = false;
+    setDragOffsetX(0);
     touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+  }
+
+  function handleTouchMove(event: React.TouchEvent<HTMLDivElement>) {
+    const start = touchStartRef.current;
+    if (!start) {
+      return;
+    }
+
+    const touch = event.touches[0];
+    if (!touch) {
+      return;
+    }
+
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (Math.abs(deltaX) <= Math.abs(deltaY)) {
+      return;
+    }
+
+    isDraggingRef.current = true;
+    setDragOffsetX(Math.max(-28, Math.min(28, deltaX * 0.45)));
   }
 
   function handleTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
     const start = touchStartRef.current;
     touchStartRef.current = null;
+    const wasDragging = isDraggingRef.current;
+    isDraggingRef.current = false;
+    setDragOffsetX(0);
     if (!start || !onActiveItemChange) {
       return;
     }
@@ -309,7 +337,7 @@ export function WindowChoiceRail({
 
     const deltaX = touch.clientX - start.x;
     const deltaY = touch.clientY - start.y;
-    if (Math.abs(deltaX) < 32 || Math.abs(deltaX) <= Math.abs(deltaY)) {
+    if (!wasDragging || Math.abs(deltaX) < 18 || Math.abs(deltaX) <= Math.abs(deltaY)) {
       return;
     }
 
@@ -331,7 +359,18 @@ export function WindowChoiceRail({
             <span aria-hidden>‹</span>
           </button>
         ) : null}
-        <div ref={viewportRef} className="min-w-0 overflow-hidden" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        <div
+          ref={viewportRef}
+          className="min-w-0 overflow-hidden touch-pan-y select-none"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={() => {
+            touchStartRef.current = null;
+            isDraggingRef.current = false;
+            setDragOffsetX(0);
+          }}
+        >
           {showControls ? (
             <>
               <div aria-hidden="true" className="pointer-events-none absolute bottom-0 left-6 top-0 z-[11] w-px bg-gray-200" />
@@ -342,8 +381,8 @@ export function WindowChoiceRail({
             ref={beltRef}
             className={contentClassName ? `${baseScrollerClassName} ${contentClassName}` : baseScrollerClassName}
             style={{
-              transform: `translateX(${offsetX}px)`,
-              transition: hasOverflow ? "transform 280ms ease" : undefined,
+              transform: `translateX(${offsetX + dragOffsetX}px)`,
+              transition: hasOverflow ? (dragOffsetX !== 0 ? "none" : "transform 180ms ease-out") : undefined,
               willChange: "transform"
             }}
           >
@@ -395,7 +434,7 @@ export function ManagementIntro({
   disclosurePlacement = "below-title",
   statusChipPlacement = "top-right"
 }: {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   description: string;
   statusChip?: string | null;
@@ -406,14 +445,15 @@ export function ManagementIntro({
   statusChipPlacement?: "top-right" | "below-title";
 }) {
   const [isMoreOpen, setIsMoreOpen] = useSessionDisclosureState(
-    disclosureStorageKey ?? `management-intro:${eyebrow.toLowerCase().replace(/\s+/g, "-")}`,
+    disclosureStorageKey ??
+      `management-intro:${(eyebrow ?? title).toLowerCase().replace(/\s+/g, "-")}`,
     false
   );
 
   return (
     <section className="rounded-lg bg-gray-100 p-5">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{eyebrow}</p>
+        {eyebrow ? <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{eyebrow}</p> : <div />}
         {disclosurePlacement === "top-right" ? (
           <InlineDisclosureButton
             isOpen={isMoreOpen}

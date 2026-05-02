@@ -22,61 +22,80 @@ export function GroupStandingsMiniTable({
   rows,
   homeTeamId = null,
   movementByTeamId,
-  className
+  className,
+  showPlayedColumn = true,
+  showMovementColumn = false
 }: {
   rows: MiniGroupStandingsRow[];
   homeTeamId?: string | null;
   movementByTeamId?: Record<string, MiniGroupStandingsMovement>;
   className?: string;
+  showPlayedColumn?: boolean;
+  showMovementColumn?: boolean;
 }) {
   return (
     <div className={className ?? ""}>
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200 text-[10px]">
+        <table className="mx-auto min-w-[460px] w-full table-fixed divide-y divide-gray-200 text-[10px]">
+          <colgroup>
+            <col className="w-[74px]" />
+            {showMovementColumn ? <col className="w-[24px]" /> : null}
+            {showPlayedColumn ? <col className="w-[30px]" /> : null}
+            <col className="w-[30px]" />
+            <col className="w-[30px]" />
+            <col className="w-[30px]" />
+            <col className="w-[30px]" />
+            <col className="w-[30px]" />
+            <col className="w-[30px]" />
+            <col className="w-[30px]" />
+            <col className="w-[62px]" />
+          </colgroup>
           <thead className="text-[10px] font-bold uppercase tracking-wide text-gray-500">
             <tr>
-              <th className="px-2 py-1.5 text-left">Team</th>
-              <th className="px-2 py-1.5 text-right">P</th>
-              <th className="px-2 py-1.5 text-right">W</th>
-              <th className="px-2 py-1.5 text-right">D</th>
-              <th className="px-2 py-1.5 text-right">L</th>
-              <th className="px-2 py-1.5 text-right">GF</th>
-              <th className="px-2 py-1.5 text-right">GA</th>
-              <th className="px-2 py-1.5 text-right">GD</th>
-              <th className="px-2 py-1.5 text-right">Pts</th>
-              <th className="px-2 py-1.5 text-center">Advance</th>
+              <th className="px-1.5 py-1.5 text-center whitespace-nowrap">Team</th>
+              {showMovementColumn ? <th className="px-1 py-1.5 text-center" aria-label="Movement" /> : null}
+              {showPlayedColumn ? <th className="px-[0.6rem] py-1.5 text-center">P</th> : null}
+              <th className="px-[0.6rem] py-1.5 text-center">W</th>
+              <th className="px-[0.6rem] py-1.5 text-center">D</th>
+              <th className="px-[0.6rem] py-1.5 text-center">L</th>
+              <th className="px-[0.6rem] py-1.5 text-center">GF</th>
+              <th className="px-[0.6rem] py-1.5 text-center">GA</th>
+              <th className="px-[0.6rem] py-1.5 text-center">GD</th>
+              <th className="px-[0.6rem] py-1.5 text-center">Pts</th>
+              <th className="px-1.5 py-1.5 text-center whitespace-nowrap">Advance</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
             {rows.map((row, index) => {
               const isHomeTeam = Boolean(homeTeamId && row.teamId === homeTeamId);
               const movement = movementByTeamId?.[row.teamId];
+              const rowHighlightClass = isHomeTeam ? "bg-amber-100/80" : "";
 
               return (
-                <tr key={row.teamId} className={isHomeTeam ? "bg-amber-50" : ""}>
-                  <td className="px-2 py-1.5">
-                    <div className="flex items-center gap-1">
-                      <p className="truncate font-semibold uppercase tracking-wide text-gray-900">{row.shortName}</p>
+                <tr key={row.teamId}>
+                  <td className={`px-1.5 py-1.5 text-center ${rowHighlightClass}`}>
+                    <p className="whitespace-nowrap font-semibold uppercase tracking-wide text-gray-900">{row.shortName}</p>
+                  </td>
+                  {showMovementColumn ? (
+                    <td className={`px-1 py-1.5 text-center ${rowHighlightClass}`}>
                       {movement ? (
-                        <span
-                          className={`ml-1 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                            movement === "up" ? "bg-amber-100 text-gray-800" : "bg-amber-100 text-gray-800"
-                          }`}
-                        >
-                          {movement === "up" ? "↑ up" : "↓ down"}
+                        <span className="inline-flex items-center justify-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-800">
+                          {movement === "up" ? "↑" : "↓"}
                         </span>
                       ) : null}
-                    </div>
-                  </td>
-                  <td className="px-2 py-1.5 text-right font-semibold text-gray-700">{row.played}</td>
-                  <td className="px-2 py-1.5 text-right font-semibold text-gray-700">{row.wins}</td>
-                  <td className="px-2 py-1.5 text-right font-semibold text-gray-700">{row.draws}</td>
-                  <td className="px-2 py-1.5 text-right font-semibold text-gray-700">{row.losses}</td>
-                  <td className="px-2 py-1.5 text-right font-semibold text-gray-700">{row.goalsFor}</td>
-                  <td className="px-2 py-1.5 text-right font-semibold text-gray-700">{row.goalsAgainst}</td>
-                  <td className="px-2 py-1.5 text-right font-semibold text-gray-700">{row.goalDifference}</td>
-                  <td className="px-2 py-1.5 text-right font-bold text-gray-900">{row.points}</td>
-                  <td className="px-2 py-1.5 text-center">
+                    </td>
+                  ) : null}
+                  {showPlayedColumn ? (
+                    <td className={`px-[0.6rem] py-1.5 text-center font-semibold text-gray-700 ${rowHighlightClass}`}>{row.played}</td>
+                  ) : null}
+                  <td className={`px-[0.6rem] py-1.5 text-center font-semibold text-gray-700 ${rowHighlightClass}`}>{row.wins}</td>
+                  <td className={`px-[0.6rem] py-1.5 text-center font-semibold text-gray-700 ${rowHighlightClass}`}>{row.draws}</td>
+                  <td className={`px-[0.6rem] py-1.5 text-center font-semibold text-gray-700 ${rowHighlightClass}`}>{row.losses}</td>
+                  <td className={`px-[0.6rem] py-1.5 text-center font-semibold text-gray-700 ${rowHighlightClass}`}>{row.goalsFor}</td>
+                  <td className={`px-[0.6rem] py-1.5 text-center font-semibold text-gray-700 ${rowHighlightClass}`}>{row.goalsAgainst}</td>
+                  <td className={`px-[0.6rem] py-1.5 text-center font-semibold text-gray-700 ${rowHighlightClass}`}>{row.goalDifference}</td>
+                  <td className={`px-[0.6rem] py-1.5 text-center font-bold text-gray-900 ${rowHighlightClass}`}>{row.points}</td>
+                  <td className={`px-1.5 py-1.5 text-center ${rowHighlightClass}`}>
                     {index < 2 ? (
                       <span className="inline-flex items-center justify-center text-green-700">
                         <Check aria-hidden className="h-3.5 w-3.5" />

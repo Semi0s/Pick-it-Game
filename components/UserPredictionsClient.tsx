@@ -162,7 +162,7 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
                           {getPredictionStateLabel(match.status)}
                         </span>
                       </div>
-                      <PredictionRow match={match} prediction={prediction} />
+                      <PredictionRow prediction={prediction} />
                     </div>
                   );
                 })}

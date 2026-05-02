@@ -29,8 +29,16 @@ import {
   scoreFinalizedKnockoutMatchWithClient
 } from "@/lib/bracket-predictions";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
+import {
+  buildGroupStandingsByGroup,
+  buildQualifiedTeamSeeds,
+  resolveRoundOf32SeedAssignments,
+  summarizeKnockoutSeedState,
+  type GroupStageMatchForSeeding,
+  type KnockoutPlaceholderMatch
+} from "@/lib/knockout-seeding";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
-import type { MatchNextSlot, MatchStage, UserRole } from "@/lib/types";
+import type { MatchNextSlot, MatchStage, Team, UserRole } from "@/lib/types";
 
 type MatchRow = {
   id: string;
@@ -260,6 +268,19 @@ export type RemoveManagerAccessResult = ResetUserAccessResult;
 export type UpdateUserDisplayNameResult = ResetUserAccessResult;
 export type RepairPendingInviteResult = ResetUserAccessResult;
 export type UpdateManagerLimitsResult = UpsertManagerLimitsResult;
+export type SeedKnockoutFromGroupStageResult =
+  | {
+      ok: true;
+      seededMatches: number;
+      alreadySeeded: boolean;
+      forced: boolean;
+      message: string;
+    }
+  | {
+      ok: false;
+      alreadySeeded?: boolean;
+      message: string;
+    };
 
 export type AdminGroupSummary = {
   id: string;
@@ -1734,6 +1755,161 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
   revalidatePath("/leaderboard");
   revalidatePath("/admin/matches");
   return { ok: true, match: mapMatchRow(data as MatchRow) };
+}
+
+export async function seedKnockoutFromGroupStageAction(
+  force = false
+): Promise<SeedKnockoutFromGroupStageResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const adminSupabase = createAdminClient();
+  const [{ data: groupMatches, error: groupMatchesError }, { data: roundOf32Matches, error: roundOf32Error }, { data: teams, error: teamsError }] =
+    await Promise.all([
+      adminSupabase
+        .from("matches")
+        .select("id,stage,group_name,status,home_team_id,away_team_id,home_score,away_score")
+        .eq("stage", "group")
+        .order("kickoff_time", { ascending: true }),
+      adminSupabase
+        .from("matches")
+        .select("id,stage,home_source,away_source,home_team_id,away_team_id,status")
+        .in("stage", ["r32", "round_of_32"])
+        .order("kickoff_time", { ascending: true }),
+      adminSupabase
+        .from("teams")
+        .select("id,name,short_name,group_name,fifa_rank,flag_emoji")
+        .order("group_name", { ascending: true })
+        .order("name", { ascending: true })
+    ]);
+
+  if (groupMatchesError) {
+    return { ok: false, message: groupMatchesError.message };
+  }
+
+  if (roundOf32Error) {
+    return { ok: false, message: roundOf32Error.message };
+  }
+
+  if (teamsError) {
+    return { ok: false, message: teamsError.message };
+  }
+
+  const mappedRoundOf32Matches = ((roundOf32Matches ?? []) as KnockoutPlaceholderMatch[]);
+  const seedState = summarizeKnockoutSeedState(mappedRoundOf32Matches);
+  if (seedState.roundOf32MatchCount === 0) {
+    return { ok: false, message: "Round of 32 placeholder matches are not available yet." };
+  }
+
+  if (seedState.hasKnockoutStarted) {
+    return { ok: false, message: "Knockout seeding is locked because the Round of 32 has already started." };
+  }
+
+  const mappedGroupMatches = ((groupMatches ?? []) as GroupStageMatchForSeeding[]);
+  const incompleteGroupMatchCount = mappedGroupMatches.filter((match) => match.status !== "final").length;
+  if (incompleteGroupMatchCount > 0) {
+    return { ok: false, message: "Group stage is not complete yet." };
+  }
+
+  if (seedState.hasAnySeeds && !force) {
+    return {
+      ok: false,
+      alreadySeeded: true,
+      message: "Knockout is already seeded. Reseed?"
+    };
+  }
+
+  const mappedTeams: Team[] = ((teams ?? []) as Array<{
+    id: string;
+    name: string;
+    short_name: string;
+    group_name: string;
+    fifa_rank: number | null;
+    flag_emoji: string;
+  }>).map((team) => ({
+    id: team.id,
+    name: team.name,
+    shortName: team.short_name,
+    groupName: team.group_name,
+    fifaRank: team.fifa_rank ?? 0,
+    flagEmoji: team.flag_emoji
+  }));
+
+  try {
+    const standingsByGroup = buildGroupStandingsByGroup(mappedGroupMatches, mappedTeams);
+    const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(standingsByGroup);
+    if (rankedThirdPlaceTeams.length < 8) {
+      return { ok: false, message: "Could not determine all eight best third-place qualifiers." };
+    }
+
+    const assignments = resolveRoundOf32SeedAssignments(
+      mappedRoundOf32Matches,
+      automaticQualifiers,
+      rankedThirdPlaceTeams
+    );
+
+    if (assignments.length !== seedState.roundOf32MatchCount) {
+      return {
+        ok: false,
+        message: `Expected ${seedState.roundOf32MatchCount} Round of 32 seed assignments, but resolved ${assignments.length}.`
+      };
+    }
+
+    const seededAt = new Date().toISOString();
+    const writeResults = await Promise.all(
+      assignments.map(async (assignment) => {
+        const { error } = await adminSupabase
+          .from("matches")
+          .update({
+            home_team_id: assignment.homeTeamId,
+            away_team_id: assignment.awayTeamId,
+            updated_at: seededAt
+          })
+          .eq("id", assignment.matchId);
+
+        return { matchId: assignment.matchId, error };
+      })
+    );
+
+    const failedWrite = writeResults.find((result) => result.error);
+    if (failedWrite?.error) {
+      return { ok: false, message: failedWrite.error.message };
+    }
+
+    console.info("Knockout seeded from group results", {
+      adminUserId: adminCheck.userId,
+      forced: force,
+      seededAt,
+      assignments: assignments.map((assignment) => ({
+        matchId: assignment.matchId,
+        homeSource: assignment.homeSource,
+        awaySource: assignment.awaySource,
+        homeTeamId: assignment.homeTeamId,
+        awayTeamId: assignment.awayTeamId
+      }))
+    });
+
+    revalidatePath("/");
+    revalidatePath("/knockout");
+    revalidatePath("/leaderboard");
+    revalidatePath("/predictions");
+    revalidatePath("/admin");
+    revalidatePath("/admin/matches");
+
+    return {
+      ok: true,
+      seededMatches: assignments.length,
+      alreadySeeded: seedState.hasAnySeeds,
+      forced: force,
+      message: force
+        ? `Knockout reseeded from final group results across ${assignments.length} Round of 32 matches.`
+        : `Knockout seeded from final group results across ${assignments.length} Round of 32 matches.`
+    };
+  } catch (error) {
+    return { ok: false, message: (error as Error).message };
+  }
 }
 
 export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMatchResult> {

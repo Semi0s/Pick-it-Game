@@ -3,7 +3,11 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
-import { scoreFinalizedGroupMatch, updateAdminMatchResultAction } from "@/app/admin/actions";
+import {
+  scoreFinalizedGroupMatch,
+  seedKnockoutFromGroupStageAction,
+  updateAdminMatchResultAction
+} from "@/app/admin/actions";
 import { showAppToast } from "@/lib/app-toast";
 import { formatMatchStage } from "@/lib/match-stage";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
@@ -27,10 +31,13 @@ const stages: ("all" | MatchStage)[] = [
 ];
 
 export function AdminMatchesClient() {
+  const router = useRouter();
   const [matches, setMatches] = useState<AdminMatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [stageFilter, setStageFilter] = useState<"all" | MatchStage>("all");
   const [dateFilter, setDateFilter] = useState("all");
+  const [isSeedingKnockout, setIsSeedingKnockout] = useState(false);
+  const [isConfirmingReseed, setIsConfirmingReseed] = useState(false);
 
   useEffect(() => {
     loadMatches();
@@ -56,10 +63,95 @@ export function AdminMatchesClient() {
     const dateMatches = dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter;
     return stageMatches && dateMatches;
   });
+  const knockoutSeedStatus = useMemo(() => {
+    const groupMatches = matches.filter((match) => match.stage === "group");
+    const incompleteGroupMatchCount = groupMatches.filter((match) => match.status !== "final").length;
+    const roundOf32Matches = matches.filter((match) => match.stage === "r32" || match.stage === "round_of_32");
+    const seededRoundOf32Count = roundOf32Matches.filter((match) => match.homeTeamId && match.awayTeamId).length;
+    const hasAnySeeds = roundOf32Matches.some((match) => match.homeTeamId || match.awayTeamId);
+    const hasKnockoutStarted = roundOf32Matches.some((match) => match.status !== "scheduled");
+
+    return {
+      incompleteGroupMatchCount,
+      roundOf32Count: roundOf32Matches.length,
+      seededRoundOf32Count,
+      hasAnySeeds,
+      hasKnockoutStarted,
+      canSeed:
+        roundOf32Matches.length > 0 &&
+        incompleteGroupMatchCount === 0 &&
+        !hasKnockoutStarted
+    };
+  }, [matches]);
+
+  async function handleSeedKnockout(force = false) {
+    setIsSeedingKnockout(true);
+
+    try {
+      const result = await seedKnockoutFromGroupStageAction(force);
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+
+      if (result.ok) {
+        setIsConfirmingReseed(false);
+        await loadMatches();
+        router.refresh();
+        return;
+      }
+
+      if (result.alreadySeeded) {
+        setIsConfirmingReseed(true);
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsSeedingKnockout(false);
+    }
+  }
 
   return (
     <div className="space-y-5">
       <AdminHeader eyebrow="Matches" title="Update match results." />
+
+      <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Seeding</p>
+            <h3 className="text-lg font-black text-gray-950">Seed knockout from group results</h3>
+            <p className="text-sm font-semibold text-gray-600">
+              {knockoutSeedStatus.hasKnockoutStarted
+                ? "Round of 32 matches have already started. Automatic seeding is locked."
+                : knockoutSeedStatus.incompleteGroupMatchCount > 0
+                  ? "Group stage is not complete yet."
+                  : knockoutSeedStatus.hasAnySeeds
+                    ? `Knockout is already seeded across ${knockoutSeedStatus.seededRoundOf32Count} of ${knockoutSeedStatus.roundOf32Count} Round of 32 matches.`
+                    : "All group-stage matches are final. Seed the Round of 32 from actual results."}
+            </p>
+          </div>
+          <div className="shrink-0">
+            <button
+              type="button"
+              disabled={isSeedingKnockout || !knockoutSeedStatus.canSeed}
+              onClick={() => void handleSeedKnockout(isConfirmingReseed)}
+              className="rounded-md bg-accent px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+            >
+              {isSeedingKnockout
+                ? isConfirmingReseed
+                  ? "Reseeding..."
+                  : "Seeding..."
+                : isConfirmingReseed
+                  ? "Reseed knockout"
+                  : "Seed knockout"}
+            </button>
+          </div>
+        </div>
+        {knockoutSeedStatus.canSeed && knockoutSeedStatus.hasAnySeeds ? (
+          <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            {isConfirmingReseed
+              ? "Reseed will overwrite the current Round of 32 team placements."
+              : "Knockout is already seeded. Reseed?"}
+          </p>
+        ) : null}
+      </section>
 
       <section className="grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:grid-cols-2">
         <label>
@@ -125,8 +217,8 @@ type MatchResultCardProps = {
 function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardProps) {
   const router = useRouter();
   const [status, setStatus] = useState<MatchStatus>(match.status);
-  const [homeScore, setHomeScore] = useState(match.homeScore?.toString() ?? "");
-  const [awayScore, setAwayScore] = useState(match.awayScore?.toString() ?? "");
+  const [homeScore, setHomeScore] = useState(match.homeScore?.toString() ?? "0");
+  const [awayScore, setAwayScore] = useState(match.awayScore?.toString() ?? "0");
   const [isSaving, setIsSaving] = useState(false);
   const isFinalized = status === "final";
   const isLive = status === "live";
@@ -135,11 +227,15 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
   const awayLabel = getSideLabel(match, "away");
   const resolvedWinnerTeamId = getResolvedWinnerTeamId(match, homeScore, awayScore);
   const resolvedWinnerLabel = getResolvedWinnerLabel(match, resolvedWinnerTeamId);
+  const hasUnsavedChanges =
+    status !== match.status ||
+    homeScore !== (match.homeScore?.toString() ?? "0") ||
+    awayScore !== (match.awayScore?.toString() ?? "0");
 
   useEffect(() => {
     setStatus(match.status);
-    setHomeScore(match.homeScore === undefined ? "" : String(match.homeScore));
-    setAwayScore(match.awayScore === undefined ? "" : String(match.awayScore));
+    setHomeScore(match.homeScore === undefined ? "0" : String(match.homeScore));
+    setAwayScore(match.awayScore === undefined ? "0" : String(match.awayScore));
   }, [match]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -344,8 +440,12 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
 
         <button
           type="submit"
-          disabled={isSaving}
-          className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+          disabled={isSaving || !hasUnsavedChanges}
+          className={`w-full rounded-md px-4 py-3 text-base font-bold ${
+            isSaving || !hasUnsavedChanges
+              ? "bg-gray-300 text-gray-600"
+              : "bg-accent text-white"
+          }`}
         >
           {isSaving ? "Saving..." : "Save Match"}
         </button>

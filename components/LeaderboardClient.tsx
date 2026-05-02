@@ -46,9 +46,11 @@ const DEFAULT_SUBSELECTION_STATE: LeaderboardSubselectionState = {
 const LEADERBOARD_SWITCHER_STORAGE_KEY = "leaderboard-switcher-state";
 const LEADERBOARD_INTRO_DISCLOSURE_STORAGE_KEY = "leaderboard-intro-disclosure";
 const LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY = "leaderboard-activity-disclosure";
+const LEADERBOARD_ACTIVITY_MORE_STORAGE_KEY = "leaderboard-activity-more";
 const LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY = "leaderboard-leader-summary-state";
 const LEADERBOARD_SUBSELECTION_STORAGE_KEY = "leaderboard-subselection-state";
 const LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY = "leaderboard-daily-winner-dismissed";
+const LEADERBOARD_TIME_ZONE = "America/New_York";
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TWO_LINE_CLAMP_STYLE = {
   display: "-webkit-box",
@@ -58,7 +60,7 @@ const TWO_LINE_CLAMP_STYLE = {
 };
 
 export function LeaderboardClient() {
-  const { user } = useCurrentUser();
+  const { user, isLoading: isUserLoading } = useCurrentUser();
   const searchParams = useSearchParams();
   const [users, setUsers] = useState<LeaderboardListItem[]>([]);
   const [groupStandings, setGroupStandings] = useState<GroupStandingItem[]>([]);
@@ -75,8 +77,13 @@ export function LeaderboardClient() {
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [activeCommentEventId, setActiveCommentEventId] = useState<string | null>(null);
   const [lastCommentAtByEvent, setLastCommentAtByEvent] = useState<Record<string, number>>({});
+  const [pendingActivityAnchorId, setPendingActivityAnchorId] = useState<string | null>(null);
   const [isActivityExpanded, setIsActivityExpanded] = useSessionDisclosureState(
     LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY,
+    false
+  );
+  const [isActivityMoreOpen, setIsActivityMoreOpen] = useSessionDisclosureState(
+    LEADERBOARD_ACTIVITY_MORE_STORAGE_KEY,
     false
   );
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -96,10 +103,9 @@ export function LeaderboardClient() {
     LEADERBOARD_SUBSELECTION_STORAGE_KEY,
     DEFAULT_SUBSELECTION_STATE
   );
-  const [dismissedDailyWinnerKey, setDismissedDailyWinnerKey] = useSessionJsonState<string | null>(
-    LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY,
-    null
-  );
+  const [dismissedDailyWinnerKeys, setDismissedDailyWinnerKeys] = useState<string[]>([]);
+  const [hasRestoredDailyWinnerDismissal, setHasRestoredDailyWinnerDismissal] = useState(false);
+  const [restoredDailyWinnerDismissOwnerKey, setRestoredDailyWinnerDismissOwnerKey] = useState<string | null>(null);
   const [isIntroMoreOpen, setIsIntroMoreOpen] = useSessionDisclosureState(
     LEADERBOARD_INTRO_DISCLOSURE_STORAGE_KEY,
     false
@@ -131,6 +137,7 @@ export function LeaderboardClient() {
 
     return `/api/leaderboard?${params.toString()}`;
   }, [activeView, selectedGroupId, selectedManagerId]);
+  const dailyWinnerDismissOwnerKey = user?.id ?? "anonymous";
 
   const loadManagedAwardGroup = useCallback(async () => {
     if (activeView !== "managed_groups" || !selectedGroupId) {
@@ -188,6 +195,68 @@ export function LeaderboardClient() {
   }, [searchParams]);
 
   useEffect(() => {
+    setHasRestoredDailyWinnerDismissal(false);
+    setRestoredDailyWinnerDismissOwnerKey(null);
+
+    try {
+      const localValue = window.localStorage.getItem(LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY);
+      if (localValue) {
+        const parsed = JSON.parse(localValue) as Record<string, string[]> | string | null;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          setDismissedDailyWinnerKeys(parsed[dailyWinnerDismissOwnerKey] ?? []);
+        } else if (typeof parsed === "string") {
+          setDismissedDailyWinnerKeys([parsed]);
+        } else {
+          setDismissedDailyWinnerKeys([]);
+        }
+      } else {
+        setDismissedDailyWinnerKeys([]);
+      }
+
+      const legacySessionValue = window.sessionStorage.getItem(LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY);
+      if (legacySessionValue) {
+        const parsed = JSON.parse(legacySessionValue) as string | null;
+        if (parsed) {
+          setDismissedDailyWinnerKeys((current) => (current.includes(parsed) ? current : [...current, parsed]));
+        }
+      }
+    } catch (caughtError) {
+      console.warn("Could not restore Daily Winner dismissal state.", caughtError);
+    } finally {
+      setRestoredDailyWinnerDismissOwnerKey(dailyWinnerDismissOwnerKey);
+      setHasRestoredDailyWinnerDismissal(true);
+    }
+  }, [dailyWinnerDismissOwnerKey]);
+
+  useEffect(() => {
+    if (!hasRestoredDailyWinnerDismissal || restoredDailyWinnerDismissOwnerKey !== dailyWinnerDismissOwnerKey) {
+      return;
+    }
+
+    try {
+      const localValue = window.localStorage.getItem(LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY);
+      const parsed = localValue ? (JSON.parse(localValue) as Record<string, string[]> | string | null) : null;
+      const nextState =
+        parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : ({} as Record<string, string[]>);
+
+      if (dismissedDailyWinnerKeys.length > 0) {
+        nextState[dailyWinnerDismissOwnerKey] = dismissedDailyWinnerKeys;
+      } else {
+        delete nextState[dailyWinnerDismissOwnerKey];
+      }
+
+      window.localStorage.setItem(LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY, JSON.stringify(nextState));
+    } catch (caughtError) {
+      console.warn("Could not persist Daily Winner dismissal state.", caughtError);
+    }
+  }, [
+    dailyWinnerDismissOwnerKey,
+    dismissedDailyWinnerKeys,
+    hasRestoredDailyWinnerDismissal,
+    restoredDailyWinnerDismissOwnerKey
+  ]);
+
+  useEffect(() => {
     try {
       const storedValue = window.sessionStorage.getItem(LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY);
       if (!storedValue) {
@@ -236,6 +305,8 @@ export function LeaderboardClient() {
 
       if (shouldShowLoading) {
         setIsLoading(true);
+      } else {
+        setDailyWinners([]);
       }
 
       fetch(requestUrl, { cache: "no-store" })
@@ -338,6 +409,37 @@ export function LeaderboardClient() {
       isMounted = false;
     };
   }, [user?.id, refreshNonce]);
+
+  useEffect(() => {
+    if (!pendingActivityAnchorId || !isActivityExpanded) {
+      return;
+    }
+
+    const anchorId = `activity-${pendingActivityAnchorId}`;
+    const scrollToTarget = () => {
+      const target = document.getElementById(anchorId);
+      if (!target) {
+        return false;
+      }
+
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", `#${anchorId}`);
+      }
+      setPendingActivityAnchorId(null);
+      return true;
+    };
+
+    if (scrollToTarget()) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      scrollToTarget();
+    }, 80);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [activityFeed, isActivityExpanded, pendingActivityAnchorId]);
 
   useEffect(() => {
     void loadManagedAwardGroup();
@@ -484,6 +586,25 @@ export function LeaderboardClient() {
     () => switcher?.managers.find((manager) => manager.id === selectedManagerId)?.label ?? null,
     [selectedManagerId, switcher?.managers]
   );
+  const dailyWinnerContextLabel = useMemo(() => {
+    if (activeView === "global") {
+      return "Global";
+    }
+
+    if ((activeView === "managed_groups" || activeView === "my_groups") && selectedGroupLabel) {
+      return selectedGroupLabel;
+    }
+
+    if (activeView === "groups") {
+      return "Group Standings";
+    }
+
+    if (activeView === "managers" && selectedManagerLabel) {
+      return selectedManagerLabel;
+    }
+
+    return null;
+  }, [activeView, selectedGroupLabel, selectedManagerLabel]);
   const stableLeaderSummaryGroupId = selectedGroupId || lastSelectedGroupIdRef.current;
   const stableLeaderSummaryManagerId = selectedManagerId || lastSelectedManagerIdRef.current;
   const leaderSummaryContextKey = useMemo(
@@ -514,19 +635,83 @@ export function LeaderboardClient() {
       ).length,
     [activityFeed]
   );
+  const featuredActivityFeed = useMemo(
+    () =>
+      [...activityFeed]
+        .filter((event) => getFeaturedActivityRank(event) < Number.POSITIVE_INFINITY)
+        .sort((left, right) => {
+          const rankDelta = getFeaturedActivityRank(left) - getFeaturedActivityRank(right);
+          if (rankDelta !== 0) {
+            return rankDelta;
+          }
+
+          return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+        }),
+    [activityFeed]
+  );
+  const overflowActivityFeed = useMemo(
+    () =>
+      [...activityFeed]
+        .filter((event) => getFeaturedActivityRank(event) === Number.POSITIVE_INFINITY)
+        .sort((left, right) => {
+          const leftPoints = left.eventType === "points_awarded" ? left.pointsDelta ?? Number.NEGATIVE_INFINITY : Number.NEGATIVE_INFINITY;
+          const rightPoints =
+            right.eventType === "points_awarded" ? right.pointsDelta ?? Number.NEGATIVE_INFINITY : Number.NEGATIVE_INFINITY;
+
+          if (leftPoints !== rightPoints) {
+            return rightPoints - leftPoints;
+          }
+
+          return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+        }),
+    [activityFeed]
+  );
+  const dailyWinnerScopeKey = useMemo(() => {
+    if (activeView === "managed_groups" || activeView === "my_groups") {
+      return `${activeView}:${selectedGroupId || "all"}`;
+    }
+
+    return activeView;
+  }, [activeView, selectedGroupId]);
   const dailyWinnerDismissKey = useMemo(() => {
     if (dailyWinners.length === 0) {
       return "";
     }
 
+    const dateKey = getCurrentDateKeyLocal(LEADERBOARD_TIME_ZONE);
     const winnerIds = dailyWinners
-      .map((winner) => winner.eventId ?? `winner:${winner.userId}`)
+      .map((winner) => winner.userId)
       .sort()
       .join("|");
 
-    return `${activeView}:${selectedGroupId || "all"}:${winnerIds}`;
-  }, [activeView, dailyWinners, selectedGroupId]);
-  const isDailyWinnerDismissed = Boolean(dailyWinnerDismissKey) && dismissedDailyWinnerKey === dailyWinnerDismissKey;
+    return `${dailyWinnerScopeKey}:${dateKey}:${winnerIds}`;
+  }, [dailyWinnerScopeKey, dailyWinners]);
+  const isDailyWinnerDismissed =
+    Boolean(dailyWinnerDismissKey) && dismissedDailyWinnerKeys.includes(dailyWinnerDismissKey);
+  const canEvaluateDailyWinnerDismissal =
+    !isUserLoading &&
+    hasRestoredDailyWinnerDismissal &&
+    restoredDailyWinnerDismissOwnerKey === dailyWinnerDismissOwnerKey;
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") {
+      return;
+    }
+
+    console.info("[leaderboard] daily winner dismissal", {
+      ownerKey: dailyWinnerDismissOwnerKey,
+      eventKey: dailyWinnerDismissKey,
+      dismissedKeys: dismissedDailyWinnerKeys,
+      hiddenBecauseDismissed: isDailyWinnerDismissed,
+      dailyWinnerCount: dailyWinners.length
+    });
+  }, [
+    dailyWinnerDismissKey,
+    dailyWinnerDismissOwnerKey,
+    dailyWinners.length,
+    dismissedDailyWinnerKeys,
+    isDailyWinnerDismissed
+  ]);
   const activeManagedTrophyMember = managedAwardGroup && managedTrophySheetTarget
     ? managedAwardGroup.members.find((member) => member.userId === managedTrophySheetTarget.userId) ?? null
     : null;
@@ -546,6 +731,198 @@ export function LeaderboardClient() {
     setHasExplicitSwitcherPreference(true);
     setSelectedManagerId(nextManagerId);
   }, []);
+
+  function renderActivityCard(event: LeaderboardActivityItem, isNewest: boolean) {
+    return (
+      <div
+        key={event.id}
+        id={event.eventId ? `activity-${event.eventId}` : undefined}
+        className={`rounded-md border px-3 py-3 ${isNewest ? `${getActivityCardTone(event)} shadow-sm` : `${getActivityCardTone(event)}`}`}
+      >
+        <div className="flex items-start gap-3">
+          <span
+            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-sm font-black ${getActivityIconTone(
+              event
+            )}`}
+            aria-hidden="true"
+          >
+            {getActivityIcon(event)}
+          </span>
+          <div className="min-w-0 flex-1">
+            {event.userName ? (
+              <div className="mb-1 flex items-start gap-2">
+                <Avatar name={event.userName} avatarUrl={event.userAvatarUrl ?? undefined} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <p
+                      style={TWO_LINE_CLAMP_STYLE}
+                      className={`min-w-0 flex-1 text-sm font-semibold leading-5 ${isNewest ? "text-gray-900" : "text-gray-800"}`}
+                    >
+                      {event.message}
+                    </p>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <span
+                        className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-black ${getActivityBadgeTone(
+                          event
+                        )}`}
+                      >
+                        {getActivityLabel(event)}
+                      </span>
+                      {isNewest ? (
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Newest</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  {event.userHomeTeamId ? (
+                    <div className="mt-1">
+                      <HomeTeamBadge teamId={event.userHomeTeamId} label="" className="bg-white/75 py-0.5" />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            {!event.userName ? (
+              <div className="flex items-start justify-between gap-3">
+                <p
+                  style={TWO_LINE_CLAMP_STYLE}
+                  className={`min-w-0 flex-1 text-sm font-semibold leading-5 ${isNewest ? "text-gray-900" : "text-gray-800"}`}
+                >
+                  {event.message}
+                </p>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <span
+                    className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-black ${getActivityBadgeTone(
+                      event
+                    )}`}
+                  >
+                    {getActivityLabel(event)}
+                  </span>
+                  {isNewest ? (
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Newest</p>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            {(event.canReact || event.canComment) && user ? (
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  {event.canComment ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedComments((current) => ({
+                          ...current,
+                          [event.eventId!]: !current[event.eventId!]
+                        }))
+                      }
+                      className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white/80 px-3 py-2 text-xs font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                      aria-expanded={Boolean(event.eventId && expandedComments[event.eventId])}
+                      aria-label={
+                        event.eventId && expandedComments[event.eventId]
+                          ? `Hide comments for ${event.message}`
+                          : `Open comments for ${event.message}`
+                      }
+                    >
+                      {event.eventId && expandedComments[event.eventId] ? (
+                        <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      <span>💬 {event.comments.length > 0 ? `${event.comments.length} comments` : "Comments"}</span>
+                    </button>
+                  ) : null}
+                </div>
+                {event.canReact ? (
+                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                    {["🔥", "🎯", "👀", "👍"].map((emoji) => {
+                      const reaction = event.reactions.find((item) => item.emoji === emoji);
+                      const reactionKey = `${event.eventId}:${emoji}`;
+                      return (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() => {
+                            void handleReactionToggle(event.eventId, emoji, reaction?.reacted ?? false);
+                          }}
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-bold transition ${
+                            reaction?.reacted
+                              ? "border-accent bg-accent-light text-accent-dark"
+                              : "border-gray-200 bg-white text-gray-700 hover:border-accent hover:bg-accent-light"
+                          }`}
+                          disabled={activeReactionKey === reactionKey}
+                        >
+                          <span>{emoji}</span>
+                          <span>{reaction?.count ?? 0}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {event.canComment && event.eventId && expandedComments[event.eventId] ? (
+              <div className="mt-3 space-y-3 border-t border-gray-200 pt-3">
+                {event.comments.length > 0 ? (
+                  <div className="space-y-2">
+                    {event.comments.map((comment) => (
+                      <div key={comment.id} className="rounded-md bg-white/80 px-3 py-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-xs font-bold text-gray-800">{comment.userName}</p>
+                          <p className="text-[11px] font-semibold text-gray-500">
+                            {formatRelativeTime(comment.createdAt)}
+                          </p>
+                        </div>
+                        <p className="mt-1 text-sm text-gray-700">{comment.body}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs font-semibold text-gray-500">No comments yet.</p>
+                )}
+                <div className="space-y-2">
+                  <textarea
+                    value={event.eventId ? commentDrafts[event.eventId] ?? "" : ""}
+                    onChange={(currentEvent) => {
+                      const nextValue = currentEvent.target.value;
+                      if (!event.eventId) {
+                        return;
+                      }
+
+                      setCommentDrafts((current) => ({
+                        ...current,
+                        [event.eventId!]: nextValue
+                      }));
+                    }}
+                    rows={3}
+                    maxLength={280}
+                    placeholder="Add a comment"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  />
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[11px] font-semibold text-gray-500">Keep it kind. 280 characters max.</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleCommentSubmit(event.eventId!);
+                      }}
+                      disabled={
+                        !event.eventId ||
+                        activeCommentEventId === event.eventId ||
+                        !(commentDrafts[event.eventId] ?? "").trim()
+                      }
+                      className="inline-flex items-center rounded-md bg-accent px-3 py-2 text-xs font-bold text-white transition hover:bg-accent-dark disabled:cursor-not-allowed disabled:bg-gray-300"
+                    >
+                      {activeCommentEventId === event.eventId ? "Posting..." : "Post comment"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -576,36 +953,43 @@ export function LeaderboardClient() {
         </div>
       </section>
 
-      {!isLoading && !error && dailyWinners.length > 0 && !isDailyWinnerDismissed ? (
+      {!isLoading && !error && canEvaluateDailyWinnerDismissal && dailyWinners.length > 0 && !isDailyWinnerDismissed ? (
         <section className="relative overflow-hidden rounded-lg border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-amber-100 p-4 shadow-sm">
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute right-3 top-3 text-xl text-amber-300/80"
-          >
-            ✦
-          </div>
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute right-10 top-7 text-sm text-amber-300/70"
-          >
-            ✦
-          </div>
           <div className="relative">
             <div>
               <div className="flex items-start justify-between gap-3">
-                <p className="text-sm font-bold uppercase tracking-wide text-amber-700">🏆 Daily Winner</p>
+                <div className="flex min-w-0 items-center gap-2">
+                  <p className="text-sm font-bold uppercase tracking-wide text-amber-700">🏆 Daily Winner</p>
+                  {dailyWinnerContextLabel ? (
+                    <span className="inline-flex items-center rounded-md border border-amber-200 bg-white/80 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                      {dailyWinnerContextLabel}
+                    </span>
+                  ) : null}
+                </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {dailyWinners[0]?.eventId ? (
-                    <a
-                      href={`#activity-${dailyWinners[0].eventId}`}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsActivityExpanded(true);
+                        setPendingActivityAnchorId(dailyWinners[0]?.eventId ?? null);
+                      }}
                       className="text-xs font-bold text-amber-800 underline-offset-2 hover:underline"
                     >
                       See in Recent Activity
-                    </a>
+                    </button>
                   ) : null}
                   <button
                     type="button"
-                    onClick={() => setDismissedDailyWinnerKey(dailyWinnerDismissKey)}
+                    onClick={() => {
+                      if (!dailyWinnerDismissKey) {
+                        return;
+                      }
+
+                      setDismissedDailyWinnerKeys((current) =>
+                        current.includes(dailyWinnerDismissKey) ? current : [...current, dailyWinnerDismissKey]
+                      );
+                    }}
                     className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-amber-200 bg-white/90 text-amber-800 transition hover:border-amber-300 hover:bg-amber-50"
                     aria-label="Dismiss daily winner"
                   >
@@ -613,11 +997,8 @@ export function LeaderboardClient() {
                   </button>
                 </div>
               </div>
-              <p className="mt-2 text-base font-black text-gray-950">
-                {dailyWinners.length === 1 ? "Today's standout pick-maker." : "Today's standout group of pick-makers."}
-              </p>
-              <p className="mt-1 text-sm font-semibold text-gray-600">
-                {dailyWinners.length === 1 ? "Highest points scored today." : "Tied for the highest points scored today."}
+              <p className="mt-2 text-sm font-semibold text-gray-600">
+                {dailyWinners.length === 1 ? "Highest points today." : "Tied for the highest points today."}
               </p>
             </div>
 
@@ -701,207 +1082,17 @@ export function LeaderboardClient() {
           </div>
           {isActivityExpanded ? (
             <div className="mt-2.5 space-y-2">
-              {activityFeed.map((event, index) => (
-              <div
-                key={event.id}
-                id={event.eventId ? `activity-${event.eventId}` : undefined}
-                className={`rounded-md border px-3 py-3 ${
-                  index === 0
-                    ? `${getActivityCardTone(event.eventType)} shadow-sm`
-                    : `${getActivityCardTone(event.eventType)}`
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <span
-                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-sm font-black ${getActivityIconTone(
-                      event.eventType
-                    )}`}
-                    aria-hidden="true"
-                  >
-                    {getActivityIcon(event.eventType)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    {event.userName ? (
-                      <div className="mb-1 flex items-start gap-2">
-                        <Avatar name={event.userName} avatarUrl={event.userAvatarUrl ?? undefined} size="sm" />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-3">
-                            <p
-                              style={TWO_LINE_CLAMP_STYLE}
-                              className={`min-w-0 flex-1 text-sm font-semibold leading-5 ${index === 0 ? "text-gray-900" : "text-gray-800"}`}
-                            >
-                              {event.message}
-                            </p>
-                            <div className="flex shrink-0 flex-col items-end gap-2">
-                              <span
-                                className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-black ${getActivityBadgeTone(
-                                  event.eventType
-                                )}`}
-                              >
-                                {getActivityLabel(event.eventType)}
-                              </span>
-                              {index === 0 ? (
-                                <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Newest</p>
-                              ) : null}
-                            </div>
-                          </div>
-                          {event.userHomeTeamId ? (
-                            <div className="mt-1">
-                              <HomeTeamBadge teamId={event.userHomeTeamId} label="" className="bg-white/75 py-0.5" />
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
-                    {!event.userName ? (
-                      <div className="flex items-start justify-between gap-3">
-                        <p
-                          style={TWO_LINE_CLAMP_STYLE}
-                          className={`min-w-0 flex-1 text-sm font-semibold leading-5 ${index === 0 ? "text-gray-900" : "text-gray-800"}`}
-                        >
-                          {event.message}
-                        </p>
-                        <div className="flex shrink-0 flex-col items-end gap-2">
-                          <span
-                            className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-black ${getActivityBadgeTone(
-                              event.eventType
-                            )}`}
-                          >
-                            {getActivityLabel(event.eventType)}
-                          </span>
-                          {index === 0 ? (
-                            <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Newest</p>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
-                    {(event.canReact || event.canComment) && user ? (
-                      <div className="mt-2 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          {event.canComment ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedComments((current) => ({
-                                  ...current,
-                                  [event.eventId!]: !current[event.eventId!]
-                                }))
-                              }
-                              className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white/80 px-3 py-2 text-xs font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                              aria-expanded={Boolean(event.eventId && expandedComments[event.eventId])}
-                              aria-label={
-                                event.eventId && expandedComments[event.eventId]
-                                  ? `Hide comments for ${event.message}`
-                                  : `Open comments for ${event.message}`
-                              }
-                            >
-                              {event.eventId && expandedComments[event.eventId] ? (
-                                <ChevronUp className="h-3.5 w-3.5" aria-hidden />
-                              ) : (
-                                <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-                              )}
-                              <span>💬 {event.comments.length > 0 ? `${event.comments.length} comments` : "Comments"}</span>
-                            </button>
-                          ) : null}
-                        </div>
-                        {event.canReact ? (
-                          <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                            {["🔥", "🎯", "👀", "👍"].map((emoji) => {
-                              const reaction = event.reactions.find((item) => item.emoji === emoji);
-                              const reactionKey = `${event.eventId}:${emoji}`;
-                              return (
-                                <button
-                                  key={emoji}
-                                  type="button"
-                                  onClick={() => {
-                                    void handleReactionToggle(
-                                      event.eventId,
-                                      emoji,
-                                      reaction?.reacted ?? false
-                                    );
-                                  }}
-                                  disabled={!event.eventId || activeReactionKey === reactionKey}
-                                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-bold transition ${
-                                    reaction?.reacted
-                                      ? "border-accent bg-accent-light text-accent-dark"
-                                      : "border-gray-200 bg-white text-gray-600 hover:border-accent-light hover:bg-gray-50"
-                                  } disabled:cursor-not-allowed disabled:opacity-60`}
-                                >
-                                  <span>{emoji}</span>
-                                  {reaction?.count ? <span>{reaction.count}</span> : null}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {event.canComment && event.eventId && expandedComments[event.eventId] ? (
-                      <div className="mt-2 space-y-2 rounded-md border border-gray-200 bg-white/60 p-3">
-                        {event.comments.length > 0 ? (
-                          <div className="space-y-1.5">
-                            {event.comments.map((comment) => (
-                              <div key={comment.id} className="rounded-md bg-white/70 px-3 py-2">
-                                <div className="flex items-start gap-2.5">
-                                  <Avatar
-                                    name={comment.userName}
-                                    avatarUrl={comment.userAvatarUrl ?? undefined}
-                                    size="sm"
-                                  />
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">
-                                      <span>{comment.userName}</span>
-                                      {comment.isOwn ? <span>You</span> : null}
-                                      {comment.userHomeTeamId ? (
-                                        <HomeTeamBadge teamId={comment.userHomeTeamId} label="" className="bg-white py-0.5" />
-                                      ) : null}
-                                    </div>
-                                    <p className="mt-0.5 text-sm font-semibold leading-5 text-gray-800">{comment.body}</p>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-xs font-semibold text-gray-500">No comments yet.</p>
-                        )}
-                        <div className="space-y-1.5">
-                          <textarea
-                            value={commentDrafts[event.eventId] ?? ""}
-                            maxLength={280}
-                            rows={2}
-                            onChange={(inputEvent) =>
-                              setCommentDrafts((current) => ({
-                                ...current,
-                                [event.eventId!]: inputEvent.target.value
-                              }))
-                            }
-                            placeholder="Add a quick comment"
-                            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                          />
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-[11px] font-semibold text-gray-500">
-                              {(commentDrafts[event.eventId] ?? "").length}/280
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => void handleCommentSubmit(event.eventId)}
-                              disabled={
-                                activeCommentEventId === event.eventId ||
-                                !(commentDrafts[event.eventId] ?? "").trim()
-                              }
-                              className="rounded-md bg-accent px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-gray-300"
-                            >
-                              {activeCommentEventId === event.eventId ? "Posting..." : "Post"}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
+              {featuredActivityFeed.map((event, index) => renderActivityCard(event, index === 0))}
+              {overflowActivityFeed.length > 0 ? (
+                <div className="pt-1">
+                  <InlineDisclosureButton
+                    isOpen={isActivityMoreOpen}
+                    variant="subtle"
+                    onClick={() => setIsActivityMoreOpen((current) => !current)}
+                  />
                 </div>
-              </div>
-              ))}
+              ) : null}
+              {isActivityMoreOpen ? overflowActivityFeed.map((event) => renderActivityCard(event, false)) : null}
             </div>
           ) : null}
         </section>
@@ -1393,6 +1584,22 @@ function shouldShowGroupSelector(activeView: LeaderboardSwitcherView) {
   return activeView === "my_groups" || activeView === "managed_groups";
 }
 
+function getCurrentDateKeyLocal(timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+
+  return `${year}-${month}-${day}`;
+}
+
 function getGroupOptionsForView(
   switcher: LeaderboardSwitcherContext,
   activeView: LeaderboardSwitcherView
@@ -1735,112 +1942,172 @@ function getMovementTone(rankDelta: number | null) {
   return rankDelta > 0 ? "text-accent-dark" : "text-gray-600";
 }
 
-function getActivityLabel(eventType: LeaderboardActivityItem["eventType"]) {
-  if (eventType === "perfect_pick") {
+function getActivityLabel(event: LeaderboardActivityItem) {
+  if (event.eventType === "perfect_pick") {
     return "Perfect Pick";
   }
 
-  if (eventType === "daily_winner") {
+  if (event.eventType === "daily_winner") {
     return "Daily Winner";
   }
 
-  if (eventType === "trophy_awarded") {
+  if (event.eventType === "points_awarded" && event.pointsDelta === 8) {
+    return "8 Pts";
+  }
+
+  if (event.eventType === "trophy_awarded") {
     return "Trophy";
   }
 
-  if (eventType === "rank_moved_up") {
+  if (event.eventType === "rank_moved_up") {
     return "Rank Up";
   }
 
-  if (eventType === "rank_moved_down") {
+  if (event.eventType === "rank_moved_down") {
     return "Rank Move";
   }
 
   return "Points";
 }
 
-function getActivityCardTone(eventType: LeaderboardActivityItem["eventType"]) {
-  if (eventType === "perfect_pick") {
+function getActivityCardTone(event: LeaderboardActivityItem) {
+  if (event.eventType === "perfect_pick") {
     return "border-rose-200 bg-rose-50";
   }
 
-  if (eventType === "daily_winner") {
+  if (event.eventType === "daily_winner") {
     return "border-amber-200 bg-amber-50";
   }
 
-  if (eventType === "trophy_awarded") {
+  if (event.eventType === "points_awarded" && event.pointsDelta === 8) {
+    return "border-sky-200 bg-sky-50";
+  }
+
+  if (event.eventType === "trophy_awarded") {
     return "border-violet-200 bg-violet-50";
   }
 
-  if (eventType === "rank_moved_up" || eventType === "rank_moved_down") {
+  if (event.eventType === "rank_moved_up" || event.eventType === "rank_moved_down") {
     return "border-emerald-200 bg-emerald-50";
   }
 
   return "border-sky-200 bg-sky-50";
 }
 
-function getActivityBadgeTone(eventType: LeaderboardActivityItem["eventType"]) {
-  if (eventType === "perfect_pick") {
+function getActivityBadgeTone(event: LeaderboardActivityItem) {
+  if (event.eventType === "perfect_pick") {
     return "bg-rose-100 text-rose-700";
   }
 
-  if (eventType === "daily_winner") {
+  if (event.eventType === "daily_winner") {
     return "bg-amber-100 text-amber-700";
   }
 
-  if (eventType === "trophy_awarded") {
+  if (event.eventType === "points_awarded" && event.pointsDelta === 8) {
+    return "bg-sky-100 text-sky-700";
+  }
+
+  if (event.eventType === "trophy_awarded") {
     return "bg-violet-100 text-violet-700";
   }
 
-  if (eventType === "rank_moved_up" || eventType === "rank_moved_down") {
+  if (event.eventType === "rank_moved_up" || event.eventType === "rank_moved_down") {
     return "bg-emerald-100 text-emerald-700";
   }
 
   return "bg-sky-100 text-sky-700";
 }
 
-function getActivityIcon(eventType: LeaderboardActivityItem["eventType"]) {
-  if (eventType === "perfect_pick") {
+function getActivityIcon(event: LeaderboardActivityItem) {
+  if (event.eventType === "perfect_pick") {
     return "🎯";
   }
 
-  if (eventType === "daily_winner") {
+  if (event.eventType === "daily_winner") {
     return "🏆";
   }
 
-  if (eventType === "trophy_awarded") {
+  if (event.eventType === "trophy_awarded") {
     return "🏅";
   }
 
-  if (eventType === "rank_moved_up") {
+  if (event.eventType === "rank_moved_up") {
     return "↑";
   }
 
-  if (eventType === "rank_moved_down") {
+  if (event.eventType === "rank_moved_down") {
     return "↓";
   }
 
   return "+";
 }
 
-function getActivityIconTone(eventType: LeaderboardActivityItem["eventType"]) {
-  if (eventType === "perfect_pick") {
+function getActivityIconTone(event: LeaderboardActivityItem) {
+  if (event.eventType === "perfect_pick") {
     return "bg-rose-100 text-rose-700";
   }
 
-  if (eventType === "daily_winner") {
+  if (event.eventType === "daily_winner") {
     return "bg-amber-100 text-amber-700";
   }
 
-  if (eventType === "trophy_awarded") {
+  if (event.eventType === "trophy_awarded") {
     return "bg-violet-100 text-violet-700";
   }
 
-  if (eventType === "rank_moved_up" || eventType === "rank_moved_down") {
+  if (event.eventType === "rank_moved_up" || event.eventType === "rank_moved_down") {
     return "bg-emerald-100 text-emerald-700";
   }
 
   return "bg-sky-100 text-sky-700";
+}
+
+function getFeaturedActivityRank(event: LeaderboardActivityItem) {
+  if (event.eventType === "daily_winner") {
+    return 0;
+  }
+
+  if (event.eventType === "perfect_pick") {
+    return 1;
+  }
+
+  if (event.eventType === "points_awarded" && event.pointsDelta === 8) {
+    return 2;
+  }
+
+  return Number.POSITIVE_INFINITY;
+}
+
+function formatRelativeTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const diffMs = Date.now() - date.getTime();
+  const diffMinutes = Math.max(0, Math.round(diffMs / 60000));
+  if (diffMinutes < 1) {
+    return "just now";
+  }
+
+  if (diffMinutes < 60) {
+    return `${diffMinutes}m ago`;
+  }
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  }
+
+  const diffDays = Math.round(diffHours / 24);
+  if (diffDays < 7) {
+    return `${diffDays}d ago`;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric"
+  }).format(date);
 }
 
 function getPendingManagedTrophyId(

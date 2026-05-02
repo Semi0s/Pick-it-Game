@@ -43,11 +43,10 @@ export function DashboardHero({
         <h2 className="mt-2 text-xl font-black leading-tight text-gray-950 sm:text-2xl">{name}</h2>
         <div className="mt-3 space-y-2">
           <p className="text-sm leading-6 text-gray-600">
-            Predict scores. Earn points. Advance through knockout rounds, side picks, and live group play.
+            Predict scores. Earn points. Advance through knockout rounds, side picks, and live group play.{" "}
+            <span className="font-bold text-gray-950">Don&apos;t get left on the bench!</span>
           </p>
           <p className="text-sm leading-6 text-gray-600">
-            <span className="font-bold text-gray-950">Don&apos;t get left on the bench!</span>
-            <br />
             Get your first set of picks in before June 11 and earn a BONUS!
           </p>
         </div>

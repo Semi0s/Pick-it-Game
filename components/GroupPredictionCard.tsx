@@ -73,13 +73,6 @@ export function GroupPredictionCard({
   );
   const displayedHomeScore = isFinal ? getInitialScore(match.homeScore) : homeScore;
   const displayedAwayScore = isFinal ? getInitialScore(match.awayScore) : awayScore;
-  const savedPredictionSummary =
-    prediction?.predictedHomeScore !== undefined && prediction?.predictedAwayScore !== undefined
-      ? `${(match.homeTeam?.shortName ?? match.homeTeam?.name ?? "HOME").toUpperCase()} ${prediction.predictedHomeScore} v ${(
-          match.awayTeam?.shortName ?? match.awayTeam?.name ?? "AWAY"
-        ).toUpperCase()} ${prediction.predictedAwayScore}`
-      : null;
-
   useEffect(() => {
     setHomeScore(getInitialScore(prediction?.predictedHomeScore));
     setAwayScore(getInitialScore(prediction?.predictedAwayScore));
@@ -269,7 +262,7 @@ export function GroupPredictionCard({
 
       <div className="mt-2">
         <div
-          className={`relative rounded-md border px-3 py-3 ${
+          className={`relative rounded-md border px-3 py-1.5 ${
             isFinal
               ? "border-gray-200 bg-gray-100"
               : isLive
@@ -285,7 +278,7 @@ export function GroupPredictionCard({
               isFinal ? "border-gray-300" : isLive ? "border-amber-200" : "border-gray-200"
             }`}
           />
-          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-2 py-2">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-2 py-1">
           <ScoreInput
             flag={match.homeTeam?.flagEmoji}
             fullName={match.homeTeam?.name ?? match.homeTeam?.shortName ?? "Home"}
@@ -294,6 +287,11 @@ export function GroupPredictionCard({
             isFinal={isFinal}
             isLive={isLive}
             isHighlighted={scoreOutcome === "home" || scoreOutcome === "draw"}
+            predictionValue={
+              isFinal && prediction?.predictedHomeScore !== undefined
+                ? String(prediction.predictedHomeScore)
+                : null
+            }
             onChange={(value) => handleScoreChange(value, awayScore)}
           />
           <span
@@ -315,6 +313,11 @@ export function GroupPredictionCard({
             isFinal={isFinal}
             isLive={isLive}
             isHighlighted={scoreOutcome === "away" || scoreOutcome === "draw"}
+            predictionValue={
+              isFinal && prediction?.predictedAwayScore !== undefined
+                ? String(prediction.predictedAwayScore)
+                : null
+            }
             onChange={(value) => handleScoreChange(homeScore, value)}
           />
         </div>
@@ -323,15 +326,11 @@ export function GroupPredictionCard({
 
       {isFinal ? (
         <div className="mt-1.5 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-center">
-          {savedPredictionSummary ? (
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              {savedPredictionSummary}
-            </p>
-          ) : (
+          {!prediction ? (
             <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
               No saved prediction before kick-off
             </p>
-          )}
+          ) : null}
           {lastSavedAt ? (
             <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
               Saved {formatSavedAt(lastSavedAt)}
@@ -427,6 +426,7 @@ type ScoreInputProps = {
   flag?: string;
   fullName: string;
   value: string;
+  predictionValue?: string | null;
   disabled: boolean;
   isFinal?: boolean;
   isLive?: boolean;
@@ -438,6 +438,7 @@ function ScoreInput({
   flag,
   fullName,
   value,
+  predictionValue,
   disabled,
   isFinal,
   isLive,
@@ -462,6 +463,11 @@ function ScoreInput({
       >
         {fullName}
       </span>
+      {isFinal && predictionValue !== null && predictionValue !== undefined ? (
+        <span className="mt-0.5 block text-[9px] font-semibold uppercase tracking-wide text-gray-500">
+          Yours: {predictionValue}
+        </span>
+      ) : null}
     </span>
   );
 
@@ -488,7 +494,7 @@ function ScoreInput({
   );
 
   return (
-    <label className="flex flex-col items-center gap-2 rounded-md p-2 text-center">
+    <label className="flex flex-col items-center gap-1 rounded-md p-1 text-center">
       {scoreInput}
       {teamCopy}
     </label>

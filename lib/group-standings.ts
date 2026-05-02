@@ -1,6 +1,19 @@
 import type { MatchWithTeams, Team } from "@/lib/types";
 import type { MiniGroupStandingsRow } from "@/components/GroupStandingsMiniTable";
 
+export function normalizeGroupKey(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.startsWith("Group ") ? `Group ${trimmed.replace(/^Group\s+/i, "").trim()}` : `Group ${trimmed}`;
+}
+
 export function createMiniGroupStandingsRow(team: Team): MiniGroupStandingsRow {
   return {
     teamId: team.id,
@@ -69,7 +82,10 @@ export function sortMiniGroupStandingsRows(left: MiniGroupStandingsRow, right: M
 }
 
 export function buildFinalGroupStandings(matches: MatchWithTeams[], groupName: string) {
-  const groupMatches = matches.filter((match) => match.stage === "group" && match.groupName === groupName);
+  const normalizedGroupName = normalizeGroupKey(groupName);
+  const groupMatches = matches.filter(
+    (match) => match.stage === "group" && normalizeGroupKey(match.groupName) === normalizedGroupName
+  );
   const teamMap = new Map<string, MiniGroupStandingsRow>();
 
   for (const match of groupMatches) {
@@ -106,9 +122,9 @@ export function buildFinalGroupStandings(matches: MatchWithTeams[], groupName: s
 }
 
 export function getGroupShortLabel(groupName: string) {
-  return groupName.startsWith("Group ") ? groupName.replace(/^Group\s+/i, "") : groupName;
+  return normalizeGroupKey(groupName)?.replace(/^Group\s+/i, "") ?? groupName;
 }
 
 export function formatGroupName(groupName: string) {
-  return groupName.startsWith("Group ") ? groupName : `Group ${groupName}`;
+  return normalizeGroupKey(groupName) ?? groupName;
 }

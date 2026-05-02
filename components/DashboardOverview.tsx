@@ -2,11 +2,15 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CalendarDays, Network, Sparkles, Trophy } from "lucide-react";
 import { fetchDashboardGroupAccessAction } from "@/app/my-groups/actions";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
-import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
+import {
+  GroupStandingsMiniTable,
+  type MiniGroupStandingsMovement,
+  type MiniGroupStandingsRow
+} from "@/components/GroupStandingsMiniTable";
 import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
 import { DashboardHero } from "@/components/dashboard/DashboardHero";
 import { DashboardNoGroupsPanel } from "@/components/dashboard/DashboardNoGroupsPanel";
@@ -18,7 +22,7 @@ import {
 } from "@/components/player-management/Shared";
 import { fetchNextAutoPick, storeAutoPickDraft } from "@/lib/auto-pick-client";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
-import { buildFinalGroupStandings, getGroupShortLabel } from "@/lib/group-standings";
+import { buildFinalGroupStandings, getGroupShortLabel, normalizeGroupKey } from "@/lib/group-standings";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { showAppToast } from "@/lib/app-toast";
 import { normalizeInviteTokenInput } from "@/components/player-management/Shared";
@@ -53,6 +57,7 @@ const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
   pt: "Toque no logo do PICK-IT! para voltar aqui.",
   de: "Tippe auf das PICK-IT!-Logo, um hierher zurückzukehren."
 };
+const DASHBOARD_GROUP_MATCH_REFRESH_INTERVAL_MS = 15000;
 
 const AUTO_PICK_LABEL_COPY = {
   en: "Auto Pick Next Match",
@@ -85,14 +90,28 @@ export function DashboardOverview() {
   const [displayLanguage] = usePersistentExplainerLanguage(user);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [isAutoPicking, setIsAutoPicking] = useState(false);
-  const [selectedStandingsGroup, setSelectedStandingsGroup] = useSessionJsonState<string>(
+  const [selectedStandingsGroup, setSelectedStandingsGroup, selectedStandingsGroupState] = useSessionJsonState<string>(
     DASHBOARD_STANDINGS_GROUP_STORAGE_KEY,
     ""
   );
   const [isStandingsOpen, setIsStandingsOpen] = useSessionDisclosureState(
     DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY,
-    false
+    true
   );
+  const [standingsMovementByGroup, setStandingsMovementByGroup] = useState<
+    Record<string, Record<string, MiniGroupStandingsMovement>>
+  >({});
+  const previousStandingsRowsRef = useRef<MiniGroupStandingsRow[]>([]);
+  const previousStandingsGroupRef = useRef<string>("");
+  const refreshGroupMatches = useCallback(async () => {
+    try {
+      const items = await fetchGroupMatchesForPredictions();
+      setGroupMatches(items);
+    } catch (error) {
+      console.error("Could not refresh dashboard group matches.", { error });
+      setGroupMatches((currentMatches) => currentMatches);
+    }
+  }, []);
 
   const refreshPredictions = useCallback(async () => {
     if (!user) {
@@ -148,23 +167,32 @@ export function DashboardOverview() {
     }
 
     function handleWindowFocus() {
+      refreshGroupMatches().catch(() => undefined);
       refreshPredictions().catch(() => undefined);
     }
 
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
+        refreshGroupMatches().catch(() => undefined);
         refreshPredictions().catch(() => undefined);
       }
     }
 
     window.addEventListener("focus", handleWindowFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    const pollWhenVisible = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        refreshGroupMatches().catch(() => undefined);
+        refreshPredictions().catch(() => undefined);
+      }
+    }, DASHBOARD_GROUP_MATCH_REFRESH_INTERVAL_MS);
 
     return () => {
+      window.clearInterval(pollWhenVisible);
       window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refreshPredictions, user]);
+  }, [refreshGroupMatches, refreshPredictions, user]);
 
   useEffect(() => {
     if (!user) {
@@ -227,7 +255,11 @@ export function DashboardOverview() {
   const availableStandingsGroups = useMemo(
     () =>
       Array.from(
-        new Set(groupMatches.map((match) => match.groupName).filter((groupName): groupName is string => Boolean(groupName)))
+        new Set(
+          groupMatches
+            .map((match) => normalizeGroupKey(match.groupName))
+            .filter((groupName): groupName is string => Boolean(groupName))
+        )
       ).sort((left, right) => left.localeCompare(right, undefined, { numeric: true })),
     [groupMatches]
   );
@@ -240,7 +272,7 @@ export function DashboardOverview() {
       (match) => match.homeTeam?.id === user.homeTeamId || match.awayTeam?.id === user.homeTeamId
     );
 
-    return homeTeamMatch?.groupName ?? null;
+    return normalizeGroupKey(homeTeamMatch?.groupName) ?? null;
   }, [groupMatches, user?.homeTeamId]);
   const completedCount = useMemo(
     () => groupMatches.filter((match) => savedMatchIds.has(match.id)).length,
@@ -256,25 +288,83 @@ export function DashboardOverview() {
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
   const autoPickLanguage = displayLanguage === "es" ? "es" : "en";
   const resolvedStandingsGroup =
-    homeTeamGroupName && availableStandingsGroups.includes(homeTeamGroupName)
-      ? homeTeamGroupName
-      : selectedStandingsGroup && availableStandingsGroups.includes(selectedStandingsGroup)
-        ? selectedStandingsGroup
+    selectedStandingsGroup && availableStandingsGroups.includes(selectedStandingsGroup)
+      ? selectedStandingsGroup
+      : homeTeamGroupName && availableStandingsGroups.includes(homeTeamGroupName)
+        ? homeTeamGroupName
         : availableStandingsGroups[0] ?? "";
   const tournamentStandingsRows = useMemo(
     () => (resolvedStandingsGroup ? buildFinalGroupStandings(groupMatches, resolvedStandingsGroup) : []),
     [groupMatches, resolvedStandingsGroup]
   );
+  const standingsMovementByTeamId = useMemo(
+    () => (resolvedStandingsGroup ? standingsMovementByGroup[resolvedStandingsGroup] ?? {} : {}),
+    [resolvedStandingsGroup, standingsMovementByGroup]
+  );
+
+  useEffect(() => {
+    if (!resolvedStandingsGroup) {
+      previousStandingsRowsRef.current = [];
+      previousStandingsGroupRef.current = "";
+      return;
+    }
+
+    const switchedGroups = previousStandingsGroupRef.current !== resolvedStandingsGroup;
+    if (switchedGroups || previousStandingsRowsRef.current.length === 0) {
+      previousStandingsRowsRef.current = tournamentStandingsRows;
+      previousStandingsGroupRef.current = resolvedStandingsGroup;
+      return;
+    }
+
+    const previousOrder = previousStandingsRowsRef.current.map((row) => row.teamId);
+    const nextOrder = tournamentStandingsRows.map((row) => row.teamId);
+    const orderChanged =
+      previousOrder.length === nextOrder.length &&
+      previousOrder.some((teamId, index) => teamId !== nextOrder[index]);
+
+    if (!orderChanged) {
+      previousStandingsRowsRef.current = tournamentStandingsRows;
+      previousStandingsGroupRef.current = resolvedStandingsGroup;
+      return;
+    }
+
+    const previousRanks = new Map(
+      previousStandingsRowsRef.current.map((row, index) => [row.teamId, index])
+    );
+    const nextMovements: Record<string, MiniGroupStandingsMovement> = {};
+
+    for (const [index, row] of tournamentStandingsRows.entries()) {
+      const previousRank = previousRanks.get(row.teamId);
+      if (previousRank === undefined || previousRank === index) {
+        continue;
+      }
+
+      nextMovements[row.teamId] = index < previousRank ? "up" : "down";
+    }
+
+    previousStandingsRowsRef.current = tournamentStandingsRows;
+    previousStandingsGroupRef.current = resolvedStandingsGroup;
+    setStandingsMovementByGroup((current) => ({
+      ...current,
+      [resolvedStandingsGroup]: nextMovements
+    }));
+  }, [resolvedStandingsGroup, tournamentStandingsRows]);
 
   useEffect(() => {
     if (!availableStandingsGroups.length) {
       return;
     }
 
-    if (resolvedStandingsGroup !== selectedStandingsGroup) {
+    if (!selectedStandingsGroupState.hasStoredValue && resolvedStandingsGroup !== selectedStandingsGroup) {
       setSelectedStandingsGroup(resolvedStandingsGroup);
     }
-  }, [availableStandingsGroups.length, resolvedStandingsGroup, selectedStandingsGroup, setSelectedStandingsGroup]);
+  }, [
+    availableStandingsGroups.length,
+    resolvedStandingsGroup,
+    selectedStandingsGroup,
+    selectedStandingsGroupState.hasStoredValue,
+    setSelectedStandingsGroup
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !user || groupMatches.length === 0) {
@@ -408,17 +498,20 @@ export function DashboardOverview() {
               >
                 {availableStandingsGroups.map((groupName) => {
                   const isActive = resolvedStandingsGroup === groupName;
+                  const isHighlighted = !isActive && homeTeamGroupName === groupName;
 
                   return (
                     <button
                       key={groupName}
                       type="button"
                       data-choice-key={groupName}
-                    onClick={() => setSelectedStandingsGroup(groupName)}
+                      onClick={() => setSelectedStandingsGroup(groupName)}
                       className={`rounded-md border px-2 py-1.5 text-sm font-bold transition ${
                         isActive
                           ? "border-accent bg-accent text-white"
-                          : "border-gray-300 bg-white text-gray-700 hover:border-accent hover:bg-accent-light"
+                          : isHighlighted
+                            ? "border-amber-200 bg-amber-50 text-gray-800 hover:border-amber-300 hover:bg-amber-100"
+                            : "border-gray-300 bg-white text-gray-700 hover:border-accent hover:bg-accent-light"
                       }`}
                     >
                       <span className="inline-flex items-center gap-1 text-[12px] font-black leading-none">
@@ -430,7 +523,12 @@ export function DashboardOverview() {
                 })}
               </WindowChoiceRail>
 
-              <GroupStandingsMiniTable rows={tournamentStandingsRows} homeTeamId={user?.homeTeamId ?? null} />
+              <GroupStandingsMiniTable
+                rows={tournamentStandingsRows}
+                homeTeamId={user?.homeTeamId ?? null}
+                movementByTeamId={standingsMovementByTeamId}
+                showMovementColumn
+              />
             </>
           ) : null}
         </section>
