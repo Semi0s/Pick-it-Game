@@ -69,7 +69,7 @@ export function AdminStatsSection({ counts }: { counts: AdminCounts | null }) {
         label="Matches by status"
         value={
           counts
-            ? `${counts.matchesByStatus.scheduled} scheduled / ${counts.matchesByStatus.live} live / ${counts.matchesByStatus.final} final`
+            ? `${counts.matchesByStatus.scheduled} open / ${counts.matchesByStatus.locked} locked / ${counts.matchesByStatus.final} final`
             : "-"
         }
       />

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, LockKeyhole, X } from "lucide-react";
 import { formatDateTimeWithZone } from "@/lib/date-time";
+import { scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { canEditPrediction } from "@/lib/prediction-state";
 import type { AutoPickDraft, MatchWithTeams, Prediction } from "@/lib/types";
 
@@ -46,7 +47,7 @@ export function GroupPredictionCard({
   const canEdit = canEditPrediction(match.status);
   const locked = !canEdit;
   const isFinal = match.status === "final";
-  const isLive = match.status === "live";
+  const isLive = match.status === "live" || match.status === "locked";
   const predictionStateLabel = isFinal ? "Final" : isLive || locked ? "Locked" : "Open";
   const [homeScore, setHomeScore] = useState(getInitialScore(prediction?.predictedHomeScore));
   const [awayScore, setAwayScore] = useState(getInitialScore(prediction?.predictedAwayScore));
@@ -71,8 +72,43 @@ export function GroupPredictionCard({
   const matchIncludesHomeTeam = Boolean(
     highlightHomeTeamId && (match.homeTeamId === highlightHomeTeamId || match.awayTeamId === highlightHomeTeamId)
   );
-  const displayedHomeScore = isFinal ? getInitialScore(match.homeScore) : homeScore;
-  const displayedAwayScore = isFinal ? getInitialScore(match.awayScore) : awayScore;
+  const hasSavedPrediction =
+    prediction?.predictedHomeScore !== undefined &&
+    prediction?.predictedHomeScore !== null &&
+    prediction?.predictedAwayScore !== undefined &&
+    prediction?.predictedAwayScore !== null;
+  const displayPredictionHomeScore = canEdit ? homeScore : getLockedDisplayScore(prediction?.predictedHomeScore);
+  const displayPredictionAwayScore = canEdit ? awayScore : getLockedDisplayScore(prediction?.predictedAwayScore);
+  const actualFinalScoreLabel =
+    isFinal && match.homeScore !== undefined && match.homeScore !== null && match.awayScore !== undefined && match.awayScore !== null
+      ? `${match.homeScore}-${match.awayScore}`
+      : null;
+  const scoreBreakdown =
+    isFinal && hasSavedPrediction
+      ? scoreGroupStagePrediction(
+          {
+            predictedWinnerTeamId: prediction?.predictedWinnerTeamId,
+            predictedIsDraw: Boolean(prediction?.predictedIsDraw),
+            predictedHomeScore: prediction?.predictedHomeScore,
+            predictedAwayScore: prediction?.predictedAwayScore
+          },
+          {
+            stage: match.stage,
+            status: match.status,
+            homeTeamId: match.homeTeamId,
+            awayTeamId: match.awayTeamId,
+            homeScore: match.homeScore,
+            awayScore: match.awayScore,
+            winnerTeamId: match.winnerTeamId
+          }
+        )
+      : null;
+  const finalStatusMessage = getFinalStatusMessage({
+    prediction,
+    hasSavedPrediction,
+    scoreBreakdown,
+    actualFinalScoreLabel
+  });
   useEffect(() => {
     setHomeScore(getInitialScore(prediction?.predictedHomeScore));
     setAwayScore(getInitialScore(prediction?.predictedAwayScore));
@@ -253,8 +289,8 @@ export function GroupPredictionCard({
           className={`relative rounded-md border px-3 py-1.5 ${
             isFinal
               ? "border-gray-200 bg-gray-100"
-              : isLive
-                ? "border-amber-200 bg-white"
+            : isLive
+                ? "border-gray-200 bg-gray-100"
                 : matchIncludesHomeTeam
                   ? "border-gray-200 bg-amber-50"
                   : "border-gray-200 bg-white"
@@ -270,16 +306,11 @@ export function GroupPredictionCard({
           <ScoreInput
             flag={match.homeTeam?.flagEmoji}
             fullName={match.homeTeam?.name ?? match.homeTeam?.shortName ?? "Home"}
-            value={displayedHomeScore}
+            value={displayPredictionHomeScore}
             disabled={locked || isAutoFilling}
             isFinal={isFinal}
             isLive={isLive}
             isHighlighted={scoreOutcome === "home" || scoreOutcome === "draw"}
-            predictionValue={
-              isFinal && prediction?.predictedHomeScore !== undefined
-                ? String(prediction.predictedHomeScore)
-                : null
-            }
             onChange={(value) => handleScoreChange(value, awayScore)}
           />
           <span
@@ -296,16 +327,11 @@ export function GroupPredictionCard({
           <ScoreInput
             flag={match.awayTeam?.flagEmoji}
             fullName={match.awayTeam?.name ?? match.awayTeam?.shortName ?? "Away"}
-            value={displayedAwayScore}
+            value={displayPredictionAwayScore}
             disabled={locked || isAutoFilling}
             isFinal={isFinal}
             isLive={isLive}
             isHighlighted={scoreOutcome === "away" || scoreOutcome === "draw"}
-            predictionValue={
-              isFinal && prediction?.predictedAwayScore !== undefined
-                ? String(prediction.predictedAwayScore)
-                : null
-            }
             onChange={(value) => handleScoreChange(homeScore, value)}
           />
         </div>
@@ -314,31 +340,24 @@ export function GroupPredictionCard({
 
       {isFinal ? (
         <div className="mt-1.5 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-center">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Final scores</p>
-          <div className="mt-1 flex items-center justify-center gap-2">
-            {prediction ? (
-              prediction.pointsAwarded ? (
-                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-accent/30 bg-accent-light text-accent-dark">
-                  <Check aria-hidden className="h-4 w-4" />
-                </span>
-              ) : (
-                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-600">
-                  <X aria-hidden className="h-4 w-4" />
-                </span>
-              )
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Final Score</p>
+          <p className="mt-1 text-sm font-black text-gray-800">{actualFinalScoreLabel ?? "—"}</p>
+          <div className="mt-2 flex items-center justify-center gap-2">
+            {finalStatusMessage.icon === "check" ? (
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-accent/30 bg-accent-light text-accent-dark">
+                <Check aria-hidden className="h-4 w-4" />
+              </span>
+            ) : finalStatusMessage.icon === "x" ? (
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-600">
+                <X aria-hidden className="h-4 w-4" />
+              </span>
             ) : null}
-            <p className="text-sm font-black text-gray-800">
-              {prediction?.pointsAwarded
-                ? `Correct +${prediction.pointsAwarded}`
-                : prediction
-                  ? "No points this time"
-                  : "No pick saved"}
-            </p>
+            <p className="text-sm font-black text-gray-800">{finalStatusMessage.text}</p>
           </div>
         </div>
       ) : isLive ? (
-        <div className="mt-1.5 rounded-md bg-gray-200 px-4 py-3 text-center text-[10px] font-bold uppercase tracking-wide text-white/90">
-          This match has started - scores will show here when final
+        <div className="mt-1.5 rounded-md bg-gray-200 px-4 py-3 text-center text-[10px] font-bold uppercase tracking-wide text-gray-700">
+          Pick locked.
         </div>
       ) : (
         <button
@@ -422,7 +441,6 @@ type ScoreInputProps = {
   flag?: string;
   fullName: string;
   value: string;
-  predictionValue?: string | null;
   disabled: boolean;
   isFinal?: boolean;
   isLive?: boolean;
@@ -434,7 +452,6 @@ function ScoreInput({
   flag,
   fullName,
   value,
-  predictionValue,
   disabled,
   isFinal,
   isLive,
@@ -459,11 +476,6 @@ function ScoreInput({
       >
         {fullName}
       </span>
-      {isFinal && predictionValue !== null && predictionValue !== undefined ? (
-        <span className="mt-0.5 block text-[9px] font-semibold uppercase tracking-wide text-gray-500">
-          Yours: {predictionValue}
-        </span>
-      ) : null}
     </span>
   );
 
@@ -474,7 +486,8 @@ function ScoreInput({
       inputMode="numeric"
       disabled={disabled}
       value={value}
-      onChange={(event) => onChange(event.target.value === "" ? "0" : event.target.value)}
+      onChange={(event) => onChange(event.target.value === "" ? "" : event.target.value)}
+      placeholder={disabled ? "—" : undefined}
       className={`h-8 w-20 shrink-0 rounded-md border-[3px] bg-white px-0 text-center text-xl font-black leading-none outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:border-accent focus:ring-2 focus:ring-accent-light ${
         isFinal
           ? "border-white bg-white text-gray-900 disabled:bg-white"
@@ -499,6 +512,10 @@ function ScoreInput({
 
 function getInitialScore(score?: number) {
   return score === undefined ? "0" : score.toString();
+}
+
+function getLockedDisplayScore(score?: number | null) {
+  return score === undefined || score === null ? "" : score.toString();
 }
 
 function normalizeScore(score: string) {
@@ -578,4 +595,38 @@ function clearAutofillAnimation(intervalIds: number[], timeoutIds: number[]) {
 
 function toNumericScore(value: string) {
   return Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+}
+
+function getFinalStatusMessage({
+  prediction,
+  hasSavedPrediction,
+  scoreBreakdown,
+  actualFinalScoreLabel
+}: {
+  prediction?: Prediction;
+  hasSavedPrediction: boolean;
+  scoreBreakdown: ReturnType<typeof scoreGroupStagePrediction> | null;
+  actualFinalScoreLabel: string | null;
+}) {
+  if (!actualFinalScoreLabel) {
+    return { icon: null as "check" | "x" | null, text: "Scoring update pending." };
+  }
+
+  if (!prediction || !hasSavedPrediction) {
+    return { icon: "x" as const, text: "No pick saved / No points" };
+  }
+
+  if (!scoreBreakdown) {
+    return { icon: null as "check" | "x" | null, text: "Scoring update pending." };
+  }
+
+  if (scoreBreakdown.exact_score_points > 0) {
+    return { icon: "check" as const, text: `Exact score · +${scoreBreakdown.points} pts` };
+  }
+
+  if (scoreBreakdown.outcome_points > 0) {
+    return { icon: "check" as const, text: `Correct outcome · +${scoreBreakdown.points} pts` };
+  }
+
+  return { icon: "x" as const, text: "No points earned · 0 pts" };
 }

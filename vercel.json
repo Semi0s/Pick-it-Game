@@ -3,6 +3,10 @@
     {
       "path": "/api/email-jobs/process",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/sync/matches",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

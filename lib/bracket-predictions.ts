@@ -946,7 +946,7 @@ async function getBracketEditState(adminSupabase: ReturnType<typeof createAdminC
 function isKnockoutMatchLocked(
   match: Pick<MatchRow, "status" | "kickoff_time">
 ) {
-  if (match.status === "final" || match.status === "live") {
+  if (match.status === "final" || match.status === "live" || match.status === "locked") {
     return true;
   }
 

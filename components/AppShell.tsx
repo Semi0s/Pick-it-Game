@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ChevronDown, CircleUserRound, Globe, ListOrdered, SquareCheckBig, UsersRound } from "lucide-react";
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { NotificationsBell } from "@/components/NotificationsBell";
@@ -75,6 +75,8 @@ export function AppShell({ children }: AppShellProps) {
   const [toasts, setToasts] = useState<Array<{ id: string; tone: AppToastDetail["tone"]; text: string }>>([]);
   const lastTrophySignatureRef = useRef<string>("");
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
+  const headerRef = useRef<HTMLElement | null>(null);
+  const [headerHeight, setHeaderHeight] = useState(72);
 
   useEffect(() => {
     if (!isLanguageMenuOpen) {
@@ -174,6 +176,31 @@ export function AppShell({ children }: AppShellProps) {
     pendingToasts.forEach(enqueueToast);
     return () => {
       window.removeEventListener(APP_TOAST_EVENT, handleToast as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) {
+      return;
+    }
+
+    const updateHeaderHeight = () => {
+      setHeaderHeight(Math.round(header.getBoundingClientRect().height) || 72);
+    };
+
+    updateHeaderHeight();
+    window.addEventListener("resize", updateHeaderHeight);
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(updateHeaderHeight);
+      resizeObserver.observe(header);
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateHeaderHeight);
+      resizeObserver?.disconnect();
     };
   }, []);
 
@@ -422,9 +449,14 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <div
       className="min-h-screen bg-white text-gray-950"
-      style={{ paddingBottom: "calc(6.35rem + env(safe-area-inset-bottom, 0px))" }}
+      style={
+        {
+          paddingBottom: "calc(6.35rem + env(safe-area-inset-bottom, 0px))",
+          "--app-header-height": `${headerHeight}px`
+        } as CSSProperties
+      }
     >
-      <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
+      <header ref={headerRef} className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
           <Link href="/dashboard" className="min-w-0">
             <h1 className="truncate text-xl font-black leading-tight">{APP_NAME}</h1>

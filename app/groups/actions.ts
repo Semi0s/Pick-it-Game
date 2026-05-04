@@ -16,7 +16,7 @@ type MatchRow = {
   home_team_id?: string | null;
   away_team_id?: string | null;
   kickoff_time: string;
-  status: "scheduled" | "live" | "final";
+  status: "scheduled" | "locked" | "live" | "final";
 };
 
 export type SavePredictionResult =

@@ -18,7 +18,7 @@ export type KnockoutMatchStage =
   | "sf";
 export type MatchStage = "group" | KnockoutMatchStage;
 
-export type MatchStatus = "scheduled" | "live" | "final";
+export type MatchStatus = "scheduled" | "locked" | "live" | "final";
 
 export type UserProfile = {
   id: string;
@@ -85,6 +85,13 @@ export type Match = {
   winnerTeamId?: string;
   nextMatchId?: string | null;
   nextMatchSlot?: MatchNextSlot | null;
+  kickoffAt?: string | null;
+  finalizedAt?: string | null;
+  lastSyncedAt?: string | null;
+  externalId?: string | null;
+  isManualOverride?: boolean;
+  syncStatus?: "ok" | "skipped" | "error" | null;
+  syncError?: string | null;
 };
 
 export type Prediction = {

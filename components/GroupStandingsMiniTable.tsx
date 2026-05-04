@@ -45,29 +45,30 @@ export function GroupStandingsMiniTable({
 
   return (
     <div className={className ?? ""}>
-      <table className="w-full table-fixed divide-y divide-gray-200 text-[10px]">
+      <div className="mx-auto w-full max-w-[30rem]">
+      <table className="mx-auto w-full table-fixed divide-y divide-gray-200 text-[10px] sm:text-[11px]">
         <colgroup>
-          <col className="w-8" />
-          <col className="w-7" />
+          <col className="w-6 sm:w-7" />
+          <col className="w-5 sm:w-6" />
           <col />
-          {showPlayedColumn ? <col className="w-8" /> : null}
-          <col className="w-8" />
-          <col className="w-8" />
-          <col className="w-8" />
-          <col className="w-9" />
-          <col className="w-10" />
+          {showPlayedColumn ? <col className="w-6 sm:w-7" /> : null}
+          <col className="w-6 sm:w-7" />
+          <col className="w-6 sm:w-7" />
+          <col className="w-6 sm:w-7" />
+          <col className="w-7 sm:w-8" />
+          <col className="w-8 sm:w-9" />
         </colgroup>
         <thead className="text-[10px] font-bold uppercase tracking-wide text-gray-500">
           <tr>
-            <th className="px-1 py-1.5 text-center whitespace-nowrap">#</th>
-            <th className="px-1 py-1.5 text-center whitespace-nowrap" aria-label="Movement" />
-            <th className="px-1.5 py-1.5 text-left whitespace-nowrap">Team</th>
-            {showPlayedColumn ? <th className="px-1 py-1.5 text-center whitespace-nowrap">P</th> : null}
-            <th className="px-1 py-1.5 text-center whitespace-nowrap">W</th>
-            <th className="px-1 py-1.5 text-center whitespace-nowrap">D</th>
-            <th className="px-1 py-1.5 text-center whitespace-nowrap">L</th>
-            <th className="px-1 py-1.5 text-center whitespace-nowrap">GD</th>
-            <th className="px-1 py-1.5 text-center whitespace-nowrap">Pts</th>
+            <th className="px-0.5 py-1.5 text-center whitespace-nowrap">#</th>
+            <th className="px-0.5 py-1.5 text-center whitespace-nowrap" aria-label="Movement" />
+            <th className="px-1 py-1.5 text-left whitespace-nowrap">Team</th>
+            {showPlayedColumn ? <th className="px-0.5 py-1.5 text-center whitespace-nowrap">P</th> : null}
+            <th className="px-0.5 py-1.5 text-center whitespace-nowrap">W</th>
+            <th className="px-0.5 py-1.5 text-center whitespace-nowrap">D</th>
+            <th className="px-0.5 py-1.5 text-center whitespace-nowrap">L</th>
+            <th className="px-0.5 py-1.5 text-center whitespace-nowrap">GD</th>
+            <th className="px-0.5 py-1.5 text-center whitespace-nowrap">Pts</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200">
@@ -85,10 +86,10 @@ export function GroupStandingsMiniTable({
 
             return (
               <tr key={row.teamId} className={rowClassName}>
-                <td className="px-1 py-1.5 text-center font-bold text-gray-900">
+                <td className="px-0.5 py-1.5 text-center font-bold text-gray-900">
                   <span>{row.rank}</span>
                 </td>
-                <td className="px-1 py-1.5 text-center">
+                <td className="px-0.5 py-1.5 text-center">
                   {movement ? (
                     <span
                       className={`text-[9px] font-bold leading-none ${
@@ -100,24 +101,25 @@ export function GroupStandingsMiniTable({
                     </span>
                   ) : null}
                 </td>
-                <td className="px-1.5 py-1.5 text-left">
+                <td className="px-1 py-1.5 text-left">
                   <p className="truncate font-semibold uppercase tracking-wide text-gray-900">
                     {row.teamCode ?? row.teamName}
                   </p>
                 </td>
                 {showPlayedColumn ? (
-                  <td className="px-1 py-1.5 text-center font-semibold text-gray-700">{row.played}</td>
+                  <td className="px-0.5 py-1.5 text-center font-semibold text-gray-700">{row.played}</td>
                 ) : null}
-                <td className="px-1 py-1.5 text-center font-semibold text-gray-700">{row.wins}</td>
-                <td className="px-1 py-1.5 text-center font-semibold text-gray-700">{row.draws}</td>
-                <td className="px-1 py-1.5 text-center font-semibold text-gray-700">{row.losses}</td>
-                <td className="px-1 py-1.5 text-center font-semibold text-gray-700">{row.goalDifference}</td>
-                <td className="px-1 py-1.5 text-center font-bold text-gray-900">{row.points}</td>
+                <td className="px-0.5 py-1.5 text-center font-semibold text-gray-700">{row.wins}</td>
+                <td className="px-0.5 py-1.5 text-center font-semibold text-gray-700">{row.draws}</td>
+                <td className="px-0.5 py-1.5 text-center font-semibold text-gray-700">{row.losses}</td>
+                <td className="px-0.5 py-1.5 text-center font-semibold text-gray-700">{row.goalDifference}</td>
+                <td className="px-0.5 py-1.5 text-center font-bold text-gray-900">{row.points}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

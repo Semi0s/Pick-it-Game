@@ -5,7 +5,7 @@ export type PredictionStateLabel = "Open" | "Locked" | "Final";
 
 export function normalizePredictionStatus(status: PredictionStateStatus): MatchStatus {
   if (status === "in_progress") {
-    return "live";
+    return "locked";
   }
 
   return status;

@@ -6,7 +6,7 @@ export type GroupStageMatchForSeeding = {
   id: string;
   stage: string;
   groupName?: string | null;
-  status: "scheduled" | "live" | "final";
+  status: "scheduled" | "locked" | "live" | "final";
   homeTeamId?: string | null;
   awayTeamId?: string | null;
   homeScore?: number | null;
@@ -20,7 +20,7 @@ export type KnockoutPlaceholderMatch = {
   awaySource?: string | null;
   homeTeamId?: string | null;
   awayTeamId?: string | null;
-  status: "scheduled" | "live" | "final";
+  status: "scheduled" | "locked" | "live" | "final";
 };
 
 export type QualifiedTeamSeed = {

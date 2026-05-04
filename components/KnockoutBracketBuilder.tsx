@@ -87,36 +87,41 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
 
   return (
     <section className="space-y-4">
-      <KnockoutPhaseChoiceRail
-        showControls={slides.length > 1}
-        activeItemKey={slides[activeSlideIndex]?.id}
-        onActiveItemChange={(nextKey) => {
-          const nextIndex = slides.findIndex((slide) => slide.id === nextKey);
-          if (nextIndex >= 0) {
-            goToSlide(nextIndex);
-          }
-        }}
+      <div
+        className="sticky z-[12] -mx-4 border-b border-gray-200 bg-white/95 px-4 py-2 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:px-3"
+        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px))" }}
       >
-        {slides.map((slide, index) => {
-          const isActive = slide.id === slides[activeSlideIndex]?.id;
-          return (
-            <button
-              key={slide.id}
-              type="button"
-              onClick={() => goToSlide(index)}
-              data-choice-key={slide.id}
-              data-choice-active={isActive ? "true" : "false"}
-              className={`inline-flex items-center rounded-md px-3 py-2 text-sm font-bold transition ${
-                isActive
-                  ? "bg-accent text-white"
-                  : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
-              }`}
-            >
-              {slide.title}
-            </button>
-          );
-        })}
-      </KnockoutPhaseChoiceRail>
+        <KnockoutPhaseChoiceRail
+          showControls={slides.length > 1}
+          activeItemKey={slides[activeSlideIndex]?.id}
+          onActiveItemChange={(nextKey) => {
+            const nextIndex = slides.findIndex((slide) => slide.id === nextKey);
+            if (nextIndex >= 0) {
+              goToSlide(nextIndex);
+            }
+          }}
+        >
+          {slides.map((slide, index) => {
+            const isActive = slide.id === slides[activeSlideIndex]?.id;
+            return (
+              <button
+                key={slide.id}
+                type="button"
+                onClick={() => goToSlide(index)}
+                data-choice-key={slide.id}
+                data-choice-active={isActive ? "true" : "false"}
+                className={`inline-flex items-center rounded-md px-3 py-2 text-sm font-bold transition ${
+                  isActive
+                    ? "bg-accent text-white"
+                    : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
+                }`}
+              >
+                {slide.title}
+              </button>
+            );
+          })}
+        </KnockoutPhaseChoiceRail>
+      </div>
 
       <div className="overflow-visible bg-transparent">
         <div
@@ -968,7 +973,7 @@ function getKnockoutMatchShellState(
     return "final" as const;
   }
 
-  if (match.status === "live") {
+  if (match.status === "live" || match.status === "locked") {
     return "closed" as const;
   }
 
@@ -1284,7 +1289,7 @@ function getKnockoutCardLayers({
   const realLayer = {
     displayName: officialDisplayName,
     label: officialTeam ? "Actual" : null,
-    scoreText: status === "final" || status === "live" ? (officialScore != null ? String(officialScore) : null) : null,
+    scoreText: status === "final" || status === "live" || status === "locked" ? (officialScore != null ? String(officialScore) : null) : null,
     helperText: !officialTeam && !isProjected ? (placeholderLabel ?? null) : null,
     placeholderBadge: officialTeam ? null : getKnockoutPlaceholderBadge(placeholderLabel)
   };

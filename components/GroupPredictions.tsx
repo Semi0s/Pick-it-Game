@@ -26,6 +26,7 @@ import {
   normalizeGroupKey,
   resolvePreferredStandingsGroupSelection
 } from "@/lib/group-standings";
+import { buildQualifiedTeamSeeds } from "@/lib/knockout-seeding";
 import { getMatchDateKey } from "@/lib/tournament-calendar";
 import type { AutoPickDraft, MatchWithTeams, Prediction, Team, UserProfile } from "@/lib/types";
 import { GroupPredictionCard } from "@/components/GroupPredictionCard";
@@ -478,7 +479,10 @@ export function GroupPredictions({
       }),
     [availableGroups, homeTeamGroupName, lastViewedMiniTableGroup]
   );
-  const miniTableGroup = resolvedMiniTableGroup || null;
+  const miniTableGroup =
+    selectedGroup !== GROUP_FILTER_ALL_KEY && availableGroups.includes(selectedGroup)
+      ? selectedGroup
+      : resolvedMiniTableGroup || null;
 
   useEffect(() => {
     if (selectedGroup !== GROUP_FILTER_ALL_KEY && !availableGroups.includes(selectedGroup)) {
@@ -523,9 +527,8 @@ export function GroupPredictions({
       return [];
     }
 
-    const groupMatches = groupStageMatches.filter((match) => normalizeGroupKey(match.groupName) === miniTableGroup);
     const predictionByMatchId = new Map(predictions.map((prediction) => [prediction.matchId, prediction]));
-    const projectedPredictions = groupMatches.flatMap((match) => {
+    const projectedPredictions = groupStageMatches.flatMap((match) => {
       const draftState = draftPredictionStateByMatchId[match.id];
       const savedPrediction = predictionByMatchId.get(match.id);
       const predictedScore = getPredictedScoreForTable(savedPrediction, draftState);
@@ -540,9 +543,9 @@ export function GroupPredictions({
           ]
         : [];
     });
-    const groupTeams = Array.from(
+    const allGroupTeams = Array.from(
       new Map(
-        groupMatches.flatMap((match) => {
+        groupStageMatches.flatMap((match) => {
           const entries: Array<[string, Team]> = [];
           if (match.homeTeam?.id) {
             entries.push([match.homeTeam.id, match.homeTeam]);
@@ -554,13 +557,29 @@ export function GroupPredictions({
         })
       ).values()
     );
+    const projectedStandingsByGroup = buildPredictedGroupStandings(
+      groupStageMatches,
+      allGroupTeams,
+      projectedPredictions
+    );
+    const bestThirdPlaceQualifierTeamIds = new Set<string>();
+
+    try {
+      const { rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(projectedStandingsByGroup);
+      for (const seed of rankedThirdPlaceTeams) {
+        bestThirdPlaceQualifierTeamIds.add(seed.teamId);
+      }
+    } catch (error) {
+      console.warn("Could not determine projected third-place qualifiers for mini standings.", error);
+    }
+
     return (
-      buildPredictedGroupStandings(groupMatches, groupTeams, projectedPredictions).get(miniTableGroup)?.map(
+      projectedStandingsByGroup.get(miniTableGroup)?.map(
         (row, index) => ({
           ...row,
           rank: row.rank || index + 1,
           isHomeTeam: Boolean(user.homeTeamId && row.teamId === user.homeTeamId),
-          isQualifier: index < 2,
+          isQualifier: index < 2 || (index === 2 && bestThirdPlaceQualifierTeamIds.has(row.teamId)),
           isPossibleQualifier: false
         })
       ) ?? []
@@ -703,8 +722,10 @@ export function GroupPredictions({
     const nextUnsavedOpenMatch = groupStageMatches.find(
       (match) => canEditPrediction(match.status) && !nextSavedMatchIds.has(match.id)
     );
+    const shouldAdvanceToNextGlobalPick =
+      selectedGroup === GROUP_FILTER_ALL_KEY && selectedTeamId === TEAM_FILTER_ALL_KEY;
 
-    if (nextUnsavedOpenMatch) {
+    if (shouldAdvanceToNextGlobalPick && nextUnsavedOpenMatch) {
       if (pendingAdvanceTimeoutRef.current !== null) {
         window.clearTimeout(pendingAdvanceTimeoutRef.current);
       }
@@ -713,6 +734,9 @@ export function GroupPredictions({
         jumpToMatch(nextUnsavedOpenMatch.id);
         pendingAdvanceTimeoutRef.current = null;
       }, POST_SAVE_ADVANCE_DELAY_MS);
+    } else if (pendingAdvanceTimeoutRef.current !== null) {
+      window.clearTimeout(pendingAdvanceTimeoutRef.current);
+      pendingAdvanceTimeoutRef.current = null;
     }
 
     fetchPredictionsForMatches(filteredMatches.map((match) => match.id), user.id).then(setSocialPredictions);
@@ -979,7 +1003,11 @@ export function GroupPredictions({
       </section>
 
       <section className="space-y-3">
-        <div className="space-y-3 pb-2">
+        <div
+          className="sticky z-[12] -mx-4 border-b border-gray-200 bg-white/95 px-4 pb-2 pt-2 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:px-3"
+          style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px))" }}
+        >
+          <div className="space-y-3">
           <PredictionChoiceRail
             activeItemKey={selectedGroup}
             onActiveItemChange={handleGroupFilterChange}
@@ -1036,6 +1064,7 @@ export function GroupPredictions({
               ))}
             </PredictionChoiceRail>
           )}
+          </div>
         </div>
 
         {selectedGroup !== GROUP_FILTER_ALL_KEY && miniTableGroup ? (
@@ -1064,12 +1093,17 @@ export function GroupPredictions({
             </div>
 
             {isPredictionTableOpen ? (
-              <GroupStandingsMiniTable
-                rows={groupPredictionRows}
-                movementByTeamId={movementByTeamId}
-                showPlayedColumn={false}
-                emptyState="Make picks in this group to build your projected table."
-              />
+              <>
+                <p className="text-[11px] font-semibold text-gray-500">
+                  Top 2 + best 3rd-place teams advance
+                </p>
+                <GroupStandingsMiniTable
+                  rows={groupPredictionRows}
+                  movementByTeamId={movementByTeamId}
+                  showPlayedColumn={false}
+                  emptyState="Make picks in this group to build your projected table."
+                />
+              </>
             ) : null}
           </section>
         ) : null}

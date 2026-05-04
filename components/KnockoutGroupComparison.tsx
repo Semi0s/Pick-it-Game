@@ -201,7 +201,7 @@ function SelectedBracketDetail({
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{match.stageLabel}</p>
                     <span className="text-xs font-bold uppercase tracking-wide text-gray-500">
-                      {match.status === "scheduled" ? "Scheduled" : match.status === "live" ? "Live" : "Final"}
+                      {match.status === "scheduled" ? "Open" : match.status === "final" ? "Final" : "Locked"}
                     </span>
                   </div>
                   <p className="mt-2 text-sm font-semibold text-gray-700">

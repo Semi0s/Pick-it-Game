@@ -43,11 +43,18 @@ export type AdminMatch = {
   homeSource?: string;
   awaySource?: string;
   kickoffTime: string;
+  kickoffAt?: string | null;
   status: MatchStatus;
   homeScore?: number;
   awayScore?: number;
   winnerTeamId?: string;
   updatedAt?: string;
+  finalizedAt?: string | null;
+  lastSyncedAt?: string | null;
+  externalId?: string | null;
+  isManualOverride?: boolean;
+  syncStatus?: "ok" | "skipped" | "error" | null;
+  syncError?: string | null;
   homeTeam?: AdminTeam;
   awayTeam?: AdminTeam;
 };
@@ -97,11 +104,18 @@ type MatchRow = {
   home_source?: string | null;
   away_source?: string | null;
   kickoff_time: string;
+  kickoff_at?: string | null;
   status: MatchStatus;
   home_score?: number | null;
   away_score?: number | null;
   winner_team_id?: string | null;
   updated_at?: string | null;
+  finalized_at?: string | null;
+  last_synced_at?: string | null;
+  external_id?: string | null;
+  is_manual_override?: boolean | null;
+  sync_status?: "ok" | "skipped" | "error" | null;
+  sync_error?: string | null;
   home_team?: TeamRow | TeamRow[] | null;
   away_team?: TeamRow | TeamRow[] | null;
 };
@@ -115,11 +129,18 @@ const ADMIN_MATCH_SELECT = `
   home_source,
   away_source,
   kickoff_time,
+  kickoff_at,
   status,
   home_score,
   away_score,
   winner_team_id,
   updated_at,
+  finalized_at,
+  last_synced_at,
+  external_id,
+  is_manual_override,
+  sync_status,
+  sync_error,
   home_team:teams!matches_home_team_id_fkey(id,name,short_name,flag_emoji),
   away_team:teams!matches_away_team_id_fkey(id,name,short_name,flag_emoji)
 `;
@@ -133,11 +154,18 @@ const ADMIN_MATCH_BASE_SELECT = `
   home_source,
   away_source,
   kickoff_time,
+  kickoff_at,
   status,
   home_score,
   away_score,
   winner_team_id,
-  updated_at
+  updated_at,
+  finalized_at,
+  last_synced_at,
+  external_id,
+  is_manual_override,
+  sync_status,
+  sync_error
 `;
 
 export async function fetchAdminCounts(): Promise<AdminCounts> {
@@ -150,6 +178,7 @@ export async function fetchAdminCounts(): Promise<AdminCounts> {
     totalPlayers: players.length,
     matchesByStatus: {
       scheduled: matches.filter((match) => match.status === "scheduled").length,
+      locked: matches.filter((match) => match.status === "locked").length,
       live: matches.filter((match) => match.status === "live").length,
       final: matches.filter((match) => match.status === "final").length
     }
@@ -381,11 +410,18 @@ function mapMatchRow(row: MatchRow): AdminMatch {
     homeSource: row.home_source ?? undefined,
     awaySource: row.away_source ?? undefined,
     kickoffTime: row.kickoff_time,
+    kickoffAt: row.kickoff_at ?? null,
     status: row.status,
     homeScore: row.home_score ?? undefined,
     awayScore: row.away_score ?? undefined,
     winnerTeamId: row.winner_team_id ?? undefined,
     updatedAt: row.updated_at ?? undefined,
+    finalizedAt: row.finalized_at ?? null,
+    lastSyncedAt: row.last_synced_at ?? null,
+    externalId: row.external_id ?? null,
+    isManualOverride: row.is_manual_override ?? false,
+    syncStatus: row.sync_status ?? null,
+    syncError: row.sync_error ?? null,
     homeTeam: mapTeamJoin(row.home_team),
     awayTeam: mapTeamJoin(row.away_team)
   };

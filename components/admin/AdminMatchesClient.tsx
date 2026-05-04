@@ -4,17 +4,28 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
 import {
+  batchFinalizeMatchResultsAction,
+  type BatchFinalizeMatchOverwriteMode,
+  type BatchFinalizeMatchResultStyle,
+  type BatchFinalizeMatchScope,
+  getDestructiveAdminToolStatusAction,
   repairKnockoutAdvancementAction,
+  resetGroupStageTestingDataAction,
+  resetKnockoutTestingDataAction,
   rescoreKnockoutScoresAction,
   scoreFinalizedGroupMatch,
+  syncMatchesNowAction,
   seedKnockoutFromGroupStageAction,
-  updateAdminMatchResultAction
+  updateAdminMatchResultAction,
+  type DestructiveAdminToolStatusResult
 } from "@/app/admin/actions";
 import { showAppToast } from "@/lib/app-toast";
+import { getAccessLevel } from "@/lib/access-levels";
 import { formatMatchStage } from "@/lib/match-stage";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
 import type { MatchStage, MatchStatus } from "@/lib/types";
 import { AdminHeader } from "@/components/admin/AdminInvitesClient";
+import { useCurrentUser } from "@/lib/use-current-user";
 
 const stageSortOrder: Record<MatchStage, number> = {
   group: 0,
@@ -30,9 +41,14 @@ const stageSortOrder: Record<MatchStage, number> = {
   final: 10
 };
 
+const KNOCKOUT_RESET_CONFIRMATION_PHRASE = "RESET KNOCKOUT TEST DATA";
+const GROUP_RESET_CONFIRMATION_PHRASE = "RESET GROUP TEST DATA";
+const BATCH_FINALIZE_CONFIRMATION_PHRASE = "FINALIZE TEST MATCHES";
+
 export function AdminMatchesClient() {
   const expectedGroupMatchCount = 72;
   const router = useRouter();
+  const { user } = useCurrentUser();
   const [matches, setMatches] = useState<AdminMatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [stageFilter, setStageFilter] = useState<"all" | MatchStage>("all");
@@ -41,6 +57,24 @@ export function AdminMatchesClient() {
   const [isConfirmingReseed, setIsConfirmingReseed] = useState(false);
   const [isRescoringKnockout, setIsRescoringKnockout] = useState(false);
   const [isRepairingKnockout, setIsRepairingKnockout] = useState(false);
+  const [isSyncingMatches, setIsSyncingMatches] = useState(false);
+  const [isDangerZoneOpen, setIsDangerZoneOpen] = useState(false);
+  const [isKnockoutResetAcknowledged, setIsKnockoutResetAcknowledged] = useState(false);
+  const [knockoutResetConfirmationText, setKnockoutResetConfirmationText] = useState("");
+  const [isResettingKnockout, setIsResettingKnockout] = useState(false);
+  const [isGroupResetAcknowledged, setIsGroupResetAcknowledged] = useState(false);
+  const [groupResetConfirmationText, setGroupResetConfirmationText] = useState("");
+  const [isResettingGroup, setIsResettingGroup] = useState(false);
+  const [batchFinalizeFromDate, setBatchFinalizeFromDate] = useState("");
+  const [batchFinalizeToDate, setBatchFinalizeToDate] = useState("");
+  const [batchFinalizeScope, setBatchFinalizeScope] = useState<BatchFinalizeMatchScope>("group-only");
+  const [batchFinalizeResultStyle, setBatchFinalizeResultStyle] = useState<BatchFinalizeMatchResultStyle>("realistic");
+  const [batchFinalizeOverwriteMode, setBatchFinalizeOverwriteMode] =
+    useState<BatchFinalizeMatchOverwriteMode>("skip-finalized");
+  const [isBatchFinalizeAcknowledged, setIsBatchFinalizeAcknowledged] = useState(false);
+  const [batchFinalizeConfirmationText, setBatchFinalizeConfirmationText] = useState("");
+  const [isBatchFinalizingMatches, setIsBatchFinalizingMatches] = useState(false);
+  const [destructiveToolStatus, setDestructiveToolStatus] = useState<DestructiveAdminToolStatusResult | null>(null);
 
   useEffect(() => {
     loadMatches();
@@ -55,6 +89,40 @@ export function AdminMatchesClient() {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  function applyGroupResetPreview(currentMatches: AdminMatch[]): AdminMatch[] {
+    return currentMatches.map((match) => {
+      if (match.stage === "group") {
+        return {
+          ...match,
+          status: "scheduled" as MatchStatus,
+          homeScore: undefined,
+          awayScore: undefined,
+          winnerTeamId: undefined,
+          finalizedAt: null,
+          lastSyncedAt: null,
+          isManualOverride: false,
+          syncStatus: null,
+          syncError: null
+        };
+      }
+
+      return {
+        ...match,
+        homeTeamId: undefined,
+        awayTeamId: undefined,
+        homeScore: undefined,
+        awayScore: undefined,
+        winnerTeamId: undefined,
+        status: "scheduled" as MatchStatus,
+        finalizedAt: null,
+        lastSyncedAt: null,
+        isManualOverride: false,
+        syncStatus: null,
+        syncError: null
+      };
+    });
   }
 
   const stageOptions = useMemo(
@@ -115,6 +183,96 @@ export function AdminMatchesClient() {
     () => matches.filter((match) => match.stage !== "group" && match.status === "final").length,
     [matches]
   );
+  const latestSyncedAt = useMemo(() => {
+    const syncedTimestamps = matches.map((match) => match.lastSyncedAt).filter(Boolean) as string[];
+    if (syncedTimestamps.length === 0) {
+      return null;
+    }
+
+    return syncedTimestamps.sort().at(-1) ?? null;
+  }, [matches]);
+  const hasSyncErrors = useMemo(() => matches.some((match) => match.syncStatus === "error"), [matches]);
+  const canUseDangerZone = user ? getAccessLevel(user) === "super_admin" : false;
+  const knockoutAvailability = destructiveToolStatus?.ok ? destructiveToolStatus.knockout : null;
+  const groupAvailability = destructiveToolStatus?.ok ? destructiveToolStatus.group : null;
+  const diagnostics = destructiveToolStatus?.ok ? destructiveToolStatus.diagnostics : null;
+  const isKnockoutResetPhraseValid = knockoutResetConfirmationText === KNOCKOUT_RESET_CONFIRMATION_PHRASE;
+  const isKnockoutResetPhraseClose =
+    !isKnockoutResetPhraseValid &&
+    knockoutResetConfirmationText.trim().length > 0 &&
+    knockoutResetConfirmationText.replace(/\s+/g, "").toUpperCase() ===
+      KNOCKOUT_RESET_CONFIRMATION_PHRASE.replace(/\s+/g, "");
+  const isGroupResetPhraseValid = groupResetConfirmationText === GROUP_RESET_CONFIRMATION_PHRASE;
+  const isGroupResetPhraseClose =
+    !isGroupResetPhraseValid &&
+    groupResetConfirmationText.trim().length > 0 &&
+    groupResetConfirmationText.replace(/\s+/g, "").toUpperCase() === GROUP_RESET_CONFIRMATION_PHRASE.replace(/\s+/g, "");
+  const isBatchFinalizePhraseValid = batchFinalizeConfirmationText === BATCH_FINALIZE_CONFIRMATION_PHRASE;
+  const isBatchFinalizePhraseClose =
+    !isBatchFinalizePhraseValid &&
+    batchFinalizeConfirmationText.trim().length > 0 &&
+    batchFinalizeConfirmationText.replace(/\s+/g, "").toUpperCase() ===
+      BATCH_FINALIZE_CONFIRMATION_PHRASE.replace(/\s+/g, "");
+  const canSubmitKnockoutReset =
+    canUseDangerZone &&
+    Boolean(knockoutAvailability?.environmentResetAllowed) &&
+    isKnockoutResetAcknowledged &&
+    isKnockoutResetPhraseValid &&
+    !isResettingKnockout;
+  const canSubmitGroupReset =
+    canUseDangerZone &&
+    Boolean(groupAvailability?.environmentResetAllowed) &&
+    isGroupResetAcknowledged &&
+    isGroupResetPhraseValid &&
+    !isResettingGroup;
+  const canSubmitBatchFinalize =
+    canUseDangerZone &&
+    Boolean(knockoutAvailability?.environmentResetAllowed) &&
+    Boolean(batchFinalizeFromDate) &&
+    Boolean(batchFinalizeToDate) &&
+    isBatchFinalizeAcknowledged &&
+    isBatchFinalizePhraseValid &&
+    !isBatchFinalizingMatches;
+
+  useEffect(() => {
+    if (!canUseDangerZone) {
+      setDestructiveToolStatus(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadDestructiveToolStatus() {
+      try {
+        const result = await getDestructiveAdminToolStatusAction();
+        if (!cancelled) {
+          setDestructiveToolStatus(result);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setDestructiveToolStatus({
+            ok: false,
+            message: (error as Error).message
+          });
+        }
+      }
+    }
+
+    void loadDestructiveToolStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canUseDangerZone]);
+
+  useEffect(() => {
+    if (dateOptions.length === 0) {
+      return;
+    }
+
+    setBatchFinalizeFromDate((current) => current || dateOptions[0]);
+    setBatchFinalizeToDate((current) => current || dateOptions[dateOptions.length - 1]);
+  }, [dateOptions]);
 
   useEffect(() => {
     if (!knockoutSeedStatus.hasAnySeeds || knockoutSeedStatus.hasKnockoutStarted || !knockoutSeedStatus.isReady) {
@@ -186,132 +344,324 @@ export function AdminMatchesClient() {
     }
   }
 
+  async function handleSyncMatchesNow() {
+    setIsSyncingMatches(true);
+
+    try {
+      const result = await syncMatchesNowAction();
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+
+      if (result.ok) {
+        await loadMatches();
+        router.refresh();
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsSyncingMatches(false);
+    }
+  }
+
+  async function handleResetKnockoutTestingData() {
+    if (!canUseDangerZone || !isKnockoutResetAcknowledged || !isKnockoutResetPhraseValid) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "You are about to reset knockout testing data. This will clear seeded knockout teams, knockout scores, knockout winners, knockout predictions, and knockout scoring. Group-stage data will not be changed. This cannot be undone from the UI. Continue?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsResettingKnockout(true);
+    try {
+      const result = await resetKnockoutTestingDataAction({
+        confirmationText: knockoutResetConfirmationText,
+        scope: "knockout-only"
+      });
+
+      if (result.ok) {
+        setIsKnockoutResetAcknowledged(false);
+        setKnockoutResetConfirmationText("");
+        await loadMatches();
+      }
+
+      showAppToast({
+        tone: result.ok ? (result.warning ? "tip" : "success") : "error",
+        text: result.message || "Group reset finished without a message. Check the server logs."
+      });
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsResettingKnockout(false);
+    }
+  }
+
+  async function handleResetGroupTestingData() {
+    if (!canUseDangerZone || !isGroupResetAcknowledged || !isGroupResetPhraseValid) {
+      return;
+    }
+
+    console.info("[group-reset:client] button clicked", {
+      checkboxChecked: isGroupResetAcknowledged,
+      phraseMatches: isGroupResetPhraseValid
+    });
+
+    const confirmed = window.confirm(
+      "You are about to reset group-stage testing data. This will clear group-stage scores, statuses, player predictions, scoring, and seeded knockout artifacts created from group testing. This cannot be undone from the UI. Continue?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsResettingGroup(true);
+    try {
+      const result = await resetGroupStageTestingDataAction({
+        confirmationText: groupResetConfirmationText,
+        scope: "group-only"
+      });
+      console.info("[group-reset:client] action returned result", result);
+
+      showAppToast({
+        tone: result.ok ? (result.warning ? "tip" : "success") : "error",
+        text: result.message
+      });
+      console.info("[group-reset:client] toast fired", {
+        ok: result.ok,
+        warning: result.ok ? result.warning ?? false : false,
+        deletedCounts: result.ok ? result.deletedCounts : undefined
+      });
+
+      if (result.ok) {
+        setIsGroupResetAcknowledged(false);
+        setGroupResetConfirmationText("");
+        setMatches((currentMatches) => applyGroupResetPreview(currentMatches));
+        await loadMatches();
+        console.info("[group-reset:client] match list reloaded", {
+          resetMatchCount: result.resetMatchCount,
+          deletedCounts: result.deletedCounts
+        });
+        window.setTimeout(() => {
+          router.refresh();
+          console.info("[group-reset:client] router refreshed");
+        }, 150);
+      }
+    } catch (error) {
+      console.error("[group-reset:client] action threw", error);
+      showAppToast({ tone: "error", text: (error as Error).message || "Group reset failed. Check the server logs." });
+    } finally {
+      setIsResettingGroup(false);
+    }
+  }
+
+  async function handleBatchFinalizeMatches() {
+    if (!canSubmitBatchFinalize) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "You are about to batch finalize test match results. This updates actual match results and finalizes matches for testing. It will trigger scoring through the normal app flow. Use only in test environments or controlled admin QA. Continue?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsBatchFinalizingMatches(true);
+    try {
+      const result = await batchFinalizeMatchResultsAction({
+        fromDate: batchFinalizeFromDate,
+        toDate: batchFinalizeToDate,
+        scope: batchFinalizeScope,
+        resultStyle: batchFinalizeResultStyle,
+        overwriteMode: batchFinalizeOverwriteMode,
+        confirmationText: batchFinalizeConfirmationText
+      });
+
+      console.info("[batch-finalize:client] action returned result", result);
+
+      showAppToast({
+        tone: result.ok ? "success" : "error",
+        text: result.message || "Batch finalization finished without a message. Check server logs."
+      });
+
+      if (result.ok) {
+        setIsBatchFinalizeAcknowledged(false);
+        setBatchFinalizeConfirmationText("");
+        await loadMatches();
+        window.setTimeout(() => {
+          router.refresh();
+        }, 150);
+      }
+    } catch (error) {
+      showAppToast({
+        tone: "error",
+        text: (error as Error).message || "Batch finalization failed. Check server logs."
+      });
+    } finally {
+      setIsBatchFinalizingMatches(false);
+    }
+  }
+
+  function renderResetReadiness({
+    title = "Reset readiness",
+    availability,
+    checkboxChecked,
+    phraseMatches,
+    productionBlockedMessage
+  }: {
+    title?: string;
+    availability:
+      | {
+          environmentResetAllowed: boolean;
+          productionResetRequired: boolean;
+          productionResetAllowed: boolean;
+          disabledReason: string | null;
+        }
+      | null;
+    checkboxChecked: boolean;
+    phraseMatches: boolean;
+    productionBlockedMessage: string;
+  }) {
+    if (!availability) {
+      return (
+        <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+          <p className="text-sm font-bold uppercase tracking-wide text-gray-700">{title}</p>
+          <p className="mt-2 text-sm font-semibold text-gray-600">Checking reset availability...</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+        <p className="text-sm font-bold uppercase tracking-wide text-gray-700">{title}</p>
+        <div className="mt-2 space-y-1 text-sm font-semibold text-gray-700">
+          <p>
+            Environment reset allowed:{" "}
+            <span className={availability.environmentResetAllowed ? "text-emerald-700" : "text-rose-700"}>
+              {availability.environmentResetAllowed ? "yes" : "no"}
+            </span>
+          </p>
+          <p>
+            Production reset required:{" "}
+            <span className={availability.productionResetRequired ? "text-rose-700" : "text-emerald-700"}>
+              {availability.productionResetRequired ? "yes" : "no"}
+            </span>
+          </p>
+          <p>
+            Production reset allowed:{" "}
+            <span
+              className={
+                !availability.productionResetRequired || availability.productionResetAllowed
+                  ? "text-emerald-700"
+                  : "text-rose-700"
+              }
+            >
+              {availability.productionResetRequired
+                ? availability.productionResetAllowed
+                  ? "yes"
+                  : "no"
+                : "not required"}
+            </span>
+          </p>
+          <p>
+            Confirmation checkbox checked:{" "}
+            <span className={checkboxChecked ? "text-emerald-700" : "text-rose-700"}>
+              {checkboxChecked ? "yes" : "no"}
+            </span>
+          </p>
+          <p>
+            Confirmation phrase matches:{" "}
+            <span className={phraseMatches ? "text-emerald-700" : "text-rose-700"}>
+              {phraseMatches ? "yes" : "no"}
+            </span>
+          </p>
+        </div>
+
+        {availability.productionResetRequired && !availability.productionResetAllowed ? (
+          <p className="mt-3 text-sm font-semibold text-rose-700">{productionBlockedMessage}</p>
+        ) : null}
+
+        {availability.disabledReason ? (
+          <p className="mt-3 text-sm font-semibold text-rose-700">{availability.disabledReason}</p>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <AdminHeader eyebrow="Matches" title="Update match results." />
 
       <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Seeding</p>
-            <h3 className="text-lg font-black text-gray-950">Seed knockout from group results</h3>
-            <p className="text-sm font-semibold text-gray-600">
-              {knockoutSeedStatus.hasKnockoutStarted
-                ? "Round of 32 matches have already started. Automatic seeding is locked."
-                : !knockoutSeedStatus.isReady
-                  ? `Finalize all ${knockoutSeedStatus.expectedGroupMatchCount} group-stage matches before seeding the Round of 32.`
-                  : knockoutSeedStatus.hasAnySeeds
-                    ? "Group-stage results are complete and knockout matches already exist. Re-seeding may overwrite current Round of 32 team assignments."
-                    : `All ${knockoutSeedStatus.expectedGroupMatchCount} group-stage matches are final. Round of 32 can now be seeded.`}
-            </p>
-          </div>
-          <div className="shrink-0">
-            <button
-              type="button"
-              disabled={isSeedingKnockout || !knockoutSeedStatus.canSeed}
-              onClick={() => void handleSeedKnockout(isConfirmingReseed)}
-              className="rounded-md bg-accent px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
-            >
-              {isSeedingKnockout
-                ? isConfirmingReseed || knockoutSeedStatus.hasAnySeeds
-                  ? "Reseeding..."
-                  : "Seeding..."
-                : knockoutSeedStatus.hasKnockoutStarted
-                  ? "Knockout seeding locked"
-                  : !knockoutSeedStatus.isReady
-                    ? "Knockout seeding not ready"
-                    : knockoutSeedStatus.hasAnySeeds
-                      ? "Re-seed knockout?"
-                      : "Seed knockout"}
-            </button>
-          </div>
+        <div className="space-y-1">
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Match filters and search</p>
+          <h3 className="text-lg font-black text-gray-950">Find the matches you want to manage</h3>
+          <p className="text-sm font-semibold text-gray-600">
+            Narrow the list by stage or date, then update scores and statuses below.
+          </p>
         </div>
-      </section>
-
-      <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-        <div className="flex items-start justify-between gap-4">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-3">
           <div className="space-y-1">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Advancement</p>
-            <h3 className="text-lg font-black text-gray-950">Repair knockout bracket</h3>
-            <p className="text-sm font-semibold text-gray-600">
-              Rebuild downstream knockout slots from finalized winners so admin tools and the player bracket read the
-              same populated teams.
+            <p className="text-sm font-bold text-gray-900">
+              {latestSyncedAt ? `Results synced ${formatRelativeMinutes(latestSyncedAt)}` : "Waiting for results"}
+            </p>
+            <p className={`text-xs font-semibold ${hasSyncErrors ? "text-rose-700" : "text-gray-500"}`}>
+              {hasSyncErrors ? "One or more synced matches reported errors." : "Automatic locking and result sync share the same safe-mode pipeline."}
             </p>
           </div>
-          <div className="shrink-0">
-            <button
-              type="button"
-              disabled={isRepairingKnockout}
-              onClick={() => void handleRepairKnockout()}
-              className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
-            >
-              {isRepairingKnockout ? "Repairing..." : "Repair knockout bracket"}
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Scoring</p>
-            <h3 className="text-lg font-black text-gray-950">Rescore finalized knockout matches</h3>
-            <p className="text-sm font-semibold text-gray-600">
-              Recalculate bracket scores for all finalized knockout matches using the current knockout scoring rules.
-              This updates saved bracket points without changing predictions or match results.
-            </p>
-            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
-              {finalizedKnockoutCount} finalized knockout {finalizedKnockoutCount === 1 ? "match" : "matches"} ready
-            </p>
-          </div>
-          <div className="shrink-0">
-            <button
-              type="button"
-              disabled={isRescoringKnockout || finalizedKnockoutCount === 0}
-              onClick={() => void handleRescoreKnockout()}
-              className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
-            >
-              {isRescoringKnockout ? "Rescoring..." : "Rescore knockout"}
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:grid-cols-2">
-        <label>
-          <span className="text-sm font-bold text-gray-700">Stage</span>
-          <select
-            value={stageFilter}
-            onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+          <button
+            type="button"
+            disabled={isSyncingMatches}
+            onClick={() => void handleSyncMatchesNow()}
+            className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
           >
-            {stageOptions.map((stage) => (
-              <option key={stage} value={stage}>
-                {stage === "all" ? "All stages" : formatStage(stage)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span className="text-sm font-bold text-gray-700">Date</span>
-          <select
-            value={dateFilter}
-            onChange={(event) => setDateFilter(event.target.value)}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
-          >
-            <option value="all">All dates</option>
-            {dateOptions.map((date) => (
-              <option key={date} value={date}>
-                {formatDateTime(`${date}T12:00:00Z`, false)}
-              </option>
-            ))}
-          </select>
-        </label>
+            {isSyncingMatches ? "Syncing..." : "Sync Now"}
+          </button>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label>
+            <span className="text-sm font-bold text-gray-700">Stage</span>
+            <select
+              value={stageFilter}
+              onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+            >
+              {stageOptions.map((stage) => (
+                <option key={stage} value={stage}>
+                  {stage === "all" ? "All stages" : formatStage(stage)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className="text-sm font-bold text-gray-700">Date</span>
+            <select
+              value={dateFilter}
+              onChange={(event) => setDateFilter(event.target.value)}
+              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+            >
+              <option value="all">All dates</option>
+              {dateOptions.map((date) => (
+                <option key={date} value={date}>
+                  {formatDateTime(`${date}T12:00:00Z`, false)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </section>
 
       {isLoading ? <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold">Loading matches...</p> : null}
 
       <section className="space-y-3">
+        <div className="space-y-1">
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Match list / match editing</p>
+          <h3 className="text-lg font-black text-gray-950">Update statuses, scores, and final results</h3>
+        </div>
         {filteredMatches.map((match) => (
           <MatchResultCard
             key={match.id}
@@ -327,6 +677,418 @@ export function AdminMatchesClient() {
           />
         ))}
       </section>
+
+      <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+        <div className="space-y-1">
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Tournament progression</p>
+          <h3 className="text-lg font-black text-gray-950">Knockout seeding, repair, and rescoring</h3>
+          <p className="text-sm font-semibold text-gray-600">
+            Use these tools after group-stage results are complete or when repairing knockout advancement during testing.
+          </p>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <section className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Seeding</p>
+                <h3 className="text-lg font-black text-gray-950">Seed knockout from group results</h3>
+                <p className="text-sm font-semibold text-gray-600">
+                  {knockoutSeedStatus.hasKnockoutStarted
+                    ? "Round of 32 matches have already started. Automatic seeding is locked."
+                    : !knockoutSeedStatus.isReady
+                      ? `Finalize all ${knockoutSeedStatus.expectedGroupMatchCount} group-stage matches before seeding the Round of 32.`
+                      : knockoutSeedStatus.hasAnySeeds
+                        ? "Group-stage results are complete and knockout matches already exist. Re-seeding may overwrite current Round of 32 team assignments."
+                        : `All ${knockoutSeedStatus.expectedGroupMatchCount} group-stage matches are final. Round of 32 can now be seeded.`}
+                </p>
+              </div>
+              <div className="shrink-0">
+                <button
+                  type="button"
+                  disabled={isSeedingKnockout || !knockoutSeedStatus.canSeed}
+                  onClick={() => void handleSeedKnockout(isConfirmingReseed)}
+                  className="rounded-md bg-accent px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                >
+                  {isSeedingKnockout
+                    ? isConfirmingReseed || knockoutSeedStatus.hasAnySeeds
+                      ? "Reseeding..."
+                      : "Seeding..."
+                    : knockoutSeedStatus.hasKnockoutStarted
+                      ? "Knockout seeding locked"
+                      : !knockoutSeedStatus.isReady
+                        ? "Knockout seeding not ready"
+                        : knockoutSeedStatus.hasAnySeeds
+                          ? "Re-seed knockout?"
+                          : "Seed knockout"}
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Advancement</p>
+                <h3 className="text-lg font-black text-gray-950">Repair knockout bracket</h3>
+                <p className="text-sm font-semibold text-gray-600">
+                  Rebuild downstream knockout slots from finalized winners so admin tools and the player bracket read the
+                  same populated teams.
+                </p>
+              </div>
+              <div className="shrink-0">
+                <button
+                  type="button"
+                  disabled={isRepairingKnockout}
+                  onClick={() => void handleRepairKnockout()}
+                  className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                >
+                  {isRepairingKnockout ? "Repairing..." : "Repair knockout bracket"}
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Scoring</p>
+                <h3 className="text-lg font-black text-gray-950">Rescore finalized knockout matches</h3>
+                <p className="text-sm font-semibold text-gray-600">
+                  Recalculate bracket scores for all finalized knockout matches using the current knockout scoring rules.
+                  This updates saved bracket points without changing predictions or match results.
+                </p>
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                  {finalizedKnockoutCount} finalized knockout {finalizedKnockoutCount === 1 ? "match" : "matches"} ready
+                </p>
+              </div>
+              <div className="shrink-0">
+                <button
+                  type="button"
+                  disabled={isRescoringKnockout || finalizedKnockoutCount === 0}
+                  onClick={() => void handleRescoreKnockout()}
+                  className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                >
+                  {isRescoringKnockout ? "Rescoring..." : "Rescore knockout"}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      {canUseDangerZone ? (
+        <section className="rounded-lg border border-rose-200 bg-rose-50/60 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-sm font-bold uppercase tracking-wide text-rose-700">Maintenance / Danger Zone</p>
+              <h3 className="text-lg font-black text-gray-950">Testing-only recovery tools</h3>
+              <p className="text-sm font-semibold text-gray-600">
+                These tools are intended for testing and recovery. They can remove tournament data and should not be used
+                during normal play.
+              </p>
+              <p className="text-sm font-semibold text-rose-700">
+                Production deployments require explicit reset environment variables before either action can run.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsDangerZoneOpen((current) => !current)}
+              className="rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-bold text-rose-700"
+            >
+              {isDangerZoneOpen ? "Hide danger tools" : "Show danger tools"}
+            </button>
+          </div>
+
+          {isDangerZoneOpen ? (
+            <div className="mt-4 rounded-lg border border-rose-200 bg-white p-4">
+              <div className="rounded-md border border-rose-100 bg-rose-50/60 p-3">
+                <p className="text-sm font-bold uppercase tracking-wide text-rose-700">Environment diagnostics</p>
+                {diagnostics ? (
+                  <div className="mt-2 space-y-1 text-sm font-semibold text-gray-700">
+                    <p>NODE_ENV: {diagnostics.nodeEnv}</p>
+                    <p>VERCEL_ENV: {diagnostics.vercelEnv}</p>
+                    <p>Is production deployment: {diagnostics.isProductionDeployment ? "yes" : "no"}</p>
+                    <p>
+                      ALLOW_PRODUCTION_KNOCKOUT_RESET present:{" "}
+                      {diagnostics.allowProductionKnockoutResetPresent ? "yes" : "no"}
+                    </p>
+                    <p>
+                      ALLOW_PRODUCTION_KNOCKOUT_RESET equals &quot;true&quot;:{" "}
+                      {diagnostics.allowProductionKnockoutResetIsTrue ? "yes" : "no"}
+                    </p>
+                    <p>
+                      ALLOW_PRODUCTION_GROUP_RESET present:{" "}
+                      {diagnostics.allowProductionGroupResetPresent ? "yes" : "no"}
+                    </p>
+                    <p>
+                      ALLOW_PRODUCTION_GROUP_RESET equals &quot;true&quot;:{" "}
+                      {diagnostics.allowProductionGroupResetIsTrue ? "yes" : "no"}
+                    </p>
+                  </div>
+                ) : destructiveToolStatus?.ok === false ? (
+                  <p className="mt-2 text-sm font-semibold text-rose-700">{destructiveToolStatus.message}</p>
+                ) : (
+                  <p className="mt-2 text-sm font-semibold text-gray-600">Checking server environment status...</p>
+                )}
+              </div>
+
+              <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                <section className="rounded-lg border border-rose-200 bg-white p-4 xl:col-span-2">
+                  <div className="space-y-1">
+                    <h4 className="text-base font-black text-gray-950">Batch Finalize Match Results</h4>
+                    <p className="text-sm font-semibold text-gray-600">
+                      This updates actual match results and finalizes matches for testing. It will trigger scoring through
+                      the normal app flow. Use only in test environments or controlled admin QA.
+                    </p>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    <label className="block">
+                      <span className="text-sm font-bold text-gray-700">From date</span>
+                      <select
+                        value={batchFinalizeFromDate}
+                        onChange={(event) => setBatchFinalizeFromDate(event.target.value)}
+                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                      >
+                        <option value="">Select date</option>
+                        {dateOptions.map((date) => (
+                          <option key={`batch-from-${date}`} value={date}>
+                            {formatDateTime(`${date}T12:00:00Z`, false)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="text-sm font-bold text-gray-700">To date</span>
+                      <select
+                        value={batchFinalizeToDate}
+                        onChange={(event) => setBatchFinalizeToDate(event.target.value)}
+                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                      >
+                        <option value="">Select date</option>
+                        {dateOptions.map((date) => (
+                          <option key={`batch-to-${date}`} value={date}>
+                            {formatDateTime(`${date}T12:00:00Z`, false)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="text-sm font-bold text-gray-700">Scope</span>
+                      <select
+                        value={batchFinalizeScope}
+                        onChange={(event) => setBatchFinalizeScope(event.target.value as BatchFinalizeMatchScope)}
+                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                      >
+                        <option value="group-only">Group stage only</option>
+                        <option value="knockout-only">Knockout only</option>
+                        <option value="all">All matches in date range</option>
+                        <option value="open-only">Open matches only</option>
+                        <option value="locked-live-only">Locked/live test matches only</option>
+                        <option value="open-locked-live">Open + locked/live test matches</option>
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="text-sm font-bold text-gray-700">Result style</span>
+                      <select
+                        value={batchFinalizeResultStyle}
+                        onChange={(event) => setBatchFinalizeResultStyle(event.target.value as BatchFinalizeMatchResultStyle)}
+                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                      >
+                        <option value="realistic">Realistic soccer scores</option>
+                        <option value="fun">Random fun scores</option>
+                        <option value="favorites">Mostly favorites win</option>
+                        <option value="draw-heavy">Draw-heavy for group testing</option>
+                        <option value="knockout-no-draw">No draws for knockout</option>
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="text-sm font-bold text-gray-700">Overwrite behavior</span>
+                      <select
+                        value={batchFinalizeOverwriteMode}
+                        onChange={(event) => setBatchFinalizeOverwriteMode(event.target.value as BatchFinalizeMatchOverwriteMode)}
+                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                      >
+                        <option value="skip-finalized">Finalize only matches without final scores</option>
+                        <option value="overwrite-test-results">Overwrite existing test results</option>
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="text-sm font-bold text-gray-700">Type confirmation exactly</span>
+                      <input
+                        type="text"
+                        value={batchFinalizeConfirmationText}
+                        onChange={(event) => setBatchFinalizeConfirmationText(event.target.value)}
+                        placeholder={BATCH_FINALIZE_CONFIRMATION_PHRASE}
+                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                      />
+                      {isBatchFinalizePhraseClose ? (
+                        <p className="mt-2 text-sm font-semibold text-rose-700">
+                          Type exactly: {BATCH_FINALIZE_CONFIRMATION_PHRASE}
+                        </p>
+                      ) : null}
+                    </label>
+                  </div>
+
+                  <label className="mt-4 flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isBatchFinalizeAcknowledged}
+                      onChange={(event) => setIsBatchFinalizeAcknowledged(event.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                    />
+                    <span className="text-sm font-semibold text-gray-700">
+                      I understand this will update actual match results and finalize matches for testing.
+                    </span>
+                  </label>
+
+                  {renderResetReadiness({
+                    title: "Finalize readiness",
+                    availability: knockoutAvailability,
+                    checkboxChecked: isBatchFinalizeAcknowledged,
+                    phraseMatches: isBatchFinalizePhraseValid,
+                    productionBlockedMessage:
+                      "Production testing tools are blocked. Set ALLOW_PRODUCTION_KNOCKOUT_RESET=true and redeploy."
+                  })}
+
+                  <button
+                    type="button"
+                    disabled={!canSubmitBatchFinalize}
+                    onClick={() => void handleBatchFinalizeMatches()}
+                    className="mt-4 rounded-md bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                  >
+                    {isBatchFinalizingMatches ? "Finalizing test matches..." : "Batch Finalize Matches"}
+                  </button>
+                </section>
+
+                <section className="rounded-lg border border-rose-200 bg-white p-4">
+                  <div className="space-y-1">
+                    <h4 className="text-base font-black text-gray-950">Reset knockout test data</h4>
+                    <p className="text-sm font-semibold text-gray-600">
+                      Clears seeded knockout teams, knockout scores, knockout winners, knockout predictions, and knockout
+                      scoring. Group-stage data will not be changed.
+                    </p>
+                    <p className="text-sm font-semibold text-gray-600">
+                      After changing environment variables, restart the local dev server or redeploy Vercel.
+                    </p>
+                  </div>
+
+                  <label className="mt-4 flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isKnockoutResetAcknowledged}
+                      onChange={(event) => setIsKnockoutResetAcknowledged(event.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                    />
+                    <span className="text-sm font-semibold text-gray-700">
+                      I understand this will clear knockout seeded teams, test scores, picks, and scoring.
+                    </span>
+                  </label>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Type confirmation exactly</span>
+                    <input
+                      type="text"
+                      value={knockoutResetConfirmationText}
+                      onChange={(event) => setKnockoutResetConfirmationText(event.target.value)}
+                      placeholder={KNOCKOUT_RESET_CONFIRMATION_PHRASE}
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                    {isKnockoutResetPhraseClose ? (
+                      <p className="mt-2 text-sm font-semibold text-rose-700">
+                        Type exactly: {KNOCKOUT_RESET_CONFIRMATION_PHRASE}
+                      </p>
+                    ) : null}
+                  </label>
+
+                  {renderResetReadiness({
+                    availability: knockoutAvailability,
+                    checkboxChecked: isKnockoutResetAcknowledged,
+                    phraseMatches: isKnockoutResetPhraseValid,
+                    productionBlockedMessage:
+                      "Production knockout reset is disabled. Set ALLOW_PRODUCTION_KNOCKOUT_RESET=true and redeploy."
+                  })}
+
+                  <button
+                    type="button"
+                    disabled={!canSubmitKnockoutReset}
+                    onClick={() => void handleResetKnockoutTestingData()}
+                    className="mt-4 rounded-md bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                  >
+                    {isResettingKnockout ? "Resetting knockout test data..." : "Reset knockout test data"}
+                  </button>
+                </section>
+
+                <section className="rounded-lg border border-rose-200 bg-white p-4">
+                  <div className="space-y-1">
+                    <h4 className="text-base font-black text-gray-950">Reset group-stage test data</h4>
+                    <p className="text-sm font-semibold text-gray-600">
+                      Clears group-stage scores, statuses, player predictions, scoring, and generated group standings/seed
+                      test artifacts. Official group-stage match teams and schedule are preserved. Seeded knockout artifacts
+                      created from group testing will also be cleared.
+                    </p>
+                    <p className="text-sm font-semibold text-gray-600">
+                      After changing environment variables, restart the local dev server or redeploy Vercel.
+                    </p>
+                  </div>
+
+                  <label className="mt-4 flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isGroupResetAcknowledged}
+                      onChange={(event) => setIsGroupResetAcknowledged(event.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                    />
+                    <span className="text-sm font-semibold text-gray-700">
+                      I understand this will clear group-stage test scores, player predictions, scoring, and seeded knockout
+                      artifacts created from group testing.
+                    </span>
+                  </label>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Type confirmation exactly</span>
+                    <input
+                      type="text"
+                      value={groupResetConfirmationText}
+                      onChange={(event) => setGroupResetConfirmationText(event.target.value)}
+                      placeholder={GROUP_RESET_CONFIRMATION_PHRASE}
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                    {isGroupResetPhraseClose ? (
+                      <p className="mt-2 text-sm font-semibold text-rose-700">
+                        Type exactly: {GROUP_RESET_CONFIRMATION_PHRASE}
+                      </p>
+                    ) : null}
+                  </label>
+
+                  {renderResetReadiness({
+                    availability: groupAvailability,
+                    checkboxChecked: isGroupResetAcknowledged,
+                    phraseMatches: isGroupResetPhraseValid,
+                    productionBlockedMessage:
+                      "Production group-stage reset is disabled. Set ALLOW_PRODUCTION_GROUP_RESET=true and redeploy."
+                  })}
+
+                  <button
+                    type="button"
+                    disabled={!canSubmitGroupReset}
+                    onClick={() => void handleResetGroupTestingData()}
+                    className="mt-4 rounded-md bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                  >
+                    {isResettingGroup ? "Resetting group-stage test data..." : "Reset group-stage test data"}
+                  </button>
+                </section>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -341,11 +1103,11 @@ type MatchResultCardProps = {
 function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardProps) {
   const router = useRouter();
   const [status, setStatus] = useState<MatchStatus>(match.status);
-  const [homeScore, setHomeScore] = useState(match.homeScore?.toString() ?? "0");
-  const [awayScore, setAwayScore] = useState(match.awayScore?.toString() ?? "0");
+  const [homeScore, setHomeScore] = useState(match.homeScore?.toString() ?? "");
+  const [awayScore, setAwayScore] = useState(match.awayScore?.toString() ?? "");
   const [isSaving, setIsSaving] = useState(false);
   const isFinalized = status === "final";
-  const isLive = status === "live";
+  const isLive = status === "live" || status === "locked";
   const predictionStateLabel = getPredictionStateLabel(status);
   const homeLabel = getSideLabel(match, "home");
   const awayLabel = getSideLabel(match, "away");
@@ -353,13 +1115,13 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
   const resolvedWinnerLabel = getResolvedWinnerLabel(match, resolvedWinnerTeamId);
   const hasUnsavedChanges =
     status !== match.status ||
-    homeScore !== (match.homeScore?.toString() ?? "0") ||
-    awayScore !== (match.awayScore?.toString() ?? "0");
+    homeScore !== (match.homeScore?.toString() ?? "") ||
+    awayScore !== (match.awayScore?.toString() ?? "");
 
   useEffect(() => {
     setStatus(match.status);
-    setHomeScore(match.homeScore === undefined ? "0" : String(match.homeScore));
-    setAwayScore(match.awayScore === undefined ? "0" : String(match.awayScore));
+    setHomeScore(match.homeScore === undefined ? "" : String(match.homeScore));
+    setAwayScore(match.awayScore === undefined ? "" : String(match.awayScore));
   }, [match]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -389,7 +1151,7 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
 
       onSaved(updatedMatch);
 
-      if (updatedMatch.status === "final") {
+      if (updatedMatch.status === "final" && updatedMatch.stage === "group") {
         const scoringResult = await scoreFinalizedGroupMatch(updatedMatch.id);
         if (!scoringResult.ok) {
           onError(scoringResult.message);
@@ -514,7 +1276,8 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
                   : "border-gray-300 bg-white"
             }`}
           >
-            <option value="scheduled">Scheduled</option>
+            <option value="scheduled">Open</option>
+            <option value="locked">Locked</option>
             <option value="live">Live</option>
             <option value="final">Final</option>
           </select>
@@ -560,7 +1323,28 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
               Scores are equal. Winner will be saved as blank for a group-stage draw.
             </p>
           ) : null}
-          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
+          {match.isManualOverride ? (
+            <span className="rounded-md bg-gray-900 px-2 py-1 text-white">Manual override</span>
+          ) : null}
+          {match.syncStatus ? (
+            <span
+              className={`rounded-md px-2 py-1 ${
+                match.syncStatus === "error"
+                  ? "bg-rose-100 text-rose-800"
+                  : match.syncStatus === "skipped"
+                    ? "bg-gray-100 text-gray-700"
+                    : "bg-emerald-100 text-emerald-800"
+              }`}
+            >
+              Sync {match.syncStatus}
+            </span>
+          ) : null}
+          <span>{match.lastSyncedAt ? `Results synced ${formatRelativeMinutes(match.lastSyncedAt)}` : "Waiting for results"}</span>
+          {match.syncError ? <span className="text-rose-700">{match.syncError}</span> : null}
+        </div>
 
         <button
           type="submit"
@@ -709,6 +1493,10 @@ function compareAdminMatches(left: AdminMatch, right: AdminMatch) {
 }
 
 function formatMatchStatus(status: MatchStatus) {
+  if (status === "locked") {
+    return "Locked";
+  }
+
   if (status === "live") {
     return "Live";
   }
@@ -717,7 +1505,32 @@ function formatMatchStatus(status: MatchStatus) {
     return "Final";
   }
 
-  return "Scheduled";
+  return "Open";
+}
+
+function formatRelativeMinutes(value: string) {
+  const millis = new Date(value).getTime();
+  if (Number.isNaN(millis)) {
+    return "recently";
+  }
+
+  const diffMinutes = Math.max(0, Math.round((Date.now() - millis) / 60000));
+  if (diffMinutes < 1) {
+    return "just now";
+  }
+  if (diffMinutes === 1) {
+    return "1 minute ago";
+  }
+  if (diffMinutes < 60) {
+    return `${diffMinutes} minutes ago`;
+  }
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours === 1) {
+    return "1 hour ago";
+  }
+
+  return `${diffHours} hours ago`;
 }
 
 function formatDateTime(value: string, includeTime = true) {

@@ -2,14 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { CalendarDays, Network, Sparkles, Trophy } from "lucide-react";
 import { fetchDashboardGroupAccessAction } from "@/app/my-groups/actions";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import {
   GroupStandingsMiniTable,
-  type MiniGroupStandingsMovement,
-  type MiniGroupStandingsRow
+  type MiniGroupStandingsMovement
 } from "@/components/GroupStandingsMiniTable";
 import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
 import { DashboardHero } from "@/components/dashboard/DashboardHero";
@@ -28,6 +27,7 @@ import {
   normalizeGroupKey,
   resolvePreferredStandingsGroupSelection
 } from "@/lib/group-standings";
+import { buildGroupStandingsByGroup, buildQualifiedTeamSeeds } from "@/lib/knockout-seeding";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { showAppToast } from "@/lib/app-toast";
 import { normalizeInviteTokenInput } from "@/components/player-management/Shared";
@@ -54,6 +54,7 @@ const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: s
 const DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-shown";
 const DASHBOARD_STANDINGS_GROUP_STORAGE_KEY = "dashboard-standings-group";
 const DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY = "dashboard-standings-disclosure";
+const DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY = "dashboard-standings-history-v1";
 
 const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
   en: "Tap the PICK-IT logo above to return to this page again.",
@@ -63,6 +64,15 @@ const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
   de: "Tippe auf das PICK-IT!-Logo, um hierher zurückzukehren."
 };
 const DASHBOARD_GROUP_MATCH_REFRESH_INTERVAL_MS = 15000;
+
+type PersistedStandingsHistory = Record<
+  string,
+  {
+    signature: string;
+    currentOrder: string[];
+    previousOrder: string[] | null;
+  }
+>;
 
 const AUTO_PICK_LABEL_COPY = {
   en: "Auto Pick Next Match",
@@ -103,11 +113,8 @@ export function DashboardOverview() {
     DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY,
     true
   );
-  const [standingsMovementByGroup, setStandingsMovementByGroup] = useState<
-    Record<string, Record<string, MiniGroupStandingsMovement>>
-  >({});
-  const previousStandingsRowsRef = useRef<MiniGroupStandingsRow[]>([]);
-  const previousStandingsGroupRef = useRef<string>("");
+  const [standingsHistoryByGroup, setStandingsHistoryByGroup] = useState<PersistedStandingsHistory>({});
+  const [hasHydratedStandingsHistory, setHasHydratedStandingsHistory] = useState(false);
   const refreshGroupMatches = useCallback(async () => {
     try {
       const items = await fetchGroupMatchesForPredictions();
@@ -297,69 +304,198 @@ export function DashboardOverview() {
     storedGroup: selectedStandingsGroup,
     homeTeamGroup: homeTeamGroupName
   });
+  const allGroupTeams = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          groupMatches.flatMap((match) => {
+            const entries: Array<[string, NonNullable<MatchWithTeams["homeTeam"]>]> = [];
+            if (match.homeTeam?.id) {
+              entries.push([match.homeTeam.id, match.homeTeam]);
+            }
+            if (match.awayTeam?.id) {
+              entries.push([match.awayTeam.id, match.awayTeam]);
+            }
+            return entries;
+          })
+        ).values()
+      ),
+    [groupMatches]
+  );
+  const standingsByGroup = useMemo(
+    () =>
+      buildGroupStandingsByGroup(
+        groupMatches.map((match) => ({
+          id: match.id,
+          stage: match.stage,
+          groupName: match.groupName,
+          status: match.status,
+          homeTeamId: match.homeTeamId,
+          awayTeamId: match.awayTeamId,
+          homeScore: match.homeScore ?? null,
+          awayScore: match.awayScore ?? null
+        })),
+        allGroupTeams
+      ),
+    [allGroupTeams, groupMatches]
+  );
+  const qualifyingThirdPlaceTeamIds = useMemo(() => {
+    const ids = new Set<string>();
+
+    try {
+      const { rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(standingsByGroup);
+      for (const seed of rankedThirdPlaceTeams) {
+        ids.add(seed.teamId);
+      }
+    } catch (error) {
+      console.warn("Could not determine tournament third-place qualifiers for dashboard standings.", error);
+    }
+
+    return ids;
+  }, [standingsByGroup]);
   const tournamentStandingsRows = useMemo(() => {
-    const rows = resolvedStandingsGroup ? buildFinalGroupStandings(groupMatches, resolvedStandingsGroup) : [];
+    const rows = resolvedStandingsGroup ? standingsByGroup.get(resolvedStandingsGroup) ?? [] : [];
     return rows.map((row, index) => ({
       ...row,
       teamCode: row.teamCode ?? row.teamName.slice(0, 3).toUpperCase(),
       rank: row.rank || index + 1,
       isHomeTeam: Boolean(user?.homeTeamId && row.teamId === user.homeTeamId),
-      isQualifier: index < 2,
+      isQualifier: index < 2 || (index === 2 && qualifyingThirdPlaceTeamIds.has(row.teamId)),
       isPossibleQualifier: false
     }));
-  }, [groupMatches, resolvedStandingsGroup, user?.homeTeamId]);
-  const standingsMovementByTeamId = useMemo(
-    () => (resolvedStandingsGroup ? standingsMovementByGroup[resolvedStandingsGroup] ?? {} : {}),
-    [resolvedStandingsGroup, standingsMovementByGroup]
+  }, [qualifyingThirdPlaceTeamIds, resolvedStandingsGroup, standingsByGroup, user?.homeTeamId]);
+  const standingsSnapshotByGroup = useMemo(
+    () =>
+      Object.fromEntries(
+        availableStandingsGroups.map((groupName) => {
+          const rows = standingsByGroup.get(groupName) ?? buildFinalGroupStandings(groupMatches, groupName);
+          const order = rows.map((row) => row.teamId);
+          const signature = rows
+            .map(
+              (row) =>
+                `${row.teamId}:${row.rank}:${row.played}:${row.points}:${row.goalDifference}:${row.goalsFor}:${row.goalsAgainst}`
+            )
+            .join("|");
+
+          return [
+            groupName,
+            {
+              order,
+              signature
+            }
+          ];
+        })
+      ),
+    [availableStandingsGroups, groupMatches, standingsByGroup]
   );
-
-  useEffect(() => {
+  const standingsMovementByTeamId = useMemo(() => {
     if (!resolvedStandingsGroup) {
-      previousStandingsRowsRef.current = [];
-      previousStandingsGroupRef.current = "";
-      return;
+      return {};
     }
 
-    const switchedGroups = previousStandingsGroupRef.current !== resolvedStandingsGroup;
-    if (switchedGroups || previousStandingsRowsRef.current.length === 0) {
-      previousStandingsRowsRef.current = tournamentStandingsRows;
-      previousStandingsGroupRef.current = resolvedStandingsGroup;
-      return;
+    const history = standingsHistoryByGroup[resolvedStandingsGroup];
+    const currentSnapshot = standingsSnapshotByGroup[resolvedStandingsGroup];
+    if (!history?.previousOrder || !currentSnapshot) {
+      return {};
     }
 
-    const previousOrder = previousStandingsRowsRef.current.map((row) => row.teamId);
-    const nextOrder = tournamentStandingsRows.map((row) => row.teamId);
-    const orderChanged =
-      previousOrder.length === nextOrder.length &&
-      previousOrder.some((teamId, index) => teamId !== nextOrder[index]);
-
-    if (!orderChanged) {
-      previousStandingsRowsRef.current = tournamentStandingsRows;
-      previousStandingsGroupRef.current = resolvedStandingsGroup;
-      return;
-    }
-
-    const previousRanks = new Map(
-      previousStandingsRowsRef.current.map((row, index) => [row.teamId, index])
-    );
+    const previousRanks = new Map(history.previousOrder.map((teamId, index) => [teamId, index]));
     const nextMovements: Record<string, MiniGroupStandingsMovement> = {};
 
-    for (const [index, row] of tournamentStandingsRows.entries()) {
-      const previousRank = previousRanks.get(row.teamId);
+    for (const [index, teamId] of currentSnapshot.order.entries()) {
+      const previousRank = previousRanks.get(teamId);
       if (previousRank === undefined || previousRank === index) {
         continue;
       }
 
-      nextMovements[row.teamId] = index < previousRank ? "up" : "down";
+      nextMovements[teamId] = index < previousRank ? "up" : "down";
     }
 
-    previousStandingsRowsRef.current = tournamentStandingsRows;
-    previousStandingsGroupRef.current = resolvedStandingsGroup;
-    setStandingsMovementByGroup((current) => ({
-      ...current,
-      [resolvedStandingsGroup]: nextMovements
-    }));
-  }, [resolvedStandingsGroup, tournamentStandingsRows]);
+    return nextMovements;
+  }, [resolvedStandingsGroup, standingsHistoryByGroup, standingsSnapshotByGroup]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const storedValue = window.localStorage.getItem(DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY);
+      if (storedValue) {
+        setStandingsHistoryByGroup(JSON.parse(storedValue) as PersistedStandingsHistory);
+      }
+    } catch (error) {
+      console.warn("Could not restore dashboard standings history.", error);
+    } finally {
+      setHasHydratedStandingsHistory(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydratedStandingsHistory) {
+      return;
+    }
+
+    setStandingsHistoryByGroup((current) => {
+      let didChange = false;
+      const nextHistory: PersistedStandingsHistory = {};
+
+      for (const groupName of availableStandingsGroups) {
+        const snapshot = standingsSnapshotByGroup[groupName];
+        if (!snapshot) {
+          continue;
+        }
+
+        const previousHistory = current[groupName];
+        if (!previousHistory) {
+          nextHistory[groupName] = {
+            signature: snapshot.signature,
+            currentOrder: snapshot.order,
+            previousOrder: null
+          };
+          didChange = true;
+          continue;
+        }
+
+        if (previousHistory.signature !== snapshot.signature) {
+          nextHistory[groupName] = {
+            signature: snapshot.signature,
+            currentOrder: snapshot.order,
+            previousOrder:
+              previousHistory.currentOrder.length === snapshot.order.length &&
+              previousHistory.currentOrder.some((teamId, index) => teamId !== snapshot.order[index])
+                ? previousHistory.currentOrder
+                : previousHistory.previousOrder
+          };
+          didChange = true;
+          continue;
+        }
+
+        nextHistory[groupName] = previousHistory;
+      }
+
+      if (!didChange && Object.keys(current).length === Object.keys(nextHistory).length) {
+        return current;
+      }
+
+      return nextHistory;
+    });
+  }, [availableStandingsGroups, hasHydratedStandingsHistory, standingsSnapshotByGroup]);
+
+  useEffect(() => {
+    if (!hasHydratedStandingsHistory || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(
+        DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY,
+        JSON.stringify(standingsHistoryByGroup)
+      );
+    } catch (error) {
+      console.warn("Could not persist dashboard standings history.", error);
+    }
+  }, [hasHydratedStandingsHistory, standingsHistoryByGroup]);
 
   useEffect(() => {
     if (!availableStandingsGroups.length) {
@@ -544,6 +680,9 @@ export function DashboardOverview() {
                 movementByTeamId={standingsMovementByTeamId}
                 emptyState="Standings will appear as group matches go final."
               />
+              <p className="text-[11px] font-semibold text-gray-500">
+                Top 2 + best 3rd-place teams advance
+              </p>
             </>
           ) : null}
         </section>

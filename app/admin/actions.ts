@@ -28,8 +28,11 @@ import {
   resetKnockoutMatchScoring,
   scoreFinalizedKnockoutMatchWithClient
 } from "@/lib/bracket-predictions";
+import { rebuildKnockoutAdvancementWithClient as rebuildKnockoutAdvancementSharedWithClient } from "@/lib/knockout-advancement";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
-import { isKnockoutStage, normalizeKnockoutStage } from "@/lib/match-stage";
+import { isKnockoutStage } from "@/lib/match-stage";
+import { appendMatchEvent } from "@/lib/match-events";
+import { syncMatches } from "@/lib/match-sync/syncMatches";
 import {
   buildGroupStandingsByGroup,
   buildQualifiedTeamSeeds,
@@ -38,21 +41,33 @@ import {
   summarizeKnockoutSeedState
 } from "@/lib/knockout-seeding";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
+import {
+  getResetDiagnostics,
+  getTestingResetAvailability,
+  logTestingResetEnvDiagnostics
+} from "@/lib/admin/destructive-tools";
 import type { MatchNextSlot, MatchStage, Team, UserRole } from "@/lib/types";
 
 type MatchRow = {
   id: string;
   stage: MatchStage;
   group_name?: string | null;
-  status: "scheduled" | "live" | "final";
+  status: "scheduled" | "locked" | "live" | "final";
   home_team_id?: string | null;
   away_team_id?: string | null;
   home_source?: string | null;
   away_source?: string | null;
   kickoff_time?: string | null;
+  kickoff_at?: string | null;
   home_score?: number | null;
   away_score?: number | null;
   winner_team_id?: string | null;
+  finalized_at?: string | null;
+  last_synced_at?: string | null;
+  external_id?: string | null;
+  is_manual_override?: boolean | null;
+  sync_status?: "ok" | "skipped" | "error" | null;
+  sync_error?: string | null;
   next_match_id?: string | null;
   next_match_slot?: MatchNextSlot | null;
   updated_at?: string | null;
@@ -195,6 +210,48 @@ export type RescoreKnockoutScoresResult =
       message: string;
     };
 
+export type BatchFinalizeMatchScope =
+  | "group-only"
+  | "knockout-only"
+  | "all"
+  | "open-only"
+  | "locked-live-only"
+  | "open-locked-live";
+
+export type BatchFinalizeMatchResultStyle =
+  | "realistic"
+  | "fun"
+  | "favorites"
+  | "draw-heavy"
+  | "knockout-no-draw";
+
+export type BatchFinalizeMatchOverwriteMode = "skip-finalized" | "overwrite-test-results";
+
+export type BatchFinalizeMatchResultsInput = {
+  fromDate: string;
+  toDate: string;
+  scope: BatchFinalizeMatchScope;
+  resultStyle: BatchFinalizeMatchResultStyle;
+  overwriteMode: BatchFinalizeMatchOverwriteMode;
+  confirmationText: string;
+};
+
+export type BatchFinalizeMatchResultsResult =
+  | {
+      ok: true;
+      processed: number;
+      finalized: number;
+      skipped: number;
+      overwritten: number;
+      scoringJobsTriggered: number;
+      errors: string[];
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export type RepairKnockoutAdvancementResult =
   | {
       ok: true;
@@ -207,6 +264,139 @@ export type RepairKnockoutAdvancementResult =
       ok: false;
       message: string;
     };
+
+export type SyncMatchesNowResult =
+  | {
+      ok: true;
+      lockedMatches: number;
+      fetchedMatches: number;
+      finalizedMatches: number;
+      skippedManualOverride: number;
+      skippedUnresolvedTeams: number;
+      skippedUnmatched: number;
+      errors: number;
+      latestSyncedAt: string | null;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type ResetTestingDataInput = {
+  confirmationText: string;
+  scope: string;
+};
+
+export type DestructiveAdminToolStatusResult =
+  | {
+      ok: true;
+      knockout: ReturnType<typeof getTestingResetAvailability>;
+      group: ReturnType<typeof getTestingResetAvailability>;
+      diagnostics: ReturnType<typeof getResetDiagnostics>;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+type ResetOperationResultBase = {
+  ok: true;
+  warning?: false;
+  resetMatchCount: number;
+  deletedPredictions: number;
+  deletedPredictionScores: number;
+  deletedLeaderboardEvents: number;
+  deletedLeaderboardSnapshots: number;
+  deletedUserNotifications: number;
+  message: string;
+};
+
+type ResetOperationWarningResultBase = {
+  ok: true;
+  warning: true;
+  resetMatchCount: number;
+  deletedPredictions: number;
+  deletedPredictionScores: number;
+  deletedLeaderboardEvents: number;
+  deletedLeaderboardSnapshots: number;
+  deletedUserNotifications: number;
+  message: string;
+};
+
+export type ResetKnockoutTestingDataResult =
+  | {
+      deletedBracketPredictions: number;
+      deletedBracketScores: number;
+    } & ResetOperationResultBase
+  | {
+      deletedBracketPredictions: number;
+      deletedBracketScores: number;
+    } & ResetOperationWarningResultBase
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type ResetGroupStageTestingDataResult =
+  | ({
+      ok: true;
+      warning?: false;
+      resetMatchCount: number;
+      deletedPredictions: number;
+      deletedPredictionScores: number;
+      deletedLeaderboardEvents: number;
+      deletedLeaderboardSnapshots: number;
+      deletedUserNotifications: number;
+      deletedCounts: {
+        groupPredictions: number;
+        predictionScores: number;
+        leaderboardEntries: number;
+        leaderboardEvents: number;
+        groupStandingsOrDerivedRows: number;
+        knockoutSeededRowsIfApplicable: number;
+      };
+      message: string;
+    })
+  | ({
+      ok: true;
+      warning: true;
+      resetMatchCount: number;
+      deletedPredictions: number;
+      deletedPredictionScores: number;
+      deletedLeaderboardEvents: number;
+      deletedLeaderboardSnapshots: number;
+      deletedUserNotifications: number;
+      deletedCounts: {
+        groupPredictions: number;
+        predictionScores: number;
+        leaderboardEntries: number;
+        leaderboardEvents: number;
+        groupStandingsOrDerivedRows: number;
+        knockoutSeededRowsIfApplicable: number;
+      };
+      message: string;
+    })
+  | {
+      ok: false;
+      message: string;
+    };
+
+type ResetOperationSummary = {
+  targetMatchCount: number;
+  statusBreakdown: Record<string, number>;
+  resetMatchCount: number;
+  deletedPredictions: number;
+  deletedPredictionScores: number;
+  deletedLeaderboardEvents: number;
+  deletedLeaderboardSnapshots: number;
+  deletedUserNotifications: number;
+  deletedGeneratedArtifacts?: number;
+  deletedKnockoutSeedArtifacts?: number;
+  postResetStatusBreakdown?: Record<string, number>;
+  lingeringNonOpenMatchCount?: number;
+  lingeringScoredMatchCount?: number;
+};
 
 export type CreateInviteInput = {
   email: string;
@@ -1733,208 +1923,17 @@ export async function updateUserDisplayNameAction(
   };
 }
 
-type KnockoutAdvancementUpdate = {
-  matchId: string;
-  homeTeamId?: string | null;
-  awayTeamId?: string | null;
+type KnockoutResetRpcRow = {
+  targetMatchCount: number;
+  statusBreakdown: Record<string, number>;
+  reset_match_count: number;
+  deleted_bracket_prediction_count: number;
+  deleted_bracket_score_count: number;
+  deleted_prediction_score_count: number;
+  deleted_leaderboard_event_count: number;
+  deleted_leaderboard_snapshot_count: number;
+  deleted_user_notification_count: number;
 };
-
-type KnockoutAdvancementSummary = {
-  populatedSlots: number;
-  updatedSlots: number;
-  touchedMatches: number;
-  clearedPredictions: number;
-  clearedScores: number;
-};
-
-async function rebuildKnockoutAdvancementWithClient(
-  adminSupabase: ReturnType<typeof createAdminClient>
-): Promise<KnockoutAdvancementSummary> {
-  const { data, error } = await adminSupabase
-    .from("matches")
-    .select(
-      "id,stage,status,home_team_id,away_team_id,home_source,away_source,kickoff_time,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at"
-    )
-    .neq("stage", "group")
-    .order("kickoff_time", { ascending: true });
-
-  if (error) {
-    throw error;
-  }
-
-  const knockoutMatches = ((data ?? []) as MatchRow[]).filter((match) => isKnockoutStage(match.stage));
-  const unknownStages = ((data ?? []) as MatchRow[])
-    .filter((match) => match.stage !== "group" && !isKnockoutStage(match.stage))
-    .map((match) => match.stage);
-
-  if (unknownStages.length > 0) {
-    console.warn("[knockout-advancement:unknown-stages]", Array.from(new Set(unknownStages)));
-  }
-
-  const matchesById = new Map(knockoutMatches.map((match) => [match.id, { ...match }]));
-  const updatesByMatchId = new Map<string, KnockoutAdvancementUpdate>();
-  const stalePredictionMatchIds = new Set<string>();
-  let populatedSlots = 0;
-  let updatedSlots = 0;
-
-  const assignTeamToSlot = (matchId: string, slot: MatchNextSlot, teamId: string | null | undefined) => {
-    if (!teamId) {
-      return;
-    }
-
-    const match = matchesById.get(matchId);
-    if (!match) {
-      return;
-    }
-
-    const targetField = slot === "home" ? "home_team_id" : "away_team_id";
-    const currentValue = match[targetField] ?? null;
-    if (currentValue === teamId) {
-      return;
-    }
-
-    if (match.status === "scheduled") {
-      stalePredictionMatchIds.add(matchId);
-    }
-
-    if (currentValue) {
-      updatedSlots += 1;
-    } else {
-      populatedSlots += 1;
-    }
-
-    match[targetField] = teamId;
-    const currentUpdate = updatesByMatchId.get(matchId) ?? { matchId };
-    if (slot === "home") {
-      currentUpdate.homeTeamId = teamId;
-    } else {
-      currentUpdate.awayTeamId = teamId;
-    }
-    updatesByMatchId.set(matchId, currentUpdate);
-  };
-
-  for (const match of knockoutMatches) {
-    if (match.status !== "final" || !match.winner_team_id || !match.next_match_id || !match.next_match_slot) {
-      continue;
-    }
-
-    assignTeamToSlot(match.next_match_id, match.next_match_slot, match.winner_team_id);
-  }
-
-  const thirdPlaceMatch = knockoutMatches.find((match) => normalizeKnockoutStage(match.stage) === "third") ?? null;
-  const semifinalMatches = knockoutMatches
-    .filter((match) => normalizeKnockoutStage(match.stage) === "sf")
-    .sort((a, b) => {
-      const kickoffCompare = (a.kickoff_time ?? "").localeCompare(b.kickoff_time ?? "");
-      return kickoffCompare !== 0 ? kickoffCompare : a.id.localeCompare(b.id);
-    });
-
-  if (thirdPlaceMatch && semifinalMatches.length >= 2) {
-    semifinalMatches.slice(0, 2).forEach((match, index) => {
-      if (match.status !== "final" || !match.winner_team_id || !match.home_team_id || !match.away_team_id) {
-        return;
-      }
-
-      const loserTeamId = match.home_team_id === match.winner_team_id ? match.away_team_id : match.home_team_id;
-      assignTeamToSlot(thirdPlaceMatch.id, index === 0 ? "home" : "away", loserTeamId);
-    });
-  }
-
-  const touchedMatches = updatesByMatchId.size;
-  if (touchedMatches === 0) {
-    return { populatedSlots: 0, updatedSlots: 0, touchedMatches: 0, clearedPredictions: 0, clearedScores: 0 };
-  }
-
-  const updatedAt = new Date().toISOString();
-  for (const update of updatesByMatchId.values()) {
-    const payload: {
-      updated_at: string;
-      home_team_id?: string | null;
-      away_team_id?: string | null;
-    } = { updated_at: updatedAt };
-    if (typeof update.homeTeamId !== "undefined") {
-      payload.home_team_id = update.homeTeamId;
-    }
-    if (typeof update.awayTeamId !== "undefined") {
-      payload.away_team_id = update.awayTeamId;
-    }
-
-    const { error: updateError } = await adminSupabase
-      .from("matches")
-      .update(payload)
-      .eq("id", update.matchId);
-
-    if (updateError) {
-      throw updateError;
-    }
-  }
-
-  console.info("[knockout-advancement:repair]", {
-    populatedSlots,
-    updatedSlots,
-    touchedMatches,
-    updatedMatches: Array.from(updatesByMatchId.values())
-  });
-
-  let clearedPredictions = 0;
-  let clearedScores = 0;
-  if (stalePredictionMatchIds.size > 0) {
-    const staleMatchIds = Array.from(stalePredictionMatchIds);
-
-    const { count: predictionCount, error: predictionCountError } = await adminSupabase
-      .from("bracket_predictions")
-      .select("id", { count: "exact", head: true })
-      .in("match_id", staleMatchIds);
-
-    if (predictionCountError) {
-      throw predictionCountError;
-    }
-
-    const { count: scoreCount, error: scoreCountError } = await adminSupabase
-      .from("bracket_scores")
-      .select("id", { count: "exact", head: true })
-      .in("match_id", staleMatchIds);
-
-    if (scoreCountError) {
-      throw scoreCountError;
-    }
-
-    const { error: deletePredictionsError } = await adminSupabase
-      .from("bracket_predictions")
-      .delete()
-      .in("match_id", staleMatchIds);
-
-    if (deletePredictionsError) {
-      throw deletePredictionsError;
-    }
-
-    const { error: deleteScoresError } = await adminSupabase
-      .from("bracket_scores")
-      .delete()
-      .in("match_id", staleMatchIds);
-
-    if (deleteScoresError) {
-      throw deleteScoresError;
-    }
-
-    clearedPredictions = predictionCount ?? 0;
-    clearedScores = scoreCount ?? 0;
-  }
-
-  console.info("[knockout-advancement:stale-predictions-cleared]", {
-    affectedMatches: Array.from(stalePredictionMatchIds),
-    clearedPredictions,
-    clearedScores
-  });
-
-  return {
-    populatedSlots,
-    updatedSlots,
-    touchedMatches,
-    clearedPredictions,
-    clearedScores
-  };
-}
 
 export async function updateAdminMatchResultAction(input: UpdateMatchResultInput): Promise<UpdateMatchResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
@@ -1945,7 +1944,7 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
   const adminSupabase = createAdminClient();
   const { data: previousMatch, error: previousMatchError } = await adminSupabase
     .from("matches")
-    .select("id,status,stage")
+    .select("id,status,stage,home_score,away_score,winner_team_id")
     .eq("id", input.id)
     .single();
 
@@ -1959,11 +1958,15 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
       status: input.status,
       home_score: input.homeScore ?? null,
       away_score: input.awayScore ?? null,
-      winner_team_id: input.winnerTeamId ?? null
+      winner_team_id: input.winnerTeamId ?? null,
+      finalized_at: input.status === "final" ? new Date().toISOString() : null,
+      is_manual_override: true,
+      sync_error: null,
+      updated_at: new Date().toISOString()
     })
     .eq("id", input.id)
     .select(
-      "id,stage,group_name,status,home_team_id,away_team_id,home_source,away_source,kickoff_time,home_score,away_score,winner_team_id,updated_at"
+      "id,stage,group_name,status,home_team_id,away_team_id,home_source,away_source,kickoff_time,kickoff_at,home_score,away_score,winner_team_id,finalized_at,last_synced_at,external_id,is_manual_override,sync_status,sync_error,next_match_id,next_match_slot,updated_at"
     )
     .single();
 
@@ -1991,7 +1994,7 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
   if ((data as MatchRow).status === "final" && (data as MatchRow).stage !== "group") {
     try {
       await scoreFinalizedKnockoutMatchWithClient(adminSupabase, input.id);
-      await rebuildKnockoutAdvancementWithClient(adminSupabase);
+      await rebuildKnockoutAdvancementSharedWithClient(adminSupabase);
       needsKnockoutLeaderboardRefresh = true;
     } catch (error) {
       return { ok: false, message: (error as Error).message };
@@ -2008,6 +2011,33 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
       return leaderboardResult;
     }
   }
+
+  const previous = previousMatch as MatchRow;
+  const current = data as MatchRow;
+  const eventType =
+    current.status === "final"
+      ? "finalize"
+      : current.status === "scheduled" && previous.status !== "scheduled"
+        ? "reopen"
+        : current.status === "locked"
+          ? "lock"
+          : "override";
+  await appendMatchEvent(adminSupabase, {
+    matchId: input.id,
+    eventType,
+    payload: {
+      source: "admin",
+      previousStatus: previous.status,
+      nextStatus: current.status,
+      previousHomeScore: previous.home_score ?? null,
+      previousAwayScore: previous.away_score ?? null,
+      nextHomeScore: current.home_score ?? null,
+      nextAwayScore: current.away_score ?? null,
+      previousWinnerTeamId: previous.winner_team_id ?? null,
+      nextWinnerTeamId: current.winner_team_id ?? null,
+      actorUserId: adminCheck.userId
+    }
+  });
 
   revalidatePath("/");
   revalidatePath("/groups");
@@ -2067,6 +2097,189 @@ export async function rescoreKnockoutScoresAction(): Promise<RescoreKnockoutScor
   };
 }
 
+export async function batchFinalizeMatchResultsAction(
+  input: BatchFinalizeMatchResultsInput
+): Promise<BatchFinalizeMatchResultsResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  if (input.confirmationText !== "FINALIZE TEST MATCHES") {
+    return { ok: false, message: "Batch finalization confirmation did not match. No matches were changed." };
+  }
+
+  const availability = getTestingResetAvailability("knockout");
+  logTestingResetEnvDiagnostics("batchFinalizeMatchResultsAction", {
+    adminUserId: superAdminCheck.userId,
+    adminEmail: superAdminCheck.email
+  });
+  if (!availability.canRun) {
+    return {
+      ok: false,
+      message: availability.disabledReason ?? "Testing tools are disabled in this environment."
+    };
+  }
+
+  if (!input.fromDate || !input.toDate) {
+    return { ok: false, message: "Choose both a from date and a to date." };
+  }
+
+  if (input.fromDate > input.toDate) {
+    return { ok: false, message: "From date must be before or equal to the to date." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const fromIso = `${input.fromDate}T00:00:00.000Z`;
+  const toIso = `${input.toDate}T23:59:59.999Z`;
+
+  const { data: matches, error } = await adminSupabase
+    .from("matches")
+    .select(
+      "id,stage,group_name,status,home_team_id,away_team_id,kickoff_time,home_score,away_score,winner_team_id,is_manual_override,home_team:teams!matches_home_team_id_fkey(id,name,fifa_rank),away_team:teams!matches_away_team_id_fkey(id,name,fifa_rank)"
+    )
+    .gte("kickoff_time", fromIso)
+    .lte("kickoff_time", toIso)
+    .order("kickoff_time", { ascending: true });
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  const candidateMatches = ((matches ?? []) as Array<
+    MatchRow & {
+      home_team?: { id: string; name: string; fifa_rank?: number | null } | Array<{ id: string; name: string; fifa_rank?: number | null }> | null;
+      away_team?: { id: string; name: string; fifa_rank?: number | null } | Array<{ id: string; name: string; fifa_rank?: number | null }> | null;
+    }
+  >).filter((match) => isBatchFinalizeScopeMatch(match, input.scope));
+
+  const maxBatchSize = 50;
+  if (candidateMatches.length > maxBatchSize) {
+    return {
+      ok: false,
+      message: `Batch finalization is limited to ${maxBatchSize} matches at a time. Narrow the date range or scope.`
+    };
+  }
+
+  let processed = 0;
+  let finalized = 0;
+  let skipped = 0;
+  let overwritten = 0;
+  let scoringJobsTriggered = 0;
+  const errors: string[] = [];
+
+  for (const match of candidateMatches) {
+    processed += 1;
+
+    if (!match.home_team_id || !match.away_team_id) {
+      skipped += 1;
+      continue;
+    }
+
+    const isAlreadyFinal = match.status === "final";
+    const hasExistingResult = isAlreadyFinal || match.home_score != null || match.away_score != null;
+
+    if (isAlreadyFinal && input.overwriteMode === "skip-finalized") {
+      skipped += 1;
+      continue;
+    }
+
+    if (isAlreadyFinal && input.overwriteMode === "overwrite-test-results" && match.is_manual_override !== true) {
+      skipped += 1;
+      continue;
+    }
+
+    const generated = generateBatchFinalizeScore(match, input.resultStyle);
+    if (!generated) {
+      skipped += 1;
+      continue;
+    }
+
+    if (hasExistingResult) {
+      overwritten += 1;
+    }
+
+    const updateResult = await updateAdminMatchResultAction({
+      id: match.id,
+      status: "final",
+      homeScore: generated.homeScore,
+      awayScore: generated.awayScore,
+      winnerTeamId: generated.winnerTeamId
+    });
+
+    if (!updateResult.ok) {
+      skipped += 1;
+      errors.push(`${match.id}: ${updateResult.message}`);
+      continue;
+    }
+
+    if (match.stage === "group") {
+      const scoringResult = await scoreFinalizedGroupMatch(match.id);
+      if (!scoringResult.ok) {
+        errors.push(`${match.id}: ${scoringResult.message}`);
+      } else {
+        scoringJobsTriggered += 1;
+      }
+    } else {
+      scoringJobsTriggered += 1;
+    }
+
+    await appendMatchEvent(adminSupabase, {
+      matchId: match.id,
+      eventType: "batch_test_finalize",
+      payload: {
+        source: "admin-batch-finalize",
+        actorUserId: superAdminCheck.userId,
+        previousStatus: match.status,
+        nextStatus: "final",
+        previousHomeScore: match.home_score ?? null,
+        previousAwayScore: match.away_score ?? null,
+        nextHomeScore: generated.homeScore,
+        nextAwayScore: generated.awayScore
+      }
+    });
+
+    finalized += 1;
+  }
+
+  revalidatePath("/");
+  revalidatePath("/dashboard");
+  revalidatePath("/groups");
+  revalidatePath("/leaderboard");
+  revalidatePath("/knockout");
+  revalidatePath("/predictions");
+  revalidatePath("/profile");
+  revalidatePath("/admin/matches");
+  revalidatePath("/my-groups");
+
+  console.info("[batch-finalize-matches]", {
+    adminUserId: superAdminCheck.userId,
+    adminEmail: superAdminCheck.email,
+    fromDate: input.fromDate,
+    toDate: input.toDate,
+    scope: input.scope,
+    resultStyle: input.resultStyle,
+    overwriteMode: input.overwriteMode,
+    processed,
+    finalized,
+    skipped,
+    overwritten,
+    scoringJobsTriggered,
+    errorCount: errors.length
+  });
+
+  return {
+    ok: true,
+    processed,
+    finalized,
+    skipped,
+    overwritten,
+    scoringJobsTriggered,
+    errors,
+    message: `Processed ${processed} matches. Finalized ${finalized}, skipped ${skipped}, overwrote ${overwritten}, triggered scoring for ${scoringJobsTriggered}.`
+  };
+}
+
 export async function repairKnockoutAdvancementAction(): Promise<RepairKnockoutAdvancementResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
@@ -2076,7 +2289,7 @@ export async function repairKnockoutAdvancementAction(): Promise<RepairKnockoutA
   const adminSupabase = createAdminClient();
 
   try {
-    const summary = await rebuildKnockoutAdvancementWithClient(adminSupabase);
+    const summary = await rebuildKnockoutAdvancementSharedWithClient(adminSupabase);
 
     if (summary.clearedScores > 0) {
       const leaderboardResult = await recalculateLeaderboard(adminSupabase);
@@ -2103,6 +2316,886 @@ export async function repairKnockoutAdvancementAction(): Promise<RepairKnockoutA
   } catch (error) {
     return { ok: false, message: (error as Error).message };
   }
+}
+
+export async function syncMatchesNowAction(): Promise<SyncMatchesNowResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  try {
+    const syncSecret = process.env.MATCH_SYNC_SECRET?.trim() ?? "";
+    const syncBaseUrl =
+      process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+      process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
+
+    const payload =
+      syncSecret && syncBaseUrl
+        ? await fetch(`${syncBaseUrl.replace(/\/$/, "")}/api/sync/matches`, {
+            method: "POST",
+            headers: {
+              "x-match-sync-secret": syncSecret
+            },
+            cache: "no-store"
+          }).then(async (response) => {
+            const body = (await response.json()) as SyncMatchesNowResult | { ok: false; message: string };
+            if (!response.ok || !body.ok) {
+              throw new Error(body.message ?? "Match sync failed.");
+            }
+            return body;
+          })
+        : await syncMatches();
+
+    revalidatePath("/");
+    revalidatePath("/groups");
+    revalidatePath("/leaderboard");
+    revalidatePath("/knockout");
+    revalidatePath("/admin/matches");
+    revalidatePath("/profile");
+
+    return {
+      ...payload,
+      message: "Match results synced."
+    };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Match sync failed." };
+  }
+}
+
+export async function resetKnockoutTestingDataAction(
+  input: ResetTestingDataInput
+): Promise<ResetKnockoutTestingDataResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  if (input.confirmationText !== "RESET KNOCKOUT TEST DATA" || input.scope !== "knockout-only") {
+    return { ok: false, message: "Reset confirmation did not match. No data was changed." };
+  }
+
+  const destructiveToolStatus = getTestingResetAvailability("knockout");
+  logTestingResetEnvDiagnostics("resetKnockoutTestingDataAction", {
+    adminUserId: superAdminCheck.userId,
+    adminEmail: superAdminCheck.email
+  });
+  if (!destructiveToolStatus.canRun) {
+    return {
+      ok: false,
+      message:
+        destructiveToolStatus.disabledReason ??
+        "Production knockout reset is disabled. Set ALLOW_PRODUCTION_KNOCKOUT_RESET=true and redeploy."
+    };
+  }
+
+  const adminSupabase = createAdminClient();
+
+  try {
+    const summary = await resetKnockoutTestingDataWithClient(adminSupabase);
+
+    let leaderboardWarning = false;
+    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+    if (!leaderboardResult.ok) {
+      leaderboardWarning = true;
+      console.error("[knockout-reset:leaderboard-recalc-failed]", {
+        adminUserId: superAdminCheck.userId,
+        adminEmail: superAdminCheck.email,
+        environment: process.env.NODE_ENV,
+        error: leaderboardResult.message
+      });
+    }
+
+    console.info("[knockout-reset]", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email,
+      timestamp: new Date().toISOString(),
+      nodeEnv: process.env.NODE_ENV,
+      vercelEnv: process.env.VERCEL_ENV,
+      resetType: "knockout",
+      targetMatchCount: summary.targetMatchCount,
+      statusBreakdownBeforeReset: summary.statusBreakdown,
+      resetMatchCount: summary.reset_match_count,
+      deletedPredictions: summary.deleted_bracket_prediction_count,
+      deletedBracketPredictions: summary.deleted_bracket_prediction_count,
+      deletedBracketScores: summary.deleted_bracket_score_count,
+      deletedPredictionScores: summary.deleted_prediction_score_count,
+      deletedLeaderboardEvents: summary.deleted_leaderboard_event_count,
+      deletedLeaderboardSnapshots: summary.deleted_leaderboard_snapshot_count,
+      deletedUserNotifications: summary.deleted_user_notification_count,
+      leaderboardRecalculation: leaderboardWarning ? "failed" : "ok"
+    });
+    // TODO: write a dedicated admin audit record here if/when the app adds an admin audit table.
+
+    revalidatePath("/admin/matches");
+    revalidatePath("/knockout");
+    revalidatePath("/leaderboard");
+    revalidatePath("/profile");
+    revalidatePath("/dashboard");
+
+    if (leaderboardWarning) {
+      return {
+        ok: true,
+        warning: true,
+        resetMatchCount: summary.reset_match_count,
+        deletedPredictions: summary.deleted_bracket_prediction_count,
+        deletedBracketPredictions: summary.deleted_bracket_prediction_count,
+        deletedBracketScores: summary.deleted_bracket_score_count,
+        deletedPredictionScores: summary.deleted_prediction_score_count,
+        deletedLeaderboardEvents: summary.deleted_leaderboard_event_count,
+        deletedLeaderboardSnapshots: summary.deleted_leaderboard_snapshot_count,
+        deletedUserNotifications: summary.deleted_user_notification_count,
+        message:
+          "Knockout testing data was reset across all statuses, including locked/live/final matches, but leaderboard recalculation failed. Run leaderboard repair manually."
+      };
+    }
+
+    return {
+      ok: true,
+      warning: false,
+      resetMatchCount: summary.reset_match_count,
+      deletedPredictions: summary.deleted_bracket_prediction_count,
+      deletedBracketPredictions: summary.deleted_bracket_prediction_count,
+      deletedBracketScores: summary.deleted_bracket_score_count,
+      deletedPredictionScores: summary.deleted_prediction_score_count,
+      deletedLeaderboardEvents: summary.deleted_leaderboard_event_count,
+      deletedLeaderboardSnapshots: summary.deleted_leaderboard_snapshot_count,
+      deletedUserNotifications: summary.deleted_user_notification_count,
+      message: "Knockout testing data was reset across all statuses, including locked/live/final matches. Group-stage data was not changed."
+    };
+  } catch (error) {
+    return { ok: false, message: (error as Error).message };
+  }
+}
+
+export async function resetGroupStageTestingDataAction(
+  input: ResetTestingDataInput
+): Promise<ResetGroupStageTestingDataResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  if (input.confirmationText !== "RESET GROUP TEST DATA" || input.scope !== "group-only") {
+    return { ok: false, message: "Reset confirmation did not match. No data was changed." };
+  }
+
+  const destructiveToolStatus = getTestingResetAvailability("group");
+  logTestingResetEnvDiagnostics("resetGroupStageTestingDataAction", {
+    adminUserId: superAdminCheck.userId,
+    adminEmail: superAdminCheck.email
+  });
+  if (!destructiveToolStatus.canRun) {
+    return {
+      ok: false,
+      message:
+        destructiveToolStatus.disabledReason ??
+        "Production group-stage reset is disabled. Set ALLOW_PRODUCTION_GROUP_RESET=true and redeploy."
+    };
+  }
+
+  const adminSupabase = createAdminClient();
+
+  try {
+    console.info("[group-reset] reset started", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email,
+      timestamp: new Date().toISOString(),
+      nodeEnv: process.env.NODE_ENV,
+      vercelEnv: process.env.VERCEL_ENV
+    });
+    const summary = await resetGroupStageTestingDataWithClient(adminSupabase);
+
+    let leaderboardWarning = false;
+    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+    if (!leaderboardResult.ok) {
+      leaderboardWarning = true;
+      console.error("[group-reset:leaderboard-recalc-failed]", {
+        adminUserId: superAdminCheck.userId,
+        adminEmail: superAdminCheck.email,
+        environment: process.env.NODE_ENV,
+        error: leaderboardResult.message
+      });
+    }
+
+    console.info("[group-reset]", {
+      resetType: "group",
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email,
+      timestamp: new Date().toISOString(),
+      nodeEnv: process.env.NODE_ENV,
+      vercelEnv: process.env.VERCEL_ENV,
+      targetMatchCount: summary.targetMatchCount,
+      statusBreakdownBeforeReset: summary.statusBreakdown,
+      generatedArtifactsDeleted: summary.deletedGeneratedArtifacts ?? 0,
+      statusBreakdownAfterReset: summary.postResetStatusBreakdown ?? {},
+      lingeringNonOpenMatchCount: summary.lingeringNonOpenMatchCount ?? 0,
+      lingeringScoredMatchCount: summary.lingeringScoredMatchCount ?? 0,
+      resetMatchCount: summary.resetMatchCount,
+      deletedPredictions: summary.deletedPredictions,
+      deletedPredictionScores: summary.deletedPredictionScores,
+      deletedLeaderboardEvents: summary.deletedLeaderboardEvents,
+      deletedLeaderboardSnapshots: summary.deletedLeaderboardSnapshots,
+      deletedUserNotifications: summary.deletedUserNotifications,
+      leaderboardRecalculation: leaderboardWarning ? "failed" : "ok"
+    });
+
+    revalidatePath("/");
+    revalidatePath("/admin/matches");
+    revalidatePath("/knockout");
+    revalidatePath("/leaderboard");
+    revalidatePath("/predictions");
+    revalidatePath("/profile");
+    revalidatePath("/dashboard");
+    revalidatePath("/groups");
+    revalidatePath("/my-groups");
+    revalidatePath("/help");
+
+    const deletedCounts = {
+      groupPredictions: summary.deletedPredictions,
+      predictionScores: summary.deletedPredictionScores,
+      leaderboardEntries: summary.deletedLeaderboardSnapshots,
+      leaderboardEvents: summary.deletedLeaderboardEvents,
+      groupStandingsOrDerivedRows: summary.deletedGeneratedArtifacts ?? 0,
+      knockoutSeededRowsIfApplicable: summary.deletedKnockoutSeedArtifacts ?? 0
+    } as const;
+
+    const hasLingeringArtifacts =
+      (summary.lingeringNonOpenMatchCount ?? 0) > 0 || (summary.lingeringScoredMatchCount ?? 0) > 0;
+
+    if (leaderboardWarning || hasLingeringArtifacts) {
+      const result = {
+        ok: true,
+        warning: true,
+        resetMatchCount: summary.resetMatchCount,
+        deletedPredictions: summary.deletedPredictions,
+        deletedPredictionScores: summary.deletedPredictionScores,
+        deletedLeaderboardEvents: summary.deletedLeaderboardEvents,
+        deletedLeaderboardSnapshots: summary.deletedLeaderboardSnapshots,
+        deletedUserNotifications: summary.deletedUserNotifications,
+        deletedCounts,
+        message:
+          leaderboardWarning
+            ? "Group-stage testing data was reset, but leaderboard recalculation failed. Run leaderboard repair manually."
+            : "Group-stage testing data was reset, but some matches or generated artifacts may still remain. Check logs."
+      } satisfies ResetGroupStageTestingDataResult;
+      console.info("[group-reset] reset completed", {
+        ok: result.ok,
+        warning: result.warning,
+        deletedCounts
+      });
+      console.info("[group-reset] returned result", result);
+      return result;
+    }
+
+    const result = {
+      ok: true,
+      warning: false,
+      resetMatchCount: summary.resetMatchCount,
+      deletedPredictions: summary.deletedPredictions,
+      deletedPredictionScores: summary.deletedPredictionScores,
+      deletedLeaderboardEvents: summary.deletedLeaderboardEvents,
+      deletedLeaderboardSnapshots: summary.deletedLeaderboardSnapshots,
+      deletedUserNotifications: summary.deletedUserNotifications,
+      deletedCounts,
+      message:
+        "Group-stage testing data was reset. Group matches were returned to open, player predictions were cleared, and generated group standings/seed artifacts were removed."
+    } satisfies ResetGroupStageTestingDataResult;
+    console.info("[group-reset] reset completed", {
+      ok: result.ok,
+      warning: result.warning,
+      deletedCounts
+    });
+    console.info("[group-reset] returned result", result);
+    return result;
+  } catch (error) {
+    const message = buildAdminActionErrorMessage(error, "Group-stage reset failed before completion.");
+    const result = { ok: false, message } satisfies ResetGroupStageTestingDataResult;
+    console.error("[group-reset] reset failed", {
+      message,
+      error
+    });
+    return result;
+  }
+}
+
+export async function getDestructiveAdminToolStatusAction(): Promise<DestructiveAdminToolStatusResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  logTestingResetEnvDiagnostics("getDestructiveAdminToolStatusAction", {
+    adminUserId: superAdminCheck.userId,
+    adminEmail: superAdminCheck.email
+  });
+  const diagnostics = getResetDiagnostics();
+  return {
+    ok: true,
+    knockout: getTestingResetAvailability("knockout"),
+    group: getTestingResetAvailability("group"),
+    diagnostics
+  };
+}
+
+async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<typeof createAdminClient>) {
+  const { data: knockoutMatches, error: knockoutMatchesError } = await adminSupabase
+    .from("matches")
+    .select("id,stage,status")
+    .neq("stage", "group");
+
+  if (knockoutMatchesError) {
+    throw knockoutMatchesError;
+  }
+
+  const mappedKnockoutMatches = (knockoutMatches ?? []) as Array<{
+    id: string;
+    stage: MatchStage | string;
+    status?: string | null;
+  }>;
+  const unknownNonGroupMatches = mappedKnockoutMatches.filter((match) => !isKnockoutStage(match.stage));
+  if (unknownNonGroupMatches.length > 0) {
+    throw new Error("Found non-group matches with unknown knockout stages. Aborting knockout reset.");
+  }
+
+  const knockoutMatchIds = mappedKnockoutMatches.map((match) => match.id);
+  const statusBreakdown = buildResetStatusBreakdown(mappedKnockoutMatches.map((match) => match.status ?? "unknown"));
+  if (knockoutMatchIds.length === 0) {
+    throw new Error("No knockout matches were found. Aborting knockout reset.");
+  }
+
+  const { data: leaderboardEventRows, error: leaderboardEventRowsError } = await adminSupabase
+    .from("leaderboard_events")
+    .select("id")
+    .in("match_id", knockoutMatchIds);
+  if (leaderboardEventRowsError) {
+    throw leaderboardEventRowsError;
+  }
+
+  const leaderboardEventIds = (leaderboardEventRows ?? []).map((row) => row.id);
+
+  const [
+    bracketPredictionsResult,
+    bracketScoresResult,
+    predictionScoresResult,
+    leaderboardEventsResult,
+    leaderboardSnapshotsResult,
+    userNotificationsResult
+  ] = await Promise.all([
+    adminSupabase.from("bracket_predictions").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
+    adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
+    adminSupabase.from("prediction_scores").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
+    adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
+    adminSupabase.from("leaderboard_snapshots").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
+    leaderboardEventIds.length > 0
+      ? adminSupabase.from("user_notifications").select("id", { count: "exact", head: true }).in("event_id", leaderboardEventIds)
+      : Promise.resolve({ count: 0, error: null } as { count: number; error: null })
+  ]);
+
+  for (const result of [
+    bracketPredictionsResult,
+    bracketScoresResult,
+    predictionScoresResult,
+    leaderboardEventsResult,
+    leaderboardSnapshotsResult,
+    userNotificationsResult
+  ]) {
+    if (result.error) {
+      throw result.error;
+    }
+  }
+
+  const deletionResults = await Promise.all([
+    adminSupabase.from("bracket_predictions").delete().in("match_id", knockoutMatchIds),
+    adminSupabase.from("bracket_scores").delete().in("match_id", knockoutMatchIds),
+    adminSupabase.from("prediction_scores").delete().in("match_id", knockoutMatchIds),
+    adminSupabase.from("leaderboard_snapshots").delete().in("match_id", knockoutMatchIds),
+    adminSupabase.from("leaderboard_events").delete().in("match_id", knockoutMatchIds)
+  ]);
+
+  const failedDeletion = deletionResults.find((result) => result.error);
+  if (failedDeletion?.error) {
+    throw failedDeletion.error;
+  }
+
+  const { data: updatedMatches, error: updateMatchesError } = await adminSupabase
+    .from("matches")
+    .update({
+      home_team_id: null,
+      away_team_id: null,
+      home_score: null,
+      away_score: null,
+      status: "scheduled",
+      winner_team_id: null,
+      updated_at: new Date().toISOString()
+    })
+    .in("id", knockoutMatchIds)
+    .select("id");
+  if (updateMatchesError) {
+    throw updateMatchesError;
+  }
+
+  return {
+    targetMatchCount: knockoutMatchIds.length,
+    statusBreakdown,
+    reset_match_count: (updatedMatches ?? []).length,
+    deleted_bracket_prediction_count: bracketPredictionsResult.count ?? 0,
+    deleted_bracket_score_count: bracketScoresResult.count ?? 0,
+    deleted_prediction_score_count: predictionScoresResult.count ?? 0,
+    deleted_leaderboard_event_count: leaderboardEventsResult.count ?? 0,
+    deleted_leaderboard_snapshot_count: leaderboardSnapshotsResult.count ?? 0,
+    deleted_user_notification_count: userNotificationsResult.count ?? 0
+  } satisfies KnockoutResetRpcRow;
+}
+
+async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<typeof createAdminClient>) {
+  const groupMatchesResult = await selectGroupResetMatches(adminSupabase);
+  const { data: groupMatches, error: groupMatchesError } = groupMatchesResult;
+
+  if (groupMatchesError) {
+    throw new Error(buildAdminActionErrorMessage(groupMatchesError, "Could not load group-stage matches for reset."));
+  }
+
+  const mappedGroupMatches = (groupMatches ?? []) as Array<{
+    id: string;
+    stage: MatchStage | string;
+    status?: string | null;
+  }>;
+  if (mappedGroupMatches.some((match) => match.stage !== "group")) {
+    throw new Error("Found non-group matches in the group reset target set. Aborting group-stage reset.");
+  }
+
+  const groupMatchIds = mappedGroupMatches.map((match) => match.id);
+  const statusBreakdown = buildResetStatusBreakdown(mappedGroupMatches.map((match) => match.status ?? "unknown"));
+  if (groupMatchIds.length === 0) {
+    throw new Error("No group-stage matches were found. Aborting group-stage reset.");
+  }
+
+  const { data: knockoutMatches, error: knockoutMatchesError } = await adminSupabase
+    .from("matches")
+    .select("id,stage,status,home_team_id,away_team_id,home_score,away_score,winner_team_id")
+    .neq("stage", "group");
+
+  if (knockoutMatchesError) {
+    throw new Error(buildAdminActionErrorMessage(knockoutMatchesError, "Could not load knockout matches for derived artifact reset."));
+  }
+
+  const mappedKnockoutMatches = ((knockoutMatches ?? []) as MatchRow[]).filter((match) => isKnockoutStage(match.stage));
+  const knockoutMatchIds = mappedKnockoutMatches.map((match) => match.id);
+  const knockoutSeededRowsIfApplicable = mappedKnockoutMatches.filter(
+    (match) =>
+      match.home_team_id != null ||
+      match.away_team_id != null ||
+      match.home_score != null ||
+      match.away_score != null ||
+      match.winner_team_id != null ||
+      match.status !== "scheduled"
+  );
+
+  const scoredOrFinalizedBeforeReset = (groupMatches ?? []).filter((match) => {
+    const row = match as MatchRow;
+    return (
+      row.status !== "scheduled" ||
+      row.home_score != null ||
+      row.away_score != null ||
+      row.winner_team_id != null ||
+      row.finalized_at != null ||
+      row.is_manual_override === true
+    );
+  }).length;
+
+  const { data: leaderboardEventRows, error: leaderboardEventRowsError } = await adminSupabase
+    .from("leaderboard_events")
+    .select("id")
+    .in("match_id", groupMatchIds);
+  if (leaderboardEventRowsError) {
+    throw new Error(buildAdminActionErrorMessage(leaderboardEventRowsError, "Could not load group-stage leaderboard events for reset."));
+  }
+
+  const leaderboardEventIds = (leaderboardEventRows ?? []).map((row) => row.id);
+
+  const [
+    predictionsResult,
+    predictionScoresResult,
+    leaderboardEventsResult,
+    leaderboardSnapshotsResult,
+    userNotificationsResult,
+    knockoutSeedArtifactCountResult
+  ] = await Promise.all([
+    adminSupabase.from("predictions").select("id", { count: "exact", head: true }).in("match_id", groupMatchIds),
+    countOptionalMatchRows(adminSupabase, "prediction_scores", groupMatchIds),
+    countOptionalMatchRows(adminSupabase, "leaderboard_events", groupMatchIds),
+    countOptionalMatchRows(adminSupabase, "leaderboard_snapshots", groupMatchIds),
+    leaderboardEventIds.length > 0
+      ? countOptionalEventNotificationRows(adminSupabase, leaderboardEventIds)
+      : Promise.resolve({ count: 0, error: null } as { count: number; error: null }),
+    Promise.resolve({ count: 0, error: null } as { count: number; error: null })
+  ]);
+
+  const inspectionResults = [
+    { label: "predictions", result: predictionsResult, optional: false },
+    { label: "prediction_scores", result: predictionScoresResult, optional: true },
+    { label: "leaderboard_events", result: leaderboardEventsResult, optional: true },
+    { label: "leaderboard_snapshots", result: leaderboardSnapshotsResult, optional: true },
+    { label: "user_notifications", result: userNotificationsResult, optional: true },
+    { label: "knockout_seed_artifacts", result: knockoutSeedArtifactCountResult, optional: true }
+  ] as const;
+
+  for (const { label, result, optional } of inspectionResults) {
+    if (result.error) {
+      if (optional) {
+        console.warn("[group-reset:optional-inspection-skipped]", {
+          label,
+          message: buildAdminActionErrorMessage(result.error, "Optional inspection failed.")
+        });
+        continue;
+      }
+
+      throw new Error(
+        buildAdminActionErrorMessage(result.error, `Could not inspect required group-stage testing rows before reset (${label}).`)
+      );
+    }
+  }
+
+  console.info("[group-reset:before]", {
+    targetMatchCount: groupMatchIds.length,
+    statusBreakdownBeforeReset: statusBreakdown,
+    scoredOrFinalizedBeforeReset,
+    generatedArtifactRowsBeforeReset:
+      (leaderboardSnapshotsResult.count ?? 0) + (knockoutSeedArtifactCountResult.count ?? 0),
+    knockoutSeededRowsBeforeReset: knockoutSeededRowsIfApplicable.length
+  });
+
+  const deletionResults = await Promise.all([
+    adminSupabase.from("predictions").delete().in("match_id", groupMatchIds),
+    deleteOptionalMatchRows(adminSupabase, "prediction_scores", groupMatchIds),
+    deleteOptionalMatchRows(adminSupabase, "leaderboard_snapshots", groupMatchIds),
+    deleteOptionalMatchRows(adminSupabase, "leaderboard_events", groupMatchIds)
+  ]);
+  const failedDeletion = deletionResults.find((result) => result.error);
+  if (failedDeletion?.error) {
+    throw new Error(buildAdminActionErrorMessage(failedDeletion.error, "Could not delete group-stage testing rows."));
+  }
+
+  let deletedKnockoutSeedArtifacts = 0;
+  if (knockoutMatchIds.length > 0) {
+    const knockoutDeletionResults = await Promise.all([
+      adminSupabase.from("bracket_predictions").delete().in("match_id", knockoutMatchIds),
+      adminSupabase.from("bracket_scores").delete().in("match_id", knockoutMatchIds),
+      adminSupabase.from("prediction_scores").delete().in("match_id", knockoutMatchIds),
+      adminSupabase.from("leaderboard_snapshots").delete().in("match_id", knockoutMatchIds),
+      adminSupabase.from("leaderboard_events").delete().in("match_id", knockoutMatchIds),
+      adminSupabase
+        .from("matches")
+        .update({
+          home_team_id: null,
+          away_team_id: null,
+          home_score: null,
+          away_score: null,
+          status: "scheduled",
+          winner_team_id: null,
+          finalized_at: null,
+          last_synced_at: null,
+          is_manual_override: false,
+          sync_status: null,
+          sync_error: null,
+          updated_at: new Date().toISOString()
+        })
+        .in("id", knockoutMatchIds)
+    ]);
+    const failedKnockoutDeletion = knockoutDeletionResults.find((result) => result.error);
+    if (failedKnockoutDeletion?.error) {
+      if (!isOptionalResetColumnError(failedKnockoutDeletion.error.message)) {
+        throw new Error(
+          buildAdminActionErrorMessage(failedKnockoutDeletion.error, "Could not clear knockout artifacts derived from group testing.")
+        );
+      }
+
+      const fallbackKnockoutUpdate = await adminSupabase
+        .from("matches")
+        .update({
+          home_team_id: null,
+          away_team_id: null,
+          home_score: null,
+          away_score: null,
+          status: "scheduled",
+          winner_team_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .in("id", knockoutMatchIds);
+
+      if (fallbackKnockoutUpdate.error) {
+        throw new Error(
+          buildAdminActionErrorMessage(fallbackKnockoutUpdate.error, "Could not clear derived knockout match state with fallback reset.")
+        );
+      }
+    }
+
+    deletedKnockoutSeedArtifacts = knockoutSeededRowsIfApplicable.length;
+  }
+
+  await updateGroupResetMatches(adminSupabase, groupMatchIds);
+
+  const postResetResult = await selectGroupResetMatches(adminSupabase);
+  if (postResetResult.error) {
+    throw new Error(buildAdminActionErrorMessage(postResetResult.error, "Could not verify group-stage reset state after update."));
+  }
+
+  let postResetRows = ((postResetResult.data ?? []) as Array<{
+    id: string;
+    stage?: string | null;
+    status?: string | null;
+    home_score?: number | null;
+    away_score?: number | null;
+    winner_team_id?: string | null;
+    finalized_at?: string | null;
+    is_manual_override?: boolean | null;
+  }>).filter((match) => match.stage === "group");
+  let postResetStatusBreakdown = buildResetStatusBreakdown(postResetRows.map((match) => match.status ?? "unknown"));
+  let lingeringRows = postResetRows.filter(
+    (match) =>
+      match.status !== "scheduled" ||
+      match.home_score != null ||
+      match.away_score != null ||
+      match.winner_team_id != null ||
+      match.finalized_at != null ||
+      match.is_manual_override === true
+  );
+
+  if (lingeringRows.length > 0) {
+    await updateGroupResetMatches(
+      adminSupabase,
+      lingeringRows.map((match) => match.id)
+    );
+
+    const secondPostResetResult = await selectGroupResetMatches(adminSupabase);
+    if (secondPostResetResult.error) {
+      throw new Error(
+        buildAdminActionErrorMessage(secondPostResetResult.error, "Could not verify lingering group-stage rows after fallback reset.")
+      );
+    }
+
+    postResetRows = ((secondPostResetResult.data ?? []) as Array<{
+      id: string;
+      stage?: string | null;
+      status?: string | null;
+      home_score?: number | null;
+      away_score?: number | null;
+      winner_team_id?: string | null;
+      finalized_at?: string | null;
+      is_manual_override?: boolean | null;
+    }>).filter((match) => match.stage === "group");
+    postResetStatusBreakdown = buildResetStatusBreakdown(postResetRows.map((match) => match.status ?? "unknown"));
+    lingeringRows = postResetRows.filter(
+      (match) =>
+        match.status !== "scheduled" ||
+        match.home_score != null ||
+        match.away_score != null ||
+        match.winner_team_id != null ||
+        match.finalized_at != null ||
+        match.is_manual_override === true
+    );
+  }
+
+  const lingeringNonOpenMatchCount = postResetRows.filter((match) => match.status !== "scheduled").length;
+  const lingeringScoredMatchCount = lingeringRows.length;
+
+  console.info("[group-reset:after]", {
+    resetMatchCount: postResetRows.length,
+    statusBreakdownAfterReset: postResetStatusBreakdown,
+    lingeringNonOpenMatchCount,
+    lingeringScoredMatchCount,
+    deletedPredictions: predictionsResult.count ?? 0,
+    deletedPredictionScores: predictionScoresResult.count ?? 0,
+    deletedLeaderboardEvents: leaderboardEventsResult.count ?? 0,
+    deletedLeaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0,
+    deletedGeneratedArtifacts:
+      (leaderboardSnapshotsResult.count ?? 0) + (knockoutSeedArtifactCountResult.count ?? 0),
+    deletedKnockoutSeedArtifacts
+  });
+
+  return {
+    targetMatchCount: groupMatchIds.length,
+    statusBreakdown,
+    resetMatchCount: postResetRows.length,
+    deletedPredictions: predictionsResult.count ?? 0,
+    deletedPredictionScores: predictionScoresResult.count ?? 0,
+    deletedLeaderboardEvents: leaderboardEventsResult.count ?? 0,
+    deletedLeaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0,
+    deletedUserNotifications: userNotificationsResult.count ?? 0,
+    deletedGeneratedArtifacts: (leaderboardSnapshotsResult.count ?? 0) + (knockoutSeedArtifactCountResult.count ?? 0),
+    deletedKnockoutSeedArtifacts,
+    postResetStatusBreakdown,
+    lingeringNonOpenMatchCount,
+    lingeringScoredMatchCount
+  } satisfies ResetOperationSummary;
+}
+
+async function countOptionalMatchRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  tableName: "prediction_scores" | "leaderboard_events" | "leaderboard_snapshots",
+  matchIds: string[]
+) {
+  const result = await adminSupabase.from(tableName).select("id", { count: "exact", head: true }).in("match_id", matchIds);
+  if (result.error && isMissingRelationError(result.error.message, `public.${tableName}`)) {
+    return { count: 0, error: null };
+  }
+
+  return result;
+}
+
+async function deleteOptionalMatchRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  tableName: "prediction_scores" | "leaderboard_events" | "leaderboard_snapshots",
+  matchIds: string[]
+) {
+  const result = await adminSupabase.from(tableName).delete().in("match_id", matchIds);
+  if (result.error && isMissingRelationError(result.error.message, `public.${tableName}`)) {
+    return { error: null };
+  }
+
+  return result;
+}
+
+async function countOptionalEventNotificationRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  eventIds: string[]
+) {
+  const result = await adminSupabase.from("user_notifications").select("id", { count: "exact", head: true }).in("event_id", eventIds);
+  if (result.error && isMissingRelationError(result.error.message, "public.user_notifications")) {
+    return { count: 0, error: null };
+  }
+
+  return result;
+}
+
+function buildResetStatusBreakdown(statuses: string[]) {
+  return statuses.reduce<Record<string, number>>((accumulator, status) => {
+    accumulator[status] = (accumulator[status] ?? 0) + 1;
+    return accumulator;
+  }, {});
+}
+
+async function selectGroupResetMatches(adminSupabase: ReturnType<typeof createAdminClient>) {
+  const fullSelect = await adminSupabase
+    .from("matches")
+    .select("id,stage,status,home_score,away_score,winner_team_id,finalized_at,is_manual_override")
+    .eq("stage", "group");
+
+  if (!fullSelect.error) {
+    return fullSelect;
+  }
+
+  if (!isOptionalResetColumnError(fullSelect.error.message)) {
+    return fullSelect;
+  }
+
+  return adminSupabase
+    .from("matches")
+    .select("id,stage,status,home_score,away_score,winner_team_id")
+    .eq("stage", "group");
+}
+
+async function updateGroupResetMatches(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupMatchIds: string[]
+) {
+  const fullUpdate = await adminSupabase
+    .from("matches")
+    .update({
+      home_score: null,
+      away_score: null,
+      status: "scheduled",
+      winner_team_id: null,
+      finalized_at: null,
+      last_synced_at: null,
+      is_manual_override: false,
+      sync_status: null,
+      sync_error: null,
+      updated_at: new Date().toISOString()
+    })
+    .in("id", groupMatchIds);
+
+  if (!fullUpdate.error) {
+    return fullUpdate;
+  }
+
+  if (!isOptionalResetColumnError(fullUpdate.error.message)) {
+    return fullUpdate;
+  }
+
+  return adminSupabase
+    .from("matches")
+    .update({
+      home_score: null,
+      away_score: null,
+      status: "scheduled",
+      winner_team_id: null,
+      updated_at: new Date().toISOString()
+    })
+    .in("id", groupMatchIds);
+}
+
+function isOptionalResetColumnError(message: string) {
+  const optionalColumns = [
+    "finalized_at",
+    "last_synced_at",
+    "is_manual_override",
+    "sync_status",
+    "sync_error"
+  ];
+
+  return optionalColumns.some((column) => isSchemaColumnMissing(message, column));
+}
+
+function buildAdminActionErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    return message ? message : fallback;
+  }
+
+  if (error && typeof error === "object") {
+    const maybeError = error as {
+      message?: unknown;
+      details?: unknown;
+      hint?: unknown;
+      code?: unknown;
+    };
+    const parts = [fallback];
+
+    if (typeof maybeError.message === "string" && maybeError.message.trim()) {
+      parts.push(maybeError.message.trim());
+    }
+
+    if (typeof maybeError.details === "string" && maybeError.details.trim()) {
+      parts.push(`Details: ${maybeError.details.trim()}`);
+    }
+
+    if (typeof maybeError.hint === "string" && maybeError.hint.trim()) {
+      parts.push(`Hint: ${maybeError.hint.trim()}`);
+    }
+
+    if (typeof maybeError.code === "string" && maybeError.code.trim()) {
+      parts.push(`Code: ${maybeError.code.trim()}`);
+    }
+
+    return parts.join(" ");
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return `${fallback} ${error.trim()}`;
+  }
+
+  return fallback;
+}
+
+function isSchemaColumnMissing(message: string, column: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes(column.toLowerCase()) &&
+    ((normalized.includes("column") && normalized.includes("does not exist")) || normalized.includes("schema cache"))
+  );
 }
 
 export async function seedKnockoutFromGroupStageAction(
@@ -2509,6 +3602,149 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
   };
 }
 
+function isBatchFinalizeScopeMatch(
+  match: MatchRow & { status?: string | null },
+  scope: BatchFinalizeMatchScope
+) {
+  const isKnockout = isKnockoutStage(match.stage);
+  const status = match.status ?? "scheduled";
+
+  switch (scope) {
+    case "group-only":
+      return match.stage === "group";
+    case "knockout-only":
+      return isKnockout;
+    case "open-only":
+      return status === "scheduled";
+    case "locked-live-only":
+      return status === "locked" || status === "live";
+    case "open-locked-live":
+      return status === "scheduled" || status === "locked" || status === "live";
+    case "all":
+    default:
+      return true;
+  }
+}
+
+function generateBatchFinalizeScore(
+  match: MatchRow & {
+    home_team?: { id: string; name: string; fifa_rank?: number | null } | Array<{ id: string; name: string; fifa_rank?: number | null }> | null;
+    away_team?: { id: string; name: string; fifa_rank?: number | null } | Array<{ id: string; name: string; fifa_rank?: number | null }> | null;
+  },
+  style: BatchFinalizeMatchResultStyle
+): { homeScore: number; awayScore: number; winnerTeamId: string | null } | null {
+  if (!match.home_team_id || !match.away_team_id) {
+    return null;
+  }
+
+  const homeTeam = normalizeBatchFinalizeTeamJoin(match.home_team);
+  const awayTeam = normalizeBatchFinalizeTeamJoin(match.away_team);
+  const isKnockout = isKnockoutStage(match.stage);
+  const drawAllowed = !isKnockout && style !== "knockout-no-draw";
+
+  const realisticScores: Array<[number, number]> = [
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [2, 1],
+    [2, 0],
+    [0, 1],
+    [1, 2],
+    [3, 1],
+    [3, 2]
+  ];
+  const funScores: Array<[number, number]> = [
+    [0, 0],
+    [2, 2],
+    [3, 3],
+    [4, 2],
+    [5, 3],
+    [4, 1],
+    [1, 4],
+    [3, 0],
+    [0, 3]
+  ];
+  const drawHeavyScores: Array<[number, number]> = [
+    [0, 0],
+    [1, 1],
+    [2, 2],
+    [1, 0],
+    [0, 1],
+    [2, 1],
+    [1, 2]
+  ];
+
+  let [homeScore, awayScore] = pickRandomScore(
+    style === "fun" ? funScores : style === "draw-heavy" ? drawHeavyScores : realisticScores
+  );
+
+  if (style === "favorites") {
+    const homeRank = homeTeam?.fifa_rank ?? 999;
+    const awayRank = awayTeam?.fifa_rank ?? 999;
+    const homeFavored = homeRank <= awayRank;
+    [homeScore, awayScore] = pickFavoriteScore(homeFavored, drawAllowed);
+  }
+
+  if (!drawAllowed && homeScore === awayScore) {
+    const boostHome = Math.random() >= 0.5;
+    if (boostHome) {
+      homeScore += 1;
+    } else {
+      awayScore += 1;
+    }
+  }
+
+  const winnerTeamId =
+    homeScore === awayScore ? null : homeScore > awayScore ? match.home_team_id ?? null : match.away_team_id ?? null;
+
+  return { homeScore, awayScore, winnerTeamId };
+}
+
+function normalizeBatchFinalizeTeamJoin(
+  value:
+    | { id: string; name: string; fifa_rank?: number | null }
+    | Array<{ id: string; name: string; fifa_rank?: number | null }>
+    | null
+    | undefined
+) {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return value ?? null;
+}
+
+function pickRandomScore(scores: Array<[number, number]>) {
+  return scores[Math.floor(Math.random() * scores.length)] ?? [1, 0];
+}
+
+function pickFavoriteScore(homeFavored: boolean, drawAllowed: boolean): [number, number] {
+  const favoredWins: Array<[number, number]> = homeFavored
+    ? [
+        [1, 0],
+        [2, 0],
+        [2, 1],
+        [3, 1]
+      ]
+    : [
+        [0, 1],
+        [0, 2],
+        [1, 2],
+        [1, 3]
+      ];
+
+  const draws: Array<[number, number]> = [
+    [0, 0],
+    [1, 1]
+  ];
+
+  if (drawAllowed && Math.random() < 0.2) {
+    return pickRandomScore(draws);
+  }
+
+  return pickRandomScore(favoredWins);
+}
+
 async function loadScoreableMatch(
   adminSupabase: ReturnType<typeof createAdminClient>,
   matchId: string
@@ -2804,6 +4040,32 @@ async function assertCurrentUserIsAdmin(): Promise<{ ok: true; userId: string } 
   }
 
   return { ok: true, userId: user.id };
+}
+
+async function assertCurrentUserIsSuperAdmin(): Promise<
+  { ok: true; userId: string; email: string | null } | { ok: false; message: string }
+> {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in as a super admin to use destructive admin tools." };
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from("users")
+    .select("role,email")
+    .eq("id", user.id)
+    .single();
+
+  if (profileError || profile?.role !== "admin") {
+    return { ok: false, message: "Only super admins can use destructive admin tools." };
+  }
+
+  return { ok: true, userId: user.id, email: profile.email ?? user.email ?? null };
 }
 
 async function recalculateLeaderboard(
@@ -3379,9 +4641,16 @@ function mapMatchRow(row: MatchRow) {
     homeSource: row.home_source ?? undefined,
     awaySource: row.away_source ?? undefined,
     kickoffTime: row.kickoff_time ?? "",
+    kickoffAt: row.kickoff_at ?? row.kickoff_time ?? null,
     homeScore: row.home_score ?? undefined,
     awayScore: row.away_score ?? undefined,
     winnerTeamId: row.winner_team_id ?? undefined,
+    finalizedAt: row.finalized_at ?? null,
+    lastSyncedAt: row.last_synced_at ?? null,
+    externalId: row.external_id ?? null,
+    isManualOverride: row.is_manual_override ?? false,
+    syncStatus: row.sync_status ?? null,
+    syncError: row.sync_error ?? null,
     nextMatchId: row.next_match_id ?? null,
     nextMatchSlot: row.next_match_slot ?? null,
     updatedAt: row.updated_at ?? undefined
