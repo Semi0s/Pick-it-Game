@@ -51,38 +51,38 @@ export function DashboardHero({
           </p>
         </div>
         <div className="mx-auto mt-5 max-w-xl">
-          <div className="space-y-2">
+          <div>
+            <div className="grid grid-cols-4 gap-2">
             <Link
               href={ctaHref}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
+              className="inline-flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-accent bg-accent px-2 py-3 text-center text-[10px] font-bold uppercase tracking-wide text-white transition hover:border-accent-dark hover:bg-accent-dark"
             >
-              <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
-              {ctaLabel}
+              <SquareCheckBig aria-hidden className="h-5 w-5 shrink-0 text-white" />
+              <span className="text-center leading-tight normal-case tracking-normal text-[11px]">{ctaLabel}</span>
             </Link>
-            <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={onAutoPick}
                 disabled={isAutoPicking}
-                className="inline-flex min-h-[62px] flex-col items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <Sparkles aria-hidden className="h-4 w-4 shrink-0 text-accent-dark" />
+                <Sparkles aria-hidden className="h-5 w-5 shrink-0 text-accent-dark" />
                 <span className="text-center leading-tight normal-case tracking-normal text-[11px]">
                   {isAutoPicking ? autoPickLoadingLabel : autoPickLabel}
                 </span>
               </button>
               <Link
                 href="/knockout"
-                className="inline-flex min-h-[62px] flex-col items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                className="inline-flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
               >
-                <Network aria-hidden className="h-4 w-4 shrink-0 text-accent-dark" />
+                <Network aria-hidden className="h-5 w-5 shrink-0 text-accent-dark" />
                 <span className="text-center leading-tight normal-case tracking-normal text-[11px]">My Knockout Picks</span>
               </Link>
               <Link
                 href="/trophies"
-                className="inline-flex min-h-[62px] flex-col items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                className="inline-flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
               >
-                <Trophy aria-hidden className="h-4 w-4 shrink-0 text-accent-dark" />
+                <Trophy aria-hidden className="h-5 w-5 shrink-0 text-accent-dark" />
                 <span className="text-center leading-tight normal-case tracking-normal text-[11px]">My Side Picks</span>
               </Link>
             </div>

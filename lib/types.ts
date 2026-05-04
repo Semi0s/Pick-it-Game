@@ -104,6 +104,8 @@ export type BracketPrediction = {
   userId: string;
   matchId: string;
   predictedWinnerTeamId: string;
+  predictedHomeScore?: number | null;
+  predictedAwayScore?: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -116,8 +118,8 @@ export type BracketScore = {
   predictedWinnerTeamId: string;
   actualWinnerTeamId: string;
   roundPoints: number;
-  championPoints: number;
-  points: number;
+  exactScorePoints: number;
+  points: number | null;
   isCorrect: boolean;
   scoredAt: string;
 };

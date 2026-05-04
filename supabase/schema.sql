@@ -116,10 +116,18 @@ create table public.bracket_predictions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.users(id) on delete cascade,
   match_id text not null references public.matches(id) on delete cascade,
+  predicted_home_score integer,
+  predicted_away_score integer,
   predicted_winner_team_id text not null references public.teams(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (user_id, match_id)
+  unique (user_id, match_id),
+  constraint bracket_predictions_home_score_nonnegative check (
+    predicted_home_score is null or predicted_home_score >= 0
+  ),
+  constraint bracket_predictions_away_score_nonnegative check (
+    predicted_away_score is null or predicted_away_score >= 0
+  )
 );
 
 create table public.bracket_scores (

@@ -130,7 +130,7 @@ export function AppUpdatesCard() {
   return (
     <section
       className={`border ${
-        isOpen ? "rounded-lg p-3" : "rounded-md px-3 py-2"
+        isOpen ? "rounded-lg p-3" : "rounded-md px-3 py-1.5"
       } ${getUpdateCardSurfaceClasses(activeUpdate.cardTone, hasUnreadImportantUpdate)}`}
     >
       <div className="flex items-center justify-between gap-3">

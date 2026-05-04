@@ -1,5 +1,6 @@
 node_modules
 .next
+.next.bak-*
 .next.prebuild-*
 .env
 .env.local

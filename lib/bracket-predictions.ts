@@ -42,6 +42,8 @@ type BracketPredictionRow = {
   id: string;
   user_id: string;
   match_id: string;
+  predicted_home_score: number | null;
+  predicted_away_score: number | null;
   predicted_winner_team_id: string;
   created_at: string;
   updated_at: string;
@@ -56,7 +58,7 @@ type BracketScoreRow = {
   actual_winner_team_id: string;
   round_points: number;
   champion_points: number;
-  points: number;
+  points: number | null;
   is_correct: boolean;
   scored_at: string;
 };
@@ -173,9 +175,16 @@ export type KnockoutBracketMatchView = {
   awayTeam: BracketTeamOption | null;
   homeScore: number | null;
   awayScore: number | null;
+  predictedHomeScore: number | null;
+  predictedAwayScore: number | null;
+  savedHomeScore: number | null;
+  savedAwayScore: number | null;
   predictedWinnerTeamId: string | null;
+  savedWinnerTeamId: string | null;
+  savedAt: string | null;
   actualWinnerTeamId: string | null;
-  awardedPoints: number;
+  awardedPoints: number | null;
+  exactScorePoints: number | null;
   isCorrectWinner: boolean | null;
   isLocked: boolean;
   canSelectWinner: boolean;
@@ -222,7 +231,7 @@ export async function fetchUserBracketPredictions(userId: string): Promise<Brack
   const adminSupabase = createAdminClient();
   const { data, error } = await adminSupabase
     .from("bracket_predictions")
-    .select("id,user_id,match_id,predicted_winner_team_id,created_at,updated_at")
+    .select("id,user_id,match_id,predicted_home_score,predicted_away_score,predicted_winner_team_id,created_at,updated_at")
     .eq("user_id", userId)
     .order("updated_at", { ascending: false });
 
@@ -235,23 +244,23 @@ export async function fetchUserBracketPredictions(userId: string): Promise<Brack
 
 export async function saveBracketPrediction(
   userId: string,
-  matchId: string,
-  teamId: string
+  input: {
+    matchId: string;
+    homeScore: number;
+    awayScore: number;
+    teamId?: string | null;
+  }
 ): Promise<BracketPrediction> {
   const adminSupabase = createAdminClient();
   const editState = await getBracketEditState(adminSupabase);
   if (!editState.editable) {
-    if (editState.reason === "not_seeded") {
-      throw new Error("Knockout picks are not available until the Round of 32 is seeded.");
-    }
-
-    throw new Error("Knockout picks are locked because the first Round of 32 match has already started.");
+    throw new Error("Knockout picks are not available until the Round of 32 is seeded.");
   }
 
   const { data: match, error: matchError } = await adminSupabase
     .from("matches")
     .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,winner_team_id,next_match_id,next_match_slot")
-    .eq("id", matchId)
+    .eq("id", input.matchId)
     .single();
 
   if (matchError) {
@@ -263,12 +272,56 @@ export async function saveBracketPrediction(
     throw new Error("Bracket picks can only be saved for knockout matches.");
   }
 
-  if (!matchRow.home_team_id || !matchRow.away_team_id) {
+  if (isKnockoutMatchLocked(matchRow)) {
+    throw new Error(`This ${formatMatchStage(matchRow.stage).toLowerCase()} match is locked because kickoff has passed.`);
+  }
+
+  const { data: allKnockoutMatches, error: allKnockoutMatchesError } = await adminSupabase
+    .from("matches")
+    .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,winner_team_id,next_match_id,next_match_slot")
+    .neq("stage", "group");
+
+  if (allKnockoutMatchesError) {
+    throw allKnockoutMatchesError;
+  }
+
+  const knockoutMatches = ((allKnockoutMatches ?? []) as MatchRow[]).filter((candidate) => isKnockoutStage(candidate.stage));
+  const previousMatchesByNextMatchId = buildPreviousMatchesByNextMatchId(knockoutMatches);
+  const { data: predictionRows, error: predictionRowsError } = await adminSupabase
+    .from("bracket_predictions")
+    .select("id,user_id,match_id,predicted_home_score,predicted_away_score,predicted_winner_team_id,created_at,updated_at")
+    .eq("user_id", userId);
+
+  if (predictionRowsError) {
+    throw predictionRowsError;
+  }
+
+  const predictionsByMatchId = new Map(
+    ((predictionRows ?? []) as BracketPredictionRow[]).map((row) => [row.match_id, mapBracketPredictionRow(row)])
+  );
+  const availableTeamIds = getAvailableKnockoutTeamIdsForMatch(
+    matchRow,
+    previousMatchesByNextMatchId,
+    predictionsByMatchId,
+    "official"
+  );
+
+  if (!availableTeamIds.homeTeamId || !availableTeamIds.awayTeamId) {
     throw new Error(`This ${formatMatchStage(matchRow.stage).toLowerCase()} match is not fully seeded yet.`);
   }
 
-  if (![matchRow.home_team_id, matchRow.away_team_id].includes(teamId)) {
-    throw new Error("Choose one of the two teams in this match.");
+  const homeScore = normalizeBracketScore(input.homeScore);
+  const awayScore = normalizeBracketScore(input.awayScore);
+  const inferredWinnerTeamId = inferBracketWinnerTeamId({
+    homeScore,
+    awayScore,
+    homeTeamId: availableTeamIds.homeTeamId,
+    awayTeamId: availableTeamIds.awayTeamId,
+    explicitWinnerTeamId: input.teamId ?? null
+  });
+
+  if (!inferredWinnerTeamId) {
+    throw new Error("Choose who advances by tapping a team name or flag.");
   }
 
   const now = new Date().toISOString();
@@ -276,7 +329,7 @@ export async function saveBracketPrediction(
     .from("bracket_predictions")
     .select("id")
     .eq("user_id", userId)
-    .eq("match_id", matchId)
+    .eq("match_id", input.matchId)
     .maybeSingle();
 
   if (existingPredictionError) {
@@ -288,11 +341,13 @@ export async function saveBracketPrediction(
     const { data, error } = await adminSupabase
       .from("bracket_predictions")
       .update({
-        predicted_winner_team_id: teamId,
+        predicted_home_score: homeScore,
+        predicted_away_score: awayScore,
+        predicted_winner_team_id: inferredWinnerTeamId,
         updated_at: now
       })
       .eq("id", (existingPrediction as { id: string }).id)
-      .select("id,user_id,match_id,predicted_winner_team_id,created_at,updated_at")
+      .select("id,user_id,match_id,predicted_home_score,predicted_away_score,predicted_winner_team_id,created_at,updated_at")
       .single();
 
     if (error) {
@@ -305,11 +360,13 @@ export async function saveBracketPrediction(
       .from("bracket_predictions")
       .insert({
         user_id: userId,
-        match_id: matchId,
-        predicted_winner_team_id: teamId,
+        match_id: input.matchId,
+        predicted_home_score: homeScore,
+        predicted_away_score: awayScore,
+        predicted_winner_team_id: inferredWinnerTeamId,
         updated_at: now
       })
-      .select("id,user_id,match_id,predicted_winner_team_id,created_at,updated_at")
+      .select("id,user_id,match_id,predicted_home_score,predicted_away_score,predicted_winner_team_id,created_at,updated_at")
       .single();
 
     if (error) {
@@ -319,7 +376,7 @@ export async function saveBracketPrediction(
     savedPrediction = mapBracketPredictionRow(data as BracketPredictionRow);
   }
 
-  await clearInvalidDescendantPredictions(adminSupabase, userId, matchId);
+  await clearInvalidDescendantPredictions(adminSupabase, userId, input.matchId);
   return savedPrediction;
 }
 
@@ -396,7 +453,7 @@ export async function fetchKnockoutBracketEditorView(userId: string): Promise<Kn
   const predictionsByMatchId = new Map(predictions.map((prediction) => [prediction.matchId, prediction]));
   const scoresByMatchId = new Map(scoreRows.map((score) => [score.matchId, score]));
   const scoreSummary = {
-    bracketPoints: scoreRows.reduce((sum, score) => sum + score.points, 0),
+    bracketPoints: scoreRows.reduce((sum, score) => sum + (score.points ?? 0), 0),
     correctPicks: scoreRows.filter((score) => score.isCorrect).length
   };
   const stages = buildKnockoutBracketStages(
@@ -603,7 +660,7 @@ export async function fetchUserBracketScores(userId: string): Promise<BracketSco
 export async function fetchUserBracketScoreSummary(userId: string): Promise<BracketScoreSummary> {
   const scores = await fetchUserBracketScores(userId);
   return {
-    bracketPoints: scores.reduce((sum, score) => sum + score.points, 0),
+    bracketPoints: scores.reduce((sum, score) => sum + (score.points ?? 0), 0),
     correctPicks: scores.filter((score) => score.isCorrect).length
   };
 }
@@ -883,11 +940,21 @@ async function getBracketEditState(adminSupabase: ReturnType<typeof createAdminC
     return { editable: false, reason: "not_seeded", firstRoundOf32Kickoff: null };
   }
 
-  if (new Date(firstRoundOf32Kickoff).getTime() <= Date.now()) {
-    return { editable: false, reason: "locked", firstRoundOf32Kickoff };
+  return { editable: true, firstRoundOf32Kickoff };
+}
+
+function isKnockoutMatchLocked(
+  match: Pick<MatchRow, "status" | "kickoff_time">
+) {
+  if (match.status === "final" || match.status === "live") {
+    return true;
   }
 
-  return { editable: true, firstRoundOf32Kickoff };
+  if (!match.kickoff_time) {
+    return false;
+  }
+
+  return new Date(match.kickoff_time).getTime() <= Date.now();
 }
 
 async function clearInvalidDescendantPredictions(
@@ -1037,16 +1104,7 @@ function buildKnockoutBracketStages(
 ): KnockoutBracketStageView[] {
   const mode = options.mode ?? "official";
   const stagesById = new Map<CanonicalKnockoutStage, KnockoutBracketMatchView[]>();
-  const previousMatchesByNextMatchId = new Map<string, MatchRow[]>();
-  for (const match of matches) {
-    if (!match.next_match_id) {
-      continue;
-    }
-
-    const current = previousMatchesByNextMatchId.get(match.next_match_id) ?? [];
-    current.push(match);
-    previousMatchesByNextMatchId.set(match.next_match_id, current);
-  }
+  const previousMatchesByNextMatchId = buildPreviousMatchesByNextMatchId(matches);
 
   for (const match of matches) {
     const stage = normalizeKnockoutStage(match.stage);
@@ -1062,15 +1120,38 @@ function buildKnockoutBracketStages(
       previousMatchesByNextMatchId,
       predictionsByMatchId,
       teamsById,
-      options.projectedTeamByMatchId
+      options.projectedTeamByMatchId,
+      mode
     );
-    const predictedWinnerTeamId = predictionsByMatchId.get(match.id)?.predictedWinnerTeamId ?? null;
+    const savedPrediction = predictionsByMatchId.get(match.id) ?? null;
+    const savedHomeScore = savedPrediction?.predictedHomeScore ?? null;
+    const savedAwayScore = savedPrediction?.predictedAwayScore ?? null;
+    const predictedWinnerTeamId = savedPrediction?.predictedWinnerTeamId ?? null;
+    const persistedScore = scoresByMatchId.get(match.id) ?? null;
+    const computedScoreBreakdown =
+      savedPrediction && match.status === "final"
+        ? scoreBracketPrediction(
+            {
+              stage: match.stage,
+              status: match.status,
+              homeScore: match.home_score ?? null,
+              awayScore: match.away_score ?? null,
+              winnerTeamId: match.winner_team_id ?? null
+            },
+            {
+              predictedWinnerTeamId,
+              predictedHomeScore: savedHomeScore,
+              predictedAwayScore: savedAwayScore
+            }
+          )
+        : null;
     const validPredictedWinnerTeamId =
       predictedWinnerTeamId &&
       [availableTeams.homeTeam?.id, availableTeams.awayTeam?.id].includes(predictedWinnerTeamId)
         ? predictedWinnerTeamId
         : null;
     const projectedSources = options.projectedSourceByMatchId?.get(match.id);
+    const matchIsLocked = isLocked || isKnockoutMatchLocked(match);
 
     const currentStageMatches = stagesById.get(stage) ?? [];
     currentStageMatches.push({
@@ -1090,16 +1171,37 @@ function buildKnockoutBracketStages(
       awayTeam: availableTeams.awayTeam,
       homeScore: match.home_score ?? null,
       awayScore: match.away_score ?? null,
+      predictedHomeScore: savedHomeScore,
+      predictedAwayScore: savedAwayScore,
+      savedHomeScore,
+      savedAwayScore,
       predictedWinnerTeamId: validPredictedWinnerTeamId,
+      savedWinnerTeamId: validPredictedWinnerTeamId,
+      savedAt: savedPrediction?.updatedAt ?? null,
       actualWinnerTeamId: match.winner_team_id ?? null,
-      awardedPoints: scoresByMatchId.get(match.id)?.points ?? 0,
-      isCorrectWinner: scoresByMatchId.get(match.id)?.isCorrect ?? null,
-      isLocked,
-      canSelectWinner: Boolean(availableTeams.homeTeam && availableTeams.awayTeam) && !isLocked,
+      awardedPoints: computedScoreBreakdown?.points ?? persistedScore?.points ?? null,
+      exactScorePoints: computedScoreBreakdown?.exactScorePoints ?? persistedScore?.exactScorePoints ?? null,
+      isCorrectWinner: computedScoreBreakdown?.isCorrect ?? persistedScore?.isCorrect ?? null,
+      isLocked: matchIsLocked,
+      canSelectWinner: Boolean(availableTeams.homeTeam && availableTeams.awayTeam) && !matchIsLocked,
       viewMode: mode,
-      homeResolutionSource: projectedSources?.home ?? (match.home_team_id ? "actual" : "missing"),
-      awayResolutionSource: projectedSources?.away ?? (match.away_team_id ? "actual" : "missing")
+      homeResolutionSource: projectedSources?.home ?? availableTeams.homeResolutionSource,
+      awayResolutionSource: projectedSources?.away ?? availableTeams.awayResolutionSource
     });
+    if (process.env.NODE_ENV !== "production" && stage !== "r32") {
+      console.debug("[knockout-slot-resolution]", {
+        round: stage,
+        matchId: match.id,
+        homeSource: match.home_source ?? null,
+        awaySource: match.away_source ?? null,
+        homeResolvedTeamId: availableTeams.homeTeam?.id ?? null,
+        homeResolvedTeamName: availableTeams.homeTeam?.name ?? null,
+        awayResolvedTeamId: availableTeams.awayTeam?.id ?? null,
+        awayResolvedTeamName: availableTeams.awayTeam?.name ?? null,
+        homeUnresolvedReason: availableTeams.homeTeam ? null : resolveSlotUnresolvedReason(homeSource, mode),
+        awayUnresolvedReason: availableTeams.awayTeam ? null : resolveSlotUnresolvedReason(awaySource, mode)
+      });
+    }
     stagesById.set(stage, currentStageMatches);
   }
 
@@ -1117,35 +1219,115 @@ function getAvailablePredictedTeamsForMatch(
   previousMatchesByNextMatchId: Map<string, MatchRow[]>,
   predictionsByMatchId: Map<string, { predictedWinnerTeamId?: string; predicted_winner_team_id?: string }>,
   teamsById: Map<string, BracketTeamOption>,
+  projectedTeamByMatchId?: Map<string, { homeTeamId: string | null; awayTeamId: string | null }>,
+  mode: "official" | "projected" = "official"
+): {
+  homeTeam: BracketTeamOption | null;
+  awayTeam: BracketTeamOption | null;
+  homeResolutionSource: ProjectedMatchScoreSource;
+  awayResolutionSource: ProjectedMatchScoreSource;
+} {
+  const { homeTeamId, awayTeamId, homeResolutionSource, awayResolutionSource } = getAvailableKnockoutTeamIdsForMatch(
+    match,
+    previousMatchesByNextMatchId,
+    predictionsByMatchId,
+    mode,
+    projectedTeamByMatchId
+  );
+
+  return {
+    homeTeam: homeTeamId ? teamsById.get(homeTeamId) ?? null : null,
+    awayTeam: awayTeamId ? teamsById.get(awayTeamId) ?? null : null,
+    homeResolutionSource,
+    awayResolutionSource
+  };
+}
+
+function getAvailableKnockoutTeamIdsForMatch(
+  match: MatchRow,
+  previousMatchesByNextMatchId: Map<string, MatchRow[]>,
+  predictionsByMatchId: Map<string, { predictedWinnerTeamId?: string; predicted_winner_team_id?: string }>,
+  mode: "official" | "projected",
   projectedTeamByMatchId?: Map<string, { homeTeamId: string | null; awayTeamId: string | null }>
-) {
+): {
+  homeTeamId: string | null;
+  awayTeamId: string | null;
+  homeResolutionSource: ProjectedMatchScoreSource;
+  awayResolutionSource: ProjectedMatchScoreSource;
+} {
   const previousMatches = previousMatchesByNextMatchId.get(match.id) ?? [];
   const homeSource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "home");
   const awaySource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "away");
   const projectedTeams = projectedTeamByMatchId?.get(match.id);
-  const homeTeamId =
-    (homeSource
-      ? predictionsByMatchId.get(homeSource.id)?.predictedWinnerTeamId ??
-        predictionsByMatchId.get(homeSource.id)?.predicted_winner_team_id ??
-        null
-      : null) ??
-    projectedTeams?.homeTeamId ??
-    match.home_team_id ??
-    null;
-  const awayTeamId =
-    (awaySource
-      ? predictionsByMatchId.get(awaySource.id)?.predictedWinnerTeamId ??
-        predictionsByMatchId.get(awaySource.id)?.predicted_winner_team_id ??
-        null
-      : null) ??
-    projectedTeams?.awayTeamId ??
-    match.away_team_id ??
-    null;
+  const resolvedHome = resolveKnockoutSourceTeam(homeSource, predictionsByMatchId, mode);
+  const resolvedAway = resolveKnockoutSourceTeam(awaySource, predictionsByMatchId, mode);
 
   return {
-    homeTeam: homeTeamId ? teamsById.get(homeTeamId) ?? null : null,
-    awayTeam: awayTeamId ? teamsById.get(awayTeamId) ?? null : null
+    homeTeamId: resolvedHome.teamId ?? projectedTeams?.homeTeamId ?? match.home_team_id ?? null,
+    awayTeamId: resolvedAway.teamId ?? projectedTeams?.awayTeamId ?? match.away_team_id ?? null,
+    homeResolutionSource:
+      resolvedHome.source ??
+      ((projectedTeams?.homeTeamId ? "prediction" : match.home_team_id ? "actual" : "missing") as ProjectedMatchScoreSource),
+    awayResolutionSource:
+      resolvedAway.source ??
+      ((projectedTeams?.awayTeamId ? "prediction" : match.away_team_id ? "actual" : "missing") as ProjectedMatchScoreSource)
   };
+}
+
+function buildPreviousMatchesByNextMatchId(matches: MatchRow[]) {
+  const previousMatchesByNextMatchId = new Map<string, MatchRow[]>();
+
+  for (const match of matches) {
+    if (!match.next_match_id) {
+      continue;
+    }
+
+    const current = previousMatchesByNextMatchId.get(match.next_match_id) ?? [];
+    current.push(match);
+    previousMatchesByNextMatchId.set(match.next_match_id, current);
+  }
+
+  return previousMatchesByNextMatchId;
+}
+
+function resolveKnockoutSourceTeam(
+  sourceMatch: MatchRow | undefined,
+  predictionsByMatchId: Map<string, { predictedWinnerTeamId?: string; predicted_winner_team_id?: string }>,
+  mode: "official" | "projected"
+): { teamId: string | null; source: ProjectedMatchScoreSource } {
+  if (!sourceMatch) {
+    return { teamId: null, source: "missing" as const };
+  }
+
+  if (sourceMatch.status === "final" && sourceMatch.winner_team_id) {
+    return { teamId: sourceMatch.winner_team_id, source: "actual" as const };
+  }
+
+  const predictedWinnerTeamId =
+    predictionsByMatchId.get(sourceMatch.id)?.predictedWinnerTeamId ??
+    predictionsByMatchId.get(sourceMatch.id)?.predicted_winner_team_id ??
+    null;
+  if (predictedWinnerTeamId) {
+    return { teamId: predictedWinnerTeamId, source: "prediction" as const };
+  }
+
+  return { teamId: null, source: mode === "projected" ? "prediction" : "missing" };
+}
+
+function resolveSlotUnresolvedReason(sourceMatch: MatchRow | undefined, mode: "official" | "projected") {
+  if (!sourceMatch) {
+    return "no_source_match";
+  }
+
+  if (sourceMatch.status !== "final") {
+    return mode === "official" || mode === "projected" ? "projected_pick_missing" : "source_match_not_final";
+  }
+
+  if (!sourceMatch.winner_team_id) {
+    return mode === "projected" || mode === "official" ? "projected_pick_missing" : "source_match_missing_winner";
+  }
+
+  return mode === "projected" ? "projected_pick_missing" : "official_winner_unresolved";
 }
 
 function buildMatchTitle(stage: CanonicalKnockoutStage, index: number) {
@@ -1199,10 +1381,48 @@ function mapBracketPredictionRow(row: BracketPredictionRow): BracketPrediction {
     id: row.id,
     userId: row.user_id,
     matchId: row.match_id,
+    predictedHomeScore: row.predicted_home_score,
+    predictedAwayScore: row.predicted_away_score,
     predictedWinnerTeamId: row.predicted_winner_team_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+}
+
+function normalizeBracketScore(score: number) {
+  if (!Number.isFinite(score)) {
+    throw new Error("Enter a valid knockout score.");
+  }
+
+  return Math.max(0, Math.trunc(score));
+}
+
+function inferBracketWinnerTeamId({
+  homeScore,
+  awayScore,
+  homeTeamId,
+  awayTeamId,
+  explicitWinnerTeamId
+}: {
+  homeScore: number;
+  awayScore: number;
+  homeTeamId: string;
+  awayTeamId: string;
+  explicitWinnerTeamId: string | null;
+}) {
+  if (homeScore > awayScore) {
+    return homeTeamId;
+  }
+
+  if (awayScore > homeScore) {
+    return awayTeamId;
+  }
+
+  if (explicitWinnerTeamId && [homeTeamId, awayTeamId].includes(explicitWinnerTeamId)) {
+    return explicitWinnerTeamId;
+  }
+
+  return null;
 }
 
 function mapBracketScoreRow(row: BracketScoreRow): BracketScore {
@@ -1214,7 +1434,7 @@ function mapBracketScoreRow(row: BracketScoreRow): BracketScore {
     predictedWinnerTeamId: row.predicted_winner_team_id,
     actualWinnerTeamId: row.actual_winner_team_id,
     roundPoints: row.round_points,
-    championPoints: row.champion_points,
+    exactScorePoints: row.champion_points,
     points: row.points,
     isCorrect: row.is_correct,
     scoredAt: row.scored_at
@@ -1227,7 +1447,7 @@ export async function scoreFinalizedKnockoutMatchWithClient(
 ) {
   const { data: match, error: matchError } = await adminSupabase
     .from("matches")
-    .select("id,stage,status,winner_team_id")
+    .select("id,stage,status,home_score,away_score,winner_team_id")
     .eq("id", matchId)
     .single();
 
@@ -1235,14 +1455,14 @@ export async function scoreFinalizedKnockoutMatchWithClient(
     throw matchError;
   }
 
-  const matchRow = match as Pick<MatchRow, "id" | "stage" | "status" | "winner_team_id">;
+  const matchRow = match as Pick<MatchRow, "id" | "stage" | "status" | "home_score" | "away_score" | "winner_team_id">;
   if (!matchRow.winner_team_id || matchRow.status !== "final" || !isKnockoutStage(matchRow.stage)) {
     return 0;
   }
 
   const { data: predictions, error: predictionsError } = await adminSupabase
     .from("bracket_predictions")
-    .select("id,user_id,match_id,predicted_winner_team_id,created_at,updated_at")
+    .select("id,user_id,match_id,predicted_home_score,predicted_away_score,predicted_winner_team_id,created_at,updated_at")
     .eq("match_id", matchId);
 
   if (predictionsError) {
@@ -1261,9 +1481,15 @@ export async function scoreFinalizedKnockoutMatchWithClient(
         {
           stage: matchRow.stage,
           status: matchRow.status,
+          homeScore: matchRow.home_score ?? null,
+          awayScore: matchRow.away_score ?? null,
           winnerTeamId: matchRow.winner_team_id
         },
-        prediction.predicted_winner_team_id
+        {
+          predictedWinnerTeamId: prediction.predicted_winner_team_id,
+          predictedHomeScore: prediction.predicted_home_score ?? null,
+          predictedAwayScore: prediction.predicted_away_score ?? null
+        }
       );
 
       return {
@@ -1273,7 +1499,7 @@ export async function scoreFinalizedKnockoutMatchWithClient(
         predicted_winner_team_id: prediction.predicted_winner_team_id,
         actual_winner_team_id: matchRow.winner_team_id,
         round_points: breakdown.roundPoints,
-        champion_points: breakdown.championPoints,
+        champion_points: breakdown.exactScorePoints,
         points: breakdown.points,
         is_correct: breakdown.isCorrect,
         scored_at: scoredAt

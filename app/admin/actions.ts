@@ -29,13 +29,13 @@ import {
   scoreFinalizedKnockoutMatchWithClient
 } from "@/lib/bracket-predictions";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
+import { isKnockoutStage, normalizeKnockoutStage } from "@/lib/match-stage";
 import {
   buildGroupStandingsByGroup,
   buildQualifiedTeamSeeds,
+  parseSeedSource,
   resolveRoundOf32SeedAssignments,
-  summarizeKnockoutSeedState,
-  type GroupStageMatchForSeeding,
-  type KnockoutPlaceholderMatch
+  summarizeKnockoutSeedState
 } from "@/lib/knockout-seeding";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 import type { MatchNextSlot, MatchStage, Team, UserRole } from "@/lib/types";
@@ -66,6 +66,14 @@ type PredictionRow = {
   predicted_is_draw: boolean;
   predicted_home_score?: number | null;
   predicted_away_score?: number | null;
+};
+
+type ProjectedBracketPickRow = {
+  user_id: string;
+  match_id: string;
+  predicted_winner_team_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 type LeaderboardTotal = {
@@ -171,6 +179,31 @@ export type UpdateMatchResult =
       match: ReturnType<typeof mapMatchRow>;
     }
     | {
+      ok: false;
+      message: string;
+    };
+
+export type RescoreKnockoutScoresResult =
+  | {
+      ok: true;
+      rescoredMatches: number;
+      rescoredPredictions: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type RepairKnockoutAdvancementResult =
+  | {
+      ok: true;
+      populatedSlots: number;
+      updatedSlots: number;
+      touchedMatches: number;
+      message: string;
+    }
+  | {
       ok: false;
       message: string;
     };
@@ -1700,6 +1733,209 @@ export async function updateUserDisplayNameAction(
   };
 }
 
+type KnockoutAdvancementUpdate = {
+  matchId: string;
+  homeTeamId?: string | null;
+  awayTeamId?: string | null;
+};
+
+type KnockoutAdvancementSummary = {
+  populatedSlots: number;
+  updatedSlots: number;
+  touchedMatches: number;
+  clearedPredictions: number;
+  clearedScores: number;
+};
+
+async function rebuildKnockoutAdvancementWithClient(
+  adminSupabase: ReturnType<typeof createAdminClient>
+): Promise<KnockoutAdvancementSummary> {
+  const { data, error } = await adminSupabase
+    .from("matches")
+    .select(
+      "id,stage,status,home_team_id,away_team_id,home_source,away_source,kickoff_time,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at"
+    )
+    .neq("stage", "group")
+    .order("kickoff_time", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  const knockoutMatches = ((data ?? []) as MatchRow[]).filter((match) => isKnockoutStage(match.stage));
+  const unknownStages = ((data ?? []) as MatchRow[])
+    .filter((match) => match.stage !== "group" && !isKnockoutStage(match.stage))
+    .map((match) => match.stage);
+
+  if (unknownStages.length > 0) {
+    console.warn("[knockout-advancement:unknown-stages]", Array.from(new Set(unknownStages)));
+  }
+
+  const matchesById = new Map(knockoutMatches.map((match) => [match.id, { ...match }]));
+  const updatesByMatchId = new Map<string, KnockoutAdvancementUpdate>();
+  const stalePredictionMatchIds = new Set<string>();
+  let populatedSlots = 0;
+  let updatedSlots = 0;
+
+  const assignTeamToSlot = (matchId: string, slot: MatchNextSlot, teamId: string | null | undefined) => {
+    if (!teamId) {
+      return;
+    }
+
+    const match = matchesById.get(matchId);
+    if (!match) {
+      return;
+    }
+
+    const targetField = slot === "home" ? "home_team_id" : "away_team_id";
+    const currentValue = match[targetField] ?? null;
+    if (currentValue === teamId) {
+      return;
+    }
+
+    if (match.status === "scheduled") {
+      stalePredictionMatchIds.add(matchId);
+    }
+
+    if (currentValue) {
+      updatedSlots += 1;
+    } else {
+      populatedSlots += 1;
+    }
+
+    match[targetField] = teamId;
+    const currentUpdate = updatesByMatchId.get(matchId) ?? { matchId };
+    if (slot === "home") {
+      currentUpdate.homeTeamId = teamId;
+    } else {
+      currentUpdate.awayTeamId = teamId;
+    }
+    updatesByMatchId.set(matchId, currentUpdate);
+  };
+
+  for (const match of knockoutMatches) {
+    if (match.status !== "final" || !match.winner_team_id || !match.next_match_id || !match.next_match_slot) {
+      continue;
+    }
+
+    assignTeamToSlot(match.next_match_id, match.next_match_slot, match.winner_team_id);
+  }
+
+  const thirdPlaceMatch = knockoutMatches.find((match) => normalizeKnockoutStage(match.stage) === "third") ?? null;
+  const semifinalMatches = knockoutMatches
+    .filter((match) => normalizeKnockoutStage(match.stage) === "sf")
+    .sort((a, b) => {
+      const kickoffCompare = (a.kickoff_time ?? "").localeCompare(b.kickoff_time ?? "");
+      return kickoffCompare !== 0 ? kickoffCompare : a.id.localeCompare(b.id);
+    });
+
+  if (thirdPlaceMatch && semifinalMatches.length >= 2) {
+    semifinalMatches.slice(0, 2).forEach((match, index) => {
+      if (match.status !== "final" || !match.winner_team_id || !match.home_team_id || !match.away_team_id) {
+        return;
+      }
+
+      const loserTeamId = match.home_team_id === match.winner_team_id ? match.away_team_id : match.home_team_id;
+      assignTeamToSlot(thirdPlaceMatch.id, index === 0 ? "home" : "away", loserTeamId);
+    });
+  }
+
+  const touchedMatches = updatesByMatchId.size;
+  if (touchedMatches === 0) {
+    return { populatedSlots: 0, updatedSlots: 0, touchedMatches: 0, clearedPredictions: 0, clearedScores: 0 };
+  }
+
+  const updatedAt = new Date().toISOString();
+  for (const update of updatesByMatchId.values()) {
+    const payload: {
+      updated_at: string;
+      home_team_id?: string | null;
+      away_team_id?: string | null;
+    } = { updated_at: updatedAt };
+    if (typeof update.homeTeamId !== "undefined") {
+      payload.home_team_id = update.homeTeamId;
+    }
+    if (typeof update.awayTeamId !== "undefined") {
+      payload.away_team_id = update.awayTeamId;
+    }
+
+    const { error: updateError } = await adminSupabase
+      .from("matches")
+      .update(payload)
+      .eq("id", update.matchId);
+
+    if (updateError) {
+      throw updateError;
+    }
+  }
+
+  console.info("[knockout-advancement:repair]", {
+    populatedSlots,
+    updatedSlots,
+    touchedMatches,
+    updatedMatches: Array.from(updatesByMatchId.values())
+  });
+
+  let clearedPredictions = 0;
+  let clearedScores = 0;
+  if (stalePredictionMatchIds.size > 0) {
+    const staleMatchIds = Array.from(stalePredictionMatchIds);
+
+    const { count: predictionCount, error: predictionCountError } = await adminSupabase
+      .from("bracket_predictions")
+      .select("id", { count: "exact", head: true })
+      .in("match_id", staleMatchIds);
+
+    if (predictionCountError) {
+      throw predictionCountError;
+    }
+
+    const { count: scoreCount, error: scoreCountError } = await adminSupabase
+      .from("bracket_scores")
+      .select("id", { count: "exact", head: true })
+      .in("match_id", staleMatchIds);
+
+    if (scoreCountError) {
+      throw scoreCountError;
+    }
+
+    const { error: deletePredictionsError } = await adminSupabase
+      .from("bracket_predictions")
+      .delete()
+      .in("match_id", staleMatchIds);
+
+    if (deletePredictionsError) {
+      throw deletePredictionsError;
+    }
+
+    const { error: deleteScoresError } = await adminSupabase
+      .from("bracket_scores")
+      .delete()
+      .in("match_id", staleMatchIds);
+
+    if (deleteScoresError) {
+      throw deleteScoresError;
+    }
+
+    clearedPredictions = predictionCount ?? 0;
+    clearedScores = scoreCount ?? 0;
+  }
+
+  console.info("[knockout-advancement:stale-predictions-cleared]", {
+    affectedMatches: Array.from(stalePredictionMatchIds),
+    clearedPredictions,
+    clearedScores
+  });
+
+  return {
+    populatedSlots,
+    updatedSlots,
+    touchedMatches,
+    clearedPredictions,
+    clearedScores
+  };
+}
+
 export async function updateAdminMatchResultAction(input: UpdateMatchResultInput): Promise<UpdateMatchResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
@@ -1750,16 +1986,129 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
     }
   }
 
+  let needsKnockoutLeaderboardRefresh = false;
+
+  if ((data as MatchRow).status === "final" && (data as MatchRow).stage !== "group") {
+    try {
+      await scoreFinalizedKnockoutMatchWithClient(adminSupabase, input.id);
+      await rebuildKnockoutAdvancementWithClient(adminSupabase);
+      needsKnockoutLeaderboardRefresh = true;
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
+  }
+
+  if ((previousMatch as MatchRow).status === "final" && input.status !== "final" && (previousMatch as MatchRow).stage !== "group") {
+    needsKnockoutLeaderboardRefresh = true;
+  }
+
+  if (needsKnockoutLeaderboardRefresh) {
+    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+    if (!leaderboardResult.ok) {
+      return leaderboardResult;
+    }
+  }
+
   revalidatePath("/");
   revalidatePath("/groups");
   revalidatePath("/leaderboard");
+  revalidatePath("/knockout");
   revalidatePath("/admin/matches");
+  revalidatePath("/profile");
   return { ok: true, match: mapMatchRow(data as MatchRow) };
+}
+
+export async function rescoreKnockoutScoresAction(): Promise<RescoreKnockoutScoresResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const adminSupabase = createAdminClient();
+  const { data, error } = await adminSupabase
+    .from("matches")
+    .select("id,stage,status")
+    .eq("status", "final")
+    .neq("stage", "group");
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  const finalizedKnockoutMatches = ((data ?? []) as Array<Pick<MatchRow, "id" | "stage" | "status">>).filter((match) =>
+    isKnockoutStage(match.stage)
+  );
+
+  let rescoredPredictions = 0;
+  for (const match of finalizedKnockoutMatches) {
+    rescoredPredictions += await scoreFinalizedKnockoutMatchWithClient(adminSupabase, match.id);
+  }
+
+  const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+  if (!leaderboardResult.ok) {
+    return leaderboardResult;
+  }
+
+  console.info("[knockout-rescore]", {
+    rescoredMatches: finalizedKnockoutMatches.length,
+    rescoredPredictions
+  });
+
+  revalidatePath("/knockout");
+  revalidatePath("/leaderboard");
+  revalidatePath("/profile");
+  revalidatePath("/admin/matches");
+
+  return {
+    ok: true,
+    rescoredMatches: finalizedKnockoutMatches.length,
+    rescoredPredictions,
+    message: `Rescored ${rescoredPredictions} knockout predictions across ${finalizedKnockoutMatches.length} finalized matches.`
+  };
+}
+
+export async function repairKnockoutAdvancementAction(): Promise<RepairKnockoutAdvancementResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const adminSupabase = createAdminClient();
+
+  try {
+    const summary = await rebuildKnockoutAdvancementWithClient(adminSupabase);
+
+    if (summary.clearedScores > 0) {
+      const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+      if (!leaderboardResult.ok) {
+        return leaderboardResult;
+      }
+    }
+
+    revalidatePath("/knockout");
+    revalidatePath("/admin/matches");
+    revalidatePath("/profile");
+    revalidatePath("/leaderboard");
+
+    return {
+      ok: true,
+      populatedSlots: summary.populatedSlots,
+      updatedSlots: summary.updatedSlots,
+      touchedMatches: summary.touchedMatches,
+      message:
+        summary.touchedMatches === 0
+          ? "Knockout bracket already matched finalized winners."
+          : `Updated ${summary.populatedSlots + summary.updatedSlots} bracket slots across ${summary.touchedMatches} knockout matches and cleared ${summary.clearedPredictions} stale predictions.`
+    };
+  } catch (error) {
+    return { ok: false, message: (error as Error).message };
+  }
 }
 
 export async function seedKnockoutFromGroupStageAction(
   force = false
 ): Promise<SeedKnockoutFromGroupStageResult> {
+  const expectedGroupMatchCount = 72;
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
     return adminCheck;
@@ -1797,7 +2146,15 @@ export async function seedKnockoutFromGroupStageAction(
     return { ok: false, message: teamsError.message };
   }
 
-  const mappedRoundOf32Matches = ((roundOf32Matches ?? []) as KnockoutPlaceholderMatch[]);
+  const mappedRoundOf32Matches = ((roundOf32Matches ?? []) as MatchRow[]).map((match) => ({
+    id: match.id,
+    stage: match.stage,
+    homeSource: match.home_source ?? null,
+    awaySource: match.away_source ?? null,
+    homeTeamId: match.home_team_id ?? null,
+    awayTeamId: match.away_team_id ?? null,
+    status: match.status
+  }));
   const seedState = summarizeKnockoutSeedState(mappedRoundOf32Matches);
   if (seedState.roundOf32MatchCount === 0) {
     return { ok: false, message: "Round of 32 placeholder matches are not available yet." };
@@ -1807,17 +2164,30 @@ export async function seedKnockoutFromGroupStageAction(
     return { ok: false, message: "Knockout seeding is locked because the Round of 32 has already started." };
   }
 
-  const mappedGroupMatches = ((groupMatches ?? []) as GroupStageMatchForSeeding[]);
-  const incompleteGroupMatchCount = mappedGroupMatches.filter((match) => match.status !== "final").length;
-  if (incompleteGroupMatchCount > 0) {
-    return { ok: false, message: "Group stage is not complete yet." };
+  const mappedGroupMatches = ((groupMatches ?? []) as MatchRow[]).map((match) => ({
+    id: match.id,
+    stage: match.stage,
+    groupName: match.group_name ?? null,
+    status: match.status,
+    homeTeamId: match.home_team_id ?? null,
+    awayTeamId: match.away_team_id ?? null,
+    homeScore: match.home_score ?? null,
+    awayScore: match.away_score ?? null
+  }));
+  const finalGroupMatchCount = mappedGroupMatches.filter((match) => match.status === "final").length;
+  if (finalGroupMatchCount < expectedGroupMatchCount) {
+    return {
+      ok: false,
+      message: `Knockout seeding not ready. Finalize all ${expectedGroupMatchCount} group-stage matches before seeding the Round of 32.`
+    };
   }
 
   if (seedState.hasAnySeeds && !force) {
     return {
       ok: false,
       alreadySeeded: true,
-      message: "Knockout is already seeded. Reseed?"
+      message:
+        "Group-stage results are complete and knockout matches already exist. Re-seeding may overwrite current Round of 32 team assignments."
     };
   }
 
@@ -1837,12 +2207,37 @@ export async function seedKnockoutFromGroupStageAction(
     flagEmoji: team.flag_emoji
   }));
 
+  console.info("[knockout-seeding:r32-placeholders]", mappedRoundOf32Matches.map((match) => ({
+    id: match.id,
+    stage: match.stage,
+    homeTeamId: match.homeTeamId,
+    awayTeamId: match.awayTeamId,
+    homeSource: match.homeSource,
+    awaySource: match.awaySource
+  })));
+
   try {
     const standingsByGroup = buildGroupStandingsByGroup(mappedGroupMatches, mappedTeams);
     const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(standingsByGroup);
+    console.info("[knockout-seeding:qualifiers]", {
+      groupQualifierKeys: Array.from(automaticQualifiers.keys()),
+      bestThirdPlaceCount: rankedThirdPlaceTeams.length,
+      bestThirdPlaceKeys: rankedThirdPlaceTeams.map((seed) => `Best third-place ${seed.thirdPlaceRank}`)
+    });
     if (rankedThirdPlaceTeams.length < 8) {
       return { ok: false, message: "Could not determine all eight best third-place qualifiers." };
     }
+
+    const slotDiagnostics = mappedRoundOf32Matches.flatMap((match) => [
+      { matchId: match.id, side: "home" as const, rawSource: match.homeSource ?? null, parsedSource: parseSeedSource(match.homeSource) },
+      { matchId: match.id, side: "away" as const, rawSource: match.awaySource ?? null, parsedSource: parseSeedSource(match.awaySource) }
+    ]);
+    console.info("[knockout-seeding:source-parse]", slotDiagnostics.map((slot) => ({
+      matchId: slot.matchId,
+      side: slot.side,
+      rawSource: slot.rawSource,
+      parsedSource: slot.parsedSource
+    })));
 
     const assignments = resolveRoundOf32SeedAssignments(
       mappedRoundOf32Matches,
@@ -1851,9 +2246,15 @@ export async function seedKnockoutFromGroupStageAction(
     );
 
     if (assignments.length !== seedState.roundOf32MatchCount) {
+      const totalSourceSlots = mappedRoundOf32Matches.length * 2;
+      const parsedSourceSlots = slotDiagnostics.filter((slot) => slot.parsedSource !== null).length;
+      const unresolvedSourceExamples = slotDiagnostics
+        .filter((slot) => slot.parsedSource === null && slot.rawSource)
+        .slice(0, 6)
+        .map((slot) => slot.rawSource);
       return {
         ok: false,
-        message: `Expected ${seedState.roundOf32MatchCount} Round of 32 seed assignments, but resolved ${assignments.length}.`
+        message: `Could not seed Round of 32. Found ${seedState.roundOf32MatchCount} matches and ${totalSourceSlots} source slots, parsed ${parsedSourceSlots}, and resolved ${assignments.length} match assignments. Example unresolved sources: ${unresolvedSourceExamples.length > 0 ? unresolvedSourceExamples.join(", ") : "none"}.`
       };
     }
 
@@ -1878,10 +2279,20 @@ export async function seedKnockoutFromGroupStageAction(
       return { ok: false, message: failedWrite.error.message };
     }
 
+    const migratedProjectedPicks = await migrateProjectedRoundOf32Picks(
+      adminSupabase,
+      assignments.map((assignment) => ({
+        matchId: assignment.matchId,
+        homeTeamId: assignment.homeTeamId,
+        awayTeamId: assignment.awayTeamId
+      }))
+    );
+
     console.info("Knockout seeded from group results", {
       adminUserId: adminCheck.userId,
       forced: force,
       seededAt,
+      projectedPickMigration: migratedProjectedPicks,
       assignments: assignments.map((assignment) => ({
         matchId: assignment.matchId,
         homeSource: assignment.homeSource,
@@ -1904,12 +2315,114 @@ export async function seedKnockoutFromGroupStageAction(
       alreadySeeded: seedState.hasAnySeeds,
       forced: force,
       message: force
-        ? `Knockout reseeded from final group results across ${assignments.length} Round of 32 matches.`
-        : `Knockout seeded from final group results across ${assignments.length} Round of 32 matches.`
+        ? `Knockout reseeded from final group results across ${assignments.length} Round of 32 matches${migratedProjectedPicks.migrated > 0 ? ` and migrated ${migratedProjectedPicks.migrated} projected picks` : ""}.`
+        : `Knockout seeded from final group results across ${assignments.length} Round of 32 matches${migratedProjectedPicks.migrated > 0 ? ` and migrated ${migratedProjectedPicks.migrated} projected picks` : ""}.`
     };
   } catch (error) {
     return { ok: false, message: (error as Error).message };
   }
+}
+
+async function migrateProjectedRoundOf32Picks(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  assignments: Array<{
+    matchId: string;
+    homeTeamId: string;
+    awayTeamId: string;
+  }>
+) {
+  const matchIds = assignments.map((assignment) => assignment.matchId);
+  if (matchIds.length === 0) {
+    return { migrated: 0, skippedExisting: 0, skippedUnsafe: 0, sourceRows: 0 };
+  }
+
+  const [{ data: existingPredictions, error: existingPredictionsError }, legacyProjectedPicksResult] = await Promise.all([
+    adminSupabase
+      .from("bracket_predictions")
+      .select("user_id,match_id")
+      .in("match_id", matchIds),
+    adminSupabase
+      .from("bracket_picks")
+      .select("user_id,match_id,predicted_winner_team_id,created_at,updated_at")
+      .in("match_id", matchIds)
+  ]);
+
+  if (existingPredictionsError) {
+    throw existingPredictionsError;
+  }
+
+  if (legacyProjectedPicksResult.error) {
+    if (isMissingRelationError(legacyProjectedPicksResult.error.message, "public.bracket_picks")) {
+      return { migrated: 0, skippedExisting: 0, skippedUnsafe: 0, sourceRows: 0 };
+    }
+
+    throw legacyProjectedPicksResult.error;
+  }
+
+  const existingKeys = new Set(
+    ((existingPredictions ?? []) as Array<{ user_id: string; match_id: string }>).map(
+      (prediction) => `${prediction.user_id}:${prediction.match_id}`
+    )
+  );
+  const officialTeamsByMatchId = new Map(
+    assignments.map((assignment) => [
+      assignment.matchId,
+      new Set([assignment.homeTeamId, assignment.awayTeamId])
+    ])
+  );
+  const projectedPickRows = (legacyProjectedPicksResult.data ?? []) as ProjectedBracketPickRow[];
+  const now = new Date().toISOString();
+
+  let skippedExisting = 0;
+  let skippedUnsafe = 0;
+  const rowsToInsert: Array<{
+    user_id: string;
+    match_id: string;
+    predicted_winner_team_id: string;
+    created_at: string;
+    updated_at: string;
+  }> = [];
+
+  for (const projectedPick of projectedPickRows) {
+    const existingKey = `${projectedPick.user_id}:${projectedPick.match_id}`;
+    if (existingKeys.has(existingKey)) {
+      skippedExisting += 1;
+      continue;
+    }
+
+    const officialTeams = officialTeamsByMatchId.get(projectedPick.match_id);
+    const pickedTeamId = projectedPick.predicted_winner_team_id ?? null;
+    if (!officialTeams || !pickedTeamId || !officialTeams.has(pickedTeamId)) {
+      skippedUnsafe += 1;
+      continue;
+    }
+
+    rowsToInsert.push({
+      user_id: projectedPick.user_id,
+      match_id: projectedPick.match_id,
+      predicted_winner_team_id: pickedTeamId,
+      created_at: projectedPick.created_at ?? now,
+      updated_at: projectedPick.updated_at ?? now
+    });
+    existingKeys.add(existingKey);
+  }
+
+  if (rowsToInsert.length > 0) {
+    const { error } = await adminSupabase
+      .from("bracket_predictions")
+      .upsert(rowsToInsert, { onConflict: "user_id,match_id", ignoreDuplicates: true });
+
+    if (error) {
+      throw error;
+    }
+  }
+
+  return {
+    migrated: rowsToInsert.length,
+    skippedExisting,
+    skippedUnsafe,
+    sourceRows: projectedPickRows.length
+  };
 }
 
 export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMatchResult> {
@@ -2297,17 +2810,25 @@ async function recalculateLeaderboard(
   adminSupabase: ReturnType<typeof createAdminClient>,
   triggeringMatchId?: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { data: predictionPoints, error: predictionPointsError } = await adminSupabase
-    .from("predictions")
-    .select("user_id,points_awarded");
+  const [{ data: predictionPoints, error: predictionPointsError }, { data: bracketPoints, error: bracketPointsError }] =
+    await Promise.all([
+      adminSupabase.from("predictions").select("user_id,points_awarded"),
+      adminSupabase.from("bracket_scores").select("user_id,points")
+    ]);
 
   if (predictionPointsError) {
     return { ok: false, message: predictionPointsError.message };
+  }
+  if (bracketPointsError) {
+    return { ok: false, message: bracketPointsError.message };
   }
 
   const totalsByUser = new Map<string, number>();
   for (const row of predictionPoints as { user_id: string; points_awarded: number | null }[]) {
     totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points_awarded ?? 0));
+  }
+  for (const row of bracketPoints as { user_id: string; points: number | null }[]) {
+    totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points ?? 0));
   }
 
   const { data: users, error: usersError } = await adminSupabase.from("users").select("id");

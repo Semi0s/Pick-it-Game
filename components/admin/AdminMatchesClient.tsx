@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
 import {
+  repairKnockoutAdvancementAction,
+  rescoreKnockoutScoresAction,
   scoreFinalizedGroupMatch,
   seedKnockoutFromGroupStageAction,
   updateAdminMatchResultAction
@@ -13,24 +15,23 @@ import { formatMatchStage } from "@/lib/match-stage";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
 import type { MatchStage, MatchStatus } from "@/lib/types";
 import { AdminHeader } from "@/components/admin/AdminInvitesClient";
-import { getMatchDateKey } from "@/lib/tournament-calendar";
 
-const stages: ("all" | MatchStage)[] = [
-  "all",
-  "group",
-  "round_of_32",
-  "r32",
-  "round_of_16",
-  "r16",
-  "quarterfinal",
-  "qf",
-  "semifinal",
-  "sf",
-  "third",
-  "final"
-];
+const stageSortOrder: Record<MatchStage, number> = {
+  group: 0,
+  round_of_32: 1,
+  r32: 2,
+  round_of_16: 3,
+  r16: 4,
+  quarterfinal: 5,
+  qf: 6,
+  semifinal: 7,
+  sf: 8,
+  third: 9,
+  final: 10
+};
 
 export function AdminMatchesClient() {
+  const expectedGroupMatchCount = 72;
   const router = useRouter();
   const [matches, setMatches] = useState<AdminMatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -38,6 +39,8 @@ export function AdminMatchesClient() {
   const [dateFilter, setDateFilter] = useState("all");
   const [isSeedingKnockout, setIsSeedingKnockout] = useState(false);
   const [isConfirmingReseed, setIsConfirmingReseed] = useState(false);
+  const [isRescoringKnockout, setIsRescoringKnockout] = useState(false);
+  const [isRepairingKnockout, setIsRepairingKnockout] = useState(false);
 
   useEffect(() => {
     loadMatches();
@@ -54,35 +57,74 @@ export function AdminMatchesClient() {
     }
   }
 
-  const dateOptions = useMemo(
-    () => Array.from(new Set(matches.map((match) => getMatchDateKey(match.kickoffTime)))),
+  const stageOptions = useMemo(
+    () =>
+      ["all", ...Array.from(new Set(matches.map((match) => match.stage))).sort(compareStageValues)] as Array<
+        "all" | MatchStage
+      >,
     [matches]
   );
-  const filteredMatches = matches.filter((match) => {
-    const stageMatches = stageFilter === "all" || match.stage === stageFilter;
-    const dateMatches = dateFilter === "all" || getMatchDateKey(match.kickoffTime) === dateFilter;
-    return stageMatches && dateMatches;
-  });
+  const dateOptions = useMemo(
+    () => Array.from(new Set(matches.map((match) => getLocalMatchDateKey(match.kickoffTime)))).sort(),
+    [matches]
+  );
+  const filteredMatches = useMemo(() => {
+    const nextMatches = matches
+      .filter((match) => {
+        const stageMatches = stageFilter === "all" || match.stage === stageFilter;
+        const dateMatches = dateFilter === "all" || getLocalMatchDateKey(match.kickoffTime) === dateFilter;
+        return stageMatches && dateMatches;
+      })
+      .sort(compareAdminMatches);
+
+    if (process.env.NODE_ENV !== "production") {
+      console.debug("[admin-matches:filters]", {
+        selectedStage: stageFilter,
+        selectedDate: dateFilter,
+        query: {
+          stage: stageFilter === "all" ? null : stageFilter,
+          localDate: dateFilter === "all" ? null : dateFilter
+        },
+        returnedRowCount: nextMatches.length
+      });
+    }
+
+    return nextMatches;
+  }, [dateFilter, matches, stageFilter]);
   const knockoutSeedStatus = useMemo(() => {
     const groupMatches = matches.filter((match) => match.stage === "group");
-    const incompleteGroupMatchCount = groupMatches.filter((match) => match.status !== "final").length;
+    const finalGroupMatchCount = groupMatches.filter((match) => match.status === "final").length;
     const roundOf32Matches = matches.filter((match) => match.stage === "r32" || match.stage === "round_of_32");
     const seededRoundOf32Count = roundOf32Matches.filter((match) => match.homeTeamId && match.awayTeamId).length;
     const hasAnySeeds = roundOf32Matches.some((match) => match.homeTeamId || match.awayTeamId);
     const hasKnockoutStarted = roundOf32Matches.some((match) => match.status !== "scheduled");
+    const isReady = finalGroupMatchCount >= expectedGroupMatchCount;
 
     return {
-      incompleteGroupMatchCount,
+      finalGroupMatchCount,
+      expectedGroupMatchCount,
       roundOf32Count: roundOf32Matches.length,
       seededRoundOf32Count,
       hasAnySeeds,
       hasKnockoutStarted,
-      canSeed:
-        roundOf32Matches.length > 0 &&
-        incompleteGroupMatchCount === 0 &&
-        !hasKnockoutStarted
+      isReady,
+      canSeed: roundOf32Matches.length > 0 && isReady && !hasKnockoutStarted
     };
   }, [matches]);
+  const finalizedKnockoutCount = useMemo(
+    () => matches.filter((match) => match.stage !== "group" && match.status === "final").length,
+    [matches]
+  );
+
+  useEffect(() => {
+    if (!knockoutSeedStatus.hasAnySeeds || knockoutSeedStatus.hasKnockoutStarted || !knockoutSeedStatus.isReady) {
+      setIsConfirmingReseed(false);
+    }
+  }, [
+    knockoutSeedStatus.hasAnySeeds,
+    knockoutSeedStatus.hasKnockoutStarted,
+    knockoutSeedStatus.isReady
+  ]);
 
   async function handleSeedKnockout(force = false) {
     setIsSeedingKnockout(true);
@@ -108,6 +150,42 @@ export function AdminMatchesClient() {
     }
   }
 
+  async function handleRescoreKnockout() {
+    setIsRescoringKnockout(true);
+
+    try {
+      const result = await rescoreKnockoutScoresAction();
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+
+      if (result.ok) {
+        await loadMatches();
+        router.refresh();
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsRescoringKnockout(false);
+    }
+  }
+
+  async function handleRepairKnockout() {
+    setIsRepairingKnockout(true);
+
+    try {
+      const result = await repairKnockoutAdvancementAction();
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+
+      if (result.ok) {
+        await loadMatches();
+        router.refresh();
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsRepairingKnockout(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <AdminHeader eyebrow="Matches" title="Update match results." />
@@ -120,11 +198,11 @@ export function AdminMatchesClient() {
             <p className="text-sm font-semibold text-gray-600">
               {knockoutSeedStatus.hasKnockoutStarted
                 ? "Round of 32 matches have already started. Automatic seeding is locked."
-                : knockoutSeedStatus.incompleteGroupMatchCount > 0
-                  ? "Group stage is not complete yet."
+                : !knockoutSeedStatus.isReady
+                  ? `Finalize all ${knockoutSeedStatus.expectedGroupMatchCount} group-stage matches before seeding the Round of 32.`
                   : knockoutSeedStatus.hasAnySeeds
-                    ? `Knockout is already seeded across ${knockoutSeedStatus.seededRoundOf32Count} of ${knockoutSeedStatus.roundOf32Count} Round of 32 matches.`
-                    : "All group-stage matches are final. Seed the Round of 32 from actual results."}
+                    ? "Group-stage results are complete and knockout matches already exist. Re-seeding may overwrite current Round of 32 team assignments."
+                    : `All ${knockoutSeedStatus.expectedGroupMatchCount} group-stage matches are final. Round of 32 can now be seeded.`}
             </p>
           </div>
           <div className="shrink-0">
@@ -135,22 +213,68 @@ export function AdminMatchesClient() {
               className="rounded-md bg-accent px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
             >
               {isSeedingKnockout
-                ? isConfirmingReseed
+                ? isConfirmingReseed || knockoutSeedStatus.hasAnySeeds
                   ? "Reseeding..."
                   : "Seeding..."
-                : isConfirmingReseed
-                  ? "Reseed knockout"
-                  : "Seed knockout"}
+                : knockoutSeedStatus.hasKnockoutStarted
+                  ? "Knockout seeding locked"
+                  : !knockoutSeedStatus.isReady
+                    ? "Knockout seeding not ready"
+                    : knockoutSeedStatus.hasAnySeeds
+                      ? "Re-seed knockout?"
+                      : "Seed knockout"}
             </button>
           </div>
         </div>
-        {knockoutSeedStatus.canSeed && knockoutSeedStatus.hasAnySeeds ? (
-          <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            {isConfirmingReseed
-              ? "Reseed will overwrite the current Round of 32 team placements."
-              : "Knockout is already seeded. Reseed?"}
-          </p>
-        ) : null}
+      </section>
+
+      <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Advancement</p>
+            <h3 className="text-lg font-black text-gray-950">Repair knockout bracket</h3>
+            <p className="text-sm font-semibold text-gray-600">
+              Rebuild downstream knockout slots from finalized winners so admin tools and the player bracket read the
+              same populated teams.
+            </p>
+          </div>
+          <div className="shrink-0">
+            <button
+              type="button"
+              disabled={isRepairingKnockout}
+              onClick={() => void handleRepairKnockout()}
+              className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+            >
+              {isRepairingKnockout ? "Repairing..." : "Repair knockout bracket"}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Scoring</p>
+            <h3 className="text-lg font-black text-gray-950">Rescore finalized knockout matches</h3>
+            <p className="text-sm font-semibold text-gray-600">
+              Recalculate bracket scores for all finalized knockout matches using the current knockout scoring rules.
+              This updates saved bracket points without changing predictions or match results.
+            </p>
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+              {finalizedKnockoutCount} finalized knockout {finalizedKnockoutCount === 1 ? "match" : "matches"} ready
+            </p>
+          </div>
+          <div className="shrink-0">
+            <button
+              type="button"
+              disabled={isRescoringKnockout || finalizedKnockoutCount === 0}
+              onClick={() => void handleRescoreKnockout()}
+              className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+            >
+              {isRescoringKnockout ? "Rescoring..." : "Rescore knockout"}
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:grid-cols-2">
@@ -161,7 +285,7 @@ export function AdminMatchesClient() {
             onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
             className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
           >
-            {stages.map((stage) => (
+            {stageOptions.map((stage) => (
               <option key={stage} value={stage}>
                 {stage === "all" ? "All stages" : formatStage(stage)}
               </option>
@@ -548,6 +672,40 @@ function getSideLabel(match: AdminMatch, side: "home" | "away") {
 
 function formatStage(stage: MatchStage) {
   return formatMatchStage(stage);
+}
+
+function getLocalMatchDateKey(kickoffTime: string) {
+  const kickoffDate = new Date(kickoffTime);
+  const year = kickoffDate.getFullYear();
+  const month = String(kickoffDate.getMonth() + 1).padStart(2, "0");
+  const day = String(kickoffDate.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function compareStageValues(left: MatchStage, right: MatchStage) {
+  return (stageSortOrder[left] ?? 999) - (stageSortOrder[right] ?? 999);
+}
+
+function compareAdminMatches(left: AdminMatch, right: AdminMatch) {
+  const kickoffCompare = left.kickoffTime.localeCompare(right.kickoffTime);
+  if (kickoffCompare !== 0) {
+    return kickoffCompare;
+  }
+
+  const stageCompare = compareStageValues(left.stage, right.stage);
+  if (stageCompare !== 0) {
+    return stageCompare;
+  }
+
+  const groupCompare = (left.groupName ?? "").localeCompare(right.groupName ?? "", undefined, {
+    numeric: true,
+    sensitivity: "base"
+  });
+  if (groupCompare !== 0) {
+    return groupCompare;
+  }
+
+  return left.id.localeCompare(right.id, undefined, { numeric: true, sensitivity: "base" });
 }
 
 function formatMatchStatus(status: MatchStatus) {

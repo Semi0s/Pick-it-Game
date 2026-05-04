@@ -6,7 +6,9 @@ import type { BracketPrediction } from "@/lib/types";
 
 type SaveBracketPredictionInput = {
   matchId: string;
-  teamId: string;
+  teamId?: string | null;
+  homeScore: number;
+  awayScore: number;
 };
 
 export type SaveBracketPredictionResult =
@@ -27,7 +29,12 @@ export async function saveBracketPredictionAction(
   }
 
   try {
-    const prediction = await saveBracketPrediction(user.id, input.matchId, input.teamId);
+    const prediction = await saveBracketPrediction(user.id, {
+      matchId: input.matchId,
+      homeScore: input.homeScore,
+      awayScore: input.awayScore,
+      teamId: input.teamId ?? null
+    });
     const predictions = await fetchUserBracketPredictions(user.id);
     return { ok: true, prediction, predictions };
   } catch (caughtError) {

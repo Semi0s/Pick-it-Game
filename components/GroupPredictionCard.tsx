@@ -1,9 +1,9 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Check, LockKeyhole } from "lucide-react";
+import { Check, LockKeyhole, X } from "lucide-react";
 import { formatDateTimeWithZone } from "@/lib/date-time";
-import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
+import { canEditPrediction } from "@/lib/prediction-state";
 import type { AutoPickDraft, MatchWithTeams, Prediction } from "@/lib/types";
 
 type ScoreOutcome = "home" | "draw" | "away";
@@ -47,7 +47,7 @@ export function GroupPredictionCard({
   const locked = !canEdit;
   const isFinal = match.status === "final";
   const isLive = match.status === "live";
-  const predictionStateLabel = getPredictionStateLabel(match.status);
+  const predictionStateLabel = isFinal ? "Final" : isLive || locked ? "Locked" : "Open";
   const [homeScore, setHomeScore] = useState(getInitialScore(prediction?.predictedHomeScore));
   const [awayScore, setAwayScore] = useState(getInitialScore(prediction?.predictedAwayScore));
   const [isSaving, setIsSaving] = useState(false);
@@ -220,11 +220,9 @@ export function GroupPredictionCard({
                 {matchNumber}
               </span>
             ) : null}
-            {!isSavedState && canEdit ? (
-              <p className={`text-sm font-bold uppercase tracking-wide ${isFinal ? "text-gray-700" : "text-accent-dark"}`}>
-                Pick before:
-              </p>
-            ) : null}
+            <p className={`text-sm font-bold uppercase tracking-wide ${isFinal ? "text-gray-700" : "text-accent-dark"}`}>
+              Pick before:
+            </p>
             <p
               className={`text-[10px] font-semibold uppercase tracking-wide ${
                 isFinal ? "text-gray-500" : isLive ? "text-amber-800" : "text-gray-500"
@@ -245,20 +243,10 @@ export function GroupPredictionCard({
                   : "bg-accent-light text-accent-dark"
           }`}
         >
-          {locked ? <LockKeyhole aria-hidden className="h-3.5 w-3.5" /> : null}
+          {locked && !isFinal ? <LockKeyhole aria-hidden className="h-3.5 w-3.5" /> : null}
           {predictionStateLabel}
         </span>
       </div>
-
-      {isFinal ? (
-        <p className="mt-3 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700">
-          This match has concluded and results are final.
-        </p>
-      ) : isLive ? (
-        <p className="mt-3 rounded-md bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900">
-          This match is locked while the result unfolds.
-        </p>
-      ) : null}
 
       <div className="mt-2">
         <div
@@ -326,25 +314,32 @@ export function GroupPredictionCard({
 
       {isFinal ? (
         <div className="mt-1.5 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-center">
-          {!prediction ? (
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              No saved prediction before kick-off
-            </p>
-          ) : null}
-          {lastSavedAt ? (
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-              Saved {formatSavedAt(lastSavedAt)}
-            </p>
-          ) : null}
-        </div>
-      ) : isLive ? (
-        lastSavedAt ? (
-          <div className="mt-1.5 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-center">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-              Saved {formatSavedAt(lastSavedAt)}
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Final scores</p>
+          <div className="mt-1 flex items-center justify-center gap-2">
+            {prediction ? (
+              prediction.pointsAwarded ? (
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-accent/30 bg-accent-light text-accent-dark">
+                  <Check aria-hidden className="h-4 w-4" />
+                </span>
+              ) : (
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-600">
+                  <X aria-hidden className="h-4 w-4" />
+                </span>
+              )
+            ) : null}
+            <p className="text-sm font-black text-gray-800">
+              {prediction?.pointsAwarded
+                ? `Correct +${prediction.pointsAwarded}`
+                : prediction
+                  ? "No points this time"
+                  : "No pick saved"}
             </p>
           </div>
-        ) : null
+        </div>
+      ) : isLive ? (
+        <div className="mt-1.5 rounded-md bg-gray-200 px-4 py-3 text-center text-[10px] font-bold uppercase tracking-wide text-white/90">
+          This match has started - scores will show here when final
+        </div>
       ) : (
         <button
           type="submit"
@@ -359,31 +354,32 @@ export function GroupPredictionCard({
         >
           {isSavedState ? (
             <span className="flex flex-col items-center justify-center leading-tight">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                Predictions lock at kick-off
-              </span>
-              <span className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                Saved {formatSavedAt(lastSavedAt!)}
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                Saved on: {formatSavedAt(lastSavedAt!)}
               </span>
             </span>
           ) : (
             <>
               {!isSaving && !saveError && lastSavedAt && !hasUnsavedScoreChange ? <Check aria-hidden className="h-5 w-5" /> : null}
               {!canEdit
-                ? "Predictions locked"
+                ? "Pick locked"
                 : isSaving
                   ? "Saving..."
                   : isAutoFilling
                     ? "Auto Picking..."
                   : saveError
                     ? "Failed to save"
-                    : prediction
-                      ? `Update ${matchLabel}`
-                      : `Save ${matchLabel}`}
+                    : `Save ${matchLabel}`}
             </>
           )}
         </button>
       )}
+
+      {!isFinal && !isLive && canEdit && !usePrimaryButton && !saveError ? (
+        <div className="mt-1.5 rounded-md bg-accent-light px-4 py-3 text-center text-[10px] font-bold uppercase tracking-wide text-accent-dark">
+          Editable until kickoff
+        </div>
+      ) : null}
 
       {prefillSuggestion && autoPickHint ? (
         <p className="mt-1 text-center text-[10px] font-semibold leading-tight tracking-wide text-gray-500">
@@ -404,7 +400,7 @@ export function GroupPredictionCard({
           </p>
         ) : !canEdit && !isLive && !isFinal ? (
           <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
-            Predictions locked.
+            Pick locked.
           </p>
           ) : null}
         </div>

@@ -65,7 +65,7 @@ const POST_SAVE_ADVANCE_DELAY_MS = 225;
 const AUTO_PICK_REVEAL_DELAY_MS = 650;
 
 const EXPLAINER_TITLE_COPY: Record<ExplainerLanguage, string> = {
-  en: "Predict all the match scores below",
+  en: "MY PICKS",
   es: "Desplázate hacia abajo y elige un marcador para cada partido.",
   fr: "Faites défiler et choisissez un score pour chaque match.",
   pt: "Role para baixo e escolha um placar para cada partida.",
@@ -448,7 +448,6 @@ export function GroupPredictions({
     : isKnockoutSeeded
       ? "My Knockout Picks"
       : "My Results";
-
   const selectedTeam = useMemo(
     () => availableTeamsForSelectedGroup.find((team) => team.id === selectedTeamId) ?? null,
     [availableTeamsForSelectedGroup, selectedTeamId]
@@ -514,6 +513,10 @@ export function GroupPredictions({
 
   const groupFilterLabel = selectedGroup === GROUP_FILTER_ALL_KEY ? null : formatGroupName(selectedGroup);
   const teamFilterLabel = selectedTeamId === TEAM_FILTER_ALL_KEY ? null : selectedTeam?.name ?? null;
+  const groupStageSectionTitle = selectedGroup === GROUP_FILTER_ALL_KEY ? "Group Stage" : formatGroupName(selectedGroup) ?? "Group Stage";
+  const groupStageSectionTotalMatches =
+    selectedGroup === GROUP_FILTER_ALL_KEY ? groupStageMatches.length : selectedGroupMatches.length;
+  const groupStageSectionBanner = "PREDICTIONS ARE EDITABLE UNTIL KICKOFF";
 
   const groupPredictionRows = useMemo(() => {
     if (!miniTableGroup) {
@@ -874,19 +877,35 @@ export function GroupPredictions({
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg bg-gray-100 p-5">
-        <div className="flex items-start justify-between gap-3">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">My Picks</p>
-          <div
-            className={`shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2 ${
-              hasCompletedAllPicks ? "bg-amber-50 text-amber-800" : "bg-white text-gray-700"
-            }`}
-          >
-            {savedCount} of {groupStageMatches.length} picks saved
+      <section className="space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-4xl font-black leading-none text-gray-950 sm:text-5xl">
+              {groupStageSectionTitle}
+            </h1>
+          </div>
+          <div className="shrink-0 pt-1 text-right">
+            <p className="text-sm font-black uppercase tracking-wide text-gray-950 sm:text-base">
+              {groupStageSectionTotalMatches} matches
+            </p>
           </div>
         </div>
-        <div className="mt-3">
-          <h2 className="text-xl font-black leading-tight sm:text-2xl">{EXPLAINER_TITLE_COPY[explainerLanguage]}</h2>
+        <div className="rounded-md bg-cyan-50 px-4 py-3 text-center text-sm font-bold uppercase tracking-wide text-gray-500 sm:text-base">
+          {groupStageSectionBanner}
+        </div>
+        <div className="rounded-lg bg-gray-100 p-5">
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">
+              {EXPLAINER_TITLE_COPY[explainerLanguage]}
+            </p>
+            <div
+              className={`shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2 ${
+                hasCompletedAllPicks ? "bg-amber-50 text-amber-800" : "bg-white text-gray-700"
+              }`}
+            >
+              {savedCount} of {groupStageMatches.length} picks saved
+            </div>
+          </div>
           <div className="mt-3 flex justify-start">
             <InlineDisclosureButton
               isOpen={isMoreOpen}
@@ -905,54 +924,52 @@ export function GroupPredictions({
                 ))}
               </ul>
               <div className="mx-auto mt-4 max-w-xl">
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className={`grid gap-2 ${shouldShowSecondaryKnockoutButton ? "grid-cols-4" : "grid-cols-3"}`}>
                   <button
                     type="button"
                     onClick={handlePrimaryAction}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
+                    className="inline-flex min-h-[88px] w-full flex-col items-center justify-center gap-2 rounded-md border border-accent bg-accent px-2 py-3 text-center text-[11px] font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark sm:text-xs"
                   >
                     {shouldPromoteKnockout ? (
                       isKnockoutSeeded ? (
-                        <Network aria-hidden className="h-4 w-4 shrink-0 text-white" />
+                        <Network aria-hidden className="h-6 w-6 shrink-0 text-white" />
                       ) : (
-                        <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
+                        <SquareCheckBig aria-hidden className="h-6 w-6 shrink-0 text-white" />
                       )
                     ) : (
-                      <SquareCheckBig aria-hidden className="h-4 w-4 shrink-0 text-white" />
+                      <SquareCheckBig aria-hidden className="h-6 w-6 shrink-0 text-white" />
                     )}
-                    {primaryActionLabel}
+                    <span className="leading-tight">{primaryActionLabel}</span>
                   </button>
                   <button
                     type="button"
                     onClick={handleAutoPickAction}
                     disabled={isAutoPicking}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex min-h-[88px] w-full flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-center text-[11px] font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60 sm:text-xs"
                   >
-                    <Sparkles aria-hidden className="h-4 w-4 shrink-0 text-accent-dark" />
-                    {isAutoPicking ? AUTO_PICK_LOADING_COPY[autoPickLanguage] : AUTO_PICK_LABEL_COPY[autoPickLanguage]}
+                    <Sparkles aria-hidden className="h-6 w-6 shrink-0 text-accent-dark" />
+                    <span className="leading-tight">
+                      {isAutoPicking ? AUTO_PICK_LOADING_COPY[autoPickLanguage] : AUTO_PICK_LABEL_COPY[autoPickLanguage]}
+                    </span>
                   </button>
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-2">
                   {shouldShowSecondaryKnockoutButton ? (
                     <Link
                       href="/knockout"
-                      className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-sm"
+                      className="inline-flex min-h-[88px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-center text-[11px] font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-xs"
                     >
-                      <Network aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark sm:h-4 sm:w-4" />
-                      <span className="truncate">My Knockout Picks</span>
+                      <Network aria-hidden className="h-6 w-6 shrink-0 text-accent-dark" />
+                      <span className="leading-tight">My Knockout Picks</span>
                     </Link>
-                  ) : (
-                    <div />
-                  )}
+                  ) : null}
                   <Link
                     href="/trophies"
-                    className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-sm"
+                    className="inline-flex min-h-[88px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-center text-[11px] font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-xs"
                   >
-                    <span className="relative inline-flex h-4.5 w-4.5 items-center justify-center text-accent-dark sm:h-5 sm:w-5">
-                      <Trophy aria-hidden className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
+                    <span className="relative inline-flex h-6 w-6 items-center justify-center text-accent-dark">
+                      <Trophy aria-hidden className="h-6 w-6 shrink-0" />
                       <SquareCheckBig aria-hidden className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-[2px] bg-white" />
                     </span>
-                    <span className="truncate">My Side Picks</span>
+                    <span className="leading-tight">My Side Picks</span>
                   </Link>
                 </div>
               </div>
