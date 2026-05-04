@@ -456,7 +456,7 @@ export function AppShell({ children }: AppShellProps) {
         } as CSSProperties
       }
     >
-      <header ref={headerRef} className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
+      <header ref={headerRef} className="sticky top-0 z-20 bg-white">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
           <Link href="/dashboard" className="min-w-0">
             <h1 className="truncate text-xl font-black leading-tight">{APP_NAME}</h1>

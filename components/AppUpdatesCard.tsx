@@ -13,6 +13,7 @@ export function AppUpdatesCard() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useSessionDisclosureState("dashboard-updates-card-disclosure", false);
+  const [isForcedOpen, setIsForcedOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -30,6 +31,7 @@ export function AppUpdatesCard() {
           return;
         }
 
+        setIsForcedOpen(result.forceOpen);
         setUpdates(result.updates);
         setActiveIndex(0);
         setError(null);
@@ -49,6 +51,7 @@ export function AppUpdatesCard() {
   }, []);
 
   const activeUpdate = updates[activeIndex] ?? null;
+  const resolvedIsOpen = isForcedOpen || isOpen;
   const hasUnreadImportantUpdate = useMemo(
     () => updates.some((update) => update.importance === "important" && !update.isRead),
     [updates]
@@ -86,9 +89,11 @@ export function AppUpdatesCard() {
       <section className="rounded-lg border border-gray-200 bg-white p-3">
         <div className="flex items-center justify-between gap-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">Updates</p>
-          <InlineDisclosureButton isOpen={isOpen} variant="subtle" onClick={() => setIsOpen((current) => !current)} />
+          {isForcedOpen ? null : (
+            <InlineDisclosureButton isOpen={resolvedIsOpen} variant="subtle" onClick={() => setIsOpen((current) => !current)} />
+          )}
         </div>
-        {isOpen ? <p className="mt-1.5 text-[10px] text-gray-600">Updates will appear here soon</p> : null}
+        {resolvedIsOpen ? <p className="mt-1.5 text-[10px] text-gray-600">Updates will appear here soon</p> : null}
       </section>
     );
   }
@@ -98,9 +103,11 @@ export function AppUpdatesCard() {
       <section className="rounded-lg border border-gray-200 bg-white p-3">
         <div className="flex items-center justify-between gap-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">Updates</p>
-          <InlineDisclosureButton isOpen={isOpen} variant="subtle" onClick={() => setIsOpen((current) => !current)} />
+          {isForcedOpen ? null : (
+            <InlineDisclosureButton isOpen={resolvedIsOpen} variant="subtle" onClick={() => setIsOpen((current) => !current)} />
+          )}
         </div>
-        {isOpen ? (
+        {resolvedIsOpen ? (
           <>
             <p className="mt-1.5 text-[10px] leading-5 text-gray-600">
               Thank you for your support. We&apos;ll keep this space ready for important dates, feature notes, and
@@ -130,7 +137,7 @@ export function AppUpdatesCard() {
   return (
     <section
       className={`border ${
-        isOpen ? "rounded-lg p-3" : "rounded-md px-3 py-1.5"
+        resolvedIsOpen ? "rounded-lg p-3" : "rounded-md px-3 py-1.5"
       } ${getUpdateCardSurfaceClasses(activeUpdate.cardTone, hasUnreadImportantUpdate)}`}
     >
       <div className="flex items-center justify-between gap-3">
@@ -138,7 +145,7 @@ export function AppUpdatesCard() {
         <div className="flex shrink-0 items-center gap-2">
           <div
             className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
-              isOpen ? "sm:px-2.5 sm:py-1.5" : ""
+              resolvedIsOpen ? "sm:px-2.5 sm:py-1.5" : ""
             } ${getUpdateDateChipClasses(
               activeUpdate.cardTone,
               activeUpdate.importance
@@ -146,11 +153,15 @@ export function AppUpdatesCard() {
           >
             {formatUpdateTimestamp(activeUpdate.publishedAt)}
           </div>
-          <InlineDisclosureButton isOpen={isOpen} variant="subtle" onClick={() => setIsOpen((current) => !current)} />
+          {isForcedOpen ? (
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-accent-dark">Pinned open</span>
+          ) : (
+            <InlineDisclosureButton isOpen={resolvedIsOpen} variant="subtle" onClick={() => setIsOpen((current) => !current)} />
+          )}
         </div>
       </div>
 
-      {isOpen ? (
+      {resolvedIsOpen ? (
         <>
           <h3 className="mt-1.5 text-base font-black text-gray-950 sm:text-lg">{activeUpdate.title}</h3>
           <p className="mt-1.5 text-[10px] leading-5 text-gray-600">{activeUpdate.body}</p>

@@ -103,6 +103,30 @@ export async function fetchBooleanAppSetting(
   return row?.boolean_value ?? defaultValue;
 }
 
+export async function updateBooleanAppSetting(
+  key: string,
+  enabled: boolean
+): Promise<boolean> {
+  const adminSupabase = createAdminClient();
+  const { error } = await adminSupabase.from("app_settings").upsert(
+    {
+      key,
+      boolean_value: enabled
+    },
+    { onConflict: "key" }
+  );
+
+  if (error) {
+    if (isMissingAppSettingsTableError(error.message)) {
+      throw new Error(`App setting ${key} is not available yet. Apply the app_settings migration first.`);
+    }
+
+    throw new Error(error.message);
+  }
+
+  return fetchBooleanAppSetting(key, enabled);
+}
+
 export async function fetchIntegerAppSetting(
   key: string,
   defaultValue: number

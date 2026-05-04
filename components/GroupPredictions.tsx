@@ -517,6 +517,17 @@ export function GroupPredictions({
 
   const groupFilterLabel = selectedGroup === GROUP_FILTER_ALL_KEY ? null : formatGroupName(selectedGroup);
   const teamFilterLabel = selectedTeamId === TEAM_FILTER_ALL_KEY ? null : selectedTeam?.name ?? null;
+  const matchCountSummary = useMemo(() => {
+    if (!groupFilterLabel && !teamFilterLabel) {
+      return `Showing ${groupStageMatches.length} matches`;
+    }
+
+    const contextParts = [groupFilterLabel, teamFilterLabel].filter(
+      (value): value is string => Boolean(value)
+    );
+
+    return `Showing ${filteredMatches.length} of ${groupStageMatches.length} matches${contextParts.length > 0 ? ` · ${contextParts.join(" · ")}` : ""}`;
+  }, [filteredMatches.length, groupFilterLabel, groupStageMatches.length, teamFilterLabel]);
   const groupStageSectionTitle = selectedGroup === GROUP_FILTER_ALL_KEY ? "Group Stage" : formatGroupName(selectedGroup) ?? "Group Stage";
   const groupStageSectionTotalMatches =
     selectedGroup === GROUP_FILTER_ALL_KEY ? groupStageMatches.length : selectedGroupMatches.length;
@@ -1004,7 +1015,8 @@ export function GroupPredictions({
 
       <section className="space-y-3">
         <div
-          className="sticky z-[12] -mx-4 border-b border-gray-200 bg-white/95 px-4 pb-2 pt-2 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:px-3"
+          // Header stays at z-20; this rail sits directly beneath it and owns the divider below.
+          className="sticky z-[14] -mx-4 bg-white px-4 pb-2 pt-2 sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
           style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px))" }}
         >
           <div className="space-y-3">
@@ -1064,6 +1076,13 @@ export function GroupPredictions({
               ))}
             </PredictionChoiceRail>
           )}
+            <div className="border-b border-gray-200/80" />
+          </div>
+        </div>
+
+        <div className="pt-0.5">
+          <div className="flex flex-wrap items-center justify-center gap-2 text-center text-sm font-semibold text-gray-600">
+            <span>{matchCountSummary}</span>
           </div>
         </div>
 
@@ -1107,32 +1126,6 @@ export function GroupPredictions({
             ) : null}
           </section>
         ) : null}
-
-        <div className="border-b border-gray-200 pb-3 pt-1.5">
-          <div className="flex flex-wrap items-center justify-center gap-2 text-center text-sm font-semibold text-gray-600">
-            <span>
-            {filteredMatches.length} of {groupStageMatches.length} matches
-            </span>
-            {groupFilterLabel ? (
-              <>
-                <span aria-hidden className="text-gray-400">-</span>
-                <span className="inline-flex items-center rounded-md border border-gray-300 bg-white px-1 py-0.5 text-gray-700">
-                  <span className="inline-flex items-center gap-1 text-[12px] font-black leading-none">
-                    <span>Group</span>
-                    <span>{getGroupShortLabel(selectedGroup)}</span>
-                  </span>
-                </span>
-                <span>only</span>
-              </>
-            ) : null}
-            {teamFilterLabel ? (
-              <>
-                <span aria-hidden className="text-gray-400">-</span>
-                <span>{teamFilterLabel}</span>
-              </>
-            ) : null}
-          </div>
-        </div>
       </section>
 
       {renderMatchPager()}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   archiveAppUpdateAction,
   fetchManagedAppUpdatesAction,
+  updateDashboardUpdatesForceOpenAction,
   upsertAppUpdateAction,
   type UpsertAppUpdateInput
 } from "@/app/dashboard/actions";
@@ -45,8 +46,10 @@ export function AdminUpdatesManager() {
   const [draft, setDraft] = useState<UpdateDraft>(EMPTY_DRAFT);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUpdatingForceOpen, setIsUpdatingForceOpen] = useState(false);
   const [activeArchiveId, setActiveArchiveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [forceOpen, setForceOpen] = useState(false);
 
   async function loadUpdates() {
     setIsLoading(true);
@@ -59,6 +62,7 @@ export function AdminUpdatesManager() {
     }
 
     setUpdates(result.updates);
+    setForceOpen(result.forceOpen);
     setError(null);
     setIsLoading(false);
   }
@@ -110,6 +114,18 @@ export function AdminUpdatesManager() {
     setActiveArchiveId(null);
   }
 
+  async function handleForceOpenChange(nextForceOpen: boolean) {
+    setIsUpdatingForceOpen(true);
+    const result = await updateDashboardUpdatesForceOpenAction(nextForceOpen);
+    showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+
+    if (result.ok) {
+      setForceOpen(nextForceOpen);
+    }
+
+    setIsUpdatingForceOpen(false);
+  }
+
   return (
     <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
       <div>
@@ -118,6 +134,31 @@ export function AdminUpdatesManager() {
         <p className="mt-2 text-sm leading-6 text-gray-600">
           Publish short notes, feature announcements, and important tournament messages for everyone on the landing page.
         </p>
+      </div>
+
+      <div className="rounded-lg border border-gray-200 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-bold text-gray-900">Force updates card open</p>
+            <p className="text-sm leading-6 text-gray-600">
+              Keep the dashboard Updates card expanded for all users so the full message is immediately visible.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={forceOpen}
+            disabled={isUpdatingForceOpen}
+            onClick={() => void handleForceOpenChange(!forceOpen)}
+            className={`inline-flex min-w-[88px] items-center justify-center rounded-md border px-3 py-2 text-sm font-bold transition ${
+              forceOpen
+                ? "border-accent bg-accent text-white hover:bg-accent-dark"
+                : "border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
+            } disabled:cursor-not-allowed disabled:opacity-60`}
+          >
+            {isUpdatingForceOpen ? "Saving..." : forceOpen ? "Forced open" : "Collapsed allowed"}
+          </button>
+        </div>
       </div>
 
       {error ? <AdminMessage tone="error" message={error} /> : null}

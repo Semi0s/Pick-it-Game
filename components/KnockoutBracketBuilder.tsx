@@ -88,7 +88,7 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
   return (
     <section className="space-y-4">
       <div
-        className="sticky z-[12] -mx-4 border-b border-gray-200 bg-white/95 px-4 py-2 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:px-3"
+        className="sticky z-[14] -mx-4 bg-white px-4 py-2 sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
         style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px))" }}
       >
         <KnockoutPhaseChoiceRail
@@ -121,6 +121,7 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
             );
           })}
         </KnockoutPhaseChoiceRail>
+        <div className="mt-2 border-b border-gray-200/80" />
       </div>
 
       <div className="overflow-visible bg-transparent">

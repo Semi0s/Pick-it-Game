@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
+import { fetchBooleanAppSetting, updateBooleanAppSetting } from "@/lib/app-settings";
 import type {
   AppUpdate,
   AppUpdateCardTone,
@@ -32,10 +33,13 @@ type UserUpdateReadRow = {
   read_at: string;
 };
 
+const DASHBOARD_UPDATES_FORCE_OPEN_SETTING_KEY = "dashboard_updates_force_open";
+
 export type FetchLandingUpdatesResult =
   | {
       ok: true;
       updates: AppUpdateWithReadState[];
+      forceOpen: boolean;
     }
   | {
       ok: false;
@@ -46,6 +50,7 @@ export type FetchManagedUpdatesResult =
   | {
       ok: true;
       updates: AppUpdate[];
+      forceOpen: boolean;
     }
   | {
       ok: false;
@@ -77,6 +82,7 @@ export type UpsertAppUpdateResult =
 
 export type ArchiveAppUpdateResult = UpsertAppUpdateResult;
 export type MarkAppUpdateReadResult = UpsertAppUpdateResult;
+export type UpdateDashboardUpdatesForceOpenResult = UpsertAppUpdateResult;
 
 export async function fetchLandingUpdatesAction(): Promise<FetchLandingUpdatesResult> {
   const supabase = await createServerSupabaseClient();
@@ -86,6 +92,8 @@ export async function fetchLandingUpdatesAction(): Promise<FetchLandingUpdatesRe
   if (!user) {
     return { ok: false, message: "Sign in to continue." };
   }
+
+  const forceOpen = await fetchBooleanAppSetting(DASHBOARD_UPDATES_FORCE_OPEN_SETTING_KEY, false);
 
   const nowIso = new Date().toISOString();
   const { data: updates, error: updatesError } = await supabase
@@ -104,7 +112,7 @@ export async function fetchLandingUpdatesAction(): Promise<FetchLandingUpdatesRe
   ));
 
   if (activeUpdates.length === 0) {
-    return { ok: true, updates: [] };
+    return { ok: true, updates: [], forceOpen };
   }
 
   const { data: readRows, error: readsError } = await supabase
@@ -123,6 +131,7 @@ export async function fetchLandingUpdatesAction(): Promise<FetchLandingUpdatesRe
 
   return {
     ok: true,
+    forceOpen,
     updates: activeUpdates.map((update) => ({
       ...mapAppUpdateRow(update),
       isRead: readsByUpdateId.has(update.id),
@@ -179,9 +188,36 @@ export async function fetchManagedAppUpdatesAction(): Promise<FetchManagedUpdate
     return { ok: false, message: error.message };
   }
 
+  const forceOpen = await fetchBooleanAppSetting(DASHBOARD_UPDATES_FORCE_OPEN_SETTING_KEY, false);
+
   return {
     ok: true,
-    updates: (((data as AppUpdateRow[] | null) ?? []).map(mapAppUpdateRow))
+    updates: (((data as AppUpdateRow[] | null) ?? []).map(mapAppUpdateRow)),
+    forceOpen
+  };
+}
+
+export async function updateDashboardUpdatesForceOpenAction(
+  forceOpen: boolean
+): Promise<UpdateDashboardUpdatesForceOpenResult> {
+  const currentUser = await requireSuperAdmin();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  try {
+    await updateBooleanAppSetting(DASHBOARD_UPDATES_FORCE_OPEN_SETTING_KEY, forceOpen);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update dashboard updates display setting."
+    };
+  }
+
+  revalidateAppUpdatePaths();
+  return {
+    ok: true,
+    message: forceOpen ? "Updates card will now stay open for everyone." : "Updates card can collapse normally again."
   };
 }
 
