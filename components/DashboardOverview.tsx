@@ -449,6 +449,7 @@ export function DashboardOverview() {
         isAutoPicking={isAutoPicking}
         onAutoPick={handleAutoPickAction}
         dashboardCopy={dashboardCopy}
+        homeTeamId={user?.homeTeamId ?? null}
       />
 
       <AppUpdatesCard />

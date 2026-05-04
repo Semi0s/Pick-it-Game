@@ -12,6 +12,7 @@ type DashboardHeroProps = {
   isAutoPicking: boolean;
   onAutoPick: () => void;
   dashboardCopy: { hello: string; help: string };
+  homeTeamId?: string | null;
 };
 
 export function DashboardHero({
@@ -22,11 +23,26 @@ export function DashboardHero({
   autoPickLoadingLabel,
   isAutoPicking,
   onAutoPick,
-  dashboardCopy
+  dashboardCopy,
+  homeTeamId
 }: DashboardHeroProps) {
+  const hasEcuadorBackground = homeTeamId === "ecu";
+
   return (
-    <section className="rounded-lg bg-gray-100 p-5">
-      <div className="flex items-center justify-between gap-3">
+    <section
+      className={`relative overflow-hidden rounded-lg p-5 ${hasEcuadorBackground ? "bg-slate-950" : "bg-gray-100"}`}
+      style={
+        hasEcuadorBackground
+          ? {
+              backgroundImage:
+                "linear-gradient(180deg, rgba(255,255,255,0.86) 0%, rgba(255,255,255,0.74) 48%, rgba(255,255,255,0.82) 100%), url('/home-team-backgrounds/ecu-background.jpg')",
+              backgroundPosition: "center",
+              backgroundSize: "cover"
+            }
+          : undefined
+      }
+    >
+      <div className="relative flex items-center justify-between gap-3">
         <p className="text-4xl font-black uppercase leading-none tracking-wide text-accent-dark">{dashboardCopy.hello}</p>
         <div className="flex shrink-0 items-center gap-2">
           <Link
@@ -39,7 +55,7 @@ export function DashboardHero({
           </Link>
         </div>
       </div>
-      <div className="mt-2">
+      <div className="relative mt-2">
         <h2 className="mt-2 text-xl font-black leading-tight text-gray-950 sm:text-2xl">{name}</h2>
         <div className="mt-3 space-y-2">
           <p className="text-sm leading-6 text-gray-600">
