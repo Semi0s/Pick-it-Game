@@ -12,6 +12,10 @@ export async function POST(request: NextRequest) {
   return handleSyncRequest(request);
 }
 
+export async function runMatchSyncJob() {
+  return syncMatches();
+}
+
 async function handleSyncRequest(request: NextRequest) {
   const configuredSecret = process.env.MATCH_SYNC_SECRET?.trim() ?? "";
   const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
@@ -28,7 +32,7 @@ async function handleSyncRequest(request: NextRequest) {
   }
 
   try {
-    const result = await syncMatches();
+    const result = await runMatchSyncJob();
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(

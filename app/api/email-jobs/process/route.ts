@@ -60,37 +60,27 @@ export async function POST(request: NextRequest) {
   return handleRequest(request);
 }
 
-async function handleRequest(request: NextRequest) {
-  const auth = getAuthorizationState(request);
+export async function runEmailJobsWorker(source = "internal") {
   console.info("[email-jobs] Worker invoked.", {
-    method: request.method,
-    path: request.nextUrl.pathname,
-    source: auth.source
+    source
   });
-
-  if (!auth.authorized) {
-    console.warn("[email-jobs] Unauthorized worker request rejected.", {
-      method: request.method,
-      path: request.nextUrl.pathname,
-      source: auth.source
-    });
-    return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
-  }
 
   const adminSupabase = createAdminClient();
   const { data, error } = await adminSupabase.rpc("claim_email_jobs", { job_limit: 10 });
 
   if (error) {
-    console.error("[email-jobs] Failed to claim jobs.", { message: error.message });
-    return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
+    console.error("[email-jobs] Failed to claim jobs.", { message: error.message, source });
+    throw new Error(error.message);
   }
 
   const jobs = (data ?? []) as EmailJobRow[];
   console.info("[email-jobs] Claimed jobs.", {
+    source,
     claimed: jobs.length,
     jobIds: jobs.map((job) => job.id),
     jobKinds: jobs.map((job) => job.kind)
   });
+
   let sent = 0;
   let failed = 0;
   let retried = 0;
@@ -106,13 +96,39 @@ async function handleRequest(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({
+  return {
     ok: true,
     claimed: jobs.length,
     sent,
     retried,
     failed
-  });
+  };
+}
+
+async function handleRequest(request: NextRequest) {
+  const auth = getAuthorizationState(request);
+
+  if (!auth.authorized) {
+    console.warn("[email-jobs] Unauthorized worker request rejected.", {
+      method: request.method,
+      path: request.nextUrl.pathname,
+      source: auth.source
+    });
+    return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const result = await runEmailJobsWorker(auth.source);
+    return NextResponse.json(result);
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : "Email job processing failed."
+      },
+      { status: 500 }
+    );
+  }
 }
 
 async function processJob(adminSupabase: ReturnType<typeof createAdminClient>, job: EmailJobRow) {
