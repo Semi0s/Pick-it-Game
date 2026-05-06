@@ -103,10 +103,10 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
   }
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <div
-        className="sticky z-[14] -mx-4 bg-white px-4 py-2 sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
-        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px))" }}
+        className="sticky z-[14] -mx-4 bg-white px-4 py-1.5 sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
+        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <KnockoutPhaseChoiceRail
           showControls={slides.length > 1}
@@ -127,7 +127,7 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
                 onClick={() => goToSlide(index)}
                 data-choice-key={slide.id}
                 data-choice-active={isActive ? "true" : "false"}
-                className={`inline-flex items-center rounded-md px-3 py-2 text-sm font-bold transition ${
+                className={`inline-flex items-center rounded-md px-2.5 py-1 text-[13px] font-bold leading-none transition ${
                   isActive
                     ? "bg-accent text-white"
                     : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
@@ -139,20 +139,20 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
           })}
         </KnockoutPhaseChoiceRail>
         {selectedCountryFilter ? (
-          <div className="mt-2 flex items-center justify-between gap-3 rounded-md bg-gray-100 px-3 py-2">
-            <p className="min-w-0 text-[10px] font-bold uppercase tracking-wide text-gray-600">
+          <div className="mt-1.5 flex items-center justify-between gap-2 rounded-md bg-gray-100 px-2.5 py-1">
+            <p className="min-w-0 text-[10px] font-bold uppercase tracking-wide leading-none text-gray-600">
               Filtering for {activeFilterTeam?.shortName ?? "team"}
             </p>
             <button
               type="button"
               onClick={() => setSelectedCountryFilter("")}
-              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
+              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide leading-none text-gray-700 transition hover:border-accent hover:bg-accent-light"
             >
               All Teams
             </button>
           </div>
         ) : null}
-        <div className="mt-2 border-b border-gray-200/80" />
+        <div className="mt-1.5 border-b border-gray-200/80" />
       </div>
 
       <div className="overflow-visible bg-transparent">
@@ -1190,15 +1190,6 @@ function KnockoutTeamPanel({
   const displayFlag = team?.flagEmoji ?? officialTeam?.flagEmoji ?? null;
   const displayTeam = team ?? officialTeam ?? null;
   const displayCode = displayTeam ? getTeamDisplayCode(displayTeam) : null;
-  const isActiveCountryFilter = Boolean(displayTeam?.id && selectedCountryFilter === displayTeam.id);
-  const isGroupMateInCountryView = Boolean(
-    displayTeam?.id &&
-      selectedCountryFilter &&
-      displayTeam.id !== selectedCountryFilter &&
-      filterGroupName &&
-      displayTeam.groupName &&
-      displayTeam.groupName === filterGroupName
-  );
   const scoreValue = matchScoreDisplay({ predictedScore });
   const ariaTeamName = officialTeam?.name ?? userTeam?.name ?? placeholderLabel ?? "this team";
   const ariaLabel = isProjectedReadOnly
@@ -1262,22 +1253,15 @@ function KnockoutTeamPanel({
             ) : null}
           </span>
           {displayCode && displayTeam ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onSelectCountryFilter?.(displayTeam.id);
-              }}
-              className={`mt-1 inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide transition ${
-                isActiveCountryFilter
-                  ? "border-emerald-800 text-emerald-900"
-                  : isGroupMateInCountryView
-                    ? "border-gray-700 text-gray-700"
-                    : "border-gray-300 text-gray-600 hover:border-accent hover:text-accent-dark"
-              }`}
-            >
-              {displayCode}
-            </button>
+            <KnockoutCountryChip
+              teamId={displayTeam.id}
+              countryCode={displayCode}
+              teamName={displayTeam.name}
+              teamGroupName={displayTeam.groupName ?? null}
+              activeCountryId={selectedCountryFilter}
+              selectedCountryGroupName={filterGroupName}
+              onSelectCountry={onSelectCountryFilter}
+            />
           ) : null}
           {userLayer.helperText ? (
             <span className="mt-0.5 block text-center text-[10px] font-semibold text-gray-500">
@@ -1468,6 +1452,55 @@ function activeCountryGroupName(
 function getTeamDisplayCode(team: BracketTeamOption) {
   const preferred = team.shortName?.trim() || team.name.trim().slice(0, 3);
   return preferred.toUpperCase();
+}
+
+function KnockoutCountryChip({
+  teamId,
+  countryCode,
+  teamName,
+  teamGroupName,
+  activeCountryId,
+  selectedCountryGroupName,
+  onSelectCountry
+}: {
+  teamId: string;
+  countryCode: string;
+  teamName: string;
+  teamGroupName: string | null;
+  activeCountryId: string | null;
+  selectedCountryGroupName: string | null;
+  onSelectCountry?: (teamId: string) => void;
+}) {
+  const isActive = activeCountryId === teamId;
+  const isGroupMate =
+    Boolean(
+      activeCountryId &&
+        activeCountryId !== teamId &&
+        selectedCountryGroupName &&
+        teamGroupName &&
+        selectedCountryGroupName === teamGroupName
+    );
+
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onSelectCountry?.(teamId);
+      }}
+      aria-label={`Filter knockout matches by ${teamName}`}
+      className={`mt-1 inline-flex cursor-pointer items-center justify-center rounded-md border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide transition ${
+        isActive
+          ? "border-emerald-800 ring-1 ring-emerald-800 text-emerald-900"
+          : isGroupMate
+            ? "border-gray-700 ring-1 ring-gray-700 text-gray-700"
+            : "border-gray-300 text-gray-600 hover:border-accent hover:text-accent-dark"
+      }`}
+    >
+      {countryCode}
+    </button>
+  );
 }
 
 function KnockoutMatchNumberBadge({ number, compact = false }: { number: number; compact?: boolean }) {

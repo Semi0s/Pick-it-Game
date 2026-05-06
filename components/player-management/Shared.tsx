@@ -134,7 +134,7 @@ export function HorizontalChoiceRail({
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const baseScrollerClassName =
-    "flex min-w-max gap-2 px-1 pb-1 snap-x snap-proximity scroll-px-1 touch-pan-x overflow-y-hidden [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch]";
+    "flex min-w-max gap-1.5 px-0.5 pb-0.5 snap-x snap-proximity scroll-px-1 touch-pan-x overflow-y-hidden [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch]";
 
   function nudge(direction: "prev" | "next") {
     const scroller = scrollerRef.current;
@@ -151,7 +151,7 @@ export function HorizontalChoiceRail({
 
   return (
     <div className={className ?? ""}>
-      <div className="flex min-w-0 items-stretch gap-1.5">
+      <div className="flex min-w-0 items-stretch gap-1">
         {showControls ? (
           <button
             type="button"
@@ -223,7 +223,7 @@ export function WindowChoiceRail({
   const [canScrollNext, setCanScrollNext] = useState(false);
   const edgeControlWidth = 24;
   const beltGutterWidth = 40;
-  const baseScrollerClassName = "flex min-w-max gap-2 px-1 pb-1";
+  const baseScrollerClassName = "flex min-w-max gap-1.5 px-0.5 pb-0.5";
 
   const clampUserOffset = useCallback((nextUserOffset: number) => {
     const minUserOffset = minTotalOffsetRef.current - centeredOffsetRef.current;

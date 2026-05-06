@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDown, ChevronUp, CircleHelp, Network, Sparkles, SquareCheckBig, Trophy } from "lucide-react";
+import { ChevronDown, ChevronUp, CircleHelp } from "lucide-react";
 import { useEffect, useState } from "react";
+import { DismissibleHelperText } from "@/components/DismissibleHelperText";
+import { DashboardHeroActionGrid } from "@/components/dashboard/DashboardHeroActionGrid";
 
 type DashboardHeroProps = {
   userId?: string | null;
@@ -11,6 +13,8 @@ type DashboardHeroProps = {
   onPrimaryAction: () => void;
   autoPickLabel: string;
   autoPickLoadingLabel: string;
+  knockoutLabel: string;
+  sidePicksLabel: string;
   isAutoPicking: boolean;
   onAutoPick: () => void;
   dashboardCopy: { hello: string; help: string };
@@ -23,6 +27,8 @@ export function DashboardHero({
   onPrimaryAction,
   autoPickLabel,
   autoPickLoadingLabel,
+  knockoutLabel,
+  sidePicksLabel,
   isAutoPicking,
   onAutoPick,
   dashboardCopy,
@@ -31,6 +37,7 @@ export function DashboardHero({
 }: DashboardHeroProps) {
   const hasEcuadorBackground = homeTeamId === "ecu";
   const disclosureStorageKey = `pickit:dashboard-hero-disclosure:${userId ?? "guest"}`;
+  const helperTextStorageKey = `pickit:tip:dashboard-hero-intro:${userId ?? "guest"}`;
   const [isExpanded, setIsExpanded] = useState(true);
   const [hasHydratedDisclosure, setHasHydratedDisclosure] = useState(false);
 
@@ -78,10 +85,10 @@ export function DashboardHero({
           <p className={`text-5xl font-black uppercase leading-none tracking-wide sm:text-[3.4rem] ${hasEcuadorBackground ? "text-white" : "text-accent-dark"}`}>
             {dashboardCopy.hello}
           </p>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="-mr-1 flex shrink-0 items-center">
             <Link
               href="/help"
-              className={`inline-flex h-14 w-14 items-center justify-center rounded-md transition ${hasEcuadorBackground ? "text-white/90 hover:text-white" : "text-gray-800 hover:text-accent-dark"}`}
+              className={`inline-flex h-12 w-12 items-center justify-center rounded-md transition ${hasEcuadorBackground ? "text-white/90 hover:text-white" : "text-gray-800 hover:text-accent-dark"}`}
             >
               <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-accent-dark shadow-sm">
                 <CircleHelp aria-hidden className="h-5 w-5" />
@@ -108,54 +115,27 @@ export function DashboardHero({
       </div>
       {isExpanded ? (
         <div className="border-t border-gray-200 px-5 py-4">
-          <div className="space-y-2">
-          <p className="text-sm leading-6 text-gray-600">
-            Predict scores. Earn points. Advance through knockout rounds, side picks, and live group play.{" "}
-            <span className="font-bold text-gray-950">Don&apos;t get left on the bench!</span>
-          </p>
-          <p className="text-sm leading-6 text-gray-600">
-            Get your first set of picks in before June 11 and earn a BONUS!
-          </p>
-        </div>
-          <div className="mx-auto mt-5 max-w-xl">
-          <div>
-            <div className="grid grid-cols-4 gap-2">
-              <button
-                type="button"
-                onClick={onPrimaryAction}
-                className="inline-flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-accent bg-accent px-2 py-3 text-center text-[10px] font-bold uppercase tracking-wide text-white transition hover:border-accent-dark hover:bg-accent-dark"
-              >
-                <SquareCheckBig aria-hidden className="h-5 w-5 shrink-0 text-white" />
-                <span className="text-center leading-tight normal-case tracking-normal text-[11px]">{ctaLabel}</span>
-              </button>
-              <button
-                type="button"
-                onClick={onAutoPick}
-                disabled={isAutoPicking}
-                className="inline-flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Sparkles aria-hidden className="h-5 w-5 shrink-0 text-accent-dark" />
-                <span className="text-center leading-tight normal-case tracking-normal text-[11px]">
-                  {isAutoPicking ? autoPickLoadingLabel : autoPickLabel}
-                </span>
-              </button>
-              <Link
-                href="/knockout"
-                className="inline-flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
-              >
-                <Network aria-hidden className="h-5 w-5 shrink-0 text-accent-dark" />
-                <span className="text-center leading-tight normal-case tracking-normal text-[11px]">My Knockout Picks</span>
-              </Link>
-              <Link
-                href="/trophies"
-                className="inline-flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
-              >
-                <Trophy aria-hidden className="h-5 w-5 shrink-0 text-accent-dark" />
-                <span className="text-center leading-tight normal-case tracking-normal text-[11px]">My Side Picks</span>
-              </Link>
+          <DismissibleHelperText storageKey={helperTextStorageKey} dismissLabel="Hide dashboard tip">
+            <div className="space-y-2">
+              <p>
+                Predict scores. Earn points. Advance through knockout rounds, side picks, and live group play.{" "}
+                <span className="font-bold text-gray-950">Don&apos;t get left on the bench!</span>
+              </p>
+              <p>Get your first set of picks in before June 11 and earn a BONUS!</p>
             </div>
+          </DismissibleHelperText>
+          <div className="mx-auto mt-5 max-w-xl">
+            <DashboardHeroActionGrid
+              ctaLabel={ctaLabel}
+              onPrimaryAction={onPrimaryAction}
+              autoPickLabel={autoPickLabel}
+              autoPickLoadingLabel={autoPickLoadingLabel}
+              knockoutLabel={knockoutLabel}
+              sidePicksLabel={sidePicksLabel}
+              isAutoPicking={isAutoPicking}
+              onAutoPick={onAutoPick}
+            />
           </div>
-        </div>
         </div>
       ) : null}
     </section>

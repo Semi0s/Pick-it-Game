@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { InlineDisclosureButton, WindowChoiceRail, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
@@ -15,6 +15,18 @@ import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { TrophyBadge } from "@/components/TrophyBadge";
+import {
+  DASHBOARD_ACTION_COPY,
+  DASHBOARD_AUTO_PICK_EMPTY_COPY,
+  DASHBOARD_AUTO_PICK_LABEL_COPY,
+  DASHBOARD_AUTO_PICK_LOADING_COPY,
+  DashboardHeroActionGrid
+} from "@/components/dashboard/DashboardHeroActionGrid";
+import { clearStoredAutoPickDraft, fetchNextAutoPick, storeAutoPickDraft } from "@/lib/auto-pick-client";
+import { showAppToast } from "@/lib/app-toast";
+import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
+import { normalizeGroupKey } from "@/lib/group-standings";
+import { clearGroupsEntryIntent, storeGroupsEntryIntent } from "@/lib/groups-entry-intent";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
   GroupStandingItem,
@@ -25,6 +37,10 @@ import type {
   LeaderboardSwitcherView
 } from "@/lib/leaderboard-data";
 import type { DailyWinner } from "@/lib/leaderboard-highlights";
+import { fetchPlayerPredictions } from "@/lib/player-predictions";
+import { canEditPrediction } from "@/lib/prediction-state";
+import { getStoredPredictions } from "@/lib/prediction-store";
+import type { MatchWithTeams, Prediction } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 const DEFAULT_SWITCHER_STATE = {
@@ -60,8 +76,12 @@ const TWO_LINE_CLAMP_STYLE = {
 };
 
 export function LeaderboardClient() {
+  const router = useRouter();
   const { user, isLoading: isUserLoading } = useCurrentUser();
   const searchParams = useSearchParams();
+  const [groupMatches, setGroupMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
+  const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [isHeroAutoPicking, setIsHeroAutoPicking] = useState(false);
   const [users, setUsers] = useState<LeaderboardListItem[]>([]);
   const [groupStandings, setGroupStandings] = useState<GroupStandingItem[]>([]);
   const [switcher, setSwitcher] = useState<LeaderboardSwitcherContext | null>(null);
@@ -138,6 +158,28 @@ export function LeaderboardClient() {
     return `/api/leaderboard?${params.toString()}`;
   }, [activeView, selectedGroupId, selectedManagerId]);
   const dailyWinnerDismissOwnerKey = user?.id ?? "anonymous";
+  const autoPickLanguage = user?.preferredLanguage === "es" ? "es" : "en";
+  const actionCopy = DASHBOARD_ACTION_COPY[autoPickLanguage];
+  const savedMatchIds = useMemo(() => new Set(predictions.map((prediction) => prediction.matchId)), [predictions]);
+  const openMatches = useMemo(
+    () => groupMatches.filter((match) => canEditPrediction(match.status)),
+    [groupMatches]
+  );
+  const completedCount = useMemo(
+    () => groupMatches.filter((match) => savedMatchIds.has(match.id)).length,
+    [groupMatches, savedMatchIds]
+  );
+  const nextOpenMatch = useMemo(
+    () =>
+      [...openMatches].sort((left, right) => +new Date(left.kickoffTime) - +new Date(right.kickoffTime))[0] ?? null,
+    [openMatches]
+  );
+  const nextUnsavedOpenMatch = useMemo(
+    () => openMatches.find((match) => !savedMatchIds.has(match.id)) ?? null,
+    [openMatches, savedMatchIds]
+  );
+  const nextPrimaryMatch = nextUnsavedOpenMatch ?? nextOpenMatch;
+  const heroCtaLabel = completedCount > 0 ? actionCopy.myNextPick : actionCopy.myPicks;
 
   const loadManagedAwardGroup = useCallback(async () => {
     if (activeView !== "managed_groups" || !selectedGroupId) {
@@ -154,6 +196,89 @@ export function LeaderboardClient() {
     const matchedGroup = result.groups.find((group) => group.id === selectedGroupId) ?? null;
     setManagedAwardGroup(matchedGroup);
   }, [activeView, selectedGroupId]);
+
+  const refreshHeroGroupMatches = useCallback(async () => {
+    try {
+      const items = await fetchGroupMatchesForPredictions();
+      setGroupMatches(items);
+    } catch (error) {
+      console.warn("Could not refresh leaderboard hero group matches.", { error });
+      setGroupMatches((currentMatches) => currentMatches);
+    }
+  }, []);
+
+  const refreshHeroPredictions = useCallback(async () => {
+    if (!user) {
+      setPredictions([]);
+      return;
+    }
+
+    try {
+      const items = await fetchPlayerPredictions(user.id);
+      setPredictions(items);
+    } catch (error) {
+      console.warn("Could not refresh leaderboard hero predictions.", { userId: user.id, error });
+      setPredictions((currentPredictions) => currentPredictions);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchGroupMatchesForPredictions()
+      .then((items) => {
+        if (isMounted) {
+          setGroupMatches(items);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setGroupMatches(getLocalGroupMatches());
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setPredictions([]);
+      return;
+    }
+
+    setPredictions(getStoredPredictions(user.id));
+    refreshHeroPredictions().catch(() => {
+      setPredictions(getStoredPredictions(user.id));
+    });
+  }, [refreshHeroPredictions, user]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !user) {
+      return;
+    }
+
+    function handleWindowFocus() {
+      refreshHeroGroupMatches().catch(() => undefined);
+      refreshHeroPredictions().catch(() => undefined);
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refreshHeroGroupMatches().catch(() => undefined);
+        refreshHeroPredictions().catch(() => undefined);
+      }
+    }
+
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [refreshHeroGroupMatches, refreshHeroPredictions, user]);
 
   useEffect(() => {
     try {
@@ -922,6 +1047,52 @@ export function LeaderboardClient() {
     );
   }
 
+  async function handleHeroAutoPickAction() {
+    setIsHeroAutoPicking(true);
+
+    try {
+      clearGroupsEntryIntent();
+      clearStoredAutoPickDraft();
+      const suggestion = await fetchNextAutoPick();
+      storeAutoPickDraft(suggestion);
+      const targetMatch = groupMatches.find((match) => match.id === suggestion.matchId) ?? null;
+      const groupKey = normalizeGroupKey(targetMatch?.groupName) ?? null;
+      storeGroupsEntryIntent({
+        source: "dashboard",
+        target: "next-auto-pick",
+        matchId: suggestion.matchId,
+        groupKey
+      });
+      router.push("/groups");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage];
+      const localizedMessage =
+        message === DASHBOARD_AUTO_PICK_EMPTY_COPY.en ? DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage] : message;
+
+      showAppToast({
+        tone: localizedMessage === DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage] ? "tip" : "error",
+        text: localizedMessage
+      });
+    } finally {
+      setIsHeroAutoPicking(false);
+    }
+  }
+
+  function handleHeroPrimaryAction() {
+    if (completedCount > 0) {
+      clearGroupsEntryIntent();
+      clearStoredAutoPickDraft();
+      storeGroupsEntryIntent({
+        source: "dashboard",
+        target: "next-pick",
+        matchId: nextPrimaryMatch?.id ?? null,
+        groupKey: normalizeGroupKey(nextPrimaryMatch?.groupName) ?? null
+      });
+    }
+
+    router.push("/groups");
+  }
+
   return (
     <div className="space-y-5">
       <section className="rounded-lg bg-gray-100 p-5">
@@ -943,10 +1114,24 @@ export function LeaderboardClient() {
             />
           </div>
           {isIntroMoreOpen ? (
-            <p className="mt-3 text-sm leading-6 text-gray-600">
-              A quick snapshot of your current rank, total points, and recent movement across global and group
-              leaderboards.
-            </p>
+            <div className="mt-3 space-y-4">
+              <p className="text-sm leading-6 text-gray-600">
+                A quick snapshot of your current rank, total points, and recent movement across global and group
+                leaderboards.
+              </p>
+              <div className="mx-auto max-w-xl">
+                <DashboardHeroActionGrid
+                  ctaLabel={heroCtaLabel}
+                  onPrimaryAction={handleHeroPrimaryAction}
+                  autoPickLabel={DASHBOARD_AUTO_PICK_LABEL_COPY[autoPickLanguage]}
+                  autoPickLoadingLabel={DASHBOARD_AUTO_PICK_LOADING_COPY[autoPickLanguage]}
+                  knockoutLabel={actionCopy.myKnockoutPicks}
+                  sidePicksLabel={actionCopy.mySidePicks}
+                  isAutoPicking={isHeroAutoPicking}
+                  onAutoPick={handleHeroAutoPickAction}
+                />
+              </div>
+            </div>
           ) : null}
         </div>
       </section>
@@ -1059,8 +1244,11 @@ export function LeaderboardClient() {
         </section>
       ) : null}
 
-      <section className="px-1">
-        {renderSwitcherControls()}
+      <section
+        className="sticky z-[14] -mx-4 bg-white px-4 pb-2 pt-1.5 shadow-[0_12px_22px_-18px_rgba(15,23,42,0.45)] sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
+        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px) + 10px)" }}
+      >
+        {renderSwitcherControls("px-1")}
       </section>
 
       {!isLoading && !error && activityFeed.length > 0 ? (
@@ -1445,7 +1633,7 @@ export function LeaderboardClient() {
 
   function renderSwitcherControls(className?: string) {
     return (
-      <div className={className ?? ""}>
+      <div className={className ? `${className} space-y-1.5` : "space-y-1.5"}>
         <LeaderboardChoiceRail
           prevLabel="Show previous leaderboard views"
           nextLabel="Show more leaderboard views"
@@ -1459,7 +1647,7 @@ export function LeaderboardClient() {
               onClick={() => handleSelectView(tab.value)}
               data-choice-key={tab.value}
               data-choice-active={activeView === tab.value ? "true" : "false"}
-              className={`shrink-0 rounded-md px-3 py-2 text-sm font-bold ${
+              className={`shrink-0 rounded-md px-2.5 py-1 text-[12px] font-bold leading-none ${
                 activeView === tab.value ? "bg-accent text-white" : "bg-gray-100 text-gray-700"
               }`}
             >
@@ -1469,14 +1657,14 @@ export function LeaderboardClient() {
         </LeaderboardChoiceRail>
 
         {(shouldShowGroupSelector(activeView) || shouldShowManagerSelector(activeView)) && switcher ? (
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-1.5 sm:grid-cols-2">
             {shouldShowGroupSelector(activeView) ? (
               <div className="overflow-hidden rounded-md sm:col-span-2">
                 <LeaderboardChoiceRail
                   showControls={shouldShowGroupCarouselControls}
                   prevLabel="Show previous groups"
                   nextLabel="Show more groups"
-                  contentClassName="flex gap-2 pb-1"
+                  contentClassName="flex gap-1.5 pb-0.5"
                   activeItemKey={selectedGroupId}
                   onActiveItemChange={(nextKey) => handleSelectGroup(nextKey)}
                 >
@@ -1488,7 +1676,7 @@ export function LeaderboardClient() {
                         onClick={() => handleSelectGroup(group.id)}
                         data-choice-key={group.id}
                         data-choice-active={selectedGroupId === group.id ? "true" : "false"}
-                        className={`w-[min(12.25rem,calc(100vw-7.25rem))] max-w-full shrink-0 rounded-lg border px-2.5 py-2 text-left transition sm:w-[196px] ${
+                        className={`w-[min(12.25rem,calc(100vw-7.25rem))] max-w-full shrink-0 rounded-lg border px-2 py-1 text-left transition sm:w-[196px] ${
                           selectedGroupId === group.id
                             ? "border-accent bg-accent-light"
                             : "border-gray-200 bg-gray-50 hover:border-accent-light hover:bg-white"
@@ -1496,7 +1684,7 @@ export function LeaderboardClient() {
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-black leading-5 text-gray-950">{group.label}</p>
+                            <p className="truncate text-[13px] font-black leading-4 text-gray-950">{group.label}</p>
                           </div>
                           {group.rankDelta ? (
                             <span className={`text-[11px] font-black ${getMovementTone(group.rankDelta)}`}>
@@ -1504,7 +1692,7 @@ export function LeaderboardClient() {
                             </span>
                           ) : null}
                         </div>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] font-semibold text-gray-600">
+                        <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-semibold text-gray-600">
                           <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
                             {group.rank ? `#${group.rank}` : "—"}
                           </span>
@@ -1518,7 +1706,7 @@ export function LeaderboardClient() {
                       </button>
                     ))
                   ) : (
-                    <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                    <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-600">
                       {activeView === "managed_groups"
                         ? "You are not managing any groups yet."
                         : "You have not joined any groups yet."}
@@ -1530,11 +1718,11 @@ export function LeaderboardClient() {
 
             {shouldShowManagerSelector(activeView) ? (
               <label className="block">
-                <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Manager</span>
+                <span className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Manager</span>
                 <select
                   value={selectedManagerId}
                   onChange={(event) => handleSelectManager(event.target.value)}
-                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-[13px] font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                 >
                   <option value="">Choose a manager</option>
                   {switcher.managers.map((manager) => (

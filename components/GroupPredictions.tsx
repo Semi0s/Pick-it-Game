@@ -36,6 +36,7 @@ import {
   GroupStandingsMiniTable,
   type MiniGroupStandingsRow
 } from "@/components/GroupStandingsMiniTable";
+import { DismissibleHelperText } from "@/components/DismissibleHelperText";
 import { SocialPredictionList } from "@/components/SocialPredictionList";
 
 type GroupPredictionsProps = {
@@ -79,8 +80,10 @@ const GROUP_PREDICTIONS_GROUP_FILTER_STORAGE_KEY = "group-predictions-group-filt
 const GROUP_PREDICTIONS_TEAM_FILTER_STORAGE_KEY = "group-predictions-team-filter";
 const GROUP_PREDICTIONS_MINI_TABLE_GROUP_STORAGE_KEY = "group-predictions-mini-table-group";
 const GROUP_PREDICTIONS_PAGE_SIZE = 10;
-const PREDICTION_SCROLL_STACK_GAP = 12;
-const AUTO_PICK_SCROLL_EXTRA_GAP = 36;
+const PREDICTION_SCROLL_STACK_GAP = 20;
+const MATCH_FOCUS_SCROLL_EXTRA_GAP = 16;
+const INTENT_MATCH_SCROLL_EXTRA_GAP = 8;
+const AUTO_PICK_SCROLL_EXTRA_GAP = 8;
 const POST_SAVE_ADVANCE_DELAY_MS = 700;
 const AUTO_PICK_REVEAL_DELAY_MS = 650;
 const DEBUG_GROUPS_ENTRY_SCROLL = process.env.NODE_ENV !== "production";
@@ -124,6 +127,14 @@ const EXPLAINER_COPY: Record<ExplainerLanguage, string[]> = {
     "Nach dem Anpfiff werden alle Tipps der Spieler öffentlich.",
     "Hol dir einen GROSSEN BONUS, wenn du Champion und Vizemeister vor dem Start des Cups vorhersagst."
   ]
+};
+
+const HELPER_DISMISS_LABEL_COPY: Record<ExplainerLanguage, string> = {
+  en: "Hide tip",
+  es: "Ocultar tip",
+  fr: "Masquer l'aide",
+  pt: "Ocultar dica",
+  de: "Tipp ausblenden"
 };
 
 const AUTO_PICK_LABEL_COPY = {
@@ -647,9 +658,9 @@ export function GroupPredictions({
   );
   const projectedQualification = useMemo(() => {
     const automaticQualifierTeamIds = new Set<string>();
-    const automaticQualifierTeams: Array<{ teamId: string; teamCode: string; groupName: string }> = [];
+    const automaticQualifierTeams: Array<{ teamId: string; teamCode: string; teamName: string; groupName: string }> = [];
     const bestThirdPlaceQualifierTeamIds = new Set<string>();
-    const bestThirdPlaceQualifierTeams: Array<{ teamId: string; teamCode: string; groupName: string }> = [];
+    const bestThirdPlaceQualifierTeams: Array<{ teamId: string; teamCode: string; teamName: string; groupName: string }> = [];
 
     try {
       const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(projectedStandingsByGroup);
@@ -658,6 +669,7 @@ export function GroupPredictions({
         automaticQualifierTeams.push({
           teamId: qualifier.teamId,
           teamCode: qualifier.teamShortName || qualifier.teamName.slice(0, 3).toUpperCase(),
+          teamName: qualifier.teamName,
           groupName: qualifier.groupName
         });
       }
@@ -666,6 +678,7 @@ export function GroupPredictions({
         bestThirdPlaceQualifierTeams.push({
           teamId: seed.teamId,
           teamCode: seed.teamShortName || seed.teamName.slice(0, 3).toUpperCase(),
+          teamName: seed.teamName,
           groupName: seed.groupName
         });
       }
@@ -971,7 +984,9 @@ export function GroupPredictions({
           matchId: pendingDashboardNavigation.matchId,
           mode: "match",
           extraOffset:
-            pendingDashboardNavigation.target === "next-auto-pick" ? AUTO_PICK_SCROLL_EXTRA_GAP : 0,
+            pendingDashboardNavigation.target === "next-auto-pick"
+              ? AUTO_PICK_SCROLL_EXTRA_GAP
+              : INTENT_MATCH_SCROLL_EXTRA_GAP,
           source: "dashboard",
           reason: pendingDashboardNavigation.target
         });
@@ -1024,8 +1039,12 @@ export function GroupPredictions({
     const stickyControlsHeight = Math.round(
       stickyControlsRef.current?.getBoundingClientRect().height ?? 0
     );
+    const modeExtraOffset = pendingScrollTarget.mode === "match" ? MATCH_FOCUS_SCROLL_EXTRA_GAP : 0;
     const scrollOffset =
-      stickyControlsHeight + PREDICTION_SCROLL_STACK_GAP + (pendingScrollTarget.extraOffset ?? 0);
+      stickyControlsHeight +
+      PREDICTION_SCROLL_STACK_GAP +
+      modeExtraOffset +
+      (pendingScrollTarget.extraOffset ?? 0);
     const previousScrollY = window.scrollY;
     const targetTop = scrollTarget.getBoundingClientRect().top + window.scrollY - scrollOffset;
     if (activeScrollDebugRef.current && activeScrollDebugRef.current !== pendingScrollTarget.reason) {
@@ -1041,6 +1060,7 @@ export function GroupPredictions({
       targetMatchId: pendingScrollTarget.matchId,
       anchorMatchId: pendingScrollTarget.anchorMatchId ?? null,
       extraOffset: pendingScrollTarget.extraOffset ?? 0,
+      modeExtraOffset,
       stickyStackHeight: stickyControlsHeight,
       finalScrollOffset: scrollOffset,
       scrollYBefore: previousScrollY,
@@ -1269,12 +1289,16 @@ export function GroupPredictions({
   function handlePrimaryAction() {
     prepareExplicitMatchNavigation();
     if (selectedGroup === GROUP_FILTER_ALL_KEY && selectedTeamId === TEAM_FILTER_ALL_KEY && nextPredictionMatchId) {
-      jumpToMatch(nextPredictionMatchId);
+      jumpToMatch(nextPredictionMatchId, "match", {
+        extraOffset: INTENT_MATCH_SCROLL_EXTRA_GAP
+      });
       return;
     }
 
     if (nextPredictionMatchIdInCurrentView) {
-      focusMatchInCurrentFilter(nextPredictionMatchIdInCurrentView);
+      focusMatchInCurrentFilter(nextPredictionMatchIdInCurrentView, "match", {
+        extraOffset: INTENT_MATCH_SCROLL_EXTRA_GAP
+      });
       return;
     }
 
@@ -1296,6 +1320,32 @@ export function GroupPredictions({
       setSelectedTeamId(TEAM_FILTER_ALL_KEY);
     },
     [setSelectedGroup, setSelectedTeamId]
+  );
+
+  const handleProjectedQualifierSelect = useCallback(
+    (teamId: string, groupName: string) => {
+      const normalizedGroupName = normalizeGroupKey(groupName);
+      if (!normalizedGroupName) {
+        console.warn("Could not focus projected qualifier because its group was missing.", {
+          teamId
+        });
+        return;
+      }
+
+      prepareExplicitMatchNavigation();
+      setSelectedGroup(normalizedGroupName);
+      setSelectedTeamId(teamId);
+      setIsPredictionTableOpen(true);
+      setFocusedMatchId(null);
+
+      requestAnimationFrame(() => {
+        stickyControlsRef.current?.scrollIntoView({
+          block: "start",
+          behavior: "smooth"
+        });
+      });
+    },
+    [prepareExplicitMatchNavigation, setSelectedGroup, setSelectedTeamId, setIsPredictionTableOpen]
   );
 
   const handleDraftStateChange = useCallback((matchId: string, draft: DraftPredictionState) => {
@@ -1367,29 +1417,29 @@ export function GroupPredictions({
       <section
         className={
           variant === "cockpit"
-            ? "rounded-b-md bg-white pt-1"
+            ? "rounded-b-md bg-white pt-0.5"
             : "pt-3"
         }
       >
         <div
-          className={`flex flex-wrap items-center justify-between gap-3 ${
-            variant === "cockpit" ? `${lastSavedFeedback ? "pb-2" : "border-b border-gray-200/80 pb-2"}` : ""
+          className={`flex flex-wrap items-center justify-between gap-2 ${
+            variant === "cockpit" ? `${lastSavedFeedback ? "pb-1.5" : "border-b border-gray-200/80 pb-1.5"}` : ""
           }`}
         >
           <div>
-            <p className="text-sm font-black text-gray-900">
+            <p className="text-[13px] font-black leading-none text-gray-900">
               Matches {matchWindowStart + 1}-{matchWindowStart + visibleMatches.length}
             </p>
-            <p className="text-xs font-semibold text-gray-500">
+            <p className="mt-0.5 text-[11px] font-semibold leading-none text-gray-500">
               Starting {formatDateLabel(getMatchDateKey(visibleMatches[0]!.kickoffTime))}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             <button
               type="button"
               onClick={() => handleMatchWindowChange("earlier")}
               disabled={!hasEarlierMatches}
-              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[13px] font-bold leading-none text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
             >
               Earlier
             </button>
@@ -1397,15 +1447,15 @@ export function GroupPredictions({
               type="button"
               onClick={() => handleMatchWindowChange("later")}
               disabled={!hasLaterMatches}
-              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[13px] font-bold leading-none text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
             >
               Later
             </button>
           </div>
         </div>
         {variant === "cockpit" && lastSavedFeedback ? (
-          <div className="pt-2">
-            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-amber-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-900">
+          <div className="pt-1.5">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-900">
               <span className="whitespace-nowrap">Last pick</span>
               <span className="min-w-0 text-center">{lastSavedFeedback.summary}</span>
               <span className="whitespace-nowrap text-right">{formatDateTimeWithZone(lastSavedFeedback.savedAt)}</span>
@@ -1455,14 +1505,21 @@ export function GroupPredictions({
           </div>
           {isMoreOpen ? (
             <>
-              <ul className="mt-3 min-w-0 space-y-0.5 text-sm leading-5 text-gray-600">
-                {EXPLAINER_COPY[explainerLanguage].map((line) => (
-                  <li key={line} className="flex gap-2">
-                    <span className="shrink-0 text-gray-500">&bull;</span>
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
+              <div className="mt-3">
+                <DismissibleHelperText
+                  storageKey={`pickit:tip:group-picks-explainer:${user.id}`}
+                  dismissLabel={HELPER_DISMISS_LABEL_COPY[explainerLanguage]}
+                >
+                  <ul className="min-w-0 space-y-0.5">
+                    {EXPLAINER_COPY[explainerLanguage].map((line) => (
+                      <li key={line} className="flex gap-2">
+                        <span className="shrink-0 text-gray-500">&bull;</span>
+                        <span>{line}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </DismissibleHelperText>
+              </div>
               <div className="mx-auto mt-4 max-w-xl">
                 <div className={`grid gap-2 ${shouldShowSecondaryKnockoutButton ? "grid-cols-4" : "grid-cols-3"}`}>
                   <button
@@ -1521,10 +1578,10 @@ export function GroupPredictions({
       <div
         ref={stickyControlsRef}
         // Header stays at z-20; this unified cockpit and match-window stack sits beneath it at z-14.
-        className="sticky z-[14] -mx-4 bg-white px-4 pb-3 pt-2 shadow-[0_12px_22px_-18px_rgba(15,23,42,0.45)] sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
-        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px))" }}
+        className="sticky z-[14] -mx-4 bg-white px-4 pb-2 pt-1.5 shadow-[0_12px_22px_-18px_rgba(15,23,42,0.45)] sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
+        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px) + 10px)" }}
       >
-        <div className="space-y-3">
+        <div className="space-y-2">
           <PredictionChoiceRail
             activeItemKey={selectedGroup}
             onActiveItemChange={handleGroupFilterChange}
@@ -1547,9 +1604,9 @@ export function GroupPredictions({
                 isHighlighted={!selectedGroup || selectedGroup !== groupName ? homeTeamGroupName === groupName : false}
                 onSelect={handleGroupFilterChange}
               >
-                <span className="flex min-w-7 flex-col items-center leading-none">
+                <span className="flex min-w-6 flex-col items-center gap-0 leading-none">
                   <span className="text-[8px] font-semibold uppercase tracking-wide">Group</span>
-                  <span className="mt-0.5 text-base font-black">{getGroupShortLabel(groupName)}</span>
+                  <span className="text-[15px] font-black">{getGroupShortLabel(groupName)}</span>
                 </span>
               </FilterRailButton>
             ))}
@@ -1581,8 +1638,8 @@ export function GroupPredictions({
               ))}
             </PredictionChoiceRail>
           )}
-          <div className="flex flex-wrap items-center justify-center gap-2 text-center text-sm font-semibold text-gray-600">
-            <span>{matchCountSummary}</span>
+          <div className="flex flex-wrap items-center justify-center gap-1 text-center text-[11px] font-semibold leading-none text-gray-600">
+            <span className="py-0.5">{matchCountSummary}</span>
           </div>
           {selectedGroup === GROUP_FILTER_ALL_KEY ? (
             <div className="space-y-1.5 rounded-lg bg-gray-100 px-3 py-2">
@@ -1594,16 +1651,19 @@ export function GroupPredictions({
               {allModeProjectedQualifierCodes.length > 0 ? (
                 <div className="mx-auto grid max-w-[32rem] grid-cols-8 justify-center gap-1.5 text-[10px] sm:text-[11px]">
                   {allModeProjectedQualifierCodes.map((team) => (
-                    <div
+                    <button
                       key={team.teamId}
-                      className={`rounded-md px-1.5 py-1 text-center font-bold uppercase tracking-wide ${
+                      type="button"
+                      onClick={() => handleProjectedQualifierSelect(team.teamId, team.groupName)}
+                      aria-label={`Show ${team.teamName} in ${formatGroupName(team.groupName) ?? team.groupName}`}
+                      className={`rounded-md px-1.5 py-1 text-center font-bold uppercase tracking-wide transition ${
                         user.homeTeamId === team.teamId
-                          ? "bg-amber-200 text-amber-950"
-                          : "bg-gray-200 text-gray-900"
+                          ? "bg-amber-200 text-amber-950 hover:bg-amber-300"
+                          : "bg-gray-200 text-gray-900 hover:bg-gray-300"
                       }`}
                     >
                       {team.teamCode}
-                    </div>
+                    </button>
                   ))}
                 </div>
               ) : (
@@ -1614,9 +1674,9 @@ export function GroupPredictions({
             </div>
           ) : null}
           {selectedGroup !== GROUP_FILTER_ALL_KEY && miniTableGroup ? (
-            <section className="space-y-2 rounded-lg bg-gray-100 px-4 py-3">
+            <section className="space-y-1 rounded-lg bg-gray-100 px-3 py-1.5">
               <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 space-y-1">
+                <div className="min-w-0 space-y-0.5">
                   <button
                     type="button"
                     onClick={() => {
@@ -1634,7 +1694,7 @@ export function GroupPredictions({
                   </button>
                   {selectedTeamQualifierStatus ? (
                     <span
-                      className={`inline-flex rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${
+                      className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
                         selectedTeamQualifierStatus === "projected-r32"
                           ? "bg-emerald-100 text-emerald-800"
                           : selectedTeamQualifierStatus === "best-third"
@@ -1663,7 +1723,7 @@ export function GroupPredictions({
 
               {isPredictionTableOpen ? (
                 <>
-                  <p className="text-[11px] font-semibold text-gray-500">
+                  <p className="text-[9px] font-semibold text-gray-500">
                     Top 2 + best 3rd-place teams advance
                   </p>
                   <GroupStandingsMiniTable
@@ -1839,7 +1899,7 @@ function FilterRailButton({
       type="button"
       data-choice-key={optionKey}
       onClick={() => onSelect?.(optionKey)}
-      className={`rounded-md border px-1.5 py-1.5 text-sm font-bold transition ${
+      className={`rounded-md border px-1.5 py-0.5 text-[13px] font-bold leading-none transition ${
         isActive
           ? tone === "strong"
             ? "border-accent bg-accent text-white"

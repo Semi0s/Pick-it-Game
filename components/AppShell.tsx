@@ -451,7 +451,7 @@ export function AppShell({ children }: AppShellProps) {
       className="min-h-screen bg-white text-gray-950"
       style={
         {
-          paddingBottom: "calc(6.35rem + env(safe-area-inset-bottom, 0px))",
+          paddingBottom: "calc(5.7rem + env(safe-area-inset-bottom, 0px))",
           "--app-header-height": `${headerHeight}px`
         } as CSSProperties
       }
@@ -580,11 +580,10 @@ export function AppShell({ children }: AppShellProps) {
       ) : null}
 
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white"
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-700 bg-neutral-900"
         style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
       >
-        <div aria-hidden className="absolute inset-0 bg-white" />
-        <div className="relative grid w-full grid-cols-4 gap-1.5 px-2 pb-1 pt-2 md:mx-auto md:max-w-4xl">
+        <div className="relative grid w-full grid-cols-4 gap-1 px-2 pb-1 pt-1.5 md:mx-auto md:max-w-4xl">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
@@ -594,12 +593,23 @@ export function AppShell({ children }: AppShellProps) {
                 key={item.href}
                 href={item.href}
                 aria-label={item.ariaLabel}
-                className={`flex min-h-[4.75rem] w-full min-w-0 touch-manipulation select-none flex-col items-center justify-center gap-1 rounded-md px-2 py-3 text-xs font-bold leading-none transition-colors duration-100 sm:text-sm ${
-                  isActive ? "bg-accent-light text-accent-dark" : "text-gray-600"
+                className={`relative flex min-h-[4.15rem] w-full min-w-0 touch-manipulation select-none flex-col items-center justify-center gap-0.5 rounded-md px-2 py-2 text-[11px] font-semibold leading-none transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-100/20 active:scale-[0.985] sm:text-xs ${
+                  isActive
+                    ? "bg-neutral-800 text-neutral-50"
+                    : "text-neutral-400 hover:text-neutral-200"
                 }`}
                 style={{ WebkitTapHighlightColor: "transparent" }}
               >
-                <Icon aria-hidden className="h-5 w-5 shrink-0" />
+                {isActive ? (
+                  <span
+                    aria-hidden
+                    className="absolute inset-x-5 top-1 h-0.5 rounded-full bg-emerald-300/85"
+                  />
+                ) : null}
+                <Icon
+                  aria-hidden
+                  className={`h-[18px] w-[18px] shrink-0 ${isActive ? "text-emerald-200" : ""}`}
+                />
                 <span className="truncate text-center leading-tight">{item.label}</span>
               </Link>
             );

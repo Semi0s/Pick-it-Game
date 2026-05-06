@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CalendarDays, Network, Sparkles, Trophy } from "lucide-react";
+import { CalendarDays, Network, Sparkles, Trophy, X } from "lucide-react";
 import { fetchDashboardGroupAccessAction } from "@/app/my-groups/actions";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import {
@@ -11,6 +11,12 @@ import {
   type MiniGroupStandingsMovement
 } from "@/components/GroupStandingsMiniTable";
 import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
+import {
+  DASHBOARD_ACTION_COPY,
+  DASHBOARD_AUTO_PICK_EMPTY_COPY,
+  DASHBOARD_AUTO_PICK_LABEL_COPY,
+  DASHBOARD_AUTO_PICK_LOADING_COPY
+} from "@/components/dashboard/DashboardHeroActionGrid";
 import { DashboardHero } from "@/components/dashboard/DashboardHero";
 import { DashboardNoGroupsPanel } from "@/components/dashboard/DashboardNoGroupsPanel";
 import {
@@ -52,7 +58,7 @@ const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: s
   de: { hello: "Hallo", help: "RULES" }
 };
 
-const DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-shown";
+const DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-dismissed";
 const DASHBOARD_STANDINGS_GROUP_STORAGE_KEY = "dashboard-standings-group";
 const DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY = "dashboard-standings-disclosure";
 const DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY = "dashboard-standings-history-v1";
@@ -74,21 +80,6 @@ type PersistedStandingsHistory = Record<
     previousOrder: string[] | null;
   }
 >;
-
-const AUTO_PICK_LABEL_COPY = {
-  en: "Auto Pick Next Match",
-  es: "Auto Elegir Próximo Partido"
-} as const;
-
-const AUTO_PICK_LOADING_COPY = {
-  en: "Auto Picking...",
-  es: "Eligiendo..."
-} as const;
-
-const AUTO_PICK_EMPTY_COPY = {
-  en: "No open matches available right now.",
-  es: "No hay partidos disponibles en este momento."
-} as const;
 
 const DEBUG_DASHBOARD_NEXT_PICK = process.env.NODE_ENV !== "production";
 
@@ -119,6 +110,7 @@ export function DashboardOverview() {
   const [displayLanguage] = usePersistentExplainerLanguage(user);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [isAutoPicking, setIsAutoPicking] = useState(false);
+  const [showDashboardLogoHint, setShowDashboardLogoHint] = useState(false);
   const [selectedStandingsGroup, setSelectedStandingsGroup, selectedStandingsGroupState] = useSessionJsonState<string>(
     DASHBOARD_STANDINGS_GROUP_STORAGE_KEY,
     ""
@@ -309,7 +301,13 @@ export function DashboardOverview() {
       [...openMatches].sort((left, right) => +new Date(left.kickoffTime) - +new Date(right.kickoffTime))[0] ?? null,
     [openMatches]
   );
-  const heroCtaLabel = completedCount > 0 ? "My Next Pick" : "My Picks";
+  const nextUnsavedOpenMatch = useMemo(
+    () => openMatches.find((match) => !savedMatchIds.has(match.id)) ?? null,
+    [openMatches, savedMatchIds]
+  );
+  const nextPrimaryMatch = nextUnsavedOpenMatch ?? nextOpenMatch;
+  const actionCopy = DASHBOARD_ACTION_COPY[displayLanguage === "es" ? "es" : "en"];
+  const heroCtaLabel = completedCount > 0 ? actionCopy.myNextPick : actionCopy.myPicks;
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
   const autoPickLanguage = displayLanguage === "es" ? "es" : "en";
   const { selectedGroup: resolvedStandingsGroup } = resolvePreferredStandingsGroupSelection({
@@ -531,29 +529,37 @@ export function DashboardOverview() {
   ]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !user || groupMatches.length === 0) {
+    if (typeof window === "undefined" || !user) {
+      setShowDashboardLogoHint(false);
       return;
     }
 
-    const hasReachedHalfway = completedCount >= Math.ceil(groupMatches.length / 2);
-    if (hasReachedHalfway) {
-      return;
-    }
-
-    const storageKey = `${DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX}:${user.id}`;
+    const storageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX}:${user.id}`;
 
     try {
-      if (window.sessionStorage.getItem(storageKey) === "true") {
-        return;
-      }
-
-      window.sessionStorage.setItem(storageKey, "true");
-      showAppToast({ tone: "tip", text: DASHBOARD_LOGO_HINT_COPY[displayLanguage], durationMs: 5200 });
+      setShowDashboardLogoHint(window.localStorage.getItem(storageKey) !== "true");
     } catch (error) {
-      console.warn("Could not persist dashboard logo hint state.", error);
-      showAppToast({ tone: "tip", text: DASHBOARD_LOGO_HINT_COPY[displayLanguage], durationMs: 5200 });
+      console.warn("Could not restore dashboard logo hint dismissal state.", error);
+      setShowDashboardLogoHint(true);
     }
-  }, [completedCount, displayLanguage, groupMatches.length, user]);
+  }, [user]);
+
+  const dismissDashboardLogoHint = useCallback(() => {
+    if (!user) {
+      setShowDashboardLogoHint(false);
+      return;
+    }
+
+    const storageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX}:${user.id}`;
+
+    try {
+      window.localStorage.setItem(storageKey, "true");
+    } catch (error) {
+      console.warn("Could not persist dashboard logo hint dismissal state.", error);
+    }
+
+    setShowDashboardLogoHint(false);
+  }, [user]);
 
   function handleInviteEntrySubmit() {
     const token = normalizeInviteTokenInput(inviteEntryValue);
@@ -591,12 +597,12 @@ export function DashboardOverview() {
       router.push("/groups");
       logDashboardNextPick("route-pushed", { href: "/groups", target: "next-auto-pick" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : AUTO_PICK_EMPTY_COPY[autoPickLanguage];
+      const message = error instanceof Error ? error.message : DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage];
       const localizedMessage =
-        message === AUTO_PICK_EMPTY_COPY.en ? AUTO_PICK_EMPTY_COPY[autoPickLanguage] : message;
+        message === DASHBOARD_AUTO_PICK_EMPTY_COPY.en ? DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage] : message;
 
       showAppToast({
-        tone: localizedMessage === AUTO_PICK_EMPTY_COPY[autoPickLanguage] ? "tip" : "error",
+        tone: localizedMessage === DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage] ? "tip" : "error",
         text: localizedMessage
       });
     } finally {
@@ -612,13 +618,13 @@ export function DashboardOverview() {
       storeGroupsEntryIntent({
         source: "dashboard",
         target: "next-pick",
-        matchId: nextOpenMatch?.id ?? null,
-        groupKey: normalizeGroupKey(nextOpenMatch?.groupName) ?? null
+        matchId: nextPrimaryMatch?.id ?? null,
+        groupKey: normalizeGroupKey(nextPrimaryMatch?.groupName) ?? null
       });
       logDashboardNextPick("intent-stored", {
         target: "next-pick",
-        matchId: nextOpenMatch?.id ?? null,
-        groupKey: normalizeGroupKey(nextOpenMatch?.groupName) ?? null
+        matchId: nextPrimaryMatch?.id ?? null,
+        groupKey: normalizeGroupKey(nextPrimaryMatch?.groupName) ?? null
       });
     }
     router.push("/groups");
@@ -630,13 +636,33 @@ export function DashboardOverview() {
 
   return (
     <div className="-mt-1 space-y-4">
+      {showDashboardLogoHint ? (
+        <section className="rounded-md border border-amber-200 bg-amber-100 px-2.5 py-1.5">
+          <div className="flex items-start justify-between gap-2">
+            <p className="min-w-0 text-[11px] font-medium leading-4 text-amber-900">
+              {DASHBOARD_LOGO_HINT_COPY[displayLanguage]}
+            </p>
+            <button
+              type="button"
+              onClick={dismissDashboardLogoHint}
+              aria-label="Dismiss dashboard hint"
+              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-amber-700 transition hover:bg-amber-200 hover:text-amber-900"
+            >
+              <X aria-hidden className="h-3 w-3" />
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       <DashboardHero
         userId={user?.id ?? null}
         name={user?.name ?? "Player"}
         ctaLabel={heroCtaLabel}
         onPrimaryAction={handleHeroPrimaryAction}
-        autoPickLabel={AUTO_PICK_LABEL_COPY[autoPickLanguage]}
-        autoPickLoadingLabel={AUTO_PICK_LOADING_COPY[autoPickLanguage]}
+        autoPickLabel={DASHBOARD_AUTO_PICK_LABEL_COPY[autoPickLanguage]}
+        autoPickLoadingLabel={DASHBOARD_AUTO_PICK_LOADING_COPY[autoPickLanguage]}
+        knockoutLabel={actionCopy.myKnockoutPicks}
+        sidePicksLabel={actionCopy.mySidePicks}
         isAutoPicking={isAutoPicking}
         onAutoPick={handleAutoPickAction}
         dashboardCopy={dashboardCopy}
