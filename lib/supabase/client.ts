@@ -4,5 +4,9 @@ import { getSupabaseClientEnv } from "@/lib/supabase/env";
 export function createClient() {
   const { supabaseUrl, supabaseAnonKey } = getSupabaseClientEnv();
 
-  return createBrowserClient(supabaseUrl, supabaseAnonKey);
+  return createBrowserClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      detectSessionInUrl: false
+    }
+  });
 }

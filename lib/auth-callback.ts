@@ -11,6 +11,8 @@ type SupportedOtpType = "signup" | "invite" | "magiclink" | "recovery" | "email_
 export async function handleAuthCallback(nextRequest: NextRequest) {
   const nextPath = getSafeNextPath(nextRequest.nextUrl.searchParams.get("next"));
   const requestedLanguage = nextRequest.nextUrl.searchParams.get("lang");
+  const shouldAllowManualLoginAfterConfirmation =
+    nextPath.startsWith("/login") && nextPath.includes("confirmed=1");
   const cookieBuffer: Array<{ name: string; value: string; options: CookieOptions }> = [];
   const { supabaseUrl, supabaseAnonKey } = getSupabaseClientEnv();
 
@@ -47,6 +49,7 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
   let errorMessage: string | null = null;
   let confirmedUserEmail: string | null = null;
   let confirmedAt: string | null = null;
+  let skipUserSessionLookup = false;
 
   if (authError || authErrorDescription) {
     errorMessage = authErrorDescription ?? authError ?? "Supabase returned an authentication error.";
@@ -59,8 +62,16 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     console.info("exchangeCodeForSession completed.", { ok: !error, message: error?.message ?? null });
     if (error) {
+      if (isMissingPkceCodeVerifierError(error.message) && shouldAllowManualLoginAfterConfirmation) {
+        console.warn("Auth callback is allowing manual login after a PKCE verifier miss on confirmation.", {
+          nextPath,
+          message: error.message
+        });
+        skipUserSessionLookup = true;
+      } else {
       console.error("Failed to exchange auth code for session during callback.", error);
       errorMessage = error.message;
+      }
     }
   } else if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({
@@ -77,7 +88,7 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
     errorMessage = "This link is missing required confirmation details. Request a new email and try again.";
   }
 
-  if (!errorMessage) {
+  if (!errorMessage && !skipUserSessionLookup) {
     const {
       data: { user },
       error: userError
@@ -159,6 +170,14 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
   const response = NextResponse.redirect(redirectUrl);
   cookieBuffer.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
   return response;
+}
+
+function isMissingPkceCodeVerifierError(message?: string | null) {
+  if (!message) {
+    return false;
+  }
+
+  return message.toLowerCase().includes("pkce code verifier not found in storage");
 }
 
 function getSafeNextPath(value: string | null) {
