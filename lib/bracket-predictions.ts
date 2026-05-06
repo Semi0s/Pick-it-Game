@@ -1,6 +1,7 @@
 import "server-only";
 
 import { scoreBracketPrediction } from "@/lib/bracket-scoring";
+import { formatSafeSupabaseError, logSafeSupabaseError } from "@/lib/supabase-errors";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   EXPECTED_KNOCKOUT_MATCH_COUNTS,
@@ -222,6 +223,21 @@ export type BracketScoreSummary = {
   correctPicks: number;
 };
 
+export function safeFetchKnockoutStructureStatusFallback(): KnockoutStructureStatus {
+  return {
+    counts: {
+      r32: 0,
+      r16: 0,
+      qf: 0,
+      sf: 0,
+      third: 0,
+      final: 0
+    },
+    isFullySeeded: false,
+    firstRoundOf32Kickoff: null
+  };
+}
+
 export async function canEditBracketPredictions() {
   const adminSupabase = createAdminClient();
   const editState = await getBracketEditState(adminSupabase);
@@ -237,7 +253,8 @@ export async function fetchUserBracketPredictions(userId: string): Promise<Brack
     .order("updated_at", { ascending: false });
 
   if (error) {
-    throw error;
+    logSafeSupabaseError("fetch-user-bracket-predictions", error, { userId });
+    throw formatSafeSupabaseError(error, "Could not load bracket predictions.", "Bracket predictions");
   }
 
   return ((data ?? []) as BracketPredictionRow[]).map(mapBracketPredictionRow);
@@ -389,7 +406,8 @@ export async function fetchKnockoutStructureStatus(): Promise<KnockoutStructureS
     .neq("stage", "group");
 
   if (error) {
-    throw error;
+    logSafeSupabaseError("fetch-knockout-structure-status", error);
+    throw formatSafeSupabaseError(error, "Could not load knockout structure.", "Knockout structure");
   }
 
   const counts: Record<CanonicalKnockoutStage, number> = {
@@ -653,7 +671,8 @@ export async function fetchUserBracketScores(userId: string): Promise<BracketSco
     .order("scored_at", { ascending: false });
 
   if (error) {
-    throw error;
+    logSafeSupabaseError("fetch-user-bracket-scores", error, { userId });
+    throw formatSafeSupabaseError(error, "Could not load bracket scores.", "Bracket scores");
   }
 
   return ((data ?? []) as BracketScoreRow[]).map(mapBracketScoreRow);
@@ -925,7 +944,8 @@ async function getBracketEditState(adminSupabase: ReturnType<typeof createAdminC
     .order("kickoff_time", { ascending: true });
 
   if (error) {
-    throw error;
+    logSafeSupabaseError("get-bracket-edit-state", error);
+    throw formatSafeSupabaseError(error, "Could not load knockout edit state.", "Knockout edit state");
   }
 
   const firstRoundOf32Kickoff =
@@ -1029,7 +1049,8 @@ async function fetchKnockoutData(adminSupabase: ReturnType<typeof createAdminCli
   ]);
 
   if (matchesError) {
-    throw matchesError;
+    logSafeSupabaseError("fetch-knockout-data-matches", matchesError);
+    throw formatSafeSupabaseError(matchesError, "Could not load knockout matches.", "Knockout matches");
   }
 
   const matches = ((matchRows ?? []) as MatchRow[])
@@ -1056,7 +1077,8 @@ async function fetchKnockoutData(adminSupabase: ReturnType<typeof createAdminCli
       : { data: [], error: null };
 
   if (teamsError) {
-    throw teamsError;
+    logSafeSupabaseError("fetch-knockout-data-teams", teamsError, { teamCount: teamIds.size });
+    throw formatSafeSupabaseError(teamsError, "Could not load knockout teams.", "Knockout teams");
   }
 
   const teamsById = new Map<string, BracketTeamOption>(

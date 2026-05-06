@@ -153,7 +153,13 @@ export function NotificationsBell() {
       const result = (await response.json()) as NotificationResponse;
 
       if (!response.ok || !result.ok) {
-        throw new Error(result.ok ? "Could not load notifications." : result.message);
+        console.warn("Notifications are temporarily unavailable.", {
+          status: response.status,
+          message: result.ok ? "Could not load notifications." : result.message
+        });
+        setNotifications([]);
+        setUnreadCount(0);
+        return;
       }
 
       setNotifications(result.notifications);
@@ -194,7 +200,11 @@ export function NotificationsBell() {
 
       const result = (await response.json()) as { ok: true } | { ok: false; message?: string };
       if (!response.ok || !result.ok) {
-        throw new Error(result.ok ? "Could not mark notifications as read." : result.message);
+        console.warn("Notifications mark-read is temporarily unavailable.", {
+          status: response.status,
+          message: result.ok ? "Could not mark notifications as read." : result.message
+        });
+        return;
       }
 
       setUnreadCount(0);
