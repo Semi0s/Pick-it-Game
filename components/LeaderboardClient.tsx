@@ -773,9 +773,36 @@ export function LeaderboardClient() {
                       ) : null}
                     </div>
                   </div>
-                  {event.userHomeTeamId ? (
-                    <div className="mt-1">
-                      <HomeTeamBadge teamId={event.userHomeTeamId} label="" className="bg-white/75 py-0.5" />
+                  {event.userHomeTeamId || event.canComment ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {event.userHomeTeamId ? (
+                        <HomeTeamBadge teamId={event.userHomeTeamId} label="" className="bg-white/75 py-0.5" />
+                      ) : null}
+                      {event.canComment ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedComments((current) => ({
+                              ...current,
+                              [event.eventId!]: !current[event.eventId!]
+                            }))
+                          }
+                          className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white/80 px-3 py-1.5 text-xs font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                          aria-expanded={Boolean(event.eventId && expandedComments[event.eventId])}
+                          aria-label={
+                            event.eventId && expandedComments[event.eventId]
+                              ? `Hide comments for ${event.message}`
+                              : `Open comments for ${event.message}`
+                          }
+                        >
+                          {event.eventId && expandedComments[event.eventId] ? (
+                            <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                          ) : (
+                            <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                          )}
+                          <span>💬 {event.comments.length > 0 ? `${event.comments.length} comments` : "Comments"}</span>
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -803,37 +830,9 @@ export function LeaderboardClient() {
                 </div>
               </div>
             ) : null}
-            {(event.canReact || event.canComment) && user ? (
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  {event.canComment ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExpandedComments((current) => ({
-                          ...current,
-                          [event.eventId!]: !current[event.eventId!]
-                        }))
-                      }
-                      className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white/80 px-3 py-2 text-xs font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                      aria-expanded={Boolean(event.eventId && expandedComments[event.eventId])}
-                      aria-label={
-                        event.eventId && expandedComments[event.eventId]
-                          ? `Hide comments for ${event.message}`
-                          : `Open comments for ${event.message}`
-                      }
-                    >
-                      {event.eventId && expandedComments[event.eventId] ? (
-                        <ChevronUp className="h-3.5 w-3.5" aria-hidden />
-                      ) : (
-                        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-                      )}
-                      <span>💬 {event.comments.length > 0 ? `${event.comments.length} comments` : "Comments"}</span>
-                    </button>
-                  ) : null}
-                </div>
-                {event.canReact ? (
-                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            {event.canReact && user ? (
+              <div className="mt-2 flex items-center justify-end gap-3">
+                <div className="flex shrink-0 flex-wrap justify-end gap-2">
                     {["🔥", "🎯", "👀", "👍"].map((emoji) => {
                       const reaction = event.reactions.find((item) => item.emoji === emoji);
                       const reactionKey = `${event.eventId}:${emoji}`;
@@ -857,7 +856,6 @@ export function LeaderboardClient() {
                       );
                     })}
                   </div>
-                ) : null}
               </div>
             ) : null}
             {event.canComment && event.eventId && expandedComments[event.eventId] ? (

@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Check, LockKeyhole, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, LockKeyhole, X } from "lucide-react";
 import { formatDateTimeWithZone } from "@/lib/date-time";
 import { scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { canEditPrediction } from "@/lib/prediction-state";
@@ -19,6 +19,8 @@ type GroupPredictionCardProps = {
     sourceText: string;
     probabilityText?: string;
   };
+  onAutoPickAgain?: () => void;
+  autoPickAgainDisabled?: boolean;
   highlightHomeTeamId?: string | null;
   onDraftStateChange?: (
     matchId: string,
@@ -28,6 +30,7 @@ type GroupPredictionCardProps = {
       shouldCount: boolean;
     }
   ) => void;
+  footerAnchorRef?: (node: HTMLDivElement | null) => void;
   userId: string;
   onSave: (prediction: Prediction) => Promise<Prediction>;
 };
@@ -39,8 +42,11 @@ export function GroupPredictionCard({
   prediction,
   prefillSuggestion,
   autoPickHint,
+  onAutoPickAgain,
+  autoPickAgainDisabled = false,
   highlightHomeTeamId,
   onDraftStateChange,
+  footerAnchorRef,
   userId,
   onSave
 }: GroupPredictionCardProps) {
@@ -79,6 +85,11 @@ export function GroupPredictionCard({
     prediction?.predictedAwayScore !== null;
   const displayPredictionHomeScore = canEdit ? homeScore : getLockedDisplayScore(prediction?.predictedHomeScore);
   const displayPredictionAwayScore = canEdit ? awayScore : getLockedDisplayScore(prediction?.predictedAwayScore);
+  const showAutoPickChip = canEdit && Boolean(onAutoPickAgain);
+  const homeCode = match.homeTeam?.shortName ?? "HOME";
+  const awayCode = match.awayTeam?.shortName ?? "AWAY";
+  const hasActualLiveScores =
+    isLive && match.homeScore !== undefined && match.homeScore !== null && match.awayScore !== undefined && match.awayScore !== null;
   const actualFinalScoreLabel =
     isFinal && match.homeScore !== undefined && match.homeScore !== null && match.awayScore !== undefined && match.awayScore !== null
       ? `${match.homeScore}-${match.awayScore}`
@@ -234,7 +245,7 @@ export function GroupPredictionCard({
           : isLive
             ? grouped
               ? "bg-transparent"
-              : "border-amber-200 bg-amber-50"
+              : "border-gray-200 bg-gray-100"
             : grouped
               ? "bg-transparent"
               : "border-gray-200 bg-gray-50"
@@ -261,27 +272,39 @@ export function GroupPredictionCard({
             </p>
             <p
               className={`text-[10px] font-semibold uppercase tracking-wide ${
-                isFinal ? "text-gray-500" : isLive ? "text-amber-800" : "text-gray-500"
+                isFinal ? "text-gray-500" : isLive ? "text-gray-500" : "text-gray-500"
               }`}
             >
               {formatKickoff(match.kickoffTime)}
             </p>
           </div>
         </div>
-        <span
-          className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-bold ${
-            isFinal
-              ? "bg-white text-gray-700"
-              : isLive
-                ? "bg-amber-100 text-amber-800"
-                : locked
-                  ? "bg-gray-200 text-gray-700"
-                  : "bg-accent-light text-accent-dark"
-          }`}
-        >
-          {locked && !isFinal ? <LockKeyhole aria-hidden className="h-3.5 w-3.5" /> : null}
-          {predictionStateLabel}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          {showAutoPickChip ? (
+            <button
+              type="button"
+              onClick={onAutoPickAgain}
+              disabled={autoPickAgainDisabled || isAutoFilling}
+              className="inline-flex items-center rounded-md bg-amber-100 px-2 py-1 text-xs font-bold uppercase tracking-wide text-amber-900 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Auto Pick
+            </button>
+          ) : null}
+          <span
+            className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-bold ${
+              isFinal
+                ? "bg-white text-gray-700"
+                : isLive
+                  ? "bg-gray-950 text-white"
+                  : locked
+                    ? "bg-gray-200 text-gray-700"
+                    : "bg-accent-light text-accent-dark"
+            }`}
+          >
+            {locked && !isFinal ? <LockKeyhole aria-hidden className="h-3.5 w-3.5" /> : null}
+            {predictionStateLabel}
+          </span>
+        </div>
       </div>
 
       <div className="mt-2">
@@ -290,7 +313,7 @@ export function GroupPredictionCard({
             isFinal
               ? "border-gray-200 bg-gray-100"
             : isLive
-                ? "border-gray-200 bg-gray-100"
+                ? "border-gray-200 bg-white"
                 : matchIncludesHomeTeam
                   ? "border-gray-200 bg-amber-50"
                   : "border-gray-200 bg-white"
@@ -299,11 +322,12 @@ export function GroupPredictionCard({
           <span
             aria-hidden
             className={`pointer-events-none absolute bottom-0 left-1/2 top-0 -translate-x-1/2 border-l ${
-              isFinal ? "border-gray-300" : isLive ? "border-amber-200" : "border-gray-200"
+              isFinal ? "border-gray-300" : isLive ? "border-gray-200" : "border-gray-200"
             }`}
           />
           <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-2 py-1">
           <ScoreInput
+            side="left"
             flag={match.homeTeam?.flagEmoji}
             fullName={match.homeTeam?.name ?? match.homeTeam?.shortName ?? "Home"}
             value={displayPredictionHomeScore}
@@ -325,6 +349,7 @@ export function GroupPredictionCard({
             vs
           </span>
           <ScoreInput
+            side="right"
             flag={match.awayTeam?.flagEmoji}
             fullName={match.awayTeam?.name ?? match.awayTeam?.shortName ?? "Away"}
             value={displayPredictionAwayScore}
@@ -339,9 +364,28 @@ export function GroupPredictionCard({
       </div>
 
       {isFinal ? (
-        <div className="mt-1.5 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-center">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Final Score</p>
-          <p className="mt-1 text-sm font-black text-gray-800">{actualFinalScoreLabel ?? "—"}</p>
+        <div ref={footerAnchorRef} className="mt-1.5 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-center">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+            <div className="flex min-w-0 items-center justify-start gap-2">
+              <span className="text-sm font-black leading-none tabular-nums text-gray-800">
+                {match.homeScore ?? "—"}
+              </span>
+              <span className="text-sm font-black uppercase leading-none text-gray-500">
+                {homeCode}
+              </span>
+            </div>
+            <div className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+              {actualFinalScoreLabel ? "<- Final Score ->" : "Final Score: Awaiting score"}
+            </div>
+            <div className="flex min-w-0 items-center justify-end gap-2">
+              <span className="text-sm font-black uppercase leading-none text-gray-500">
+                {awayCode}
+              </span>
+              <span className="text-sm font-black leading-none tabular-nums text-gray-800">
+                {match.awayScore ?? "—"}
+              </span>
+            </div>
+          </div>
           <div className="mt-2 flex items-center justify-center gap-2">
             {finalStatusMessage.icon === "check" ? (
               <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-accent/30 bg-accent-light text-accent-dark">
@@ -356,55 +400,81 @@ export function GroupPredictionCard({
           </div>
         </div>
       ) : isLive ? (
-        <div className="mt-1.5 rounded-md bg-gray-200 px-4 py-3 text-center text-[10px] font-bold uppercase tracking-wide text-gray-700">
-          Pick locked.
+        <div ref={footerAnchorRef} className="mt-1.5 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-center">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+            <div className="flex min-w-0 items-center justify-start gap-2">
+              <span className="text-sm font-black leading-none tabular-nums text-gray-800">
+                {hasActualLiveScores ? match.homeScore : "—"}
+              </span>
+              <span className="text-sm font-black uppercase leading-none text-gray-500">
+                {homeCode}
+              </span>
+            </div>
+            <div className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+              {hasActualLiveScores ? "<- Live Score ->" : "Live Score: Awaiting score"}
+            </div>
+            <div className="flex min-w-0 items-center justify-end gap-2">
+              <span className="text-sm font-black uppercase leading-none text-gray-500">
+                {awayCode}
+              </span>
+              <span className="text-sm font-black leading-none tabular-nums text-gray-800">
+                {hasActualLiveScores ? match.awayScore : "—"}
+              </span>
+            </div>
+          </div>
+          <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-gray-600">
+            Pick locked.
+          </p>
         </div>
       ) : (
-        <button
-          type="submit"
-          disabled={!canEdit || isSaving || isAutoFilling || !canSubmitNewPrediction}
-          className={`mt-1.5 inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-3 font-bold transition disabled:cursor-not-allowed ${
-            usePrimaryButton
-              ? "border-accent bg-accent text-sm text-white hover:border-accent-dark hover:bg-accent-dark"
-              : isSavedState
-                ? "border-gray-200 bg-transparent text-gray-500 hover:border-gray-300 hover:bg-gray-100 disabled:border-gray-200 disabled:bg-transparent disabled:text-gray-500"
-                : "border-gray-300 bg-gray-300 text-sm text-gray-600 disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600"
-          }`}
-        >
-          {isSavedState ? (
-            <span className="flex flex-col items-center justify-center leading-tight">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                Saved on: {formatSavedAt(lastSavedAt!)}
+        <div ref={footerAnchorRef}>
+          <button
+            type="submit"
+            disabled={!canEdit || isSaving || isAutoFilling || !canSubmitNewPrediction}
+            className={`mt-1.5 inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-3 font-bold transition disabled:cursor-not-allowed ${
+              usePrimaryButton
+                ? "border-accent bg-accent text-sm text-white hover:border-accent-dark hover:bg-accent-dark"
+                : isSavedState
+                  ? "border-gray-200 bg-transparent text-gray-500 hover:border-gray-300 hover:bg-gray-100 disabled:border-gray-200 disabled:bg-transparent disabled:text-gray-500"
+                  : "border-gray-300 bg-gray-300 text-sm text-gray-600 disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600"
+            }`}
+          >
+            {isSavedState ? (
+              <span className="flex flex-col items-center justify-center leading-tight">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  Saved on: {formatSavedAt(lastSavedAt!)}
+                </span>
               </span>
-            </span>
-          ) : (
-            <>
-              {!isSaving && !saveError && lastSavedAt && !hasUnsavedScoreChange ? <Check aria-hidden className="h-5 w-5" /> : null}
-              {!canEdit
-                ? "Pick locked"
-                : isSaving
-                  ? "Saving..."
-                  : isAutoFilling
-                    ? "Auto Picking..."
-                  : saveError
-                    ? "Failed to save"
-                    : `Save ${matchLabel}`}
-            </>
-          )}
-        </button>
+            ) : (
+              <>
+                {!isSaving && !saveError && lastSavedAt && !hasUnsavedScoreChange ? <Check aria-hidden className="h-5 w-5" /> : null}
+                {!canEdit
+                  ? "Pick locked"
+                  : isSaving
+                    ? "Saving..."
+                    : isAutoFilling
+                      ? "Auto Picking..."
+                      : saveError
+                        ? "Failed to save"
+                        : `Save ${matchLabel}`}
+              </>
+            )}
+          </button>
+        </div>
       )}
 
       {!isFinal && !isLive && canEdit && !usePrimaryButton && !saveError ? (
-        <div className="mt-1.5 rounded-md bg-accent-light px-4 py-3 text-center text-[10px] font-bold uppercase tracking-wide text-accent-dark">
+        <div className="mt-1 rounded-md bg-accent-light px-3 py-1 text-center text-[10px] font-bold uppercase tracking-wide text-accent-dark">
           Editable until kickoff
         </div>
       ) : null}
 
-      {prefillSuggestion && autoPickHint ? (
-        <p className="mt-1 text-center text-[10px] font-semibold leading-tight tracking-wide text-gray-500">
-          <span>{autoPickHint.sourceText}</span>
-          {autoPickHint.probabilityText ? <span className="block mt-0.5">{autoPickHint.probabilityText}</span> : null}
-        </p>
+      {prefillSuggestion && autoPickHint?.probabilityText ? (
+        <div className="mt-1 rounded-md border border-gray-200 bg-gray-100 px-3 py-1.5 text-center">
+          <p className="text-[10px] font-semibold leading-tight tracking-wide text-gray-500">
+            {autoPickHint.probabilityText}
+          </p>
+        </div>
       ) : null}
 
       {isSaving || saveError || (!canEdit && !isLive && !isFinal) ? (
@@ -438,6 +508,7 @@ export function GroupPredictionCard({
 }
 
 type ScoreInputProps = {
+  side: "left" | "right";
   flag?: string;
   fullName: string;
   value: string;
@@ -449,6 +520,7 @@ type ScoreInputProps = {
 };
 
 function ScoreInput({
+  side,
   flag,
   fullName,
   value,
@@ -458,6 +530,7 @@ function ScoreInput({
   isHighlighted,
   onChange
 }: ScoreInputProps) {
+  const numericValue = value === "" ? 0 : Math.max(0, Number(value));
   const badgeTone = isFinal
     ? "bg-white text-gray-600"
     : isLive
@@ -493,8 +566,8 @@ function ScoreInput({
           ? "border-white bg-white text-gray-900 disabled:bg-white"
           : isLive
             ? isHighlighted
-              ? "border-amber-400 text-amber-950 disabled:bg-gray-100"
-              : "border-amber-300 text-gray-950 disabled:bg-gray-100"
+              ? "border-gray-400 text-gray-950 disabled:bg-white"
+              : "border-gray-300 text-gray-950 disabled:bg-white"
             : isHighlighted
               ? "border-accent text-accent-dark disabled:bg-gray-100"
               : "border-gray-300 text-gray-300 disabled:bg-gray-100"
@@ -502,16 +575,69 @@ function ScoreInput({
     />
   );
 
+  const adjustButtonClassName = `inline-flex h-5 w-7 items-center justify-center transition ${
+    disabled
+      ? "cursor-not-allowed text-gray-300"
+      : isFinal
+        ? "text-gray-500"
+        : isLive
+          ? "text-gray-700 hover:text-gray-900"
+          : "text-gray-700 hover:text-accent-dark"
+  }`;
+
+  const decrementButton = (
+    <button
+      type="button"
+      disabled={disabled || numericValue <= 0}
+      onClick={() => onChange(String(Math.max(0, numericValue - 1)))}
+      aria-label={`Decrease score for ${fullName}`}
+      className={`${adjustButtonClassName} border-t border-gray-200`}
+    >
+      <ChevronDown aria-hidden className="h-3.5 w-3.5" />
+    </button>
+  );
+
+  const incrementButton = (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => onChange(String(Math.max(0, numericValue + 1)))}
+      aria-label={`Increase score for ${fullName}`}
+      className={adjustButtonClassName}
+    >
+      <ChevronUp aria-hidden className="h-3.5 w-3.5" />
+    </button>
+  );
+
+  const stepper = (
+    <span className="inline-flex shrink-0 flex-col items-center justify-center rounded-sm bg-gray-100 text-gray-500">
+      {incrementButton}
+      {decrementButton}
+    </span>
+  );
+
   return (
     <label className="flex flex-col items-center gap-1 rounded-md p-1 text-center">
-      {scoreInput}
+      <div className="flex items-center gap-2">
+        {side === "left" ? (
+          <>
+            {stepper}
+            {scoreInput}
+          </>
+        ) : (
+          <>
+            {scoreInput}
+            {stepper}
+          </>
+        )}
+      </div>
       {teamCopy}
     </label>
   );
 }
 
-function getInitialScore(score?: number) {
-  return score === undefined ? "0" : score.toString();
+function getInitialScore(score?: number | null) {
+  return score === undefined || score === null ? "0" : score.toString();
 }
 
 function getLockedDisplayScore(score?: number | null) {

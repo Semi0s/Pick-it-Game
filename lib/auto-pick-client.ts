@@ -14,11 +14,22 @@ type AutoPickApiResult =
     };
 
 export async function fetchNextAutoPick(): Promise<AutoPickResult> {
+  return fetchAutoPickSuggestion();
+}
+
+export async function fetchNextAutoPickForMatches(preferredMatchIds: string[]): Promise<AutoPickResult> {
+  return fetchAutoPickSuggestion(preferredMatchIds);
+}
+
+async function fetchAutoPickSuggestion(preferredMatchIds?: string[]): Promise<AutoPickResult> {
   const response = await fetch("/api/auto-pick/next", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
-    }
+    },
+    body: JSON.stringify(
+      preferredMatchIds && preferredMatchIds.length > 0 ? { preferredMatchIds } : {}
+    )
   });
 
   const result = (await response.json()) as AutoPickApiResult;
@@ -56,4 +67,12 @@ export function restoreStoredAutoPickDraft() {
     console.warn("Could not restore auto-pick draft.", error);
     return null;
   }
+}
+
+export function clearStoredAutoPickDraft() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.removeItem(AUTO_PICK_DRAFT_STORAGE_KEY);
 }

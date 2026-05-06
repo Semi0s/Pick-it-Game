@@ -36,6 +36,7 @@ type BracketSlideView = {
 };
 
 const KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY = "knockout-active-slide";
+const KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY = "knockout-active-country-filter";
 
 export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderProps) {
   const [predictions, setPredictions] = useState<BracketPrediction[]>(initialView.predictions);
@@ -44,6 +45,10 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
   const [pendingMatchId, setPendingMatchId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "error" | "success"; text: string } | null>(null);
   const [activeSlideIndex, setActiveSlideIndex] = useSessionJsonState<number>(KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY, 0);
+  const [selectedCountryFilter, setSelectedCountryFilter] = useSessionJsonState<string>(
+    KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY,
+    ""
+  );
   const [transitionReady, setTransitionReady] = useState(true);
   const touchStartXRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
@@ -55,6 +60,18 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
     [draftScoreByMatchId, draftWinnerByMatchId, initialView, predictions]
   );
   const slides = useMemo(() => buildBracketSlides(view), [view]);
+  const activeSlide = slides[activeSlideIndex] ?? null;
+  const activeFilterTeam = useMemo(() => {
+    if (!selectedCountryFilter || !activeSlide) {
+      return null;
+    }
+
+    return (
+      activeSlide.currentMatches
+        .flatMap((match) => [match.homeTeam, match.awayTeam, match.seededHomeTeam, match.seededAwayTeam])
+        .find((team) => team?.id === selectedCountryFilter) ?? null
+    );
+  }, [activeSlide, selectedCountryFilter]);
   useEffect(() => {
     if (message) {
       showAppToast(message);
@@ -121,6 +138,20 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
             );
           })}
         </KnockoutPhaseChoiceRail>
+        {selectedCountryFilter ? (
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-md bg-gray-100 px-3 py-2">
+            <p className="min-w-0 text-[10px] font-bold uppercase tracking-wide text-gray-600">
+              Filtering for {activeFilterTeam?.shortName ?? "team"}
+            </p>
+            <button
+              type="button"
+              onClick={() => setSelectedCountryFilter("")}
+              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
+            >
+              All Teams
+            </button>
+          </div>
+        ) : null}
         <div className="mt-2 border-b border-gray-200/80" />
       </div>
 
@@ -142,6 +173,8 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
             onSelect={handleSelectWinner}
             onAdjustScore={handleAdjustScore}
             onSave={handleSaveWinner}
+            selectedCountryFilter={selectedCountryFilter || null}
+            onSelectCountryFilter={setSelectedCountryFilter}
           />
         </div>
       </div>
@@ -328,7 +361,9 @@ function BracketStageViewport({
   pendingMatchId,
   onSelect,
   onAdjustScore,
-  onSave
+  onSave,
+  selectedCountryFilter,
+  onSelectCountryFilter
 }: {
   slide: BracketSlideView;
   mode: KnockoutBracketEditorView["mode"];
@@ -337,8 +372,42 @@ function BracketStageViewport({
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
+  selectedCountryFilter: string | null;
+  onSelectCountryFilter: (teamId: string) => void;
 }) {
-  const stageBanner = getStageBanner(slide, mode);
+  const filteredSlide = useMemo(() => {
+    if (!selectedCountryFilter) {
+      return slide;
+    }
+
+    return {
+      ...slide,
+      currentMatches: slide.currentMatches.filter((match) =>
+        [match.homeTeam?.id, match.awayTeam?.id, match.seededHomeTeam?.id, match.seededAwayTeam?.id].includes(selectedCountryFilter)
+      )
+    };
+  }, [selectedCountryFilter, slide]);
+  const stageBanner = getStageBanner(filteredSlide, mode);
+
+  if (selectedCountryFilter && filteredSlide.currentMatches.length === 0) {
+    return (
+      <section className="overflow-visible">
+        <div className="border-b border-gray-200/80 px-3 py-3 sm:px-4 sm:py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="text-3xl font-black leading-none text-gray-950 sm:text-4xl">{slide.title}</h3>
+            </div>
+            <div className="shrink-0 pt-1 text-right">
+              <p className="text-sm font-black uppercase tracking-wide text-gray-950 sm:text-base">0 matches</p>
+            </div>
+          </div>
+        </div>
+        <div className="px-3 py-5 text-center text-sm font-semibold text-gray-600 sm:px-4">
+          No matches in this round for {activeFilterTeamLabel(slide, selectedCountryFilter)}.
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="overflow-visible">
@@ -349,7 +418,7 @@ function BracketStageViewport({
           </div>
           <div className="shrink-0 pt-1 text-right">
             <p className="text-sm font-black uppercase tracking-wide text-gray-950 sm:text-base">
-              {slide.currentMatches.length} matches
+              {filteredSlide.currentMatches.length} matches
             </p>
           </div>
         </div>
@@ -373,27 +442,33 @@ function BracketStageViewport({
       >
         {slide.layout === "split" ? (
           <SplitRoundView
-            slide={slide}
+            slide={filteredSlide}
             pendingMatchId={pendingMatchId}
             onSelect={onSelect}
             onAdjustScore={onAdjustScore}
             onSave={onSave}
+            selectedCountryFilter={selectedCountryFilter}
+            onSelectCountryFilter={onSelectCountryFilter}
           />
         ) : slide.layout === "finale" ? (
           <FinaleRoundView
-            slide={slide}
+            slide={filteredSlide}
             pendingMatchId={pendingMatchId}
             onSelect={onSelect}
             onAdjustScore={onAdjustScore}
             onSave={onSave}
+            selectedCountryFilter={selectedCountryFilter}
+            onSelectCountryFilter={onSelectCountryFilter}
           />
         ) : (
           <FocusedRoundView
-            slide={slide}
+            slide={filteredSlide}
             pendingMatchId={pendingMatchId}
             onSelect={onSelect}
             onAdjustScore={onAdjustScore}
             onSave={onSave}
+            selectedCountryFilter={selectedCountryFilter}
+            onSelectCountryFilter={onSelectCountryFilter}
           />
         )}
       </div>
@@ -433,13 +508,17 @@ function SplitRoundView({
   pendingMatchId,
   onSelect,
   onAdjustScore,
-  onSave
+  onSave,
+  selectedCountryFilter,
+  onSelectCountryFilter
 }: {
   slide: BracketSlideView;
   pendingMatchId: string | null;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
+  selectedCountryFilter: string | null;
+  onSelectCountryFilter: (teamId: string) => void;
 }) {
   const pods = groupMatchesIntoPods(slide.currentMatches);
 
@@ -461,6 +540,8 @@ function SplitRoundView({
                 onSave={onSave}
                 density="compact"
                 side={podIndex === 0 ? "left" : "right"}
+                selectedCountryFilter={selectedCountryFilter}
+                onSelectCountryFilter={onSelectCountryFilter}
               />
             ))}
           </div>
@@ -475,13 +556,17 @@ function FocusedRoundView({
   pendingMatchId,
   onSelect,
   onAdjustScore,
-  onSave
+  onSave,
+  selectedCountryFilter,
+  onSelectCountryFilter
 }: {
   slide: BracketSlideView;
   pendingMatchId: string | null;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
+  selectedCountryFilter: string | null;
+  onSelectCountryFilter: (teamId: string) => void;
 }) {
   const pods = groupMatchesIntoPods(slide.currentMatches);
 
@@ -503,6 +588,8 @@ function FocusedRoundView({
                 onSave={onSave}
                 density="expanded"
                 side={podIndex === 0 ? "left" : "right"}
+                selectedCountryFilter={selectedCountryFilter}
+                onSelectCountryFilter={onSelectCountryFilter}
               />
             ))}
           </div>
@@ -517,13 +604,17 @@ function FinaleRoundView({
   pendingMatchId,
   onSelect,
   onAdjustScore,
-  onSave
+  onSave,
+  selectedCountryFilter,
+  onSelectCountryFilter
 }: {
   slide: BracketSlideView;
   pendingMatchId: string | null;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
+  selectedCountryFilter: string | null;
+  onSelectCountryFilter: (teamId: string) => void;
 }) {
   const finalMatch = slide.currentMatches[0] ?? null;
 
@@ -540,6 +631,8 @@ function FinaleRoundView({
             onSave={onSave}
             density="hero"
             side="center"
+            selectedCountryFilter={selectedCountryFilter}
+            onSelectCountryFilter={onSelectCountryFilter}
           />
         </div>
       ) : null}
@@ -555,7 +648,9 @@ function CurrentRoundMatchCard({
   onSave,
   density,
   side = "left",
-  showHeader = true
+  showHeader = true,
+  selectedCountryFilter,
+  onSelectCountryFilter
 }: {
   match: KnockoutBracketMatchView;
   isPending: boolean;
@@ -565,6 +660,8 @@ function CurrentRoundMatchCard({
   density: "compact" | "expanded" | "hero";
   side?: "left" | "right" | "center";
   showHeader?: boolean;
+  selectedCountryFilter?: string | null;
+  onSelectCountryFilter?: (teamId: string) => void;
 }) {
   const isCompact = density === "compact";
   const isHero = density === "hero";
@@ -646,6 +743,7 @@ function CurrentRoundMatchCard({
       <span className="shrink-0 rounded-md bg-amber-50 px-2 py-1 text-[10px] font-black text-amber-700">Wait</span>
     );
   const isReadOnly = shellState === "closed" || shellState === "final" || shellState === "wait";
+  const selectedCountryGroupName = activeCountryGroupName(selectedCountryFilter ?? null, match);
 
   return (
     <div
@@ -709,6 +807,9 @@ function CurrentRoundMatchCard({
             showScorelineMiss={showScorelineMissOverlay}
             onIncrement={() => onAdjustScore(match.matchId, "home", 1)}
             onDecrement={() => onAdjustScore(match.matchId, "home", -1)}
+            selectedCountryFilter={selectedCountryFilter ?? null}
+            filterGroupName={selectedCountryGroupName}
+            onSelectCountryFilter={onSelectCountryFilter}
           />
           <span
             className={`inline-flex h-7 w-7 items-center justify-center rounded-full border text-[8px] font-black uppercase ${
@@ -745,6 +846,9 @@ function CurrentRoundMatchCard({
             showScorelineMiss={showScorelineMissOverlay}
             onIncrement={() => onAdjustScore(match.matchId, "away", 1)}
             onDecrement={() => onAdjustScore(match.matchId, "away", -1)}
+            selectedCountryFilter={selectedCountryFilter ?? null}
+            filterGroupName={selectedCountryGroupName}
+            onSelectCountryFilter={onSelectCountryFilter}
           />
         </div>
       </div>
@@ -1036,7 +1140,10 @@ function KnockoutTeamPanel({
   predictedScore,
   showScorelineMiss,
   onIncrement,
-  onDecrement
+  onDecrement,
+  selectedCountryFilter,
+  filterGroupName,
+  onSelectCountryFilter
 }: {
   team: BracketTeamOption | null;
   officialTeam: BracketTeamOption | null;
@@ -1057,6 +1164,9 @@ function KnockoutTeamPanel({
   showScorelineMiss: boolean;
   onIncrement: () => void;
   onDecrement: () => void;
+  selectedCountryFilter: string | null;
+  filterGroupName: string | null;
+  onSelectCountryFilter?: (teamId: string) => void;
 }) {
   const isCompact = density === "compact";
   const userTeam = team;
@@ -1078,6 +1188,17 @@ function KnockoutTeamPanel({
     ? officialTeam?.name ?? team?.name ?? formatRoundOf32PlaceholderLabel(placeholderLabel)
     : team?.name ?? officialTeam?.name ?? formatRoundOf32PlaceholderLabel(placeholderLabel);
   const displayFlag = team?.flagEmoji ?? officialTeam?.flagEmoji ?? null;
+  const displayTeam = team ?? officialTeam ?? null;
+  const displayCode = displayTeam ? getTeamDisplayCode(displayTeam) : null;
+  const isActiveCountryFilter = Boolean(displayTeam?.id && selectedCountryFilter === displayTeam.id);
+  const isGroupMateInCountryView = Boolean(
+    displayTeam?.id &&
+      selectedCountryFilter &&
+      displayTeam.id !== selectedCountryFilter &&
+      filterGroupName &&
+      displayTeam.groupName &&
+      displayTeam.groupName === filterGroupName
+  );
   const scoreValue = matchScoreDisplay({ predictedScore });
   const ariaTeamName = officialTeam?.name ?? userTeam?.name ?? placeholderLabel ?? "this team";
   const ariaLabel = isProjectedReadOnly
@@ -1126,24 +1247,42 @@ function KnockoutTeamPanel({
           {side === "right" ? renderWinnerSlot() : null}
         </span>
       </span>
-      <span className="mt-1 block w-full px-1">
-        <span className="flex items-center justify-center gap-1.5 text-center text-base font-black text-gray-950">
+        <span className="mt-1 block w-full px-1">
+          <span className="flex items-center justify-center gap-1.5 text-center text-base font-black text-gray-950">
           {displayFlag && side === "right" ? (
             <span aria-hidden className="shrink-0 text-xl leading-none">
               {displayFlag}
             </span>
           ) : null}
-          <span className="min-w-0 truncate">{displayLabel}</span>
-          {displayFlag && side === "left" ? (
-            <span aria-hidden className="shrink-0 text-xl leading-none">
-              {displayFlag}
-            </span>
-          ) : null}
-        </span>
-        {userLayer.helperText ? (
-          <span className="mt-0.5 block text-center text-[10px] font-semibold text-gray-500">
-            {userLayer.helperText}
+            <span className="min-w-0 truncate">{displayLabel}</span>
+            {displayFlag && side === "left" ? (
+              <span aria-hidden className="shrink-0 text-xl leading-none">
+                {displayFlag}
+              </span>
+            ) : null}
           </span>
+          {displayCode && displayTeam ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectCountryFilter?.(displayTeam.id);
+              }}
+              className={`mt-1 inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide transition ${
+                isActiveCountryFilter
+                  ? "border-emerald-800 text-emerald-900"
+                  : isGroupMateInCountryView
+                    ? "border-gray-700 text-gray-700"
+                    : "border-gray-300 text-gray-600 hover:border-accent hover:text-accent-dark"
+              }`}
+            >
+              {displayCode}
+            </button>
+          ) : null}
+          {userLayer.helperText ? (
+            <span className="mt-0.5 block text-center text-[10px] font-semibold text-gray-500">
+              {userLayer.helperText}
+            </span>
         ) : null}
       </span>
     </span>
@@ -1300,6 +1439,30 @@ function getKnockoutCardLayers({
     userLayer,
     realLayer
   };
+}
+
+function activeFilterTeamLabel(slide: BracketSlideView, selectedCountryFilter: string) {
+  const team =
+    slide.currentMatches
+      .flatMap((match) => [match.homeTeam, match.awayTeam, match.seededHomeTeam, match.seededAwayTeam])
+      .find((candidate) => candidate?.id === selectedCountryFilter) ?? null;
+
+  return team?.shortName ?? "that team";
+}
+
+function activeCountryGroupName(
+  selectedCountryFilter: string | null,
+  match: Pick<KnockoutBracketMatchView, "homeTeam" | "awayTeam" | "seededHomeTeam" | "seededAwayTeam">
+) {
+  if (!selectedCountryFilter) {
+    return null;
+  }
+
+  const team = [match.homeTeam, match.awayTeam, match.seededHomeTeam, match.seededAwayTeam].find(
+    (candidate) => candidate?.id === selectedCountryFilter
+  );
+
+  return team?.groupName ?? null;
 }
 
 function getTeamDisplayCode(team: BracketTeamOption) {

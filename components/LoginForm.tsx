@@ -30,6 +30,7 @@ export function LoginForm({
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [accessCode, setAccessCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -49,7 +50,8 @@ export function LoginForm({
     const result = await authenticateWithEmail(mode, email, password, {
       nextPath,
       flow,
-      language
+      language,
+      accessCode: mode === "signup" ? accessCode : undefined
     });
     setIsSubmitting(false);
 
@@ -159,7 +161,7 @@ export function LoginForm({
 
       {!confirmed && (inviteFlow || signupContext) ? (
         <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
-          Use your invited email to create your account or sign in below.
+          Use your invited email or the access code from your group organizer to create your account.
         </p>
       ) : null}
 
@@ -194,6 +196,22 @@ export function LoginForm({
           required
         />
       </label>
+
+      {mode === "signup" ? (
+        <label className="block">
+          <span className="text-sm font-semibold text-gray-800">Access code</span>
+          <input
+            value={accessCode}
+            onChange={(event) => setAccessCode(event.target.value)}
+            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            placeholder="Enter your access code"
+            autoComplete="one-time-code"
+          />
+          <p className="mt-2 text-sm font-medium text-gray-600">
+            Enter the access code provided by your group organizer.
+          </p>
+        </label>
+      ) : null}
 
       {mode === "login" ? (
         <div className="flex justify-end">

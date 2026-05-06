@@ -1103,8 +1103,8 @@ type MatchResultCardProps = {
 function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardProps) {
   const router = useRouter();
   const [status, setStatus] = useState<MatchStatus>(match.status);
-  const [homeScore, setHomeScore] = useState(match.homeScore?.toString() ?? "");
-  const [awayScore, setAwayScore] = useState(match.awayScore?.toString() ?? "");
+  const [homeScore, setHomeScore] = useState(getAdminInitialScoreInput(match.homeScore));
+  const [awayScore, setAwayScore] = useState(getAdminInitialScoreInput(match.awayScore));
   const [isSaving, setIsSaving] = useState(false);
   const isFinalized = status === "final";
   const isLive = status === "live" || status === "locked";
@@ -1115,13 +1115,13 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
   const resolvedWinnerLabel = getResolvedWinnerLabel(match, resolvedWinnerTeamId);
   const hasUnsavedChanges =
     status !== match.status ||
-    homeScore !== (match.homeScore?.toString() ?? "") ||
-    awayScore !== (match.awayScore?.toString() ?? "");
+    homeScore !== getAdminInitialScoreInput(match.homeScore) ||
+    awayScore !== getAdminInitialScoreInput(match.awayScore);
 
   useEffect(() => {
     setStatus(match.status);
-    setHomeScore(match.homeScore === undefined ? "" : String(match.homeScore));
-    setAwayScore(match.awayScore === undefined ? "" : String(match.awayScore));
+    setHomeScore(getAdminInitialScoreInput(match.homeScore));
+    setAwayScore(getAdminInitialScoreInput(match.awayScore));
   }, [match]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1390,6 +1390,10 @@ function ScoreInput({
       />
     </label>
   );
+}
+
+function getAdminInitialScoreInput(score?: number) {
+  return score === undefined ? "0" : String(score);
 }
 
 function getResolvedWinnerTeamId(match: AdminMatch, homeScore: string, awayScore: string) {

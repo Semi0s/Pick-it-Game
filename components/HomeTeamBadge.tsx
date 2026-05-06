@@ -5,11 +5,13 @@ import { getTeam } from "@/lib/mock-data";
 export function HomeTeamBadge({
   teamId,
   label = "Home Team",
-  className = ""
+  className = "",
+  compact = false
 }: {
   teamId?: string | null;
   label?: string;
   className?: string;
+  compact?: boolean;
 }) {
   const team = getTeam(teamId ?? undefined);
   if (!team) {
@@ -18,7 +20,9 @@ export function HomeTeamBadge({
 
   return (
     <span
-      className={`inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white/85 px-2.5 py-1 text-xs font-bold text-gray-700 ${className}`.trim()}
+      className={`inline-flex items-center rounded-md border border-gray-200 bg-white/85 text-xs font-bold text-gray-700 ${
+        compact ? "gap-1.5 px-2 py-1" : "gap-2 px-2.5 py-1"
+      } ${className}`.trim()}
     >
       <span
         aria-hidden
@@ -26,8 +30,14 @@ export function HomeTeamBadge({
       >
         {team.flagEmoji}
       </span>
-      {label ? <span className="text-gray-500">{label}</span> : null}
-      <span className="text-gray-900">{team.name}</span>
+      {compact ? (
+        <span className="text-gray-900">{team.shortName}</span>
+      ) : (
+        <>
+          {label ? <span className="text-gray-500">{label}</span> : null}
+          <span className="text-gray-900">{team.name}</span>
+        </>
+      )}
     </span>
   );
 }

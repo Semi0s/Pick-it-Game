@@ -30,8 +30,19 @@ type PredictionRow = {
   match_id: string;
 };
 
-export async function POST() {
+type AutoPickRequestBody = {
+  preferredMatchIds?: string[];
+};
+
+export async function POST(request: Request) {
   try {
+    let requestBody: AutoPickRequestBody = {};
+    try {
+      requestBody = (await request.json()) as AutoPickRequestBody;
+    } catch {
+      requestBody = {};
+    }
+
     const supabase = await createServerSupabaseClient();
     const {
       data: { user }
@@ -85,9 +96,18 @@ export async function POST() {
     const openMatches = [...matches]
       .filter((match) => canEditPrediction(match.status))
       .sort((left, right) => left.kickoffTime.localeCompare(right.kickoffTime));
+    const unsavedOpenMatches = openMatches.filter((match) => !savedMatchIds.has(match.id));
+    const preferredMatchIds = new Set(
+      Array.isArray(requestBody.preferredMatchIds)
+        ? requestBody.preferredMatchIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+        : []
+    );
     const nextMatch =
-      openMatches
-        .filter((match) => !savedMatchIds.has(match.id))[0] ?? null;
+      (preferredMatchIds.size > 0
+        ? unsavedOpenMatches.find((match) => preferredMatchIds.has(match.id)) ?? null
+        : null) ??
+      unsavedOpenMatches[0] ??
+      null;
 
     if (!nextMatch) {
       const message =

@@ -19,7 +19,8 @@ import {
   useSessionDisclosureState,
   useSessionJsonState
 } from "@/components/player-management/Shared";
-import { fetchNextAutoPick, storeAutoPickDraft } from "@/lib/auto-pick-client";
+import { clearStoredAutoPickDraft, fetchNextAutoPick, storeAutoPickDraft } from "@/lib/auto-pick-client";
+import { clearGroupsEntryIntent, storeGroupsEntryIntent } from "@/lib/groups-entry-intent";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import {
   buildFinalGroupStandings,
@@ -88,6 +89,19 @@ const AUTO_PICK_EMPTY_COPY = {
   en: "No open matches available right now.",
   es: "No hay partidos disponibles en este momento."
 } as const;
+
+const DEBUG_DASHBOARD_NEXT_PICK = process.env.NODE_ENV !== "production";
+
+function logDashboardNextPick(event: string, details?: Record<string, unknown>) {
+  if (!DEBUG_DASHBOARD_NEXT_PICK || typeof window === "undefined" || window.innerWidth < 1024) {
+    return;
+  }
+
+  console.info("[dashboard-next-pick]", {
+    event,
+    ...details
+  });
+}
 
 export function DashboardOverview() {
   const router = useRouter();
@@ -296,7 +310,6 @@ export function DashboardOverview() {
     [openMatches]
   );
   const heroCtaLabel = completedCount > 0 ? "My Next Pick" : "My Picks";
-  const heroCtaHref = "/groups?focus=next";
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
   const autoPickLanguage = displayLanguage === "es" ? "es" : "en";
   const { selectedGroup: resolvedStandingsGroup } = resolvePreferredStandingsGroupSelection({
@@ -557,9 +570,26 @@ export function DashboardOverview() {
     setIsAutoPicking(true);
 
     try {
+      logDashboardNextPick("click", { target: "next-auto-pick" });
+      clearGroupsEntryIntent();
+      clearStoredAutoPickDraft();
       const suggestion = await fetchNextAutoPick();
       storeAutoPickDraft(suggestion);
+      const targetMatch = groupMatches.find((match) => match.id === suggestion.matchId) ?? null;
+      const groupKey = normalizeGroupKey(targetMatch?.groupName) ?? null;
+      storeGroupsEntryIntent({
+        source: "dashboard",
+        target: "next-auto-pick",
+        matchId: suggestion.matchId,
+        groupKey
+      });
+      logDashboardNextPick("intent-stored", {
+        target: "next-auto-pick",
+        matchId: suggestion.matchId,
+        groupKey
+      });
       router.push("/groups");
+      logDashboardNextPick("route-pushed", { href: "/groups", target: "next-auto-pick" });
     } catch (error) {
       const message = error instanceof Error ? error.message : AUTO_PICK_EMPTY_COPY[autoPickLanguage];
       const localizedMessage =
@@ -574,12 +604,37 @@ export function DashboardOverview() {
     }
   }
 
+  function handleHeroPrimaryAction() {
+    if (completedCount > 0) {
+      logDashboardNextPick("click", { target: "next-pick" });
+      clearGroupsEntryIntent();
+      clearStoredAutoPickDraft();
+      storeGroupsEntryIntent({
+        source: "dashboard",
+        target: "next-pick",
+        matchId: nextOpenMatch?.id ?? null,
+        groupKey: normalizeGroupKey(nextOpenMatch?.groupName) ?? null
+      });
+      logDashboardNextPick("intent-stored", {
+        target: "next-pick",
+        matchId: nextOpenMatch?.id ?? null,
+        groupKey: normalizeGroupKey(nextOpenMatch?.groupName) ?? null
+      });
+    }
+    router.push("/groups");
+    logDashboardNextPick("route-pushed", {
+      href: "/groups",
+      target: completedCount > 0 ? "next-pick" : "groups"
+    });
+  }
+
   return (
-    <div className="space-y-5">
+    <div className="-mt-1 space-y-4">
       <DashboardHero
+        userId={user?.id ?? null}
         name={user?.name ?? "Player"}
-        ctaHref={heroCtaHref}
         ctaLabel={heroCtaLabel}
+        onPrimaryAction={handleHeroPrimaryAction}
         autoPickLabel={AUTO_PICK_LABEL_COPY[autoPickLanguage]}
         autoPickLoadingLabel={AUTO_PICK_LOADING_COPY[autoPickLanguage]}
         isAutoPicking={isAutoPicking}

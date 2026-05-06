@@ -1545,7 +1545,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
                                   {member.homeTeamId ? (
                                     <div className="mt-2">
-                                      <HomeTeamBadge teamId={member.homeTeamId} />
+                                      <HomeTeamBadge teamId={member.homeTeamId} compact />
                                     </div>
                                   ) : null}
                                   <div className="mt-2 flex flex-wrap gap-2">
@@ -1752,7 +1752,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
                                   {member.homeTeamId ? (
                                     <div className="mt-2">
-                                      <HomeTeamBadge teamId={member.homeTeamId} />
+                                      <HomeTeamBadge teamId={member.homeTeamId} compact />
                                     </div>
                                   ) : null}
                                   <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">

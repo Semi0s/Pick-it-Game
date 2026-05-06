@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Network, Sparkles, SquareCheckBig, Trophy } from "lucide-react";
 import { showAppToast } from "@/lib/app-toast";
 import { InlineDisclosureButton, WindowChoiceRail, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
 import { buildAutoPickDraft } from "@/lib/auto-pick";
-import { fetchNextAutoPick, restoreStoredAutoPickDraft } from "@/lib/auto-pick-client";
+import { fetchNextAutoPick, fetchNextAutoPickForMatches, restoreStoredAutoPickDraft } from "@/lib/auto-pick-client";
+import { formatDateTimeWithZone } from "@/lib/date-time";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
+import { clearGroupsEntryIntent, readGroupsEntryIntent, type GroupsEntryIntent } from "@/lib/groups-entry-intent";
 import {
   getExplainerLanguageForUser,
   normalizeExplainerLanguage,
@@ -51,22 +53,40 @@ type DraftPredictionState = {
 
 type PendingScrollTarget = {
   matchId: string;
-  mode: "match" | "section";
+  mode: "match" | "section" | "peek";
+  anchorMatchId?: string;
+  extraOffset?: number;
+  source?: "local" | "dashboard" | "save";
+  reason?: string;
+};
+
+type SavedMatchFeedback = {
+  matchId: string;
+  summary: string;
+  savedAt: string;
 };
 
 type PredictedGroupRowMovement = "up" | "down";
+type SelectedTeamQualifierStatus = "projected-r32" | "best-third" | "outside" | "eliminated";
+type DashboardPendingNavigation = {
+  target: "next-pick" | "next-auto-pick";
+  matchId: string;
+  groupKey: string | null;
+};
 const GROUP_PREDICTIONS_MORE_STORAGE_KEY = "group-predictions-more";
 const GROUP_PREDICTIONS_TABLE_STORAGE_KEY = "group-predictions-table";
 const GROUP_PREDICTIONS_GROUP_FILTER_STORAGE_KEY = "group-predictions-group-filter";
 const GROUP_PREDICTIONS_TEAM_FILTER_STORAGE_KEY = "group-predictions-team-filter";
 const GROUP_PREDICTIONS_MINI_TABLE_GROUP_STORAGE_KEY = "group-predictions-mini-table-group";
 const GROUP_PREDICTIONS_PAGE_SIZE = 10;
-const PREDICTION_SCROLL_TOP_OFFSET = 120;
-const POST_SAVE_ADVANCE_DELAY_MS = 225;
+const PREDICTION_SCROLL_STACK_GAP = 12;
+const AUTO_PICK_SCROLL_EXTRA_GAP = 36;
+const POST_SAVE_ADVANCE_DELAY_MS = 700;
 const AUTO_PICK_REVEAL_DELAY_MS = 650;
+const DEBUG_GROUPS_ENTRY_SCROLL = process.env.NODE_ENV !== "production";
 
 const EXPLAINER_TITLE_COPY: Record<ExplainerLanguage, string> = {
-  en: "MY PICKS",
+  en: "FIND MY PICKS",
   es: "Desplázate hacia abajo y elige un marcador para cada partido.",
   fr: "Faites défiler et choisissez un score pour chaque match.",
   pt: "Role para baixo e escolha um placar para cada partida.",
@@ -153,6 +173,7 @@ export function GroupPredictions({
   initialPredictions,
   initialKnockoutSeeded
 }: GroupPredictionsProps) {
+  const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [predictions, setPredictions] = useState<Prediction[]>(initialPredictions ?? []);
@@ -173,6 +194,9 @@ export function GroupPredictions({
   const [matchWindowStart, setMatchWindowStart] = useState(0);
   const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null);
   const [focusedMatchId, setFocusedMatchId] = useState<string | null>(null);
+  const [lastSavedFeedback, setLastSavedFeedback] = useState<SavedMatchFeedback | null>(null);
+  const [dashboardEntryIntent, setDashboardEntryIntent] = useState<GroupsEntryIntent | null>(null);
+  const [pendingDashboardNavigation, setPendingDashboardNavigation] = useState<DashboardPendingNavigation | null>(null);
   const [isKnockoutSeeded, setIsKnockoutSeeded] = useState(initialKnockoutSeeded ?? false);
   const [autoPickDraft, setAutoPickDraft] = useState<AutoPickDraft | null>(null);
   const [activeAutoPickToken, setActiveAutoPickToken] = useState<string | null>(null);
@@ -198,15 +222,34 @@ export function GroupPredictions({
     true
   );
   const matchCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const matchFooterRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dateSectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const stickyControlsRef = useRef<HTMLDivElement | null>(null);
+  const matchListTopRef = useRef<HTMLDivElement | null>(null);
   const previousGroupPredictionRowsRef = useRef<MiniGroupStandingsRow[]>([]);
   const previousPredictedGroupRef = useRef<string>(selectedGroup);
   const pendingAdvanceTimeoutRef = useRef<number | null>(null);
+  const hasConsumedInitialFocusRef = useRef(false);
   const hasConsumedStoredAutoPickRef = useRef(false);
+  const hasInitializedDashboardIntentRef = useRef(false);
   const autoPickRevealTimeoutRef = useRef<number | null>(null);
+  const activeScrollDebugRef = useRef<string | null>(null);
+  const pendingPagerScrollRef = useRef(false);
   const [movementByGroup, setMovementByGroup] = useState<Record<string, Record<string, PredictedGroupRowMovement>>>(
     {}
   );
+
+  const logGroupsEntryScroll = useCallback((event: string, details?: Record<string, unknown>) => {
+    if (!DEBUG_GROUPS_ENTRY_SCROLL || typeof window === "undefined" || window.innerWidth < 1024) {
+      return;
+    }
+
+    console.info("[groups-entry-scroll]", {
+      event,
+      pathname,
+      ...details
+    });
+  }, [pathname]);
 
   useEffect(() => {
     return () => {
@@ -218,6 +261,20 @@ export function GroupPredictions({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (hasInitializedDashboardIntentRef.current) {
+      return;
+    }
+
+    hasInitializedDashboardIntentRef.current = true;
+    const restoredIntent = readGroupsEntryIntent();
+    setDashboardEntryIntent(restoredIntent);
+    logGroupsEntryScroll("mount", {
+      pendingIntent: restoredIntent?.target ?? null,
+      matchesLoaded: matches.length > 0
+    });
+  }, [logGroupsEntryScroll, matches.length]);
 
   const autoPickLanguage = explainerLanguage === "es" ? "es" : "en";
 
@@ -441,6 +498,17 @@ export function GroupPredictions({
 
     return groupStageMatches.find((match) => canEditPrediction(match.status))?.id ?? null;
   }, [groupStageMatches, savedMatchIds]);
+  const nextPredictionMatchIdInCurrentView = useMemo(() => {
+    const nextUnsavedOpenMatch = filteredMatches.find(
+      (match) => canEditPrediction(match.status) && !savedMatchIds.has(match.id)
+    );
+
+    if (nextUnsavedOpenMatch) {
+      return nextUnsavedOpenMatch.id;
+    }
+
+    return filteredMatches.find((match) => canEditPrediction(match.status))?.id ?? null;
+  }, [filteredMatches, savedMatchIds]);
 
   const shouldPromoteKnockout = !nextPredictionMatchId;
   const shouldShowSecondaryKnockoutButton = !shouldPromoteKnockout;
@@ -532,56 +600,90 @@ export function GroupPredictions({
   const groupStageSectionTotalMatches =
     selectedGroup === GROUP_FILTER_ALL_KEY ? groupStageMatches.length : selectedGroupMatches.length;
   const groupStageSectionBanner = "PREDICTIONS ARE EDITABLE UNTIL KICKOFF";
+  const predictionByMatchId = useMemo(
+    () => new Map(predictions.map((prediction) => [prediction.matchId, prediction])),
+    [predictions]
+  );
+  const projectedPredictions = useMemo(
+    () =>
+      groupStageMatches.flatMap((match) => {
+        const draftState = draftPredictionStateByMatchId[match.id];
+        const savedPrediction = predictionByMatchId.get(match.id);
+        const predictedScore = getPredictedScoreForTable(savedPrediction, draftState);
+
+        return predictedScore
+          ? [
+              {
+                matchId: match.id,
+                predictedHomeScore: predictedScore.homeScore,
+                predictedAwayScore: predictedScore.awayScore
+              }
+            ]
+          : [];
+      }),
+    [draftPredictionStateByMatchId, groupStageMatches, predictionByMatchId]
+  );
+  const allGroupTeams = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          groupStageMatches.flatMap((match) => {
+            const entries: Array<[string, Team]> = [];
+            if (match.homeTeam?.id) {
+              entries.push([match.homeTeam.id, match.homeTeam]);
+            }
+            if (match.awayTeam?.id) {
+              entries.push([match.awayTeam.id, match.awayTeam]);
+            }
+            return entries;
+          })
+        ).values()
+      ),
+    [groupStageMatches]
+  );
+  const projectedStandingsByGroup = useMemo(
+    () => buildPredictedGroupStandings(groupStageMatches, allGroupTeams, projectedPredictions),
+    [allGroupTeams, groupStageMatches, projectedPredictions]
+  );
+  const projectedQualification = useMemo(() => {
+    const automaticQualifierTeamIds = new Set<string>();
+    const automaticQualifierTeams: Array<{ teamId: string; teamCode: string; groupName: string }> = [];
+    const bestThirdPlaceQualifierTeamIds = new Set<string>();
+    const bestThirdPlaceQualifierTeams: Array<{ teamId: string; teamCode: string; groupName: string }> = [];
+
+    try {
+      const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(projectedStandingsByGroup);
+      for (const qualifier of automaticQualifiers.values()) {
+        automaticQualifierTeamIds.add(qualifier.teamId);
+        automaticQualifierTeams.push({
+          teamId: qualifier.teamId,
+          teamCode: qualifier.teamShortName || qualifier.teamName.slice(0, 3).toUpperCase(),
+          groupName: qualifier.groupName
+        });
+      }
+      for (const seed of rankedThirdPlaceTeams) {
+        bestThirdPlaceQualifierTeamIds.add(seed.teamId);
+        bestThirdPlaceQualifierTeams.push({
+          teamId: seed.teamId,
+          teamCode: seed.teamShortName || seed.teamName.slice(0, 3).toUpperCase(),
+          groupName: seed.groupName
+        });
+      }
+    } catch (error) {
+      console.warn("Could not determine projected qualifiers for My Picks cockpit.", error);
+    }
+
+    return {
+      automaticQualifierTeamIds,
+      automaticQualifierTeams,
+      bestThirdPlaceQualifierTeamIds,
+      bestThirdPlaceQualifierTeams
+    };
+  }, [projectedStandingsByGroup]);
 
   const groupPredictionRows = useMemo(() => {
     if (!miniTableGroup) {
       return [];
-    }
-
-    const predictionByMatchId = new Map(predictions.map((prediction) => [prediction.matchId, prediction]));
-    const projectedPredictions = groupStageMatches.flatMap((match) => {
-      const draftState = draftPredictionStateByMatchId[match.id];
-      const savedPrediction = predictionByMatchId.get(match.id);
-      const predictedScore = getPredictedScoreForTable(savedPrediction, draftState);
-
-      return predictedScore
-        ? [
-            {
-              matchId: match.id,
-              predictedHomeScore: predictedScore.homeScore,
-              predictedAwayScore: predictedScore.awayScore
-            }
-          ]
-        : [];
-    });
-    const allGroupTeams = Array.from(
-      new Map(
-        groupStageMatches.flatMap((match) => {
-          const entries: Array<[string, Team]> = [];
-          if (match.homeTeam?.id) {
-            entries.push([match.homeTeam.id, match.homeTeam]);
-          }
-          if (match.awayTeam?.id) {
-            entries.push([match.awayTeam.id, match.awayTeam]);
-          }
-          return entries;
-        })
-      ).values()
-    );
-    const projectedStandingsByGroup = buildPredictedGroupStandings(
-      groupStageMatches,
-      allGroupTeams,
-      projectedPredictions
-    );
-    const bestThirdPlaceQualifierTeamIds = new Set<string>();
-
-    try {
-      const { rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(projectedStandingsByGroup);
-      for (const seed of rankedThirdPlaceTeams) {
-        bestThirdPlaceQualifierTeamIds.add(seed.teamId);
-      }
-    } catch (error) {
-      console.warn("Could not determine projected third-place qualifiers for mini standings.", error);
     }
 
     return (
@@ -590,12 +692,59 @@ export function GroupPredictions({
           ...row,
           rank: row.rank || index + 1,
           isHomeTeam: Boolean(user.homeTeamId && row.teamId === user.homeTeamId),
-          isQualifier: index < 2 || (index === 2 && bestThirdPlaceQualifierTeamIds.has(row.teamId)),
+          isQualifier:
+            index < 2 || (index === 2 && projectedQualification.bestThirdPlaceQualifierTeamIds.has(row.teamId)),
           isPossibleQualifier: false
         })
       ) ?? []
     );
-  }, [draftPredictionStateByMatchId, groupStageMatches, miniTableGroup, predictions, user.homeTeamId]);
+  }, [miniTableGroup, projectedQualification.bestThirdPlaceQualifierTeamIds, projectedStandingsByGroup, user.homeTeamId]);
+  const allModeProjectedQualifierCodes = useMemo(
+    () =>
+      projectedPredictions.length === 0
+        ? []
+        : [
+            ...projectedQualification.automaticQualifierTeams,
+            ...projectedQualification.bestThirdPlaceQualifierTeams
+          ].slice(0, 32),
+    [
+      projectedPredictions.length,
+      projectedQualification.automaticQualifierTeams,
+      projectedQualification.bestThirdPlaceQualifierTeams
+    ]
+  );
+  const selectedTeamQualifierStatus = useMemo<SelectedTeamQualifierStatus | null>(() => {
+    if (!miniTableGroup || !selectedTeam || selectedTeamId === TEAM_FILTER_ALL_KEY) {
+      return null;
+    }
+
+    const row = projectedStandingsByGroup.get(miniTableGroup)?.find((candidate) => candidate.teamId === selectedTeam.id) ?? null;
+    if (!row) {
+      return null;
+    }
+
+    if (row.rank <= 2) {
+      return "projected-r32";
+    }
+
+    if (row.rank === 3 && projectedQualification.bestThirdPlaceQualifierTeamIds.has(row.teamId)) {
+      return "best-third";
+    }
+
+    const groupMatchesForSelection = groupStageMatches.filter(
+      (match) => normalizeGroupKey(match.groupName) === miniTableGroup
+    );
+    const isGroupFullyFinal = groupMatchesForSelection.length > 0 && groupMatchesForSelection.every((match) => match.status === "final");
+
+    return isGroupFullyFinal ? "eliminated" : "outside";
+  }, [
+    groupStageMatches,
+    miniTableGroup,
+    projectedQualification.bestThirdPlaceQualifierTeamIds,
+    projectedStandingsByGroup,
+    selectedTeam,
+    selectedTeamId
+  ]);
   const movementByTeamId = useMemo(
     () => (miniTableGroup ? movementByGroup[miniTableGroup] ?? {} : {}),
     [miniTableGroup, movementByGroup]
@@ -651,25 +800,195 @@ export function GroupPredictions({
   }, [groupPredictionRows, miniTableGroup]);
 
   const jumpToMatch = useCallback(
-    (matchId: string, mode: "match" | "section" = "match") => {
+    (
+      matchId: string,
+      mode: "match" | "section" | "peek" = "match",
+      options?: { scheduleScroll?: boolean; anchorMatchId?: string; extraOffset?: number }
+    ) => {
       setSelectedGroup(GROUP_FILTER_ALL_KEY);
       setSelectedTeamId(TEAM_FILTER_ALL_KEY);
       const targetIndex = groupStageMatches.findIndex((match) => match.id === matchId);
       const maxWindowStart = Math.max(groupStageMatches.length - GROUP_PREDICTIONS_PAGE_SIZE, 0);
       setMatchWindowStart(
-        targetIndex >= 0 ? Math.max(0, Math.min(targetIndex, maxWindowStart)) : 0
+        targetIndex >= 0 ? Math.max(0, Math.min(Math.max(0, targetIndex - 1), maxWindowStart)) : 0
       );
-      setPendingScrollTarget({ matchId, mode });
+      if (options?.scheduleScroll !== false) {
+        setPendingScrollTarget({
+          matchId,
+          mode,
+          anchorMatchId: options?.anchorMatchId,
+          extraOffset: options?.extraOffset,
+          source: "local"
+        });
+      }
       setFocusedMatchId(matchId);
     },
     [groupStageMatches, setSelectedGroup, setSelectedTeamId]
   );
 
+  const focusMatchInCurrentFilter = useCallback(
+    (
+      matchId: string,
+      mode: "match" | "section" | "peek" = "match",
+      options?: { scheduleScroll?: boolean; anchorMatchId?: string; extraOffset?: number }
+    ) => {
+      const targetIndex = filteredMatches.findIndex((match) => match.id === matchId);
+      const maxWindowStart = Math.max(filteredMatches.length - GROUP_PREDICTIONS_PAGE_SIZE, 0);
+      setMatchWindowStart(
+        targetIndex >= 0 ? Math.max(0, Math.min(Math.max(0, targetIndex - 1), maxWindowStart)) : 0
+      );
+      if (options?.scheduleScroll !== false) {
+        setPendingScrollTarget({
+          matchId,
+          mode,
+          anchorMatchId: options?.anchorMatchId,
+          extraOffset: options?.extraOffset,
+          source: "local"
+        });
+      }
+      setFocusedMatchId(matchId);
+    },
+    [filteredMatches]
+  );
+
+  const focusDashboardEntryMatch = useCallback(
+    (matchId: string, groupKey: string | null, target: "next-pick" | "next-auto-pick") => {
+      const normalizedGroupKey =
+        groupKey && availableGroups.includes(groupKey) ? groupKey : GROUP_FILTER_ALL_KEY;
+      const scopedMatches =
+        normalizedGroupKey === GROUP_FILTER_ALL_KEY
+          ? groupStageMatches
+          : groupStageMatches.filter((match) => normalizeGroupKey(match.groupName) === normalizedGroupKey);
+      const targetIndex = scopedMatches.findIndex((match) => match.id === matchId);
+      const maxWindowStart = Math.max(scopedMatches.length - GROUP_PREDICTIONS_PAGE_SIZE, 0);
+
+      setSelectedGroup(normalizedGroupKey);
+      setSelectedTeamId(TEAM_FILTER_ALL_KEY);
+      setMatchWindowStart(
+        targetIndex >= 0 ? Math.max(0, Math.min(Math.max(0, targetIndex - 1), maxWindowStart)) : 0
+      );
+      setFocusedMatchId(matchId);
+      setPendingDashboardNavigation({
+        target,
+        matchId,
+        groupKey: normalizedGroupKey === GROUP_FILTER_ALL_KEY ? null : normalizedGroupKey
+      });
+    },
+    [availableGroups, groupStageMatches, setSelectedGroup, setSelectedTeamId]
+  );
+
+  const clearEntryFocusIntent = useCallback(() => {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete("focus");
+    const nextQuery = nextParams.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
+
   useEffect(() => {
-    if (searchParams.get("focus") === "next" && nextPredictionMatchId) {
-      jumpToMatch(nextPredictionMatchId, "section");
+    // Entry-time focus should only run once. Post-save footer-preserving scroll owns
+    // subsequent auto-advance movement so the page does not jump twice.
+    if (hasConsumedInitialFocusRef.current) {
+      return;
     }
-  }, [jumpToMatch, nextPredictionMatchId, searchParams]);
+
+    if (searchParams.get("focus") === "next" && nextPredictionMatchId) {
+      hasConsumedInitialFocusRef.current = true;
+      jumpToMatch(nextPredictionMatchId, "section");
+      clearEntryFocusIntent();
+      return;
+    }
+
+    if (searchParams.get("focus") === "next-match" && nextPredictionMatchId) {
+      hasConsumedInitialFocusRef.current = true;
+      jumpToMatch(nextPredictionMatchId, "match");
+      clearEntryFocusIntent();
+    }
+  }, [clearEntryFocusIntent, jumpToMatch, nextPredictionMatchId, searchParams]);
+
+  useEffect(() => {
+    if (hasConsumedInitialFocusRef.current || !dashboardEntryIntent) {
+      return;
+    }
+
+    const dashboardTargetMatchId = dashboardEntryIntent.matchId ?? nextPredictionMatchId;
+    if (dashboardEntryIntent.target === "next-pick" && dashboardTargetMatchId) {
+      hasConsumedInitialFocusRef.current = true;
+      focusDashboardEntryMatch(
+        dashboardTargetMatchId,
+        dashboardEntryIntent.groupKey ?? null,
+        "next-pick"
+      );
+      logGroupsEntryScroll("intent-received", {
+        target: "next-pick",
+        matchesLoaded: matches.length > 0,
+        targetMatchId: dashboardTargetMatchId,
+        groupKey: dashboardEntryIntent.groupKey ?? null
+      });
+    }
+  }, [dashboardEntryIntent, focusDashboardEntryMatch, logGroupsEntryScroll, matches.length, nextPredictionMatchId]);
+
+  useEffect(() => {
+    if (!pendingDashboardNavigation) {
+      return;
+    }
+
+    const targetInVisibleWindow = visibleMatches.some((match) => match.id === pendingDashboardNavigation.matchId);
+    const targetNode = matchCardRefs.current[pendingDashboardNavigation.matchId];
+    const stickyControlsHeight = Math.round(stickyControlsRef.current?.getBoundingClientRect().height ?? 0);
+    const appHeaderHeight =
+      typeof window === "undefined"
+        ? 0
+        : Math.round(
+            Number.parseFloat(
+              window.getComputedStyle(document.documentElement).getPropertyValue("--app-header-height")
+            ) || 0
+          );
+    const expectedGroupKey = pendingDashboardNavigation.groupKey ?? GROUP_FILTER_ALL_KEY;
+    const filterWindowStateReady =
+      selectedGroup === expectedGroupKey &&
+      selectedTeamId === TEAM_FILTER_ALL_KEY &&
+      targetInVisibleWindow;
+
+    logGroupsEntryScroll("ready-check", {
+      target: pendingDashboardNavigation.target,
+      targetMatchId: pendingDashboardNavigation.matchId,
+      expectedGroupKey,
+      matchesLoaded: matches.length > 0,
+      targetCardRefExists: Boolean(targetNode),
+      targetAnchorRefExists: Boolean(targetNode),
+      filterWindowStateReady,
+      stickyStackHeight: stickyControlsHeight,
+      appHeaderHeight
+    });
+
+    if (!filterWindowStateReady || !targetNode || stickyControlsHeight <= 0) {
+      return;
+    }
+
+    const scheduleDashboardScroll = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setPendingScrollTarget({
+          matchId: pendingDashboardNavigation.matchId,
+          mode: "match",
+          extraOffset:
+            pendingDashboardNavigation.target === "next-auto-pick" ? AUTO_PICK_SCROLL_EXTRA_GAP : 0,
+          source: "dashboard",
+          reason: pendingDashboardNavigation.target
+        });
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(scheduleDashboardScroll);
+    };
+  }, [
+    logGroupsEntryScroll,
+    matches.length,
+    pendingDashboardNavigation,
+    selectedGroup,
+    selectedTeamId,
+    visibleMatches
+  ]);
 
   useEffect(() => {
     if (!pendingScrollTarget) {
@@ -683,26 +1002,72 @@ export function GroupPredictions({
 
     const targetDateKey = getMatchDateKey(targetMatch.kickoffTime);
     const targetNode = matchCardRefs.current[pendingScrollTarget.matchId];
+    const anchorNode = pendingScrollTarget.anchorMatchId
+      ? matchFooterRefs.current[pendingScrollTarget.anchorMatchId]
+      : null;
     const sectionNode = dateSectionRefs.current[targetDateKey];
 
-    if (!targetNode && !sectionNode) {
+    if (!targetNode && !sectionNode && !anchorNode) {
       return;
     }
 
     const scrollTarget =
-      pendingScrollTarget.mode === "section" ? sectionNode ?? targetNode : targetNode ?? sectionNode;
+      pendingScrollTarget.mode === "peek"
+        ? anchorNode ?? targetNode ?? sectionNode
+        : pendingScrollTarget.mode === "section"
+          ? sectionNode ?? targetNode
+          : targetNode ?? sectionNode;
     if (!scrollTarget) {
       return;
     }
 
-    const targetTop = scrollTarget.getBoundingClientRect().top + window.scrollY - PREDICTION_SCROLL_TOP_OFFSET;
+    const stickyControlsHeight = Math.round(
+      stickyControlsRef.current?.getBoundingClientRect().height ?? 0
+    );
+    const scrollOffset =
+      stickyControlsHeight + PREDICTION_SCROLL_STACK_GAP + (pendingScrollTarget.extraOffset ?? 0);
+    const previousScrollY = window.scrollY;
+    const targetTop = scrollTarget.getBoundingClientRect().top + window.scrollY - scrollOffset;
+    if (activeScrollDebugRef.current && activeScrollDebugRef.current !== pendingScrollTarget.reason) {
+      logGroupsEntryScroll("later-scroll-detected", {
+        previousSource: activeScrollDebugRef.current,
+        nextSource: pendingScrollTarget.reason ?? pendingScrollTarget.source ?? "unknown"
+      });
+    }
+    activeScrollDebugRef.current = pendingScrollTarget.reason ?? pendingScrollTarget.source ?? "unknown";
+    logGroupsEntryScroll("scroll-run", {
+      source: pendingScrollTarget.source ?? "local",
+      reason: pendingScrollTarget.reason ?? null,
+      targetMatchId: pendingScrollTarget.matchId,
+      anchorMatchId: pendingScrollTarget.anchorMatchId ?? null,
+      extraOffset: pendingScrollTarget.extraOffset ?? 0,
+      stickyStackHeight: stickyControlsHeight,
+      finalScrollOffset: scrollOffset,
+      scrollYBefore: previousScrollY,
+      desiredScrollY: Math.max(0, targetTop)
+    });
     window.scrollTo({
       top: Math.max(0, targetTop),
       behavior: "smooth"
     });
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        logGroupsEntryScroll("scroll-complete", {
+          source: pendingScrollTarget.source ?? "local",
+          reason: pendingScrollTarget.reason ?? null,
+          scrollYAfter: window.scrollY
+        });
+        if (pendingScrollTarget.source === "dashboard") {
+          clearGroupsEntryIntent();
+          setPendingDashboardNavigation(null);
+          setDashboardEntryIntent(null);
+        }
+        activeScrollDebugRef.current = null;
+      });
+    });
 
     setPendingScrollTarget(null);
-  }, [pendingScrollTarget, visibleMatches]);
+  }, [logGroupsEntryScroll, pendingScrollTarget, visibleMatches]);
 
   async function handleSave(prediction: Prediction) {
     const savedPrediction = await savePlayerPrediction(prediction);
@@ -727,22 +1092,47 @@ export function GroupPredictions({
       return nextPredictions;
     });
 
+    setLastSavedFeedback({
+      matchId: savedPrediction.matchId,
+      summary: formatSavedPredictionSummary(
+        groupStageMatches.find((match) => match.id === savedPrediction.matchId),
+        savedPrediction
+      ),
+      savedAt: savedPrediction.updatedAt ?? new Date().toISOString()
+    });
+
     const nextSavedMatchIds = new Set(
       (nextPredictions.length > 0 ? nextPredictions : predictions).map((item) => item.matchId)
     );
-    const nextUnsavedOpenMatch = groupStageMatches.find(
-      (match) => canEditPrediction(match.status) && !nextSavedMatchIds.has(match.id)
-    );
     const shouldAdvanceToNextGlobalPick =
       selectedGroup === GROUP_FILTER_ALL_KEY && selectedTeamId === TEAM_FILTER_ALL_KEY;
+    const autoAdvanceMatches = shouldAdvanceToNextGlobalPick ? groupStageMatches : filteredMatches;
+    const nextUnsavedOpenMatch = autoAdvanceMatches.find(
+      (match) => canEditPrediction(match.status) && !nextSavedMatchIds.has(match.id)
+    );
 
-    if (shouldAdvanceToNextGlobalPick && nextUnsavedOpenMatch) {
+    if (nextUnsavedOpenMatch) {
       if (pendingAdvanceTimeoutRef.current !== null) {
         window.clearTimeout(pendingAdvanceTimeoutRef.current);
       }
 
       pendingAdvanceTimeoutRef.current = window.setTimeout(() => {
-        jumpToMatch(nextUnsavedOpenMatch.id);
+        if (shouldAdvanceToNextGlobalPick) {
+          jumpToMatch(nextUnsavedOpenMatch.id, "peek", {
+            scheduleScroll: false
+          });
+        } else {
+          focusMatchInCurrentFilter(nextUnsavedOpenMatch.id, "peek", {
+            scheduleScroll: false
+          });
+        }
+        setPendingScrollTarget({
+          matchId: nextUnsavedOpenMatch.id,
+          mode: "peek",
+          anchorMatchId: savedPrediction.matchId,
+          source: "save",
+          reason: "post-save-peek"
+        });
         pendingAdvanceTimeoutRef.current = null;
       }, POST_SAVE_ADVANCE_DELAY_MS);
     } else if (pendingAdvanceTimeoutRef.current !== null) {
@@ -755,12 +1145,24 @@ export function GroupPredictions({
   }
 
   async function handleAutoPickAction() {
+    prepareExplicitMatchNavigation();
     setIsAutoPicking(true);
 
     try {
-      const suggestion = await fetchNextAutoPick();
+      const preferredMatchIds =
+        selectedGroup === GROUP_FILTER_ALL_KEY && selectedTeamId === TEAM_FILTER_ALL_KEY
+          ? []
+          : filteredMatches
+              .filter((match) => canEditPrediction(match.status) && !savedMatchIds.has(match.id))
+              .map((match) => match.id);
+      const suggestion =
+        preferredMatchIds.length > 0
+          ? await fetchNextAutoPickForMatches(preferredMatchIds)
+          : await fetchNextAutoPick();
       const draft = buildAutoPickDraft(suggestion);
-      triggerAutoPickDraft(draft);
+      triggerAutoPickDraft(draft, {
+        preserveCurrentFilter: !(selectedGroup === GROUP_FILTER_ALL_KEY && selectedTeamId === TEAM_FILTER_ALL_KEY)
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : AUTO_PICK_EMPTY_COPY[autoPickLanguage];
       const localizedMessage =
@@ -783,10 +1185,18 @@ export function GroupPredictions({
   }
 
   const triggerAutoPickDraft = useCallback(
-    (draft: AutoPickDraft) => {
+    (draft: AutoPickDraft, options?: { preserveCurrentFilter?: boolean }) => {
       setAutoPickDraft(draft);
       setActiveAutoPickToken(null);
-      jumpToMatch(draft.matchId);
+      if (options?.preserveCurrentFilter) {
+        focusMatchInCurrentFilter(draft.matchId, "match", {
+          extraOffset: AUTO_PICK_SCROLL_EXTRA_GAP
+        });
+      } else {
+        jumpToMatch(draft.matchId, "match", {
+          extraOffset: AUTO_PICK_SCROLL_EXTRA_GAP
+        });
+      }
 
       if (autoPickRevealTimeoutRef.current !== null) {
         window.clearTimeout(autoPickRevealTimeoutRef.current);
@@ -801,26 +1211,70 @@ export function GroupPredictions({
         autoPickRevealTimeoutRef.current = null;
       }, AUTO_PICK_REVEAL_DELAY_MS);
     },
-    [autoPickLanguage, jumpToMatch]
+    [autoPickLanguage, focusMatchInCurrentFilter, jumpToMatch]
   );
 
+  const prepareExplicitMatchNavigation = useCallback(() => {
+    // When a player explicitly asks for the next pick, that intent should win over
+    // any delayed post-save or pager-driven movement still waiting to run.
+    if (pendingAdvanceTimeoutRef.current !== null) {
+      window.clearTimeout(pendingAdvanceTimeoutRef.current);
+      pendingAdvanceTimeoutRef.current = null;
+    }
+
+    pendingPagerScrollRef.current = false;
+    setPendingScrollTarget(null);
+  }, []);
+
   useEffect(() => {
-    if (hasConsumedStoredAutoPickRef.current) {
+    if (hasConsumedStoredAutoPickRef.current || dashboardEntryIntent?.target !== "next-auto-pick") {
       return;
     }
 
     hasConsumedStoredAutoPickRef.current = true;
     const storedDraft = restoreStoredAutoPickDraft();
+    logGroupsEntryScroll("intent-received", {
+      target: "next-auto-pick",
+      matchesLoaded: matches.length > 0,
+      targetMatchId: storedDraft?.matchId ?? null
+    });
     if (!storedDraft) {
+      clearGroupsEntryIntent();
+      setDashboardEntryIntent(null);
       return;
     }
 
-    triggerAutoPickDraft(storedDraft);
-  }, [triggerAutoPickDraft]);
+    setAutoPickDraft(storedDraft);
+    setActiveAutoPickToken(null);
+    focusDashboardEntryMatch(
+      storedDraft.matchId,
+      dashboardEntryIntent.groupKey ?? null,
+      "next-auto-pick"
+    );
+
+    if (autoPickRevealTimeoutRef.current !== null) {
+      window.clearTimeout(autoPickRevealTimeoutRef.current);
+    }
+
+    autoPickRevealTimeoutRef.current = window.setTimeout(() => {
+      setActiveAutoPickToken(storedDraft.token);
+      showAppToast({
+        tone: "tip",
+        text: AUTO_PICK_SUCCESS_COPY[autoPickLanguage]
+      });
+      autoPickRevealTimeoutRef.current = null;
+    }, AUTO_PICK_REVEAL_DELAY_MS);
+  }, [autoPickLanguage, dashboardEntryIntent, focusDashboardEntryMatch, logGroupsEntryScroll, matches.length]);
 
   function handlePrimaryAction() {
-    if (nextPredictionMatchId) {
+    prepareExplicitMatchNavigation();
+    if (selectedGroup === GROUP_FILTER_ALL_KEY && selectedTeamId === TEAM_FILTER_ALL_KEY && nextPredictionMatchId) {
       jumpToMatch(nextPredictionMatchId);
+      return;
+    }
+
+    if (nextPredictionMatchIdInCurrentView) {
+      focusMatchInCurrentFilter(nextPredictionMatchIdInCurrentView);
       return;
     }
 
@@ -869,10 +1323,59 @@ export function GroupPredictions({
     });
   }, []);
 
-  const renderMatchPager = () =>
+  const handleMatchWindowChange = useCallback(
+    (direction: "earlier" | "later") => {
+      pendingPagerScrollRef.current = true;
+      setFocusedMatchId(null);
+      setMatchWindowStart((current) => {
+        if (direction === "earlier") {
+          return Math.max(0, current - GROUP_PREDICTIONS_PAGE_SIZE);
+        }
+
+        return Math.min(
+          Math.max(filteredMatches.length - GROUP_PREDICTIONS_PAGE_SIZE, 0),
+          current + GROUP_PREDICTIONS_PAGE_SIZE
+        );
+      });
+    },
+    [filteredMatches.length]
+  );
+
+  useEffect(() => {
+    if (!pendingPagerScrollRef.current || !matchListTopRef.current) {
+      return;
+    }
+
+    const stickyControlsHeight = Math.round(stickyControlsRef.current?.getBoundingClientRect().height ?? 0);
+    if (stickyControlsHeight <= 0) {
+      return;
+    }
+
+    const targetTop =
+      matchListTopRef.current.getBoundingClientRect().top + window.scrollY - stickyControlsHeight - PREDICTION_SCROLL_STACK_GAP;
+
+    window.scrollTo({
+      top: Math.max(0, targetTop),
+      behavior: "smooth"
+    });
+
+    pendingPagerScrollRef.current = false;
+  }, [matchWindowStart, visibleMatches]);
+
+  const renderMatchPager = (variant: "cockpit" | "content" = "content") =>
     visibleMatches.length > 0 ? (
-      <section className="pt-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <section
+        className={
+          variant === "cockpit"
+            ? "rounded-b-md bg-white pt-1"
+            : "pt-3"
+        }
+      >
+        <div
+          className={`flex flex-wrap items-center justify-between gap-3 ${
+            variant === "cockpit" ? `${lastSavedFeedback ? "pb-2" : "border-b border-gray-200/80 pb-2"}` : ""
+          }`}
+        >
           <div>
             <p className="text-sm font-black text-gray-900">
               Matches {matchWindowStart + 1}-{matchWindowStart + visibleMatches.length}
@@ -884,7 +1387,7 @@ export function GroupPredictions({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => setMatchWindowStart((current) => Math.max(0, current - GROUP_PREDICTIONS_PAGE_SIZE))}
+              onClick={() => handleMatchWindowChange("earlier")}
               disabled={!hasEarlierMatches}
               className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -892,14 +1395,7 @@ export function GroupPredictions({
             </button>
             <button
               type="button"
-              onClick={() =>
-                setMatchWindowStart((current) =>
-                  Math.min(
-                    Math.max(filteredMatches.length - GROUP_PREDICTIONS_PAGE_SIZE, 0),
-                    current + GROUP_PREDICTIONS_PAGE_SIZE
-                  )
-                )
-              }
+              onClick={() => handleMatchWindowChange("later")}
               disabled={!hasLaterMatches}
               className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -907,6 +1403,15 @@ export function GroupPredictions({
             </button>
           </div>
         </div>
+        {variant === "cockpit" && lastSavedFeedback ? (
+          <div className="pt-2">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-amber-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-900">
+              <span className="whitespace-nowrap">Last pick</span>
+              <span className="min-w-0 text-center">{lastSavedFeedback.summary}</span>
+              <span className="whitespace-nowrap text-right">{formatDateTimeWithZone(lastSavedFeedback.savedAt)}</span>
+            </div>
+          </div>
+        ) : null}
       </section>
     ) : null;
 
@@ -925,11 +1430,11 @@ export function GroupPredictions({
             </p>
           </div>
         </div>
-        <div className="rounded-md bg-cyan-50 px-4 py-3 text-center text-sm font-bold uppercase tracking-wide text-gray-500 sm:text-base">
+        <div className="rounded-md bg-accent-light px-4 py-2 text-center text-xs font-bold uppercase tracking-wide text-accent-dark sm:text-sm">
           {groupStageSectionBanner}
         </div>
         <div className="rounded-lg bg-gray-100 p-5">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">
               {EXPLAINER_TITLE_COPY[explainerLanguage]}
             </p>
@@ -1013,13 +1518,13 @@ export function GroupPredictions({
         </div>
       </section>
 
-      <section className="space-y-3">
-        <div
-          // Header stays at z-20; this rail sits directly beneath it and owns the divider below.
-          className="sticky z-[14] -mx-4 bg-white px-4 pb-2 pt-2 sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
-          style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px))" }}
-        >
-          <div className="space-y-3">
+      <div
+        ref={stickyControlsRef}
+        // Header stays at z-20; this unified cockpit and match-window stack sits beneath it at z-14.
+        className="sticky z-[14] -mx-4 bg-white px-4 pb-3 pt-2 shadow-[0_12px_22px_-18px_rgba(15,23,42,0.45)] sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
+        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px))" }}
+      >
+        <div className="space-y-3">
           <PredictionChoiceRail
             activeItemKey={selectedGroup}
             onActiveItemChange={handleGroupFilterChange}
@@ -1076,59 +1581,106 @@ export function GroupPredictions({
               ))}
             </PredictionChoiceRail>
           )}
-            <div className="border-b border-gray-200/80" />
-          </div>
-        </div>
-
-        <div className="pt-0.5">
           <div className="flex flex-wrap items-center justify-center gap-2 text-center text-sm font-semibold text-gray-600">
             <span>{matchCountSummary}</span>
           </div>
-        </div>
-
-        {selectedGroup !== GROUP_FILTER_ALL_KEY && miniTableGroup ? (
-          <section className="space-y-2 bg-gray-100 -mx-4 px-4 py-3 sm:rounded-lg sm:mx-0">
-            <div className="flex items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!isPredictionTableOpen) {
-                    setIsPredictionTableOpen(true);
-                  }
-                }}
-                className={`text-[10px] font-bold uppercase tracking-wide transition ${
-                  isPredictionTableOpen
-                    ? "cursor-default text-accent-dark"
-                    : "text-accent-dark hover:text-accent"
-                }`}
-              >
-                See How Your Predictions Affect The Tables
-              </button>
-              <InlineDisclosureButton
-                isOpen={isPredictionTableOpen}
-                variant="subtle"
-                onClick={() => setIsPredictionTableOpen((current) => !current)}
-              />
-            </div>
-
-            {isPredictionTableOpen ? (
-              <>
-                <p className="text-[11px] font-semibold text-gray-500">
-                  Top 2 + best 3rd-place teams advance
+          {selectedGroup === GROUP_FILTER_ALL_KEY ? (
+            <div className="space-y-1.5 rounded-lg bg-gray-100 px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-accent-dark">
+                  MY PICKS FOR KNOCKOUT STAGE
                 </p>
-                <GroupStandingsMiniTable
-                  rows={groupPredictionRows}
-                  movementByTeamId={movementByTeamId}
-                  showPlayedColumn={false}
-                  emptyState="Make picks in this group to build your projected table."
+              </div>
+              {allModeProjectedQualifierCodes.length > 0 ? (
+                <div className="mx-auto grid max-w-[32rem] grid-cols-8 justify-center gap-1.5 text-[10px] sm:text-[11px]">
+                  {allModeProjectedQualifierCodes.map((team) => (
+                    <div
+                      key={team.teamId}
+                      className={`rounded-md px-1.5 py-1 text-center font-bold uppercase tracking-wide ${
+                        user.homeTeamId === team.teamId
+                          ? "bg-amber-200 text-amber-950"
+                          : "bg-gray-200 text-gray-900"
+                      }`}
+                    >
+                      {team.teamCode}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[10px] font-semibold text-gray-500">
+                  Save your first group picks to start building your knockout field.
+                </p>
+              )}
+            </div>
+          ) : null}
+          {selectedGroup !== GROUP_FILTER_ALL_KEY && miniTableGroup ? (
+            <section className="space-y-2 rounded-lg bg-gray-100 px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isPredictionTableOpen) {
+                        setIsPredictionTableOpen(true);
+                      }
+                    }}
+                    className={`text-[10px] font-bold uppercase tracking-wide transition ${
+                      isPredictionTableOpen
+                        ? "cursor-default text-accent-dark"
+                        : "text-accent-dark hover:text-accent"
+                    }`}
+                  >
+                    See How Your Predictions Affect The Tables
+                  </button>
+                  {selectedTeamQualifierStatus ? (
+                    <span
+                      className={`inline-flex rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${
+                        selectedTeamQualifierStatus === "projected-r32"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : selectedTeamQualifierStatus === "best-third"
+                            ? "bg-emerald-50 text-emerald-800"
+                            : selectedTeamQualifierStatus === "eliminated"
+                              ? "bg-rose-50 text-rose-700"
+                              : "bg-gray-200 text-gray-700"
+                      }`}
+                    >
+                      {selectedTeamQualifierStatus === "projected-r32"
+                        ? "Projected R32"
+                        : selectedTeamQualifierStatus === "best-third"
+                          ? "Best 3rd"
+                          : selectedTeamQualifierStatus === "eliminated"
+                            ? "Eliminated"
+                            : "Outside"}
+                    </span>
+                  ) : null}
+                </div>
+                <InlineDisclosureButton
+                  isOpen={isPredictionTableOpen}
+                  variant="subtle"
+                  onClick={() => setIsPredictionTableOpen((current) => !current)}
                 />
-              </>
-            ) : null}
-          </section>
-        ) : null}
-      </section>
+              </div>
 
-      {renderMatchPager()}
+              {isPredictionTableOpen ? (
+                <>
+                  <p className="text-[11px] font-semibold text-gray-500">
+                    Top 2 + best 3rd-place teams advance
+                  </p>
+                  <GroupStandingsMiniTable
+                    rows={groupPredictionRows}
+                    movementByTeamId={movementByTeamId}
+                    showPlayedColumn={false}
+                    emptyState="Make picks in this group to build your projected table."
+                  />
+                </>
+              ) : null}
+            </section>
+          ) : null}
+          {renderMatchPager("cockpit")}
+        </div>
+      </div>
+
+      <div ref={matchListTopRef} aria-hidden />
 
       {filteredDates.map((date) => {
         const dateMatches = filteredMatchesByDate[date] ?? [];
@@ -1153,11 +1705,11 @@ export function GroupPredictions({
               </div>
             </div>
 
-            <div className="divide-y divide-gray-200 overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <div className="divide-y divide-gray-200">
               {dateMatches.map((match) => (
                 <div
                   key={match.id}
-                  className="space-y-2 px-4 py-4"
+                  className="space-y-2 px-1 py-4 sm:px-0"
                   ref={(node) => {
                     matchCardRefs.current[match.id] = node;
                   }}
@@ -1190,8 +1742,32 @@ export function GroupPredictions({
                           }
                         : undefined
                     }
+                    onAutoPickAgain={() => {
+                      void (async () => {
+                        prepareExplicitMatchNavigation();
+                        setIsAutoPicking(true);
+                        try {
+                          const suggestion = await fetchNextAutoPickForMatches([match.id]);
+                          const draft = buildAutoPickDraft(suggestion);
+                          triggerAutoPickDraft(draft, { preserveCurrentFilter: true });
+                        } catch (error) {
+                          const message =
+                            error instanceof Error ? error.message : AUTO_PICK_EMPTY_COPY[autoPickLanguage];
+                          showAppToast({
+                            tone: "error",
+                            text: message
+                          });
+                        } finally {
+                          setIsAutoPicking(false);
+                        }
+                      })();
+                    }}
+                    autoPickAgainDisabled={isAutoPicking}
                     highlightHomeTeamId={user.homeTeamId ?? null}
                     onDraftStateChange={handleDraftStateChange}
+                    footerAnchorRef={(node) => {
+                      matchFooterRefs.current[match.id] = node;
+                    }}
                     userId={user.id}
                     onSave={handleSave}
                   />
@@ -1216,7 +1792,7 @@ export function GroupPredictions({
         </p>
       ) : null}
 
-      {renderMatchPager()}
+      {renderMatchPager("content")}
     </div>
   );
 }
@@ -1312,6 +1888,14 @@ function formatWeekdayLabel(date: string) {
   return new Intl.DateTimeFormat("en-US", {
     weekday: "short"
   }).format(new Date(`${date}T12:00:00Z`));
+}
+
+function formatSavedPredictionSummary(match: MatchWithTeams | undefined, prediction: Prediction) {
+  const homeCode = match?.homeTeam?.shortName ?? match?.homeTeam?.name?.slice(0, 3).toUpperCase() ?? "HOME";
+  const awayCode = match?.awayTeam?.shortName ?? match?.awayTeam?.name?.slice(0, 3).toUpperCase() ?? "AWAY";
+  const homeScore = prediction.predictedHomeScore ?? 0;
+  const awayScore = prediction.predictedAwayScore ?? 0;
+  return `${homeCode} ${homeScore} vs. ${awayCode} ${awayScore}`;
 }
 
 function getAutoPickSourceText(source: string, language: "en" | "es") {

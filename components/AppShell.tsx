@@ -1,10 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ChevronDown, CircleUserRound, Globe, ListOrdered, SquareCheckBig, UsersRound } from "lucide-react";
-import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { APP_TOAST_EVENT, markAppToastsReady, type AppToastDetail } from "@/lib/app-toast";
@@ -457,10 +457,16 @@ export function AppShell({ children }: AppShellProps) {
       }
     >
       <header ref={headerRef} className="sticky top-0 z-20 bg-white">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
-          <Link href="/dashboard" className="min-w-0">
-            <h1 className="truncate text-xl font-black leading-tight">{APP_NAME}</h1>
-            <p className="truncate text-xs font-semibold text-accent-dark">{APP_TAGLINE}</p>
+        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-2">
+          <Link href="/dashboard" className="min-w-0" aria-label="PICK-IT! World Cup 2026 home">
+            <Image
+              src="/images/pickit-header-logo.png"
+              alt="PICK-IT! World Cup 2026"
+              width={648}
+              height={220}
+              priority
+              className="h-[4.25rem] w-auto sm:h-[5.1rem]"
+            />
           </Link>
           <div className="flex items-center gap-2">
             <NotificationsBell />

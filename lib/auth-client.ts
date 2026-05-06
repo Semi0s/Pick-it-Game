@@ -1,6 +1,7 @@
 "use client";
 
 import { DEFAULT_LEGAL_DOCUMENT_TYPE } from "@/lib/legal";
+import { getAccessCodeBlockedMessage, getAccessCodeFailureReasonFromMessage } from "@/lib/access-codes";
 import { appendLanguageToPath, defaultLanguage, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { teams } from "@/lib/mock-data";
 import { getPublicWebPushVapidKey } from "@/lib/push-config";
@@ -33,6 +34,7 @@ type AuthOptions = {
   nextPath?: string;
   flow?: string;
   language?: string;
+  accessCode?: string;
 };
 
 type UserRow = {
@@ -154,16 +156,21 @@ export async function authenticateWithEmail(
   const response =
     mode === "login"
       ? await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
-      : await supabase.auth.signUp({
-          email: normalizedEmail,
-          password,
-          options: {
-            emailRedirectTo: signupRedirectUrl
-          }
-        });
+      : await signUpWithInviteContext(supabase, normalizedEmail, password, signupRedirectUrl, options?.accessCode);
 
   if (response.error) {
-    return { ok: false, message: getFriendlyAuthError(response.error.message, mode) };
+    console.error("[access-code:signup] Supabase auth returned an error.", {
+      mode,
+      hadAccessCode: Boolean(options?.accessCode?.trim()),
+      message: response.error.message
+    });
+
+    return {
+      ok: false,
+      message: getFriendlyAuthError(response.error.message, mode, {
+        hadAccessCode: Boolean(options?.accessCode?.trim())
+      })
+    };
   }
 
   if (mode === "signup" && response.data.user && !response.data.session) {
@@ -901,8 +908,23 @@ function decodeBase64UrlToUint8Array(value: string) {
   return Uint8Array.from(raw, (char) => char.charCodeAt(0));
 }
 
-function getFriendlyAuthError(message: string, mode: AuthMode) {
+function getFriendlyAuthError(message: string, mode: AuthMode, options?: { hadAccessCode?: boolean }) {
   const normalized = message.toLowerCase();
+  const accessCodeFailure = getAccessCodeFailureReasonFromMessage(message);
+
+  if (accessCodeFailure) {
+    return getAccessCodeBlockedMessage(accessCodeFailure);
+  }
+
+  if (mode === "signup" && options?.hadAccessCode) {
+    if (normalized.includes("database error")) {
+      return "That code looked valid, but we couldn't finish signup. Ask the pool admin to verify access-code setup.";
+    }
+
+    if (normalized.includes("not invited")) {
+      return "Your email was not directly invited, and the access-code signup path is not active in the database yet.";
+    }
+  }
 
   if (mode === "signup" && (normalized.includes("not invited") || normalized.includes("database error"))) {
     return "That email is not eligible yet. Ask the pool admin for an invite to the app or the group.";
@@ -921,6 +943,78 @@ function getFriendlyAuthError(message: string, mode: AuthMode) {
   }
 
   return message || "Something went wrong. Please try again.";
+}
+
+async function signUpWithInviteContext(
+  supabase: ReturnType<typeof createClient>,
+  email: string,
+  password: string,
+  signupRedirectUrl: string,
+  accessCode?: string
+) {
+  const trimmedAccessCode = accessCode?.trim() ?? "";
+  console.info("[access-code:signup] Starting signup flow.", {
+    email,
+    hasAccessCode: Boolean(trimmedAccessCode)
+  });
+
+  if (trimmedAccessCode) {
+    console.info("[access-code:signup] Prevalidating access code before auth signup.", {
+      email,
+      normalizedCodePreview: `${trimmedAccessCode.replace(/\s+/g, "").trim().toLowerCase().slice(0, 4)}...`
+    });
+
+    const validationResponse = await fetch("/api/access-codes/validate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ code: trimmedAccessCode })
+    });
+
+    const validationResult = (await validationResponse.json()) as
+      | { ok: true }
+      | { ok: false; message?: string };
+
+    if (!validationResponse.ok) {
+      console.error("[access-code:signup] Access-code prevalidation failed.", {
+        email,
+        status: validationResponse.status,
+        message: validationResult.ok ? "Could not validate that code right now." : validationResult.message
+      });
+
+      return {
+        data: { user: null, session: null },
+        error: { message: validationResult.ok ? "Could not validate that code right now." : validationResult.message ?? "Could not validate that code right now." }
+      };
+    }
+
+    if (!validationResult.ok) {
+      console.warn("[access-code:signup] Access-code prevalidation blocked signup.", {
+        email,
+        message: validationResult.message
+      });
+
+      return {
+        data: { user: null, session: null },
+        error: { message: validationResult.message ?? "That code is not valid or is no longer available." }
+      };
+    }
+
+    console.info("[access-code:signup] Access-code prevalidation passed. Submitting signup metadata.", {
+      email,
+      hasAccessCodeMetadata: true
+    });
+  }
+
+  return supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: signupRedirectUrl,
+      data: trimmedAccessCode ? { access_code: trimmedAccessCode } : undefined
+    }
+  });
 }
 
 async function fetchCurrentUserProfileRow(

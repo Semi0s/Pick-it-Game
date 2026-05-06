@@ -77,7 +77,7 @@ export function ManagedTrophyAwardSheet({
                 <p className="truncate text-sm font-semibold text-gray-600">{groupName}</p>
                 {member.homeTeamId ? (
                   <div className="mt-2">
-                    <HomeTeamBadge teamId={member.homeTeamId} />
+                    <HomeTeamBadge teamId={member.homeTeamId} compact />
                   </div>
                 ) : null}
               </div>

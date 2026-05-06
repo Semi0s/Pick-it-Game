@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { createAdminInviteAction } from "@/app/admin/actions";
 import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
+import { AdminAccessCodesSection } from "@/components/admin/AdminAccessCodesSection";
 import { fetchAdminInvites, type AdminInvite } from "@/lib/admin-data";
 import { getRoleBadgeLabel } from "@/lib/access-levels";
 import { formatDateOnly, formatDateTimeWithZone } from "@/lib/date-time";
@@ -234,6 +235,8 @@ export function AdminInvitesSection({
           </ActionButton>
         </form>
       </ManagementCard>
+
+      {user?.accessLevel === "super_admin" ? <AdminAccessCodesSection /> : null}
 
       {showInviteList ? (
         <section className="space-y-3">
