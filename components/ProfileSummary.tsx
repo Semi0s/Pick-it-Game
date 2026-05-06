@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
@@ -58,6 +58,10 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
   });
   const [isTopCardOpen, setIsTopCardOpen] = useSessionDisclosureState("profile-top-card-disclosure", false);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const sortedTeams = useMemo(
+    () => [...teams].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" })),
+    []
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -290,7 +294,7 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
             className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
           >
             <option value="">No home team selected</option>
-            {teams.map((team) => (
+            {sortedTeams.map((team) => (
               <option key={team.id} value={team.id}>
                 {team.flagEmoji} {team.name}
               </option>
