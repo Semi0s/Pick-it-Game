@@ -1020,41 +1020,41 @@ security definer
 set search_path = public
 as $access_code$
 declare
-  normalized_code text;
-  access_code_row public.access_codes%rowtype;
-  existing_redemption_id uuid;
-  target_group record;
+  v_normalized_code text;
+  v_access_code_row public.access_codes%rowtype;
+  v_existing_redemption_id uuid;
+  v_target_group record;
 begin
-  normalized_code := public.normalize_access_code(raw_code);
-  raise log '[access-code] redeem_access_code_for_new_user start email=% has_code=%', lower(auth_email), normalized_code is not null;
+  v_normalized_code := public.normalize_access_code(raw_code);
+  raise log '[access-code] redeem_access_code_for_new_user start email=% has_code=%', lower(auth_email), v_normalized_code is not null;
 
-  if normalized_code is null then
+  if v_normalized_code is null then
     raise exception 'ACCESS_CODE_INVALID';
   end if;
 
   select *
-  into access_code_row
+  into v_access_code_row
   from public.access_codes
-  where public.access_codes.normalized_code = normalized_code
+  where public.access_codes.normalized_code = v_normalized_code
   for update;
 
-  if access_code_row.id is null then
+  if v_access_code_row.id is null then
     raise exception 'ACCESS_CODE_INVALID';
   end if;
 
-  if not access_code_row.active then
+  if not v_access_code_row.active then
     raise exception 'ACCESS_CODE_INACTIVE';
   end if;
 
-  if access_code_row.expires_at is not null and access_code_row.expires_at <= now() then
+  if v_access_code_row.expires_at is not null and v_access_code_row.expires_at <= now() then
     raise exception 'ACCESS_CODE_EXPIRED';
   end if;
 
-  if access_code_row.max_uses is not null and access_code_row.used_count >= access_code_row.max_uses then
+  if v_access_code_row.max_uses is not null and v_access_code_row.used_count >= v_access_code_row.max_uses then
     raise exception 'ACCESS_CODE_FULL';
   end if;
 
-  if access_code_row.group_id is not null then
+  if v_access_code_row.group_id is not null then
     select
       groups.id,
       groups.status,
@@ -1064,42 +1064,42 @@ begin
         from public.group_members
         where group_members.group_id = groups.id
       ) as member_count
-    into target_group
+    into v_target_group
     from public.groups
-    where groups.id = access_code_row.group_id;
+    where groups.id = v_access_code_row.group_id;
 
-    if target_group.id is null or target_group.status <> 'active' then
+    if v_target_group.id is null or v_target_group.status <> 'active' then
       raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
     end if;
 
-    if target_group.member_count >= target_group.membership_limit then
+    if v_target_group.member_count >= v_target_group.membership_limit then
       raise exception 'ACCESS_CODE_GROUP_FULL';
     end if;
   end if;
 
   select access_code_redemptions.id
-  into existing_redemption_id
+  into v_existing_redemption_id
   from public.access_code_redemptions
-  where access_code_redemptions.code_id = access_code_row.id
+  where access_code_redemptions.code_id = v_access_code_row.id
     and (
       access_code_redemptions.user_id = auth_user_id
       or access_code_redemptions.normalized_email = lower(auth_email)
     )
   limit 1;
 
-  if existing_redemption_id is not null then
-    return access_code_row;
+  if v_existing_redemption_id is not null then
+    return v_access_code_row;
   end if;
 
   update public.access_codes
   set used_count = public.access_codes.used_count + 1,
       updated_at = now()
-  where public.access_codes.id = access_code_row.id
-  returning * into access_code_row;
+  where public.access_codes.id = v_access_code_row.id
+  returning * into v_access_code_row;
 
-  raise log '[access-code] redeem_access_code_for_new_user counted usage email=% code_id=% group_id=%', lower(auth_email), access_code_row.id, access_code_row.group_id;
+  raise log '[access-code] redeem_access_code_for_new_user counted usage email=% code_id=% group_id=%', lower(auth_email), v_access_code_row.id, v_access_code_row.group_id;
 
-  return access_code_row;
+  return v_access_code_row;
 end;
 $access_code$;
 
@@ -1108,29 +1108,39 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $handle_new_user$
+as $f$
 declare
   invite_row public.invites%rowtype;
   group_invite_row public.group_invites%rowtype;
   access_code_row public.access_codes%rowtype;
   derived_name text;
   raw_access_code text;
+  debug_step text := 'start';
 begin
-  raise log '[access-code] handle_new_user start email=% has_access_code=%', lower(new.email), nullif(trim(coalesce(new.raw_user_meta_data ->> 'access_code', '')), '') is not null;
+  debug_step := 'read_access_code';
+  raw_access_code := coalesce(
+    nullif(trim(new.raw_user_meta_data ->> 'access_code'), ''),
+    nullif(trim(new.raw_user_meta_data ->> 'accessCode'), ''),
+    nullif(trim(new.raw_user_meta_data ->> 'invite_code'), ''),
+    nullif(trim(new.raw_user_meta_data ->> 'share_code'), ''),
+    null
+  );
 
+  debug_step := 'direct_invite_lookup';
   select *
   into invite_row
   from public.invites
   where lower(email) = lower(new.email);
 
   if invite_row.email is not null then
+    debug_step := 'insert_user_direct_invite';
     insert into public.users (id, name, email, preferred_language, role, needs_profile_setup)
     values (new.id, invite_row.display_name, new.email, coalesce(nullif(trim(invite_row.language), ''), 'en'), invite_row.role, true)
     on conflict (id) do nothing;
-
     return new;
   end if;
 
+  debug_step := 'group_invite_lookup';
   select *
   into group_invite_row
   from public.group_invites
@@ -1141,20 +1151,21 @@ begin
   limit 1;
 
   if group_invite_row.id is not null then
+    debug_step := 'derive_group_invite_name';
     derived_name := coalesce(nullif(trim(group_invite_row.suggested_display_name), ''), split_part(new.email, '@', 1));
-
+    debug_step := 'insert_user_group_invite';
     insert into public.users (id, name, email, preferred_language, role, needs_profile_setup)
     values (new.id, derived_name, new.email, coalesce(nullif(trim(group_invite_row.language), ''), 'en'), 'player', true)
     on conflict (id) do nothing;
-
     return new;
   end if;
 
-  raw_access_code := coalesce(new.raw_user_meta_data ->> 'access_code', null);
+  debug_step := 'redeem_access_code_for_new_user';
   access_code_row := public.redeem_access_code_for_new_user(new.email, new.id, raw_access_code);
-
+  debug_step := 'derive_access_code_name';
   derived_name := split_part(new.email, '@', 1);
 
+  debug_step := 'insert_user_access_code';
   insert into public.users (id, name, email, preferred_language, role, needs_profile_setup)
   values (
     new.id,
@@ -1166,6 +1177,7 @@ begin
   )
   on conflict (id) do nothing;
 
+  debug_step := 'insert_access_code_redemption';
   insert into public.access_code_redemptions (
     code_id,
     user_id,
@@ -1185,29 +1197,18 @@ begin
   on conflict (code_id, user_id) do nothing;
 
   if access_code_row.group_id is not null then
+    debug_step := 'insert_group_member';
     insert into public.group_members (group_id, user_id, role)
-    values (access_code_row.group_id, new.id, 'member')
+    values (access_code_row.group_id, new.id, 'member'::public.group_member_role)
     on conflict (group_id, user_id) do nothing;
   end if;
 
-  raise log '[access-code] handle_new_user completed access-code signup email=% code_id=% group_id=%', lower(new.email), access_code_row.id, access_code_row.group_id;
-
   return new;
 exception
-  when raise_exception then
-    if raw_access_code is not null and trim(raw_access_code) <> '' then
-      raise log '[access-code] handle_new_user re-raising access-code exception email=% error=%', lower(new.email), sqlerrm;
-    end if;
-    raise;
   when others then
-    if raw_access_code is not null and trim(raw_access_code) <> '' then
-      raise log '[access-code] handle_new_user unexpected access-code failure email=% error=%', lower(new.email), sqlerrm;
-      raise exception 'ACCESS_CODE_REDEMPTION_FAILED';
-    end if;
-
-    raise exception 'EMAIL_NOT_INVITED';
+    raise exception 'HANDLE_NEW_USER_FAILED step=% sqlstate=% sqlerrm=%', debug_step, SQLSTATE, SQLERRM;
 end;
-$handle_new_user$;
+$f$;
 
 create trigger on_auth_user_created
 after insert on auth.users

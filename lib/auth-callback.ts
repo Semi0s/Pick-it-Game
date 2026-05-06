@@ -2,6 +2,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
 import { reconcileInvitesForAuthUser } from "@/lib/auth-invite-reconciliation";
 import { appendLanguageToPath, normalizeLanguage } from "@/lib/i18n";
+import { getSupabaseClientEnv } from "@/lib/supabase/env";
 
 const DEFAULT_NEXT_PATH = "/reset-password";
 
@@ -11,8 +12,9 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
   const nextPath = getSafeNextPath(nextRequest.nextUrl.searchParams.get("next"));
   const requestedLanguage = nextRequest.nextUrl.searchParams.get("lang");
   const cookieBuffer: Array<{ name: string; value: string; options: CookieOptions }> = [];
+  const { supabaseUrl, supabaseAnonKey } = getSupabaseClientEnv();
 
-  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
       getAll() {
         return nextRequest.cookies.getAll();

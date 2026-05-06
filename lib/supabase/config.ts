@@ -1,3 +1,10 @@
+import { getSupabaseClientEnv } from "@/lib/supabase/env";
+
 export function hasSupabaseConfig() {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  try {
+    getSupabaseClientEnv();
+    return true;
+  } catch {
+    return false;
+  }
 }

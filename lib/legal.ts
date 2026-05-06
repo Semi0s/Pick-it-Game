@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { defaultLanguage, normalizeLanguage, supportedLanguages, type SupportedLanguage } from "@/lib/i18n";
+import { getSafeSupabaseErrorInfo, logSafeSupabaseError } from "@/lib/supabase-errors";
 
 export const DEFAULT_LEGAL_DOCUMENT_TYPE = "eula";
 
@@ -47,7 +48,17 @@ export async function getRequiredLegalDocument(
   documentType = DEFAULT_LEGAL_DOCUMENT_TYPE,
   language?: string | null
 ): Promise<LegalDocument | null> {
-  const adminSupabase = createAdminClient();
+  let adminSupabase: ReturnType<typeof createAdminClient>;
+  try {
+    adminSupabase = createAdminClient();
+  } catch (error) {
+    logSafeSupabaseError("legal-required-document-client", error, {
+      documentType,
+      language: normalizeLanguage(language),
+      recoverable: true
+    });
+    return null;
+  }
   const requestedLanguage = normalizeLanguage(language);
   const candidateLanguages = requestedLanguage === defaultLanguage ? [defaultLanguage] : [requestedLanguage, defaultLanguage];
 
@@ -65,7 +76,13 @@ export async function getRequiredLegalDocument(
         return null;
       }
 
-      throw new Error(error.message);
+      logSafeSupabaseError("legal-required-document-query", error, {
+        documentType,
+        candidateLanguage,
+        recoverable: true
+      });
+      const safeError = getSafeSupabaseErrorInfo(error, "Could not load the current legal document.");
+      throw new Error(`${safeError.message}${safeError.hint ? ` Hint: ${safeError.hint}` : ""}`);
     }
 
     if (data) {
@@ -95,7 +112,12 @@ export async function getLegalDocuments(
       return [];
     }
 
-    throw new Error(error.message);
+    logSafeSupabaseError("legal-documents-query", error, {
+      documentType,
+      recoverable: true
+    });
+    const safeError = getSafeSupabaseErrorInfo(error, "Could not load legal documents.");
+    throw new Error(`${safeError.message}${safeError.hint ? ` Hint: ${safeError.hint}` : ""}`);
   }
 
   return ((data as LegalDocumentRow[] | null) ?? []).map(mapLegalDocumentRow);
@@ -174,7 +196,9 @@ export async function acceptLegalDocument(
       throw new Error("Legal acceptance storage is not available yet. Apply the legal migration first.");
     }
 
-    throw new Error(error.message);
+    logSafeSupabaseError("legal-acceptance-upsert", error, { userId, documentType });
+    const safeError = getSafeSupabaseErrorInfo(error, "Could not save legal acceptance.");
+    throw new Error(`${safeError.message}${safeError.hint ? ` Hint: ${safeError.hint}` : ""}`);
   }
 
   return getUserLegalAcceptanceStatus(userId, documentType, requiredDocument.language);
@@ -211,7 +235,12 @@ export async function upsertRequiredLegalDocument(input: {
       throw new Error("Legal documents are not available yet. Apply the legal migration first.");
     }
 
-    throw new Error(error.message);
+    logSafeSupabaseError("legal-document-upsert", error, {
+      documentType: input.documentType,
+      language: normalizedLanguage
+    });
+    const safeError = getSafeSupabaseErrorInfo(error, "Could not save legal documents.");
+    throw new Error(`${safeError.message}${safeError.hint ? ` Hint: ${safeError.hint}` : ""}`);
   }
 
   return mapLegalDocumentRow(data as LegalDocumentRow);
@@ -234,7 +263,13 @@ async function getLatestUserLegalAcceptance(userId: string, documentType: string
       return null;
     }
 
-    throw new Error(error.message);
+    logSafeSupabaseError("legal-latest-acceptance-query", error, {
+      userId,
+      documentType,
+      language
+    });
+    const safeError = getSafeSupabaseErrorInfo(error, "Could not load legal acceptance state.");
+    throw new Error(`${safeError.message}${safeError.hint ? ` Hint: ${safeError.hint}` : ""}`);
   }
 
   return (data as LegalAcceptanceRow | null) ?? null;

@@ -2,6 +2,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { defaultLanguage, normalizeLanguage } from "@/lib/i18n";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
+import { getSupabaseClientEnv } from "@/lib/supabase/env";
 
 const protectedRoutes = ["/dashboard", "/groups", "/my-groups", "/leaderboard", "/profile", "/profile-setup", "/admin", "/legal/accept"];
 const LEGAL_ACCEPT_PATH = "/legal/accept";
@@ -26,10 +27,11 @@ export async function middleware(request: NextRequest) {
       headers: request.headers
     }
   });
+  const { supabaseUrl, supabaseAnonKey } = getSupabaseClientEnv();
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       cookies: {
         getAll() {

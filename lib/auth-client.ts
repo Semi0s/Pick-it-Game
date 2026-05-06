@@ -13,6 +13,7 @@ import {
   warnOptionalFeatureOnce
 } from "@/lib/schema-safety";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
+import { getSafeSupabaseErrorInfo } from "@/lib/supabase-errors";
 import { getPublicSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/client";
 import { demoSignIn, demoSignOut, demoSignUp, getDemoCurrentUser } from "@/lib/demo-auth-fallback";
@@ -159,15 +160,32 @@ export async function authenticateWithEmail(
       : await signUpWithInviteContext(supabase, normalizedEmail, password, signupRedirectUrl, options?.accessCode);
 
   if (response.error) {
+    const metadataKeys = getSignupMetadataKeys(options?.accessCode);
+    const safeAuthError = getSafeSupabaseErrorInfo(response.error, "Supabase auth returned an unknown error.");
+    const authErrorRecord = response.error as Record<string, unknown>;
+
     console.error("[access-code:signup] Supabase auth returned an error.", {
+      authErrorCode: safeAuthError.code,
+      authErrorConstructor: safeAuthError.constructorName,
+      authErrorDetails: safeAuthError.details,
+      authErrorHint: safeAuthError.hint,
+      authErrorJson: safeSerializeAuthError(response.error),
+      authErrorKeys: Object.keys(authErrorRecord),
       mode,
       hadAccessCode: Boolean(options?.accessCode?.trim()),
-      message: response.error.message
+      isAuthError:
+        typeof authErrorRecord.__isAuthError === "boolean" ? authErrorRecord.__isAuthError : null,
+      message: safeAuthError.message,
+      metadataKeys,
+      name: safeAuthError.name,
+      ownPropertyNames: safeAuthError.ownPropertyNames,
+      signupPayloadMode: mode === "signup" ? "email_password_with_metadata" : "email_password",
+      status: typeof authErrorRecord.status === "number" ? authErrorRecord.status : null
     });
 
     return {
       ok: false,
-      message: getFriendlyAuthError(response.error.message, mode, {
+      message: getFriendlyAuthError(safeAuthError.message, mode, {
         hadAccessCode: Boolean(options?.accessCode?.trim())
       })
     };
@@ -917,12 +935,24 @@ function getFriendlyAuthError(message: string, mode: AuthMode, options?: { hadAc
   }
 
   if (mode === "signup" && options?.hadAccessCode) {
+    if (normalized.includes("user already registered") || normalized.includes("already been registered")) {
+      return "That email already has an account. Switch to sign in.";
+    }
+
     if (normalized.includes("database error")) {
       return "That code looked valid, but we couldn't finish signup. Ask the pool admin to verify access-code setup.";
     }
 
-    if (normalized.includes("not invited")) {
-      return "Your email was not directly invited, and the access-code signup path is not active in the database yet.";
+    if (
+      normalized.includes("email_not_invited") ||
+      normalized.includes("email is not invited") ||
+      normalized.includes("not invited")
+    ) {
+      return "That email is not directly invited, and this access code could not be redeemed.";
+    }
+
+    if (normalized.includes("trigger") || normalized.includes("unexpected_failure")) {
+      return "That code looked valid, but signup could not be completed. Ask the pool admin to verify access-code setup.";
     }
   }
 
@@ -953,9 +983,11 @@ async function signUpWithInviteContext(
   accessCode?: string
 ) {
   const trimmedAccessCode = accessCode?.trim() ?? "";
+  const metadata = getSignupMetadata(trimmedAccessCode);
   console.info("[access-code:signup] Starting signup flow.", {
     email,
-    hasAccessCode: Boolean(trimmedAccessCode)
+    hasAccessCode: Boolean(trimmedAccessCode),
+    metadataKeys: Object.keys(metadata ?? {})
   });
 
   if (trimmedAccessCode) {
@@ -1003,7 +1035,8 @@ async function signUpWithInviteContext(
 
     console.info("[access-code:signup] Access-code prevalidation passed. Submitting signup metadata.", {
       email,
-      hasAccessCodeMetadata: true
+      hasAccessCodeMetadata: true,
+      metadataKeys: Object.keys(metadata ?? {})
     });
   }
 
@@ -1012,9 +1045,29 @@ async function signUpWithInviteContext(
     password,
     options: {
       emailRedirectTo: signupRedirectUrl,
-      data: trimmedAccessCode ? { access_code: trimmedAccessCode } : undefined
+      data: metadata
     }
   });
+}
+
+function getSignupMetadata(accessCode: string) {
+  return accessCode ? { access_code: accessCode } : undefined;
+}
+
+function getSignupMetadataKeys(accessCode?: string) {
+  return Object.keys(getSignupMetadata(accessCode?.trim() ?? "") ?? {});
+}
+
+function safeSerializeAuthError(error: unknown) {
+  try {
+    if (!error || typeof error !== "object") {
+      return String(error);
+    }
+
+    return JSON.stringify(error, Object.getOwnPropertyNames(error));
+  } catch {
+    return null;
+  }
 }
 
 async function fetchCurrentUserProfileRow(

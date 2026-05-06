@@ -165,7 +165,18 @@ declare
   derived_name text;
   raw_access_code text;
 begin
-  raise log '[access-code] handle_new_user start email=% has_access_code=%', lower(new.email), nullif(trim(coalesce(new.raw_user_meta_data ->> 'access_code', '')), '') is not null;
+  raw_access_code := coalesce(
+    nullif(trim(new.raw_user_meta_data ->> 'access_code'), ''),
+    nullif(trim(new.raw_user_meta_data ->> 'accessCode'), ''),
+    nullif(trim(new.raw_user_meta_data ->> 'invite_code'), ''),
+    nullif(trim(new.raw_user_meta_data ->> 'share_code'), ''),
+    null
+  );
+
+  raise log '[access-code] handle_new_user start email=% has_access_code=% metadata_keys=%',
+    lower(new.email),
+    raw_access_code is not null,
+    (select string_agg(key, ',') from jsonb_object_keys(coalesce(new.raw_user_meta_data, '{}'::jsonb)) as key);
 
   select *
   into invite_row
@@ -199,7 +210,6 @@ begin
     return new;
   end if;
 
-  raw_access_code := coalesce(new.raw_user_meta_data ->> 'access_code', null);
   access_code_row := public.redeem_access_code_for_new_user(new.email, new.id, raw_access_code);
 
   derived_name := split_part(new.email, '@', 1);
