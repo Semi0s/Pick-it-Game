@@ -68,6 +68,9 @@ const LEADERBOARD_SUBSELECTION_STORAGE_KEY = "leaderboard-subselection-state";
 const LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY = "leaderboard-daily-winner-dismissed";
 const LEADERBOARD_TIME_ZONE = "America/New_York";
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
+const LEADERBOARD_STABLE_CONTENT_MIN_HEIGHT = "clamp(24rem, 54vh, 38rem)";
+const LEADERBOARD_STABLE_ROW_TARGET = 8;
+const LEADERBOARD_STABLE_ROW_DEPTH_PX = 96;
 const TWO_LINE_CLAMP_STYLE = {
   display: "-webkit-box",
   WebkitLineClamp: 2,
@@ -750,6 +753,14 @@ export function LeaderboardClient() {
   const shouldShowPlayerSocialIndicators = !isGlobalView;
   const canAwardManagedTrophies = activeView === "managed_groups" && Boolean(managedAwardGroup);
   const canSelfAwardTrophies = user?.role === "admin";
+  const shallowLeaderboardSpacerHeight = useMemo(() => {
+    if (!shouldRenderLeaderboardRows || isLoading || Boolean(error) || users.length === 0) {
+      return 0;
+    }
+
+    const missingRows = Math.max(0, LEADERBOARD_STABLE_ROW_TARGET - users.length);
+    return missingRows * LEADERBOARD_STABLE_ROW_DEPTH_PX;
+  }, [error, isLoading, shouldRenderLeaderboardRows, users.length]);
   const leaders = useMemo(() => users.filter((profile) => profile.rank === 1), [users]);
   const sharedLeaderScore = leaders[0]?.totalPoints ?? null;
   const activityMentionCount = useMemo(
@@ -1287,7 +1298,7 @@ export function LeaderboardClient() {
       ) : null}
 
       {shouldRenderLeaderboardRows ? (
-        <section className="space-y-2">
+        <section className="space-y-2" style={{ minHeight: LEADERBOARD_STABLE_CONTENT_MIN_HEIGHT }}>
           {!isLoading && !error && leaders.length > 1 ? (
             <LeaderSummaryCard
               leaders={leaders}
@@ -1464,6 +1475,10 @@ export function LeaderboardClient() {
               );
             })()
           ))}
+
+          {shallowLeaderboardSpacerHeight > 0 ? (
+            <div aria-hidden className="pointer-events-none" style={{ height: `${shallowLeaderboardSpacerHeight}px` }} />
+          ) : null}
         </section>
       ) : isGroupStandingsView ? (
         <GroupStandingsSection groups={groupStandings} isLoading={isLoading} error={error} />

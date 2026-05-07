@@ -4,13 +4,17 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { completeProfileSetupAction } from "@/app/profile-setup/actions";
 import { showAppToast } from "@/lib/app-toast";
+import { PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY } from "@/lib/i18n";
+import { teams } from "@/lib/mock-data";
+import { getStrings } from "@/lib/strings";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 export function ProfileSetupForm() {
   const router = useRouter();
   const { user, isLoading } = useCurrentUser();
   const [displayName, setDisplayName] = useState("");
-  const [username, setUsername] = useState("");
+  const [preferredLanguage, setPreferredLanguage] = useState<"en" | "es" | "">("");
+  const [homeTeamId, setHomeTeamId] = useState("");
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -21,6 +25,10 @@ export function ProfileSetupForm() {
 
     return user.name || user.email.split("@")[0] || "Player";
   }, [user]);
+  const sortedTeams = useMemo(
+    () => [...teams].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" })),
+    []
+  );
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -46,6 +54,16 @@ export function ProfileSetupForm() {
     }
   }, [message]);
 
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    setDisplayName((current) => current || placeholderName);
+    setPreferredLanguage((current) => current || user.preferredLanguage || "en");
+    setHomeTeamId((current) => current || user.homeTeamId || "");
+  }, [placeholderName, user]);
+
   if (isLoading || !user || user.needsLegalAcceptance) {
     return (
       <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
@@ -61,7 +79,8 @@ export function ProfileSetupForm() {
 
     const result = await completeProfileSetupAction({
       displayName: displayName || placeholderName,
-      username
+      preferredLanguage: preferredLanguage || "en",
+      homeTeamId: homeTeamId || null
     });
 
     setIsSubmitting(false);
@@ -71,9 +90,17 @@ export function ProfileSetupForm() {
       return;
     }
 
+    try {
+      window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, preferredLanguage || "en");
+    } catch (error) {
+      console.warn("Could not persist preferred language during profile setup.", error);
+    }
+
     router.replace("/dashboard");
     router.refresh();
   }
+
+  const copy = getStrings(preferredLanguage || user.preferredLanguage);
 
   return (
     <section className="mx-auto max-w-md space-y-5">
@@ -81,8 +108,9 @@ export function ProfileSetupForm() {
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Profile setup</p>
         <h1 className="mt-2 text-3xl font-black leading-tight">Choose how you appear in the app.</h1>
         <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">
-          Finish this once so your group invites, scores, and leaderboard view all use the name and username you choose.
+          Finish this once so your picks, groups, and leaderboard show the right identity from the start.
         </p>
+        <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Your email stays as your sign-in.</p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-gray-200 bg-white p-5">
@@ -95,19 +123,41 @@ export function ProfileSetupForm() {
             className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
             required
           />
+          <p className="mt-2 text-sm font-semibold text-gray-500">This is how other players will see you.</p>
         </label>
 
         <label className="block">
-          <span className="text-sm font-bold text-gray-800">Username</span>
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            placeholder="Pick a username"
+          <span className="text-sm font-bold text-gray-800">Preferred language</span>
+          <p className="mt-1 text-sm font-semibold text-gray-500">Choose the language you want to use in the app.</p>
+          <select
+            value={preferredLanguage}
+            onChange={(event) => setPreferredLanguage(event.target.value === "es" ? "es" : "en")}
             className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-            required
-          />
+          >
+            <option value="en">{copy.english}</option>
+            <option value="es">{copy.spanish}</option>
+          </select>
+        </label>
+
+        <label className="block">
+          <span className="text-sm font-bold text-gray-800">Home team</span>
+          <p className="mt-1 text-sm font-semibold text-gray-500">
+            Pick a team to follow and highlight throughout the game.
+          </p>
+          <select
+            value={homeTeamId}
+            onChange={(event) => setHomeTeamId(event.target.value)}
+            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+          >
+            <option value="">Skip for now</option>
+            {sortedTeams.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.flagEmoji} {team.name}
+              </option>
+            ))}
+          </select>
           <p className="mt-2 text-sm font-semibold text-gray-500">
-            3-24 characters. Use letters, numbers, spaces, periods, hyphens, or underscores.
+            You can always change this later.
           </p>
         </label>
 
@@ -128,7 +178,7 @@ export function ProfileSetupForm() {
           disabled={isSubmitting}
           className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white shadow-soft"
         >
-          {isSubmitting ? "Saving..." : "Save Profile"}
+          {isSubmitting ? "Saving..." : "Enter PICK-IT!"}
         </button>
       </form>
     </section>

@@ -545,6 +545,10 @@ create index access_codes_group_id_idx
 create index access_codes_active_expires_idx
   on public.access_codes (active, expires_at);
 
+create unique index access_codes_one_active_group_code_idx
+  on public.access_codes (group_id)
+  where group_id is not null and active = true;
+
 create index access_code_redemptions_code_id_idx
   on public.access_code_redemptions (code_id, redeemed_at desc);
 

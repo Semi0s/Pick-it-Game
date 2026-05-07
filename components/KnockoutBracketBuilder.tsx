@@ -1238,7 +1238,7 @@ function KnockoutTeamPanel({
           {side === "right" ? renderWinnerSlot() : null}
         </span>
       </span>
-        <span className="mt-1 block w-full px-1">
+        <span className="mt-0.5 block w-full px-1">
           <span className="flex items-center justify-center gap-1.5 text-center text-base font-black text-gray-950">
           {displayFlag && side === "right" ? (
             <span aria-hidden className="shrink-0 text-xl leading-none">
@@ -1264,7 +1264,7 @@ function KnockoutTeamPanel({
             />
           ) : null}
           {userLayer.helperText ? (
-            <span className="mt-0.5 block text-center text-[10px] font-semibold text-gray-500">
+            <span className="mt-px block text-center text-[10px] font-semibold text-gray-500">
               {userLayer.helperText}
             </span>
         ) : null}
@@ -1490,7 +1490,7 @@ function KnockoutCountryChip({
         onSelectCountry?.(teamId);
       }}
       aria-label={`Filter knockout matches by ${teamName}`}
-      className={`mt-1 inline-flex cursor-pointer items-center justify-center rounded-md border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide transition ${
+      className={`mt-0.5 inline-flex cursor-pointer items-center justify-center rounded-md border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide transition ${
         isActive
           ? "border-emerald-800 ring-1 ring-emerald-800 text-emerald-900"
           : isGroupMate

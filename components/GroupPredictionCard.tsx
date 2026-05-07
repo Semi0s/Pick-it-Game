@@ -538,12 +538,12 @@ function ScoreInput({
       : "bg-gray-100 text-gray-600";
 
   const teamCopy = (
-    <span className="min-w-0 px-2 py-1 text-center">
+    <span className="min-w-0 px-2 pb-0 pt-0.5 text-center">
       <span className={`inline-flex min-w-8 items-center justify-center rounded-sm px-1.5 py-0.5 text-lg leading-none ${badgeTone}`}>
         {flag}
       </span>
       <span
-        className={`mt-1 block truncate text-sm font-semibold ${
+        className={`mt-0.5 block truncate text-sm font-semibold ${
           isFinal ? "text-gray-800" : isLive ? "text-gray-900" : "text-gray-900"
         }`}
       >
@@ -617,7 +617,7 @@ function ScoreInput({
   );
 
   return (
-    <label className="flex flex-col items-center gap-1 rounded-md p-1 text-center">
+    <label className="flex flex-col items-center gap-0.5 rounded-md px-1 py-0.5 text-center">
       <div className="flex items-center gap-2">
         {side === "left" ? (
           <>

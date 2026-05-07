@@ -3,6 +3,7 @@
 import { createHash, randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { fetchBooleanAppSetting } from "@/lib/app-settings";
+import { normalizeAccessCode } from "@/lib/access-codes";
 import { buildGroupInviteEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
 import { ensureUserCanJoinAnotherGroup, fetchJoinedPlayerGroupCount } from "@/lib/group-membership-limits";
 import {
@@ -24,6 +25,8 @@ const DEFAULT_GROUP_MEMBERSHIP_LIMIT = 15;
 const DEFAULT_INVITE_EXPIRY_DAYS = 14;
 const MAX_CUSTOM_TROPHIES_PER_GROUP = 10;
 const MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH = 280;
+const MAX_MANAGED_GROUP_INVITE_CODE_ATTEMPTS = 5;
+const MANAGED_GROUP_INVITE_CODE_PATTERN = /^[A-Z0-9-]{4,24}$/;
 
 type GroupStatus = "active" | "archived";
 type GroupMemberRole = "manager" | "member";
@@ -111,6 +114,18 @@ type TrophyRecord = {
   award_source?: "system" | "manager";
   created_by: string | null;
   group_id: string | null;
+};
+
+type AccessCodeRecord = {
+  id: string;
+  code: string;
+  active: boolean;
+  max_uses?: number | null;
+  used_count: number;
+  expires_at?: string | null;
+  group_id?: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 type UserTrophyRecord = {
@@ -220,6 +235,34 @@ export type AcceptGroupInviteResult =
       message: string;
     };
 
+export type ManagedGroupInviteCode = {
+  id: string;
+  code: string;
+  shareMessage: string;
+  whatsAppUrl: string;
+};
+
+export type CreateManagedGroupInviteCodeResult =
+  | {
+      ok: true;
+      inviteCode: ManagedGroupInviteCode;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type DeactivateManagedGroupInviteCodeResult =
+  | {
+      ok: true;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export type MyManagedGroup = {
   id: string;
   name: string;
@@ -264,6 +307,7 @@ export type ManagedGroupInvite = {
 };
 
 export type ManagedGroupDetails = MyManagedGroup & {
+  inviteCode: ManagedGroupInviteCode | null;
   members: ManagedGroupMember[];
   invites: ManagedGroupInvite[];
   trophies: Array<{
@@ -796,6 +840,176 @@ export async function createGroupInviteShareLinkAction(
     claimUrl,
     whatsAppUrl,
     message: "Share link ready."
+  };
+}
+
+export async function createManagedGroupInviteCodeAction(input: {
+  groupId: string;
+  replaceExisting?: boolean;
+  customCode?: string;
+}
+): Promise<CreateManagedGroupInviteCodeResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedGroupId = input.groupId.trim();
+  if (!trimmedGroupId) {
+    return { ok: false, message: "A valid group is required." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+  if (!managedGroup) {
+    return { ok: false, message: "You do not manage that group." };
+  }
+
+  const existingInviteCode = await fetchPrimaryManagedGroupInviteCode(adminSupabase, managedGroup.id, managedGroup.name);
+  const customCodeResult = resolveManagedGroupInviteCodeInput(input.customCode);
+  if (!customCodeResult.ok) {
+    return customCodeResult;
+  }
+
+  if (existingInviteCode && !input.replaceExisting) {
+    if (
+      customCodeResult.code &&
+      normalizeAccessCode(existingInviteCode.code) === normalizeAccessCode(customCodeResult.code)
+    ) {
+      return {
+        ok: true,
+        inviteCode: existingInviteCode,
+        message: "Invite code ready."
+      };
+    }
+
+    return {
+      ok: true,
+      inviteCode: existingInviteCode,
+      message: "Invite code ready."
+    };
+  }
+
+  if (
+    existingInviteCode &&
+    input.replaceExisting &&
+    customCodeResult.code &&
+    normalizeAccessCode(existingInviteCode.code) === normalizeAccessCode(customCodeResult.code)
+  ) {
+    return {
+      ok: true,
+      inviteCode: existingInviteCode,
+      message: "That invite code is already active."
+    };
+  }
+
+  await deactivateActiveManagedGroupInviteCodes(adminSupabase, managedGroup.id);
+
+  let lastErrorMessage = "Could not create the invite code.";
+  const isReplacingExistingCode = Boolean(existingInviteCode && input.replaceExisting);
+
+  for (let attempt = 0; attempt < MAX_MANAGED_GROUP_INVITE_CODE_ATTEMPTS; attempt += 1) {
+    const candidateCode = customCodeResult.code ?? buildManagedGroupInviteCodeValue(managedGroup.name);
+    const { data, error } = await adminSupabase
+      .from("access_codes")
+      .insert({
+        code: candidateCode,
+        normalized_code: normalizeAccessCode(candidateCode),
+        label: `${managedGroup.name} invite code`,
+        notes: null,
+        active: true,
+        max_uses: null,
+        expires_at: null,
+        group_id: managedGroup.id,
+        default_role: "player",
+        default_language: normalizeLanguage(currentUser.preferredLanguage),
+        created_by: currentUser.userId
+      })
+      .select("id,code,active,max_uses,used_count,expires_at,group_id,created_at,updated_at")
+      .single();
+
+    if (!error && data) {
+      const mappedCode = mapManagedGroupInviteCode(data as AccessCodeRecord, managedGroup.name);
+      revalidatePath("/my-groups");
+      revalidatePath("/dashboard");
+      return {
+        ok: true,
+        inviteCode: mappedCode,
+        message: isReplacingExistingCode
+          ? "New invite code activated. The previous code no longer works."
+          : "Invite code activated."
+      };
+    }
+
+    lastErrorMessage = error?.message ?? lastErrorMessage;
+    if (error?.code === "23505") {
+      if (isManagedGroupInviteCodeConflict(error, "normalized_code")) {
+        return {
+          ok: false,
+          message: "That invite code is already in use. Choose another one."
+        };
+      }
+
+      const currentInviteCode = await fetchPrimaryManagedGroupInviteCode(adminSupabase, managedGroup.id, managedGroup.name);
+      if (currentInviteCode) {
+        return {
+          ok: true,
+          inviteCode: currentInviteCode,
+          message: isReplacingExistingCode
+            ? "New invite code activated. The previous code no longer works."
+            : "Invite code activated."
+        };
+      }
+
+      if (customCodeResult.code) {
+        return {
+          ok: false,
+          message: "That invite code could not be activated. Try another one."
+        };
+      }
+    } else {
+      break;
+    }
+  }
+
+  return {
+    ok: false,
+    message: lastErrorMessage
+  };
+}
+
+export async function deactivateManagedGroupInviteCodeAction(
+  groupId: string
+): Promise<DeactivateManagedGroupInviteCodeResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedGroupId = groupId.trim();
+  if (!trimmedGroupId) {
+    return { ok: false, message: "A valid group is required." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+  if (!managedGroup) {
+    return { ok: false, message: "You do not manage that group." };
+  }
+
+  const currentInviteCode = await fetchPrimaryManagedGroupInviteCode(adminSupabase, managedGroup.id, managedGroup.name);
+  if (!currentInviteCode) {
+    return { ok: false, message: "No active invite code found." };
+  }
+
+  await deactivateActiveManagedGroupInviteCodes(adminSupabase, managedGroup.id);
+
+  revalidatePath("/my-groups");
+  revalidatePath("/dashboard");
+
+  return {
+    ok: true,
+    message: "Invite code deactivated."
   };
 }
 
@@ -1990,7 +2204,7 @@ async function fetchManagedGroupDetailRows(
 
   const groupIds = groups.map((group) => group.id);
   const manageableGroupIds = groups.filter((group) => group.canManage).map((group) => group.id);
-  const [memberResult, inviteResult, trophyResult] = await Promise.all([
+  const [memberResult, inviteResult, trophyResult, inviteCodeResult] = await Promise.all([
     adminSupabase
       .from("group_members")
       .select("id,group_id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email,avatar_url,home_team_id)")
@@ -2015,7 +2229,14 @@ async function fetchManagedGroupDetailRows(
             .select("id,key,name,description,icon,tier,award_source,created_by,group_id")
             .or(`group_id.in.(${groupIds.join(",")}),group_id.is.null`)
             .order("created_at", { ascending: true })
-        : Promise.resolve({ data: [], error: null })
+        : Promise.resolve({ data: [], error: null }),
+    manageableGroupIds.length > 0
+      ? adminSupabase
+          .from("access_codes")
+          .select("id,code,active,max_uses,used_count,expires_at,group_id,created_at,updated_at")
+          .in("group_id", manageableGroupIds)
+          .order("updated_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null })
   ]);
 
   if (memberResult.error) {
@@ -2028,6 +2249,10 @@ async function fetchManagedGroupDetailRows(
 
   if (trophyResult.error) {
     throw new Error(trophyResult.error.message);
+  }
+
+  if (inviteCodeResult.error) {
+    throw new Error(inviteCodeResult.error.message);
   }
 
   const membersByGroup = new Map<string, ManagedGroupMember[]>();
@@ -2070,6 +2295,20 @@ async function fetchManagedGroupDetailRows(
       createdAt: row.created_at
     });
     invitesByGroup.set(row.group_id, list);
+  }
+
+  const inviteCodeByGroup = new Map<string, ManagedGroupInviteCode>();
+  for (const row of ((inviteCodeResult.data ?? []) as AccessCodeRecord[])) {
+    if (!row.group_id || !isManagedGroupInviteCodeUsable(row) || inviteCodeByGroup.has(row.group_id)) {
+      continue;
+    }
+
+    const group = groups.find((entry) => entry.id === row.group_id);
+    if (!group) {
+      continue;
+    }
+
+    inviteCodeByGroup.set(row.group_id, mapManagedGroupInviteCode(row, group.name));
   }
 
   const trophyRows = ((trophyResult.data ?? []) as TrophyRecord[]).filter(Boolean);
@@ -2172,12 +2411,147 @@ async function fetchManagedGroupDetailRows(
     ...group,
     memberCount: memberCounts.get(group.id) ?? 0,
     pendingInviteCount: group.canManage ? pendingInviteCounts.get(group.id) ?? 0 : 0,
+    inviteCode: group.canManage ? inviteCodeByGroup.get(group.id) ?? null : null,
     members: membersByGroup.get(group.id) ?? [],
     invites: invitesByGroup.get(group.id) ?? [],
     trophies: (trophiesByGroup.get(group.id) ?? []).sort((left, right) =>
       left.scope === right.scope ? left.name.localeCompare(right.name) : left.scope === "system" ? -1 : 1
     )
   }));
+}
+
+async function fetchPrimaryManagedGroupInviteCode(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupId: string,
+  groupName: string
+): Promise<ManagedGroupInviteCode | null> {
+  const { data, error } = await adminSupabase
+    .from("access_codes")
+    .select("id,code,active,max_uses,used_count,expires_at,group_id,created_at,updated_at")
+    .eq("group_id", groupId)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const row = ((data ?? []) as AccessCodeRecord[]).find((entry) => isManagedGroupInviteCodeUsable(entry));
+  return row ? mapManagedGroupInviteCode(row, groupName) : null;
+}
+
+function isManagedGroupInviteCodeUsable(row: AccessCodeRecord) {
+  if (!row.active) {
+    return false;
+  }
+
+  if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) {
+    return false;
+  }
+
+  if (row.max_uses !== null && row.max_uses !== undefined && row.used_count >= row.max_uses) {
+    return false;
+  }
+
+  return true;
+}
+
+function mapManagedGroupInviteCode(row: AccessCodeRecord, groupName: string): ManagedGroupInviteCode {
+  const shareMessage = buildManagedGroupInviteCodeMessage({
+    code: row.code,
+    groupName
+  });
+
+  return {
+    id: row.id,
+    code: row.code,
+    shareMessage,
+    whatsAppUrl: buildManagedGroupInviteCodeWhatsAppUrl(shareMessage)
+  };
+}
+
+function buildManagedGroupInviteCodeValue(groupName: string) {
+  const prefix =
+    groupName
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 17) || "GROUP";
+
+  return `${prefix}-${randomBytes(3).toString("hex").toUpperCase()}`;
+}
+
+function resolveManagedGroupInviteCodeInput(customCode?: string | null):
+  | { ok: true; code: string | null }
+  | { ok: false; message: string } {
+  if (!customCode?.trim()) {
+    return { ok: true, code: null };
+  }
+
+  const displayCode = customCode
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (!MANAGED_GROUP_INVITE_CODE_PATTERN.test(displayCode)) {
+    return {
+      ok: false,
+      message: "Invite code must be 4-24 characters and use only letters, numbers, or hyphens."
+    };
+  }
+
+  return { ok: true, code: displayCode };
+}
+
+function isManagedGroupInviteCodeConflict(
+  error: { message?: string | null; details?: string | null; hint?: string | null } | null | undefined,
+  field: "normalized_code" | "group_id"
+) {
+  if (!error) {
+    return false;
+  }
+
+  const haystack = [error.message, error.details, error.hint].filter(Boolean).join(" ").toLowerCase();
+  return haystack.includes(field.toLowerCase());
+}
+
+async function deactivateActiveManagedGroupInviteCodes(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupId: string
+) {
+  const { error } = await adminSupabase
+    .from("access_codes")
+    .update({
+      active: false,
+      updated_at: new Date().toISOString()
+    })
+    .eq("group_id", groupId)
+    .eq("active", true);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+function buildManagedGroupInviteCodeMessage(input: { groupName: string; code: string }) {
+  const appUrl = `${getPublicSiteUrl()}/login?mode=signup`;
+
+  return [
+    `Join my PICK-IT! group: ${input.groupName}`,
+    "",
+    "Use invite code:",
+    input.code,
+    "",
+    "Sign up or log in here:",
+    appUrl,
+    "",
+    "Then enter the code to join the group."
+  ].join("\n");
+}
+
+function buildManagedGroupInviteCodeWhatsAppUrl(message: string) {
+  return `https://wa.me/?text=${encodeURIComponent(message)}`;
 }
 
 async function fetchVisibleGroups(
