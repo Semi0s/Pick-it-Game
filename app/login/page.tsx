@@ -19,14 +19,14 @@ export default async function LoginPage({
     <main className="min-h-screen bg-white px-4 py-8">
       <section className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-md flex-col justify-center">
         <div className="mb-8 rounded-lg border border-gray-200 bg-gray-50 p-4">
-          <div className="mx-auto mb-6 max-w-96 sm:max-w-[27rem]">
+          <div className="mx-auto mb-6 max-w-[30rem]">
             <Image
-              src="/images/pickit-auth-logo.png"
-              alt="PICK-IT! Bracket Challenge World Cup 2026"
-              width={648}
-              height={649}
+              src="/images/pickit-signin-logo.png"
+              alt="PICK-IT! World Cup 2026"
+              width={2048}
+              height={1101}
               priority
-              className="h-auto w-full rounded-lg"
+              className="h-auto w-full object-contain"
             />
           </div>
 
