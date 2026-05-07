@@ -56,7 +56,7 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
     bracketPoints: 0,
     correctPicks: 0
   });
-  const [isTopCardOpen, setIsTopCardOpen] = useSessionDisclosureState("profile-top-card-disclosure", false);
+  const [isTopCardOpen, setIsTopCardOpen] = useSessionDisclosureState("profile-top-card-disclosure", true);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const sortedTeams = useMemo(
     () => [...teams].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" })),

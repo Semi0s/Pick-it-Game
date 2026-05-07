@@ -522,7 +522,9 @@ export function LeaderboardClient() {
           return;
         }
 
-        setGlobalStandingLabel(profile?.rank ? `Global #${profile.rank}` : "Global unranked");
+        setGlobalStandingLabel(
+          profile?.rank ? `YOUR GLOBAL RANK: #${profile.rank}` : "YOUR GLOBAL RANK: UNRANKED"
+        );
       })
       .catch(() => {
         if (isMounted) {
@@ -1099,7 +1101,7 @@ export function LeaderboardClient() {
         <div className="flex items-start justify-between gap-3">
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Leaderboard</p>
           {globalStandingLabel ? (
-            <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+            <div className="shrink-0 rounded-md bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700">
               {globalStandingLabel}
             </div>
           ) : null}
