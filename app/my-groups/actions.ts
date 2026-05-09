@@ -18,6 +18,23 @@ import { isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safe
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendTransactionalEmail } from "@/lib/email-sender";
 import { createTrophyEarnedNotifications } from "@/lib/notifications";
+import {
+  hasManagingDirectorAccess,
+  normalizeCommercialTier,
+  resolveAccessLevel,
+  type AccessLevel,
+  type CommercialTier
+} from "@/lib/tier-access";
+import {
+  fetchActiveGroupRulesets,
+  fetchSidePickPackageOptions,
+  normalizeManagedGroupRulesetStatus,
+  rebuildGroupCustomBonusScores,
+  resolveManagedGroupRulesetPreset,
+  type ManagedGroupRulesetPresetKey,
+  type ManagedGroupRulesetSummary,
+  type SidePickPackageOption
+} from "@/lib/scoped-scoring";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 
@@ -39,6 +56,8 @@ type CurrentUserContext =
       userId: string;
       email: string;
       role: PlatformRole;
+      planTier: CommercialTier | null;
+      accessLevel: AccessLevel;
       preferredLanguage: SupportedLanguage;
     }
   | {
@@ -310,6 +329,9 @@ export type ManagedGroupDetails = MyManagedGroup & {
   inviteCode: ManagedGroupInviteCode | null;
   members: ManagedGroupMember[];
   invites: ManagedGroupInvite[];
+  activeRuleset: ManagedGroupRulesetSummary | null;
+  sidePickPackages: SidePickPackageOption[];
+  canManageRuleset: boolean;
   trophies: Array<{
     id: string;
     key: string;
@@ -322,6 +344,19 @@ export type ManagedGroupDetails = MyManagedGroup & {
     awardedCount: number;
   }>;
 };
+
+export type SaveManagedGroupRulesetInput = {
+  groupId: string;
+  presetKey?: ManagedGroupRulesetPresetKey | null;
+  status?: "draft" | "active" | "locked" | "superseded" | "archived" | null;
+  earlyGroupStageCompletionBonus?: number;
+  knockoutCompletionBonus?: number;
+  finalMatchupBonus?: number;
+  exactFinalScoreBonus?: number;
+  sidePickPackageId?: string | null;
+};
+
+export type SaveManagedGroupRulesetResult = ResendGroupInviteResult;
 
 export type FetchMyGroupsResult =
   | {
@@ -1145,7 +1180,7 @@ export async function listManagedGroupPlayersAction(): Promise<ListManagedGroupP
   try {
     const adminSupabase = createAdminClient();
     const [groups, managerCustomTrophiesEnabled] = await Promise.all([
-      fetchManagedGroupDetails(adminSupabase, currentUser.userId, currentUser.role),
+      fetchManagedGroupDetails(adminSupabase, currentUser),
       fetchBooleanAppSetting("manager_custom_trophies_enabled", false)
     ]);
     return { ok: true, groups, managerCustomTrophiesEnabled };
@@ -1171,7 +1206,7 @@ export async function fetchManagedGroupDetailAction(groupId: string): Promise<Fe
   try {
     const adminSupabase = createAdminClient();
     const [group, managerCustomTrophiesEnabled] = await Promise.all([
-      fetchManagedGroupDetail(adminSupabase, currentUser.userId, currentUser.role, trimmedGroupId),
+      fetchManagedGroupDetail(adminSupabase, currentUser, trimmedGroupId),
       fetchBooleanAppSetting("manager_custom_trophies_enabled", false)
     ]);
 
@@ -1900,6 +1935,135 @@ export async function deleteManagedGroupAction(groupId: string, confirmationName
   }
 }
 
+export async function saveManagedGroupRulesetAction(
+  input: SaveManagedGroupRulesetInput
+): Promise<SaveManagedGroupRulesetResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  if (!hasManagingDirectorAccess(currentUser.accessLevel)) {
+    return { ok: false, message: "Only Managing Directors and Super Admins can apply group rulesets." };
+  }
+
+  const trimmedGroupId = input.groupId.trim();
+  if (!trimmedGroupId) {
+    return { ok: false, message: "Group id is required." };
+  }
+
+  const preset = resolveManagedGroupRulesetPreset(input.presetKey ?? "classic");
+  const requestedStatus = normalizeManagedGroupRulesetStatus(input.status);
+  const nextRuleset = {
+    presetKey: preset.key,
+    status: requestedStatus,
+    earlyGroupStageCompletionBonus:
+      input.earlyGroupStageCompletionBonus === undefined
+        ? preset.ruleset.earlyGroupStageCompletionBonus
+        : normalizeRulesetBonusValue(input.earlyGroupStageCompletionBonus, 10),
+    knockoutCompletionBonus:
+      input.knockoutCompletionBonus === undefined
+        ? preset.ruleset.knockoutCompletionBonus
+        : normalizeRulesetBonusValue(input.knockoutCompletionBonus, 10),
+    finalMatchupBonus:
+      input.finalMatchupBonus === undefined
+        ? preset.ruleset.finalMatchupBonus
+        : normalizeRulesetBonusValue(input.finalMatchupBonus, 15),
+    exactFinalScoreBonus:
+      input.exactFinalScoreBonus === undefined
+        ? preset.ruleset.exactFinalScoreBonus
+        : normalizeRulesetBonusValue(input.exactFinalScoreBonus, 25),
+    sidePickPackageKey: preset.ruleset.sidePickPackageKey,
+    sidePickPackageId: input.sidePickPackageId?.trim() || null
+  };
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    if (nextRuleset.sidePickPackageKey) {
+      const packages = await fetchSidePickPackageOptions(adminSupabase, "group_custom");
+      const matchedPackage =
+        packages.find((pkg) => pkg.key === nextRuleset.sidePickPackageKey) ??
+        packages.find((pkg) => pkg.id === nextRuleset.sidePickPackageId);
+      if (!matchedPackage) {
+        return { ok: false, message: "Choose a valid group-local side-pick package." };
+      }
+      nextRuleset.sidePickPackageId = matchedPackage.id;
+    }
+
+    const { data: existingRulesets, error: existingRulesetsError } = await adminSupabase
+      .from("group_rulesets")
+      .select("id,version,status")
+      .eq("group_id", trimmedGroupId)
+      .order("version", { ascending: false });
+
+    if (existingRulesetsError) {
+      return { ok: false, message: existingRulesetsError.message };
+    }
+
+    const latestRuleset = (((existingRulesets ?? []) as Array<{ version: number; status: string }>)[0] ?? null);
+    if (latestRuleset?.status === "locked" && currentUser.role !== "admin") {
+      return { ok: false, message: "This group ruleset is locked. Ask a super admin if it needs to change." };
+    }
+
+    const nextVersion = (latestRuleset?.version ?? 0) + 1;
+    if (nextRuleset.status === "active") {
+      const { error: supersedeError } = await adminSupabase
+        .from("group_rulesets")
+        .update({
+          status: "superseded",
+          updated_at: new Date().toISOString()
+        })
+        .eq("group_id", trimmedGroupId)
+        .eq("status", "active");
+
+      if (supersedeError) {
+        return { ok: false, message: supersedeError.message };
+      }
+    }
+
+    const { error: insertError } = await adminSupabase
+      .from("group_rulesets")
+      .insert({
+        group_id: trimmedGroupId,
+        version: nextVersion,
+        status: nextRuleset.status,
+        early_group_stage_completion_bonus: nextRuleset.earlyGroupStageCompletionBonus,
+        knockout_completion_bonus: nextRuleset.knockoutCompletionBonus,
+        final_matchup_bonus: nextRuleset.finalMatchupBonus,
+        exact_final_score_bonus: nextRuleset.exactFinalScoreBonus,
+        side_pick_package_id: nextRuleset.sidePickPackageId,
+        created_by_user_id: currentUser.userId
+      });
+
+    if (insertError) {
+      return { ok: false, message: insertError.message };
+    }
+
+    await rebuildGroupCustomBonusScores(adminSupabase, [trimmedGroupId]);
+
+    revalidatePath("/my-groups");
+    revalidatePath("/leaderboard");
+
+    return {
+      ok: true,
+      message:
+        nextVersion === 1
+          ? `${preset.label} ruleset saved as ${nextRuleset.status}.`
+          : `${preset.label} ruleset v${nextVersion} saved as ${nextRuleset.status}.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not save that group ruleset."
+    };
+  }
+}
+
 export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
   const currentUser = await getCurrentUserContext();
   if (!currentUser.ok) {
@@ -2049,6 +2213,11 @@ async function getCurrentUserContext(): Promise<CurrentUserContext> {
     userId: profile.id,
     email: profile.email,
     role: profile.role,
+    planTier: normalizeCommercialTier((profile as { plan_tier?: string | null }).plan_tier ?? null),
+    accessLevel: resolveAccessLevel({
+      role: profile.role,
+      planTier: (profile as { plan_tier?: string | null }).plan_tier ?? null
+    }),
     preferredLanguage: normalizeLanguage((profile as { preferred_language?: string | null }).preferred_language)
   };
 }
@@ -2057,35 +2226,53 @@ async function fetchCurrentUserContextProfile(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   userId: string
 ): Promise<{
-  data: { id: string; email: string; role: PlatformRole; preferred_language?: string | null } | null;
+  data: { id: string; email: string; role: PlatformRole; preferred_language?: string | null; plan_tier?: string | null } | null;
   error: { message: string } | null;
 }> {
   const fullProfileQuery = await supabase
     .from("users")
-    .select("id,email,role,preferred_language")
+    .select("id,email,role,preferred_language,plan_tier")
     .eq("id", userId)
     .maybeSingle();
 
   if (!fullProfileQuery.error) {
     return {
-      data: (fullProfileQuery.data as { id: string; email: string; role: PlatformRole; preferred_language?: string | null } | null) ?? null,
+      data: (fullProfileQuery.data as { id: string; email: string; role: PlatformRole; preferred_language?: string | null; plan_tier?: string | null } | null) ?? null,
       error: null
     };
   }
 
-  if (!isMissingColumnError(fullProfileQuery.error.message, "users", "preferred_language")) {
+  const missingPreferredLanguage = isMissingColumnError(fullProfileQuery.error.message, "users", "preferred_language");
+  const missingPlanTier = isMissingColumnError(fullProfileQuery.error.message, "users", "plan_tier");
+
+  if (!missingPreferredLanguage && !missingPlanTier) {
     return { data: null, error: { message: fullProfileQuery.error.message } };
   }
 
-  warnOptionalFeatureOnce(
-    "my-groups-current-user-preferred-language-missing",
-    "My Groups current-user context is loading without preferred_language because the live public.users schema is behind the app.",
-    fullProfileQuery.error.message
-  );
+  if (missingPreferredLanguage) {
+    warnOptionalFeatureOnce(
+      "my-groups-current-user-preferred-language-missing",
+      "My Groups current-user context is loading without preferred_language because the live public.users schema is behind the app.",
+      fullProfileQuery.error.message
+    );
+  }
 
+  if (missingPlanTier) {
+    warnOptionalFeatureOnce(
+      "my-groups-current-user-plan-tier-missing",
+      "My Groups current-user context is loading without plan_tier because the live public.users schema is behind the app.",
+      fullProfileQuery.error.message
+    );
+  }
+
+  const fallbackSelect = missingPreferredLanguage && missingPlanTier
+    ? "id,email,role"
+    : missingPreferredLanguage
+      ? "id,email,role,plan_tier"
+      : "id,email,role,preferred_language";
   const fallbackProfileQuery = await supabase
     .from("users")
-    .select("id,email,role")
+    .select(fallbackSelect)
     .eq("id", userId)
     .maybeSingle();
 
@@ -2093,9 +2280,11 @@ async function fetchCurrentUserContextProfile(
     return { data: null, error: { message: fallbackProfileQuery.error.message } };
   }
 
-  const fallbackRow = fallbackProfileQuery.data as { id: string; email: string; role: PlatformRole } | null;
+  const fallbackRow = fallbackProfileQuery.data as { id: string; email: string; role: PlatformRole; preferred_language?: string | null; plan_tier?: string | null } | null;
   return {
-    data: fallbackRow ? { ...fallbackRow, preferred_language: "en" } : null,
+    data: fallbackRow
+      ? { ...fallbackRow, preferred_language: fallbackRow.preferred_language ?? "en", plan_tier: fallbackRow.plan_tier ?? null }
+      : null,
     error: null
   };
 }
@@ -2166,37 +2355,35 @@ async function fetchManagedGroupCount(
 
 async function fetchManagedGroupDetails(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  userId: string,
-  role: PlatformRole
+  currentUser: Extract<CurrentUserContext, { ok: true }>
 ): Promise<ManagedGroupDetails[]> {
-  const groups = await fetchVisibleGroups(adminSupabase, userId, role);
+  const groups = await fetchVisibleGroups(adminSupabase, currentUser.userId, currentUser.role);
   if (groups.length === 0) {
     return [];
   }
 
-  return fetchManagedGroupDetailRows(adminSupabase, groups, role);
+  return fetchManagedGroupDetailRows(adminSupabase, groups, currentUser);
 }
 
 async function fetchManagedGroupDetail(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  userId: string,
-  role: PlatformRole,
+  currentUser: Extract<CurrentUserContext, { ok: true }>,
   groupId: string
 ): Promise<ManagedGroupDetails | null> {
-  const groups = await fetchVisibleGroups(adminSupabase, userId, role);
+  const groups = await fetchVisibleGroups(adminSupabase, currentUser.userId, currentUser.role);
   const group = groups.find((entry) => entry.id === groupId);
   if (!group) {
     return null;
   }
 
-  const [detail] = await fetchManagedGroupDetailRows(adminSupabase, [group], role);
+  const [detail] = await fetchManagedGroupDetailRows(adminSupabase, [group], currentUser);
   return detail ?? null;
 }
 
 async function fetchManagedGroupDetailRows(
   adminSupabase: ReturnType<typeof createAdminClient>,
   groups: MyManagedGroup[],
-  role: PlatformRole
+  currentUser: Extract<CurrentUserContext, { ok: true }>
 ): Promise<ManagedGroupDetails[]> {
   if (groups.length === 0) {
     return [];
@@ -2204,7 +2391,7 @@ async function fetchManagedGroupDetailRows(
 
   const groupIds = groups.map((group) => group.id);
   const manageableGroupIds = groups.filter((group) => group.canManage).map((group) => group.id);
-  const [memberResult, inviteResult, trophyResult, inviteCodeResult] = await Promise.all([
+  const [memberResult, inviteResult, trophyResult, inviteCodeResult, activeRulesetsByGroup, groupCustomPackages] = await Promise.all([
     adminSupabase
       .from("group_members")
       .select("id,group_id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email,avatar_url,home_team_id)")
@@ -2217,7 +2404,7 @@ async function fetchManagedGroupDetailRows(
           .in("group_id", manageableGroupIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
-    role === "admin"
+    currentUser.role === "admin"
       ? adminSupabase
           .from("trophies")
           .select("id,key,name,description,icon,tier,award_source,created_by,group_id")
@@ -2236,7 +2423,9 @@ async function fetchManagedGroupDetailRows(
           .select("id,code,active,max_uses,used_count,expires_at,group_id,created_at,updated_at")
           .in("group_id", manageableGroupIds)
           .order("updated_at", { ascending: false })
-      : Promise.resolve({ data: [], error: null })
+      : Promise.resolve({ data: [], error: null }),
+    fetchActiveGroupRulesets(adminSupabase, manageableGroupIds),
+    fetchSidePickPackageOptions(adminSupabase, "group_custom")
   ]);
 
   if (memberResult.error) {
@@ -2387,7 +2576,7 @@ async function fetchManagedGroupDetailRows(
       continue;
     }
 
-    const destinationGroupIds = role === "admin" ? groupIds : manageableGroupIds;
+    const destinationGroupIds = currentUser.role === "admin" ? groupIds : manageableGroupIds;
     if (destinationGroupIds.length > 0) {
       for (const groupId of destinationGroupIds) {
         const list = trophiesByGroup.get(groupId) ?? [];
@@ -2412,6 +2601,9 @@ async function fetchManagedGroupDetailRows(
     memberCount: memberCounts.get(group.id) ?? 0,
     pendingInviteCount: group.canManage ? pendingInviteCounts.get(group.id) ?? 0 : 0,
     inviteCode: group.canManage ? inviteCodeByGroup.get(group.id) ?? null : null,
+    activeRuleset: group.canManage ? activeRulesetsByGroup.get(group.id) ?? null : null,
+    sidePickPackages: group.canManage ? groupCustomPackages : [],
+    canManageRuleset: group.canManage && hasManagingDirectorAccess(currentUser.accessLevel),
     members: membersByGroup.get(group.id) ?? [],
     invites: invitesByGroup.get(group.id) ?? [],
     trophies: (trophiesByGroup.get(group.id) ?? []).sort((left, right) =>
@@ -2532,6 +2724,14 @@ async function deactivateActiveManagedGroupInviteCodes(
   if (error) {
     throw new Error(error.message);
   }
+}
+
+function normalizeRulesetBonusValue(value?: number | null, max = 50) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(max, Math.round(value)));
 }
 
 function buildManagedGroupInviteCodeMessage(input: { groupName: string; code: string }) {

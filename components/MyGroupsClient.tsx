@@ -25,6 +25,7 @@ import {
   type MyManagedGroup
 } from "@/app/my-groups/actions";
 import { Avatar } from "@/components/Avatar";
+import { ManagedGroupRulesetPanel } from "@/components/ManagedGroupRulesetPanel";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { AdminInvitesSection } from "@/components/admin/AdminInvitesClient";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
@@ -1296,6 +1297,18 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                           </div>
                         ) : null}
                       </div>
+                    ) : null}
+
+                    {group.canManage && detailedGroup?.canManageRuleset ? (
+                      <ManagedGroupRulesetPanel
+                        groupId={group.id}
+                        canManageRuleset={detailedGroup.canManageRuleset}
+                        activeRuleset={detailedGroup.activeRuleset}
+                        sidePickPackages={detailedGroup.sidePickPackages}
+                        onSaved={async () => {
+                          await loadGroupDetail(group.id, true);
+                        }}
+                      />
                     ) : null}
 
                     {!detailedGroup ? (

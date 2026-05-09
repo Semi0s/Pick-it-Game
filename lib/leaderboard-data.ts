@@ -10,6 +10,7 @@ import { demoUsers } from "@/lib/mock-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
+import { fetchGroupCustomScoreTotals } from "@/lib/scoped-scoring";
 import {
   fetchDailyWinners,
   fetchPerfectPickUserIdsForLatestFinalizedMatch,
@@ -92,6 +93,8 @@ export type LeaderboardListItem = UserProfile & {
   rankDelta: number | null;
   pointsDelta: number | null;
   hasPerfectPickHighlight: boolean;
+  standardPoints?: number;
+  groupCustomPoints?: number;
 };
 
 export type LeaderboardSwitcherView = "global" | "my_groups" | "managed_groups" | "groups" | "managers";
@@ -143,6 +146,7 @@ export type GroupStandingItem = {
   perfectPickCount: number | null;
   recentActivityCount: number | null;
   tag: string | null;
+  scoringScope: "standard";
 };
 
 export type LeaderboardPageRequest = {
@@ -366,7 +370,8 @@ async function fetchGroupStandingsForAccessibleGroups(
         topPlayerPoints: topPlayer?.totalPoints ?? 0,
         perfectPickCount,
         recentActivityCount,
-        tag: deriveGroupStandingTag({ avgPoints, playerCount, perfectPickCount })
+        tag: deriveGroupStandingTag({ avgPoints, playerCount, perfectPickCount }),
+        scoringScope: "standard"
       } satisfies GroupStandingItem;
     })
     .filter(Boolean)
@@ -439,6 +444,8 @@ async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<
           ...mapUserRow(joinedUser),
           trophies: trophiesByUserId.get(entry.user_id) ?? [],
           totalPoints: entry.total_points,
+          standardPoints: entry.total_points,
+          groupCustomPoints: 0,
           rank: entry.rank,
           rankDelta: movement.rankDelta,
           pointsDelta: movement.pointsDelta,
@@ -479,10 +486,19 @@ async function fetchGroupLeaderboardRows(
     throw new Error(leaderboardError.message);
   }
 
-  const groupLeaderboardEntries = (((leaderboardData as LeaderboardEntryRow[] | null) ?? [])
+  const groupCustomTotals = await fetchGroupCustomScoreTotals(adminSupabase, [groupId]);
+  const groupCustomTotalsByUserId = groupCustomTotals.get(groupId) ?? new Map<string, number>();
+  const groupLeaderboardEntries: Array<{
+    user_id: string;
+    standard_points: number;
+    group_custom_points: number;
+    total_points: number;
+  }> = (((leaderboardData as LeaderboardEntryRow[] | null) ?? [])
     .map((entry) => ({
       user_id: entry.user_id,
-      total_points: entry.total_points
+      standard_points: entry.total_points,
+      group_custom_points: groupCustomTotalsByUserId.get(entry.user_id) ?? 0,
+      total_points: entry.total_points + (groupCustomTotalsByUserId.get(entry.user_id) ?? 0)
     }))
     .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id)));
 
@@ -520,6 +536,8 @@ async function fetchGroupLeaderboardRows(
         ...mapUserRow(joinedUser),
         trophies: trophiesByUserId.get(entry.user_id) ?? [],
         totalPoints: entry.total_points,
+        standardPoints: entry.standard_points,
+        groupCustomPoints: entry.group_custom_points,
         rank: entry.rank,
         rankDelta: movement.rankDelta,
         pointsDelta: movement.pointsDelta,
