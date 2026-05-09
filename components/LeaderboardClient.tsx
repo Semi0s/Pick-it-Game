@@ -1336,7 +1336,14 @@ export function LeaderboardClient() {
           ) : null}
 
           <div className="px-1 pt-1">
-            <h3 className="text-base font-black text-gray-950">Leaderboard</h3>
+            <h3 className="text-base font-black text-gray-950">
+              {activeView === "global" ? "Leaderboard" : "Group Leaderboard"}
+            </h3>
+            <p className="mt-1 text-xs font-semibold text-gray-500">
+              {activeView === "global"
+                ? "Global leaderboard uses standard scoring only."
+                : "Includes this group’s active bonus rules and custom picks."}
+            </p>
           </div>
           {isLoading ? (
             <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
@@ -1905,7 +1912,12 @@ function GroupStandingsSection({
   return (
     <section className="space-y-2">
           <div className="px-1 pt-1">
-            <h3 className="text-base font-black text-gray-950">Group Standings</h3>
+            <h3 className="text-base font-black text-gray-950">Average Group Points</h3>
+            <p className="mt-1 text-xs font-semibold text-gray-500">
+              Ranked by average standard score.
+              <br />
+              Custom group bonuses and group-specific side picks are excluded.
+            </p>
           </div>
 
       {isLoading ? (
