@@ -1003,7 +1003,9 @@ export function getDefaultLeaderboardView(switcher: LeaderboardSwitcherContext):
   return switcher.tabs[0]?.value ?? "global";
 }
 
-function assignRanks(entries: Array<{ user_id: string; total_points: number }>) {
+function assignRanks<T extends { user_id: string; total_points: number }>(
+  entries: T[]
+): Array<T & { rank: number }> {
   let currentRank = 0;
   let lastScore: number | null = null;
 
