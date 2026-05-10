@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { runEmailJobsWorker } from "@/app/api/email-jobs/process/route";
+import { runEmailJobsWorker } from "@/lib/email-jobs-worker";
 import { runMatchSyncJob } from "@/app/api/sync/matches/route";
 
 export const runtime = "nodejs";

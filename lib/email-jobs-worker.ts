@@ -1,0 +1,652 @@
+import { createAdminClient } from "@/lib/supabase/admin";
+import { sendTransactionalEmail } from "@/lib/email-sender";
+import { buildGroupInviteEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
+import { appendLanguageToPath, normalizeLanguage } from "@/lib/i18n";
+import { getPublicSiteUrl } from "@/lib/site-url";
+import type { UserRole } from "@/lib/types";
+
+type EmailJobKind = "access_email" | "password_recovery" | "group_invite_email";
+type EmailJobStatus = "pending" | "processing" | "retrying" | "sent" | "failed";
+type AccessEmailResult = "invite_sent" | "recovery_sent" | "no_op";
+
+type EmailJobRow = {
+  id: string;
+  kind: EmailJobKind;
+  email: string;
+  payload: {
+    displayName?: string;
+    role?: UserRole;
+    source?: string;
+    groupInviteId?: string;
+    groupId?: string;
+    groupName?: string;
+    inviterName?: string;
+    inviterEmail?: string;
+    suggestedDisplayName?: string | null;
+    customMessage?: string | null;
+    claimUrl?: string;
+    language?: string;
+  } | null;
+  status: EmailJobStatus;
+  attempts: number;
+  max_attempts: number;
+  available_at: string;
+  last_error?: string | null;
+};
+
+type InviteRow = {
+  email: string;
+  display_name: string;
+  language?: string | null;
+  role: UserRole;
+  accepted_at?: string | null;
+  send_attempts?: number | null;
+};
+
+type GroupInviteDeliveryRow = {
+  id: string;
+  send_attempts?: number | null;
+};
+
+export async function runEmailJobsWorker(source = "internal") {
+  console.info("[email-jobs] Worker invoked.", {
+    source
+  });
+
+  const adminSupabase = createAdminClient();
+  const { data, error } = await adminSupabase.rpc("claim_email_jobs", { job_limit: 10 });
+
+  if (error) {
+    console.error("[email-jobs] Failed to claim jobs.", { message: error.message, source });
+    throw new Error(error.message);
+  }
+
+  const jobs = (data ?? []) as EmailJobRow[];
+  console.info("[email-jobs] Claimed jobs.", {
+    source,
+    claimed: jobs.length,
+    jobIds: jobs.map((job) => job.id),
+    jobKinds: jobs.map((job) => job.kind)
+  });
+
+  let sent = 0;
+  let failed = 0;
+  let retried = 0;
+
+  for (const job of jobs) {
+    const result = await processJob(adminSupabase, job);
+    if (result === "sent") {
+      sent += 1;
+    } else if (result === "retrying") {
+      retried += 1;
+    } else {
+      failed += 1;
+    }
+  }
+
+  return {
+    ok: true,
+    claimed: jobs.length,
+    sent,
+    retried,
+    failed
+  };
+}
+
+async function processJob(adminSupabase: ReturnType<typeof createAdminClient>, job: EmailJobRow) {
+  let emailSent = false;
+
+  try {
+    console.info("[email-jobs] Processing job.", {
+      jobId: job.id,
+      kind: job.kind,
+      email: job.email,
+      attempts: job.attempts,
+      maxAttempts: job.max_attempts
+    });
+    let accessResult: AccessEmailResult | null = null;
+
+    if (job.kind === "access_email") {
+      accessResult = await sendAccessEmail(adminSupabase, job);
+    } else if (job.kind === "group_invite_email") {
+      await sendGroupInviteEmail(job);
+    } else {
+      await sendPasswordRecovery(adminSupabase, job.email, job.payload?.language ?? null);
+    }
+
+    emailSent = true;
+    await markJobSent(adminSupabase, job.id);
+    if (job.kind === "access_email" && accessResult === "invite_sent") {
+      await markInviteSent(adminSupabase, job.email);
+    } else if (job.kind === "access_email") {
+      await clearInviteQueueState(adminSupabase, job.email);
+    } else if (job.kind === "group_invite_email") {
+      await markGroupInviteSent(adminSupabase, job);
+    }
+
+    console.info("[email-jobs] Job sent successfully.", {
+      jobId: job.id,
+      kind: job.kind,
+      email: job.email,
+      accessResult
+    });
+    return "sent";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown email processing error.";
+    console.error("[email-jobs] Job processing failed.", {
+      jobId: job.id,
+      kind: job.kind,
+      email: job.email,
+      message,
+      attempts: job.attempts,
+      maxAttempts: job.max_attempts
+    });
+
+    if (emailSent) {
+      const postSendMessage = `Email send completed, but post-send bookkeeping failed: ${message}`;
+
+      try {
+        await markJobFailed(adminSupabase, job.id, postSendMessage);
+      } catch {
+        // Leave the job in processing state rather than risk a duplicate resend.
+      }
+
+      return "failed";
+    }
+
+    const shouldRetry = isTransientEmailError(message) && job.attempts < job.max_attempts;
+
+    if (job.kind === "access_email") {
+      await markInviteFailed(adminSupabase, job.email, message);
+    } else if (job.kind === "group_invite_email") {
+      await markGroupInviteFailed(adminSupabase, job, message);
+    }
+
+    if (shouldRetry) {
+      await markJobRetrying(adminSupabase, job.id, job.attempts, message);
+      return "retrying";
+    }
+
+    await markJobFailed(adminSupabase, job.id, message);
+    return "failed";
+  }
+}
+
+async function sendAccessEmail(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  job: EmailJobRow
+): Promise<AccessEmailResult> {
+  const normalizedEmail = job.email.trim().toLowerCase();
+  const inviteLanguage = await resolveAdminInviteLanguage(
+    adminSupabase,
+    normalizedEmail,
+    job.payload?.language ?? null
+  );
+  const authUser = await findAuthUserByEmail(adminSupabase, normalizedEmail);
+  const { data: existingUser } = await adminSupabase.from("users").select("id").eq("email", normalizedEmail).maybeSingle();
+
+  if (authUser && existingUser) {
+    await sendPasswordRecovery(adminSupabase, normalizedEmail, inviteLanguage);
+    return "recovery_sent";
+  }
+
+  const payload = job.payload ?? {};
+  if (payload.displayName && payload.role) {
+    await ensureInviteRow(adminSupabase, {
+      email: normalizedEmail,
+      displayName: payload.displayName,
+      language: inviteLanguage,
+      role: payload.role
+    });
+  }
+
+  const redirectUrl = new URL("/auth/callback", getPublicSiteUrl());
+  redirectUrl.searchParams.set(
+    "next",
+    appendLanguageToPath("/login?confirmed=1&flow=invite&mode=signup", inviteLanguage)
+  );
+  redirectUrl.searchParams.set("lang", inviteLanguage);
+  const { error } = await adminSupabase.auth.admin.inviteUserByEmail(normalizedEmail, {
+    redirectTo: redirectUrl.toString()
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return "invite_sent";
+}
+
+async function sendGroupInviteEmail(job: EmailJobRow) {
+  const payload = job.payload ?? {};
+  if (!payload.groupInviteId || !payload.claimUrl) {
+    throw new Error("Group invite email job is missing required payload.");
+  }
+
+  const groupName = payload.groupName?.trim() || "your PICK-IT! group";
+  const invitedEmail = job.email;
+  const suggestedDisplayName = payload.suggestedDisplayName?.trim() || null;
+  const claimUrl = payload.claimUrl;
+  const preferredLanguage =
+    payload.language ??
+    (payload.groupInviteId
+      ? await resolveGroupInviteLanguage(createAdminClient(), payload.groupInviteId)
+      : await resolvePreferredLanguageForEmail(createAdminClient(), invitedEmail));
+  const emailCopy = buildGroupInviteEmailCopy({
+    language: preferredLanguage,
+    groupName,
+    invitedEmail,
+    suggestedDisplayName,
+    customMessage: payload.customMessage?.trim() || null,
+    inviterLabel: payload.inviterName?.trim() || payload.inviterEmail?.trim() || null,
+    claimUrl
+  });
+
+  console.info("[email-jobs] Sending group invite email.", {
+    jobId: job.id,
+    groupInviteId: payload.groupInviteId,
+    groupId: payload.groupId ?? null,
+    email: invitedEmail,
+    language: preferredLanguage
+  });
+
+  try {
+    const result = await sendTransactionalEmail({
+      to: invitedEmail,
+      subject: emailCopy.subject,
+      html: emailCopy.html,
+      text: emailCopy.text,
+      replyTo: payload.inviterEmail?.trim() || undefined
+    });
+
+    console.info("[email-jobs] Group invite email sent.", {
+      jobId: job.id,
+      groupInviteId: payload.groupInviteId,
+      email: invitedEmail,
+      providerResponseId: result.providerResponseId
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Resend error.";
+    console.error("[email-jobs] Group invite email send failed.", {
+      jobId: job.id,
+      groupInviteId: payload.groupInviteId,
+      email: invitedEmail,
+      message
+    });
+    throw error;
+  }
+}
+
+async function sendPasswordRecovery(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  email: string,
+  language?: string | null
+) {
+  const recoveryUrl = new URL("/auth/confirm", getPublicSiteUrl());
+  recoveryUrl.searchParams.set("next", appendLanguageToPath("/reset-password", language));
+  if (language) {
+    recoveryUrl.searchParams.set("lang", normalizeLanguage(language));
+  }
+  const { error } = await adminSupabase.auth.resetPasswordForEmail(email, {
+    redirectTo: recoveryUrl.toString()
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function findAuthUserByEmail(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  normalizedEmail: string
+) {
+  let page = 1;
+
+  while (true) {
+    const { data, error } = await adminSupabase.auth.admin.listUsers({
+      page,
+      perPage: 200
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const matchedUser = data.users.find(
+      (user) => user.email?.trim().toLowerCase() === normalizedEmail
+    );
+
+    if (matchedUser) {
+      return matchedUser;
+    }
+
+    if (data.users.length < 200) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return null;
+}
+
+async function resolvePreferredLanguageForEmail(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  email: string
+) {
+  const { data } = await adminSupabase
+    .from("users")
+    .select("preferred_language")
+    .eq("email", email.trim().toLowerCase())
+    .maybeSingle();
+
+  return getSafeEmailLanguage((data as { preferred_language?: string | null } | null)?.preferred_language ?? null);
+}
+
+async function resolveAdminInviteLanguage(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  email: string,
+  fallbackLanguage?: string | null
+) {
+  const { data, error } = await adminSupabase.from("invites").select("language").eq("email", email).maybeSingle();
+  if (error) {
+    return getSafeEmailLanguage(fallbackLanguage ?? null);
+  }
+  return getSafeEmailLanguage((data as { language?: string | null } | null)?.language ?? fallbackLanguage ?? null);
+}
+
+async function resolveGroupInviteLanguage(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupInviteId: string
+) {
+  const { data, error } = await adminSupabase.from("group_invites").select("language").eq("id", groupInviteId).maybeSingle();
+  if (error) {
+    return getSafeEmailLanguage(null);
+  }
+  return getSafeEmailLanguage((data as { language?: string | null } | null)?.language ?? null);
+}
+
+async function ensureInviteRow(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    email: string;
+    displayName: string;
+    language: string;
+    role: UserRole;
+  }
+) {
+  const { error } = await adminSupabase.from("invites").upsert(
+    {
+      email: input.email,
+      display_name: input.displayName,
+      language: input.language,
+      role: input.role
+    },
+    { onConflict: "email" }
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function markJobSent(adminSupabase: ReturnType<typeof createAdminClient>, jobId: string) {
+  const { error } = await adminSupabase
+    .from("email_jobs")
+    .update({
+      status: "sent",
+      last_error: null,
+      sent_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", jobId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function markJobRetrying(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  jobId: string,
+  attempts: number,
+  message: string
+) {
+  const nextDelayMinutes = Math.min(Math.max(attempts, 1) * 2, 30);
+  const { error } = await adminSupabase
+    .from("email_jobs")
+    .update({
+      status: "retrying",
+      last_error: message,
+      available_at: new Date(Date.now() + nextDelayMinutes * 60_000).toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", jobId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function markJobFailed(adminSupabase: ReturnType<typeof createAdminClient>, jobId: string, message: string) {
+  const { error } = await adminSupabase
+    .from("email_jobs")
+    .update({
+      status: "failed",
+      last_error: message,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", jobId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function markInviteSent(adminSupabase: ReturnType<typeof createAdminClient>, email: string) {
+  const { data: invite, error: inviteLookupError } = await adminSupabase
+    .from("invites")
+    .select("email,display_name,language,role,accepted_at,send_attempts")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (inviteLookupError || !invite) {
+    return;
+  }
+
+  const inviteRow = invite as InviteRow;
+  await upsertInviteWithFallback(adminSupabase, {
+    email: inviteRow.email,
+    display_name: inviteRow.display_name,
+    language: inviteRow.language ?? "en",
+    role: inviteRow.role,
+    accepted_at: inviteRow.accepted_at ?? null,
+    status: inviteRow.accepted_at ? "accepted" : "pending",
+    last_sent_at: new Date().toISOString(),
+    send_attempts: (inviteRow.send_attempts ?? 0) + 1,
+    last_error: null
+  });
+}
+
+async function clearInviteQueueState(adminSupabase: ReturnType<typeof createAdminClient>, email: string) {
+  const { data: invite, error: inviteLookupError } = await adminSupabase
+    .from("invites")
+    .select("email,display_name,language,role,accepted_at,send_attempts")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (inviteLookupError || !invite) {
+    return;
+  }
+
+  const inviteRow = invite as InviteRow;
+  await upsertInviteWithFallback(adminSupabase, {
+    email: inviteRow.email,
+    display_name: inviteRow.display_name,
+    language: inviteRow.language ?? "en",
+    role: inviteRow.role,
+    accepted_at: inviteRow.accepted_at ?? null,
+    status: inviteRow.accepted_at ? "accepted" : "pending",
+    send_attempts: inviteRow.send_attempts ?? 0,
+    last_error: null
+  });
+}
+
+async function markGroupInviteSent(adminSupabase: ReturnType<typeof createAdminClient>, job: EmailJobRow) {
+  const groupInviteId = job.payload?.groupInviteId;
+  if (!groupInviteId) {
+    return;
+  }
+
+  const { data: invite, error: inviteLookupError } = await adminSupabase
+    .from("group_invites")
+    .select("id,send_attempts")
+    .eq("id", groupInviteId)
+    .maybeSingle();
+
+  if (inviteLookupError || !invite) {
+    return;
+  }
+
+  const inviteRow = invite as GroupInviteDeliveryRow;
+  const { error } = await adminSupabase
+    .from("group_invites")
+    .update({
+      last_sent_at: new Date().toISOString(),
+      send_attempts: (inviteRow.send_attempts ?? 0) + 1,
+      last_error: null
+    })
+    .eq("id", groupInviteId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function markGroupInviteFailed(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  job: EmailJobRow,
+  message: string
+) {
+  const groupInviteId = job.payload?.groupInviteId;
+  if (!groupInviteId) {
+    return;
+  }
+
+  const { data: invite, error: inviteLookupError } = await adminSupabase
+    .from("group_invites")
+    .select("id,send_attempts")
+    .eq("id", groupInviteId)
+    .maybeSingle();
+
+  if (inviteLookupError || !invite) {
+    return;
+  }
+
+  const inviteRow = invite as GroupInviteDeliveryRow;
+  const { error } = await adminSupabase
+    .from("group_invites")
+    .update({
+      send_attempts: (inviteRow.send_attempts ?? 0) + 1,
+      last_error: message
+    })
+    .eq("id", groupInviteId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function markInviteFailed(adminSupabase: ReturnType<typeof createAdminClient>, email: string, message: string) {
+  const { data: invite, error: inviteLookupError } = await adminSupabase
+    .from("invites")
+    .select("email,display_name,language,role,accepted_at,send_attempts")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (inviteLookupError || !invite) {
+    return;
+  }
+
+  const inviteRow = invite as InviteRow;
+  await upsertInviteWithFallback(adminSupabase, {
+    email: inviteRow.email,
+    display_name: inviteRow.display_name,
+    language: inviteRow.language ?? "en",
+    role: inviteRow.role,
+    accepted_at: inviteRow.accepted_at ?? null,
+    status: "failed",
+    send_attempts: (inviteRow.send_attempts ?? 0) + 1,
+    last_error: message
+  });
+}
+
+async function upsertInviteWithFallback(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  payload: {
+    email: string;
+    display_name: string;
+    language: string;
+    role: UserRole;
+    accepted_at: string | null;
+    status: "pending" | "accepted" | "failed";
+    last_sent_at?: string;
+    send_attempts?: number;
+    last_error: string | null;
+  }
+) {
+  const { error } = await adminSupabase.from("invites").upsert(payload, { onConflict: "email" });
+
+  if (!error) {
+    return;
+  }
+
+  if (!isMissingInviteDeliveryColumnError(error.message)) {
+    throw new Error(error.message);
+  }
+
+  const minimalPayload = {
+    email: payload.email,
+    display_name: payload.display_name,
+    role: payload.role,
+    accepted_at: payload.accepted_at,
+    status: payload.status
+  };
+
+  const { error: fallbackError } = await adminSupabase.from("invites").upsert(minimalPayload, { onConflict: "email" });
+  if (fallbackError) {
+    throw new Error(fallbackError.message);
+  }
+}
+
+function isMissingInviteDeliveryColumnError(message: string) {
+  return (
+    isMissingColumnError(message, "language") ||
+    isMissingColumnError(message, "status") ||
+    isMissingColumnError(message, "last_sent_at") ||
+    isMissingColumnError(message, "send_attempts") ||
+    isMissingColumnError(message, "last_error")
+  );
+}
+
+function isMissingColumnError(message: string, column: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes(column.toLowerCase()) &&
+    (
+      (normalized.includes("column") && normalized.includes("does not exist")) ||
+      normalized.includes("schema cache")
+    )
+  );
+}
+
+function isTransientEmailError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("rate limit") ||
+    normalized.includes("temporar") ||
+    normalized.includes("timeout") ||
+    normalized.includes("network") ||
+    normalized.includes("try again")
+  );
+}
