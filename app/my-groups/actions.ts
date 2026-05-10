@@ -291,6 +291,7 @@ export type MyManagedGroup = {
   pendingInviteCount?: number;
   canManage: boolean;
   userRole: "super_admin" | GroupMemberRole | "viewer";
+  currentUserGroupLevelLabel: "Admin View" | "Manager" | "Player" | "Viewer";
 };
 
 export type ManagedGroupMember = {
@@ -2806,7 +2807,15 @@ async function fetchVisibleGroups(
       userRole:
         role === "admin"
           ? "super_admin"
-          : membershipRole ?? "viewer"
+          : membershipRole ?? "viewer",
+      currentUserGroupLevelLabel:
+        role === "admin"
+          ? "Admin View"
+          : canManage
+            ? "Manager"
+            : membershipRole === "member"
+              ? "Player"
+              : "Viewer"
     };
   });
 }
