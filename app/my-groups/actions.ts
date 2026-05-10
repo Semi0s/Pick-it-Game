@@ -25,7 +25,6 @@ import {
   getEffectiveManagedGroupLimit,
   getEffectiveMembershipLimitForGroup,
   hasDirectorAccess,
-  hasManagingDirectorAccess,
   hasManagerAccess,
   isAtOrOverManagedGroupLimit,
   normalizeCommercialTier,
@@ -2024,8 +2023,8 @@ export async function saveManagedGroupRulesetAction(
     return currentUser;
   }
 
-  if (!hasManagingDirectorAccess(currentUser.accessLevel)) {
-    return { ok: false, message: "Only Managing Directors and Super Admins can apply group rulesets." };
+  if (!hasDirectorAccess(currentUser.accessLevel)) {
+    return { ok: false, message: "Only League Directors, Branded Leagues, and Super Admins can apply League rulesets." };
   }
 
   const trimmedGroupId = input.groupId.trim();
@@ -2260,7 +2259,7 @@ export async function scoreManagedGroupSidePickAction(
   }
 
   if (!hasDirectorAccess(currentUser.accessLevel)) {
-    return { ok: false, message: "Only Directors, Managing Directors, and Super Admins can score side picks." };
+    return { ok: false, message: "Only League Directors, Branded Leagues, and Super Admins can score side picks." };
   }
 
   const groupId = input.groupId.trim();
@@ -3059,7 +3058,7 @@ async function fetchManagedGroupDetailRows(
     inviteCode: group.canManage ? inviteCodeByGroup.get(group.id) ?? null : null,
     activeRuleset: group.canManage ? activeRulesetsByGroup.get(group.id) ?? null : null,
     sidePickPackages: group.canManage ? groupCustomPackages : [],
-    canManageRuleset: group.canManage && hasManagingDirectorAccess(currentUser.accessLevel),
+    canManageRuleset: group.canManage && hasDirectorAccess(currentUser.accessLevel),
     canManageSidePicks: group.canManage && hasDirectorAccess(currentUser.accessLevel),
     scoringPreview: {
       standardScoringLabel: "Standard scoring applies to global rank and average group comparison.",

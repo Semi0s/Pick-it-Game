@@ -51,11 +51,11 @@ export function getRoleBadgeLabel(role: string | null | undefined) {
   }
 
   if (normalizedRole === "director") {
-    return "D";
+    return "L";
   }
 
   if (normalizedRole === "managing director" || normalizedRole === "managing_director") {
-    return "MD";
+    return "L+";
   }
 
   if (normalizedRole === "admin") {
@@ -88,7 +88,13 @@ export function getAccessLevelDescription(
 
   return access.limits.isUnlimited
     ? "Unlimited organizer access"
-    : `Up to ${access.limits.maxGroups ?? 0} group${access.limits.maxGroups === 1 ? "" : "s"} · ${access.limits.maxMembersPerGroup ?? 0} members per group`;
+    : [
+        `Up to ${access.limits.maxGroups ?? 0} group${access.limits.maxGroups === 1 ? "" : "s"}`,
+        `${access.limits.maxMembersPerGroup ?? 0} members per group`,
+        access.limits.maxTotalPlayers ? `${access.limits.maxTotalPlayers} total players` : null
+      ]
+        .filter(Boolean)
+        .join(" · ");
 }
 
 export function shouldShowAccessBadge(

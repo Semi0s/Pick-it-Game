@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchMatchesByDate, type NormalizedExternalMatch } from "@/lib/match-api/client";
 import { appendMatchEvent } from "@/lib/match-events";
 import { rebuildKnockoutAdvancementWithClient } from "@/lib/knockout-advancement";
+import { rebuildScopedLeaderboardState } from "@/lib/scoped-scoring";
 import { scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { scoreFinalizedKnockoutMatchWithClient, resetKnockoutMatchScoring } from "@/lib/bracket-predictions";
 import { resolveTeamIdByName } from "@/lib/match-sync/team-resolution";
@@ -42,11 +43,6 @@ type PredictionRow = {
   predicted_is_draw: boolean;
   predicted_home_score?: number | null;
   predicted_away_score?: number | null;
-};
-
-type LeaderboardTotal = {
-  user_id: string;
-  total_points: number;
 };
 
 export type SyncMatchesResult = {
@@ -323,7 +319,9 @@ async function finalizeMatchFromSync(
 
     await scoreFinalizedKnockoutMatchWithClient(adminSupabase, internalMatch.id);
     await rebuildKnockoutAdvancementWithClient(adminSupabase);
-    const leaderboardResult = await recalculateLeaderboardWithClient(adminSupabase);
+    const leaderboardResult = await rebuildScopedLeaderboardState(adminSupabase, {
+      triggeringMatchId: internalMatch.id
+    });
     if (!leaderboardResult.ok) {
       throw new Error(leaderboardResult.message);
     }
@@ -515,7 +513,11 @@ async function scoreGroupMatchWithClient(
     }
   }
 
-  const leaderboardResult = await recalculateLeaderboardWithClient(adminSupabase);
+  // Match sync and admin finalization share the same rebuild path so
+  // standard totals, standard side picks, and group-local overlays stay aligned.
+  const leaderboardResult = await rebuildScopedLeaderboardState(adminSupabase, {
+    triggeringMatchId: matchId
+  });
   if (!leaderboardResult.ok) {
     throw new Error(leaderboardResult.message);
   }
@@ -541,78 +543,6 @@ async function resetGroupMatchScoringWithClient(adminSupabase: AdminSupabaseClie
   if (eventsDeleteResult.error) {
     throw eventsDeleteResult.error;
   }
-}
-
-async function recalculateLeaderboardWithClient(
-  adminSupabase: AdminSupabaseClient
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  const [{ data: predictionPoints, error: predictionPointsError }, { data: bracketPoints, error: bracketPointsError }] =
-    await Promise.all([
-      adminSupabase.from("predictions").select("user_id,points_awarded"),
-      adminSupabase.from("bracket_scores").select("user_id,points")
-    ]);
-
-  if (predictionPointsError) {
-    return { ok: false, message: predictionPointsError.message };
-  }
-  if (bracketPointsError) {
-    return { ok: false, message: bracketPointsError.message };
-  }
-
-  const totalsByUser = new Map<string, number>();
-  for (const row of (predictionPoints ?? []) as Array<{ user_id: string; points_awarded: number | null }>) {
-    totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points_awarded ?? 0));
-  }
-  for (const row of (bracketPoints ?? []) as Array<{ user_id: string; points: number | null }>) {
-    totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points ?? 0));
-  }
-
-  const { data: users, error: usersError } = await adminSupabase.from("users").select("id");
-  if (usersError) {
-    return { ok: false, message: usersError.message };
-  }
-
-  const totals = ((users ?? []) as Array<{ id: string }>)
-    .map((user) => ({ user_id: user.id, total_points: totalsByUser.get(user.id) ?? 0 }))
-    .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id));
-
-  const rankedEntries = assignRanks(totals).map((entry) => ({
-    ...entry,
-    updated_at: new Date().toISOString()
-  }));
-
-  if (rankedEntries.length > 0) {
-    const { error: leaderboardError } = await adminSupabase
-      .from("leaderboard_entries")
-      .upsert(rankedEntries, { onConflict: "user_id" });
-    if (leaderboardError) {
-      return { ok: false, message: leaderboardError.message };
-    }
-  }
-
-  const userUpdateResults = await Promise.all(
-    ((users ?? []) as Array<{ id: string }>).map((user) =>
-      adminSupabase.from("users").update({ total_points: totalsByUser.get(user.id) ?? 0 }).eq("id", user.id)
-    )
-  );
-  const failedUserUpdate = userUpdateResults.find((result) => result.error);
-  if (failedUserUpdate?.error) {
-    return { ok: false, message: failedUserUpdate.error.message };
-  }
-
-  return { ok: true };
-}
-
-function assignRanks(totals: LeaderboardTotal[]) {
-  let previousPoints: number | null = null;
-  let previousRank = 0;
-
-  return totals.map((entry, index) => {
-    const rank = previousPoints === entry.total_points ? previousRank : index + 1;
-    previousPoints = entry.total_points;
-    previousRank = rank;
-    return { ...entry, rank };
-  });
 }
 
 function shiftDate(date: Date, days: number) {

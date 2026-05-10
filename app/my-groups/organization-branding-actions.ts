@@ -125,7 +125,7 @@ export async function fetchOrganizationBrandingWorkspaceAction(
   }
 
   if (!canEditOrganizationBranding(currentUser.accessLevel)) {
-    return { ok: false, message: "Organization branding is only available to Managing Directors and Super Admins." };
+    return { ok: false, message: "Organization branding is only available to Branded Leagues and Super Admins." };
   }
 
   try {

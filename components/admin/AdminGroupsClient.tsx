@@ -197,7 +197,7 @@ export function AdminGroupsSection({
 
       <ManagementSection
         title="Manager Limits"
-        description="Compact manager limit cards that can be reused later for scoped Managing Director tooling."
+        description="Compact organizer limit cards that can be reused later for League Director and Branded League tooling."
         storageKey="admin-groups:manager-limits-section"
         defaultOpen={false}
         badge={<ManagementBadge label={`${managers.length} managers`} tone="warning" />}

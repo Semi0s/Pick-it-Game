@@ -221,7 +221,7 @@ export function OrganizationBrandingPanel() {
   return (
     <ManagementCard
       title="Organization Branding"
-      subtitle="Scoped portal branding for Managing Directors and Super Admins."
+      subtitle="Scoped portal branding for Branded Leagues and Super Admins."
       badges={
         workspace?.organization ? (
           <ManagementBadge

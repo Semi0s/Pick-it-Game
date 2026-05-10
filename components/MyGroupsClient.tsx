@@ -539,6 +539,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
         `Managed groups: ${summary.groupAccess.managedGroupCount} / ${summary.tierAccess.limits.maxGroups}`,
         `Group member cap: ${summary.tierAccess.limits.maxMembersPerGroup} members`,
+        summary.tierAccess.limits.maxTotalPlayers
+          ? `League player cap: ${summary.tierAccess.limits.maxTotalPlayers} total players`
+          : "League player cap: Not applied at this tier",
         "Scope: Assigned groups only"
       ];
     }

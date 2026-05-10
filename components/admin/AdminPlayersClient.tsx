@@ -690,7 +690,7 @@ export function AdminPlayersClient() {
       userId: player.appUserId,
       displayName: player.displayName,
       maxGroups: String(player.maxGroups ?? 3),
-      maxMembersPerGroup: String(player.maxMembersPerGroup ?? 4)
+      maxMembersPerGroup: String(player.maxMembersPerGroup ?? 30)
     });
   }
 }

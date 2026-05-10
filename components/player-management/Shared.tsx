@@ -559,21 +559,21 @@ export function HierarchyPanel({
       key: "manager",
       title: "Manager",
       badge: "3 groups",
-      copy: "Can manage multiple groups, invites, and the current social group tooling.",
+      copy: "Can manage standard groups, invites, and social group tooling, without the League custom scoring layer.",
       tone: "warning"
     },
     {
       key: "director",
-      title: "Director",
-      badge: "10 groups",
-      copy: "Can use broader organizer controls for larger pools and future customization.",
+      title: "League Director [L]",
+      badge: "10 groups · 20 seats",
+      copy: "Can manage a League, use League rules and local custom scoring, enable side-pick packages, and view League standings.",
       tone: "warning"
     },
     {
       key: "managing_director",
-      title: "Managing Director",
-      badge: "Scoped org admin",
-      copy: "Reserved for future umbrella-level organization tools without platform-wide access.",
+      title: "Branded League [L+]",
+      badge: "30 groups · 100 seats",
+      copy: "Can run a larger branded League with branding access and expanded League tooling, while keeping custom scoring local.",
       tone: "warning"
     }
   ];

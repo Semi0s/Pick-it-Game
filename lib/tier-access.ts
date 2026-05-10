@@ -20,6 +20,7 @@ export type TierAccessContext = {
 export type TierLimitSnapshot = {
   maxGroups: number | null;
   maxMembersPerGroup: number | null;
+  maxTotalPlayers: number | null;
   businessMaxReach: number | null;
   isUnlimited: boolean;
   source: "super_admin" | "plan" | "legacy_override";
@@ -60,6 +61,9 @@ export type CommercialTierDefinition = {
   shortLabel: string;
   maxGroups: number;
   maxMembersPerGroup: number;
+  // Helper-level total player cap for League-style organizer tiers.
+  // We keep this in app logic for now instead of adding a new DB column.
+  maxTotalPlayers: number | null;
   businessMaxReach: number;
 };
 
@@ -69,35 +73,40 @@ export const COMMERCIAL_TIER_DEFINITIONS: Record<CommercialTier, CommercialTierD
     shortLabel: "P",
     maxGroups: 0,
     maxMembersPerGroup: 0,
-    businessMaxReach: 1
+    maxTotalPlayers: null,
+    businessMaxReach: 0
   },
   captain: {
     label: "Captain",
     shortLabel: "C",
     maxGroups: 1,
     maxMembersPerGroup: 20,
-    businessMaxReach: 21
+    maxTotalPlayers: null,
+    businessMaxReach: 20
   },
   manager: {
     label: "Manager",
     shortLabel: "M",
     maxGroups: 3,
     maxMembersPerGroup: 30,
-    businessMaxReach: 91
+    maxTotalPlayers: null,
+    businessMaxReach: 90
   },
   director: {
-    label: "Director",
-    shortLabel: "D",
+    label: "League Director",
+    shortLabel: "L",
     maxGroups: 10,
-    maxMembersPerGroup: 100,
-    businessMaxReach: 1001
+    maxMembersPerGroup: 20,
+    maxTotalPlayers: 200,
+    businessMaxReach: 200
   },
   managing_director: {
-    label: "Managing Director",
-    shortLabel: "MD",
-    maxGroups: 25,
+    label: "Branded League",
+    shortLabel: "L+",
+    maxGroups: 30,
     maxMembersPerGroup: 100,
-    businessMaxReach: 2501
+    maxTotalPlayers: 3000,
+    businessMaxReach: 3000
   }
 };
 
@@ -194,6 +203,7 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
       limits: {
         maxGroups: null,
         maxMembersPerGroup: null,
+        maxTotalPlayers: null,
         businessMaxReach: null,
         isUnlimited: true,
         source: "super_admin"
@@ -239,6 +249,7 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
     limits: {
       maxGroups,
       maxMembersPerGroup,
+      maxTotalPlayers: definition.maxTotalPlayers,
       businessMaxReach: definition.businessMaxReach,
       isUnlimited: false,
       source: hasLegacyManagerOverride ? "legacy_override" : "plan"

@@ -591,6 +591,176 @@ export async function rebuildGroupCustomBonusScores(
   }
 }
 
+export async function rebuildScopedLeaderboardState(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  options?: {
+    triggeringMatchId?: string;
+  }
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const triggeringMatchId = options?.triggeringMatchId?.trim() || null;
+
+  try {
+    await rebuildGroupCustomBonusScores(adminSupabase);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not rebuild group-local bonus scores."
+    };
+  }
+
+  const [
+    { data: predictionPoints, error: predictionPointsError },
+    { data: bracketPoints, error: bracketPointsError },
+    standardSidePickTotals
+  ] = await Promise.all([
+    adminSupabase.from("predictions").select("user_id,points_awarded"),
+    adminSupabase.from("bracket_scores").select("user_id,points"),
+    fetchStandardSidePickTotalsByUser(adminSupabase)
+  ]);
+
+  if (predictionPointsError) {
+    return { ok: false, message: predictionPointsError.message };
+  }
+  if (bracketPointsError) {
+    return { ok: false, message: bracketPointsError.message };
+  }
+
+  const totalsByUser = new Map<string, number>();
+  for (const row of (predictionPoints ?? []) as Array<{ user_id: string; points_awarded: number | null }>) {
+    totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points_awarded ?? 0));
+  }
+  for (const row of (bracketPoints ?? []) as Array<{ user_id: string; points: number | null }>) {
+    totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points ?? 0));
+  }
+  for (const [userId, total] of standardSidePickTotals.entries()) {
+    totalsByUser.set(userId, (totalsByUser.get(userId) ?? 0) + total);
+  }
+
+  const { data: users, error: usersError } = await adminSupabase.from("users").select("id");
+  if (usersError) {
+    return { ok: false, message: usersError.message };
+  }
+
+  const totals = ((users ?? []) as Array<{ id: string }>)
+    .map((user) => ({ user_id: user.id, total_points: totalsByUser.get(user.id) ?? 0 }))
+    .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id));
+
+  const rankedEntries = assignScopedLeaderboardRanks(totals).map((entry) => ({
+    ...entry,
+    updated_at: new Date().toISOString()
+  }));
+
+  if (rankedEntries.length > 0) {
+    const { error: leaderboardError } = await adminSupabase
+      .from("leaderboard_entries")
+      .upsert(rankedEntries, { onConflict: "user_id" });
+
+    if (leaderboardError) {
+      return { ok: false, message: leaderboardError.message };
+    }
+
+    if (triggeringMatchId) {
+      const { error: snapshotDeleteError } = await adminSupabase
+        .from("leaderboard_snapshots")
+        .delete()
+        .eq("scope_type", "global")
+        .eq("match_id", triggeringMatchId)
+        .is("group_id", null);
+
+      if (snapshotDeleteError) {
+        return { ok: false, message: snapshotDeleteError.message };
+      }
+
+      // Standard scoring is the only source for global standings and
+      // average group comparison. Group-local custom points never land here.
+      const { error: snapshotError } = await adminSupabase.from("leaderboard_snapshots").insert(
+        rankedEntries.map((entry) => ({
+          scope_type: "global",
+          group_id: null,
+          match_id: triggeringMatchId,
+          user_id: entry.user_id,
+          rank: entry.rank,
+          total_points: entry.total_points
+        }))
+      );
+
+      if (snapshotError) {
+        return { ok: false, message: snapshotError.message };
+      }
+
+      const { data: groupMembers, error: groupMembersError } = await adminSupabase
+        .from("group_members")
+        .select("group_id,user_id");
+
+      if (groupMembersError) {
+        return { ok: false, message: groupMembersError.message };
+      }
+
+      const membersByGroupId = new Map<string, string[]>();
+      for (const membership of (groupMembers as { group_id: string; user_id: string }[] | null) ?? []) {
+        const existing = membersByGroupId.get(membership.group_id) ?? [];
+        existing.push(membership.user_id);
+        membersByGroupId.set(membership.group_id, existing);
+      }
+
+      const groupCustomTotals = await fetchGroupCustomScoreTotals(adminSupabase, Array.from(membersByGroupId.keys()));
+      const groupSnapshotRows = Array.from(membersByGroupId.entries()).flatMap(([groupId, memberUserIds]) => {
+        const customTotalsByUserId = groupCustomTotals.get(groupId) ?? new Map<string, number>();
+        const rankedGroupEntries = assignScopedLeaderboardRanks(
+          Array.from(new Set(memberUserIds))
+            .map((userId) => ({
+              // Group-local views can overlay custom points on top of standard totals.
+              user_id: userId,
+              total_points: (totalsByUser.get(userId) ?? 0) + (customTotalsByUserId.get(userId) ?? 0)
+            }))
+            .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id))
+        );
+
+        return rankedGroupEntries.map((entry) => ({
+          scope_type: "group",
+          group_id: groupId,
+          match_id: triggeringMatchId,
+          user_id: entry.user_id,
+          rank: entry.rank,
+          total_points: entry.total_points
+        }));
+      });
+
+      const { error: groupSnapshotDeleteError } = await adminSupabase
+        .from("leaderboard_snapshots")
+        .delete()
+        .eq("scope_type", "group")
+        .eq("match_id", triggeringMatchId);
+
+      if (groupSnapshotDeleteError) {
+        return { ok: false, message: groupSnapshotDeleteError.message };
+      }
+
+      if (groupSnapshotRows.length > 0) {
+        const { error: groupSnapshotInsertError } = await adminSupabase
+          .from("leaderboard_snapshots")
+          .insert(groupSnapshotRows);
+
+        if (groupSnapshotInsertError) {
+          return { ok: false, message: groupSnapshotInsertError.message };
+        }
+      }
+    }
+  }
+
+  const userTotalUpdates = ((users ?? []) as Array<{ id: string }>).map((user) =>
+    adminSupabase.from("users").update({ total_points: totalsByUser.get(user.id) ?? 0 }).eq("id", user.id)
+  );
+
+  const userUpdateResults = await Promise.all(userTotalUpdates);
+  const failedUserUpdate = userUpdateResults.find((result) => result.error);
+  if (failedUserUpdate?.error) {
+    return { ok: false, message: failedUserUpdate.error.message };
+  }
+
+  return { ok: true };
+}
+
 async function fetchActiveGroupRulesetsForRebuild(
   adminSupabase: ReturnType<typeof createAdminClient>,
   groupIds?: string[]
@@ -793,4 +963,16 @@ function normalizeBonusValue(value: number | null | undefined, max: number) {
   }
 
   return Math.max(0, Math.min(max, Math.floor(value)));
+}
+
+function assignScopedLeaderboardRanks<T extends { user_id: string; total_points: number }>(totals: T[]) {
+  let previousPoints: number | null = null;
+  let previousRank = 0;
+
+  return totals.map((entry, index) => {
+    const rank = previousPoints === entry.total_points ? previousRank : index + 1;
+    previousPoints = entry.total_points;
+    previousRank = rank;
+    return { ...entry, rank };
+  });
 }
