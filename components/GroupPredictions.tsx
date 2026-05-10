@@ -9,6 +9,7 @@ import { InlineDisclosureButton, WindowChoiceRail, useSessionDisclosureState, us
 import { buildAutoPickDraft } from "@/lib/auto-pick";
 import { fetchNextAutoPick, fetchNextAutoPickForMatches, restoreStoredAutoPickDraft } from "@/lib/auto-pick-client";
 import { formatDateTimeWithZone } from "@/lib/date-time";
+import { parseJsonResponse } from "@/lib/fetch-json";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { clearGroupsEntryIntent, readGroupsEntryIntent, type GroupsEntryIntent } from "@/lib/groups-entry-intent";
 import {
@@ -345,7 +346,11 @@ export function GroupPredictions({
 
     fetch("/api/knockout/status", { cache: "no-store" })
       .then(async (response) => {
-        const result = (await response.json()) as { ok: boolean; isSeeded?: boolean };
+        const result = await parseJsonResponse<{ ok: boolean; isSeeded?: boolean }>(
+          response,
+          "Could not load knockout status.",
+          "knockout status"
+        );
         if (!response.ok || !result.ok) {
           throw new Error("Could not load knockout status.");
         }

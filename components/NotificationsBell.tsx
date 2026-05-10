@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Bell, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { formatDateTimeWithZone } from "@/lib/date-time";
+import { parseJsonResponse } from "@/lib/fetch-json";
 import type { UserNotification } from "@/lib/notifications";
 
 type NotificationResponse =
@@ -150,7 +151,11 @@ export function NotificationsBell() {
 
     try {
       const response = await fetch("/api/notifications", { cache: "no-store" });
-      const result = (await response.json()) as NotificationResponse;
+      const result = await parseJsonResponse<NotificationResponse>(
+        response,
+        "Could not load notifications.",
+        "notifications"
+      );
 
       if (!response.ok || !result.ok) {
         console.warn("Notifications are temporarily unavailable.", {
@@ -198,7 +203,11 @@ export function NotificationsBell() {
         }
       });
 
-      const result = (await response.json()) as { ok: true } | { ok: false; message?: string };
+      const result = await parseJsonResponse<{ ok: true } | { ok: false; message?: string }>(
+        response,
+        "Could not mark notifications as read.",
+        "notifications"
+      );
       if (!response.ok || !result.ok) {
         console.warn("Notifications mark-read is temporarily unavailable.", {
           status: response.status,

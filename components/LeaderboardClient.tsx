@@ -24,9 +24,11 @@ import {
 } from "@/components/dashboard/DashboardHeroActionGrid";
 import { clearStoredAutoPickDraft, fetchNextAutoPick, storeAutoPickDraft } from "@/lib/auto-pick-client";
 import { showAppToast } from "@/lib/app-toast";
+import { parseJsonResponse } from "@/lib/fetch-json";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { normalizeGroupKey } from "@/lib/group-standings";
 import { clearGroupsEntryIntent, storeGroupsEntryIntent } from "@/lib/groups-entry-intent";
+import { getHomeTeamVisual } from "@/lib/home-team-visuals";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
   GroupStandingItem,
@@ -40,6 +42,7 @@ import type { DailyWinner } from "@/lib/leaderboard-highlights";
 import { fetchPlayerPredictions } from "@/lib/player-predictions";
 import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
+import { hasManagerAccess } from "@/lib/tier-access";
 import type { MatchWithTeams, Prediction } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
@@ -77,6 +80,173 @@ const TWO_LINE_CLAMP_STYLE = {
   WebkitBoxOrient: "vertical" as const,
   overflow: "hidden"
 };
+
+function LeaderboardPlayerRow({
+  profile,
+  index,
+  currentUserId,
+  scoreMode,
+  canAwardManagedTrophies,
+  canSelfAwardTrophies,
+  managedAwardGroup,
+  shouldShowPlayerSocialIndicators,
+  onOpenTrophySheet
+}: {
+  profile: LeaderboardListItem;
+  index: number;
+  currentUserId?: string;
+  scoreMode: "standard" | "group";
+  canAwardManagedTrophies: boolean;
+  canSelfAwardTrophies: boolean;
+  managedAwardGroup: ManagedGroupDetails | null;
+  shouldShowPlayerSocialIndicators: boolean;
+  onOpenTrophySheet: (userId: string) => void;
+}) {
+  const isCurrentUser = profile.id === currentUserId;
+  const isLightlyHighlighted = index < 3;
+  const homeTeamVisual = getHomeTeamVisual(profile.homeTeamId);
+  const usesHomeCountryHighlight = isCurrentUser && Boolean(homeTeamVisual);
+  const rowTone = isCurrentUser
+    ? usesHomeCountryHighlight
+      ? "bg-white/95"
+      : "border-accent bg-accent-light"
+    : isLightlyHighlighted
+      ? "border-gray-300 bg-gray-50"
+      : "border-gray-200 bg-white";
+  const rankTone = isCurrentUser
+    ? usesHomeCountryHighlight
+      ? "bg-white/90 text-gray-900"
+      : "bg-white text-accent-dark"
+    : isLightlyHighlighted
+      ? "bg-white text-gray-800"
+      : "bg-gray-100 text-gray-700";
+  const pointsTone = isCurrentUser
+    ? usesHomeCountryHighlight
+      ? "bg-white/90 text-gray-900"
+      : "bg-white text-accent-dark"
+    : "bg-white text-gray-800";
+  const socialTone = isCurrentUser ? "text-gray-600" : "text-gray-500";
+  const standardPoints = profile.standardPoints ?? profile.totalPoints;
+  const groupCustomPoints = profile.groupCustomPoints ?? 0;
+
+  return (
+    <div
+      key={profile.id}
+      className={`relative overflow-hidden rounded-lg border p-3 ${rowTone}`}
+      style={
+        usesHomeCountryHighlight && homeTeamVisual
+          ? {
+              backgroundColor: homeTeamVisual.surface,
+              borderColor: homeTeamVisual.border
+            }
+          : undefined
+      }
+    >
+      {homeTeamVisual ? (
+        <>
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0"
+            style={{ backgroundImage: homeTeamVisual.gradient }}
+          />
+          <span
+            aria-hidden
+            className="pointer-events-none absolute -right-3 top-1/2 -translate-y-1/2 rotate-[-8deg] select-none text-[234px] font-black leading-none sm:-right-4 sm:text-[281px]"
+            style={{ color: homeTeamVisual.watermark, opacity: 0.14 }}
+          >
+            {homeTeamVisual.flagEmoji}
+          </span>
+        </>
+      ) : null}
+      <Link
+        href={`/leaderboard/${profile.id}`}
+        className="relative z-10 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5"
+      >
+        <span
+          className={`flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md px-2 py-1 text-center ${rankTone}`}
+        >
+          <span className="text-sm font-black leading-none">{profile.rank ?? index + 1}</span>
+          <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">Place</span>
+        </span>
+        <span className="flex min-w-0 items-center gap-2.5">
+          <Avatar
+            name={profile.name}
+            avatarUrl={profile.avatarUrl}
+            size="md"
+            className="h-[3.75rem] w-[3.75rem] text-base"
+          />
+          <span className="min-w-0 flex-1">
+            <span className="flex w-full items-center justify-between gap-3">
+              <span className="min-w-0 flex-1">
+                <span className="block min-w-0 truncate text-base font-black text-gray-950">
+                  {profile.name}
+                  {isCurrentUser ? " (You)" : ""}
+                </span>
+                <span className={`mt-1.5 flex flex-wrap items-center gap-2 text-xs font-semibold ${socialTone}`}>
+                  {shouldShowPlayerSocialIndicators && profile.hasPerfectPickHighlight ? (
+                    <span className="rounded-md bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">
+                      🎯 Perfect Pick
+                    </span>
+                  ) : null}
+                  {shouldShowPlayerSocialIndicators && profile.trophies && profile.trophies.length > 0 ? (
+                    <span className="inline-flex items-center gap-1">
+                      {profile.trophies.slice(0, 2).map((trophy) => (
+                        <TrophyBadge
+                          key={`${profile.id}-${trophy.id}`}
+                          icon={trophy.icon}
+                          tier={trophy.tier}
+                          size="sm"
+                          className={isCurrentUser ? "border-accent/40" : ""}
+                        />
+                      ))}
+                    </span>
+                  ) : null}
+                </span>
+              </span>
+              <span className="ml-auto flex shrink-0 items-center gap-2">
+                <span className="flex flex-col items-end gap-1">
+                  <span className={`inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-semibold ${pointsTone}`}>
+                    {profile.totalPoints} {scoreMode === "group" ? "group pts" : "standard pts"}
+                  </span>
+                  {scoreMode === "group" ? (
+                    <span className="text-[11px] font-bold text-gray-600">
+                      Std {standardPoints} {groupCustomPoints > 0 ? `+ Local ${groupCustomPoints}` : "+ Local 0"}
+                    </span>
+                  ) : null}
+                  {profile.pointsDelta && profile.pointsDelta > 0 ? (
+                    <span className="text-xs font-black text-accent-dark">+{profile.pointsDelta} pts</span>
+                  ) : null}
+                  {profile.rankDelta ? (
+                    <span className={`text-xs font-black ${getMovementTone(profile.rankDelta)}`}>
+                      {formatRankMovement(profile.rankDelta)}
+                    </span>
+                  ) : null}
+                </span>
+                {canAwardManagedTrophies && (profile.id !== currentUserId || canSelfAwardTrophies) ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (!managedAwardGroup) {
+                        return;
+                      }
+                      onOpenTrophySheet(profile.id);
+                    }}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-base transition hover:border-accent hover:bg-accent-light"
+                    aria-label={`Award trophy to ${profile.name}`}
+                  >
+                    🏆
+                  </button>
+                ) : null}
+              </span>
+            </span>
+          </span>
+        </span>
+      </Link>
+    </div>
+  );
+}
 
 export function LeaderboardClient() {
   const router = useRouter();
@@ -439,9 +609,10 @@ export function LeaderboardClient() {
 
       fetch(requestUrl, { cache: "no-store" })
         .then(async (response) => {
-          const result = (await response.json()) as
+          const result = await parseJsonResponse<
             | ({ ok: true } & LeaderboardPageData)
-            | { ok: false; message?: string };
+            | { ok: false; message?: string }
+          >(response, "Could not load the live leaderboard right now.", "leaderboard");
 
           if (!response.ok || !result.ok) {
             throw new Error(result.ok ? "Could not load the live leaderboard right now." : result.message);
@@ -510,9 +681,10 @@ export function LeaderboardClient() {
 
     fetch("/api/leaderboard?view=global", { cache: "no-store" })
       .then(async (response) => {
-        const result = (await response.json()) as
+        const result = await parseJsonResponse<
           | ({ ok: true } & LeaderboardPageData)
-          | { ok: false; message?: string };
+          | { ok: false; message?: string }
+        >(response, "Could not load the live leaderboard right now.", "leaderboard");
 
         if (!response.ok || !result.ok) {
           throw new Error(result.ok ? "Could not load the live leaderboard right now." : result.message);
@@ -751,7 +923,10 @@ export function LeaderboardClient() {
   const isGroupStandingsView = activeView === "groups";
   const shouldRenderLeaderboardRows = isGlobalView || isGroupView;
   const shouldShowPlayerSocialIndicators = !isGlobalView;
-  const canAwardManagedTrophies = activeView === "managed_groups" && Boolean(managedAwardGroup);
+  const canAwardManagedTrophies =
+    activeView === "managed_groups" &&
+    hasManagerAccess(switcher?.accessLevel ?? "player") &&
+    Boolean(managedAwardGroup);
   const canSelfAwardTrophies = user?.role === "admin";
   const shallowLeaderboardSpacerHeight = useMemo(() => {
     if (!shouldRenderLeaderboardRows || isLoading || Boolean(error) || users.length === 0) {
@@ -1358,129 +1533,24 @@ export function LeaderboardClient() {
           ) : null}
 
           {users.map((profile, index) => (
-            (() => {
-              const isCurrentUser = profile.id === user?.id;
-              const isLightlyHighlighted = index < 3;
-              const rowTone = isCurrentUser
-                ? "border-accent bg-accent-light"
-                : isLightlyHighlighted
-                  ? "border-gray-300 bg-gray-50"
-                  : "border-gray-200 bg-white";
-              const rankTone = isCurrentUser
-                ? "bg-white text-accent-dark"
-                : isLightlyHighlighted
-                  ? "bg-white text-gray-800"
-                  : "bg-gray-100 text-gray-700";
-              const pointsTone = isCurrentUser
-                ? "bg-white text-accent-dark"
-                : "bg-white text-gray-800";
-              const socialTone = isCurrentUser ? "text-gray-600" : "text-gray-500";
-              const badgeHomeTeamTone = isCurrentUser ? "bg-white/85" : "bg-white/70";
-
-              return (
-            <div
+            <LeaderboardPlayerRow
               key={profile.id}
-              className={`rounded-lg border p-3 ${rowTone}`}
-            >
-              <Link
-                href={`/leaderboard/${profile.id}`}
-                className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5"
-              >
-                <span
-                  className={`flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md px-2 py-1 text-center ${rankTone}`}
-                >
-                  <span className="text-sm font-black leading-none">{profile.rank ?? index + 1}</span>
-                  <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">Place</span>
-                </span>
-                <span className="min-w-0 flex items-center gap-2.5">
-                  <Avatar
-                    name={profile.name}
-                    avatarUrl={profile.avatarUrl}
-                    size="md"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex w-full items-center justify-between gap-3">
-                      <span className="min-w-0">
-                        <span
-                          className="min-w-0 truncate text-base font-black text-gray-950"
-                        >
-                          {profile.name}
-                          {isCurrentUser ? " (You)" : ""}
-                        </span>
-                      </span>
-                      <span className="ml-auto flex shrink-0 items-center gap-2">
-                        <span className="flex flex-col items-end gap-1">
-                          <span
-                            className={`inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-semibold ${pointsTone}`}
-                          >
-                            {profile.totalPoints} points
-                          </span>
-                          {profile.pointsDelta && profile.pointsDelta > 0 ? (
-                            <span className="text-xs font-black text-accent-dark">
-                              +{profile.pointsDelta} pts
-                            </span>
-                          ) : null}
-                          {profile.rankDelta ? (
-                            <span className={`text-xs font-black ${getMovementTone(profile.rankDelta)}`}>
-                              {formatRankMovement(profile.rankDelta)}
-                            </span>
-                          ) : null}
-                        </span>
-                        {canAwardManagedTrophies && (profile.id !== user?.id || canSelfAwardTrophies) ? (
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              if (!managedAwardGroup) {
-                                return;
-                              }
-                              setManagedTrophySheetTarget({ groupId: managedAwardGroup.id, userId: profile.id });
-                            }}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-base transition hover:border-accent hover:bg-accent-light"
-                            aria-label={`Award trophy to ${profile.name}`}
-                          >
-                            🏆
-                          </button>
-                        ) : null}
-                      </span>
-                    </span>
-                    {shouldShowPlayerSocialIndicators ? (
-                      <span
-                        className={`mt-1.5 flex flex-wrap items-center gap-2 text-xs font-semibold ${socialTone}`}
-                      >
-                        {profile.hasPerfectPickHighlight ? (
-                          <span className="rounded-md bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">
-                            🎯 Perfect Pick
-                          </span>
-                        ) : null}
-                        {profile.trophies && profile.trophies.length > 0 ? (
-                          <span className="inline-flex items-center gap-1">
-                            {profile.trophies.slice(0, 2).map((trophy) => (
-                              <TrophyBadge
-                                key={`${profile.id}-${trophy.id}`}
-                                icon={trophy.icon}
-                                tier={trophy.tier}
-                                size="sm"
-                                className={isCurrentUser ? "border-accent/40" : ""}
-                              />
-                            ))}
-                          </span>
-                        ) : null}
-                        {profile.homeTeamId ? (
-                          <HomeTeamBadge
-                            teamId={profile.homeTeamId}
-                            className={badgeHomeTeamTone}
-                          />
-                        ) : null}
-                      </span>
-                    ) : null}
-                  </span>
-                </span>
-              </Link>
-            </div>
-              );
-            })()
+              profile={profile}
+              index={index}
+              currentUserId={user?.id}
+              scoreMode={activeView === "global" ? "standard" : "group"}
+              canAwardManagedTrophies={canAwardManagedTrophies}
+              canSelfAwardTrophies={canSelfAwardTrophies}
+              managedAwardGroup={managedAwardGroup}
+              shouldShowPlayerSocialIndicators={shouldShowPlayerSocialIndicators}
+              onOpenTrophySheet={(userId) => {
+                if (!managedAwardGroup) {
+                  return;
+                }
+
+                setManagedTrophySheetTarget({ groupId: managedAwardGroup.id, userId });
+              }}
+            />
           ))}
 
           {shallowLeaderboardSpacerHeight > 0 ? (
@@ -1538,9 +1608,10 @@ export function LeaderboardClient() {
         body: JSON.stringify({ eventId, emoji })
       });
 
-      const result = (await response.json()) as
+      const result = await parseJsonResponse<
         | { ok: true; reactions: LeaderboardActivityItem["reactions"] }
-        | { ok: false; message?: string };
+        | { ok: false; message?: string }
+      >(response, "Could not update that reaction.", "leaderboard reactions");
 
       if (!response.ok || !result.ok) {
         throw new Error(result.ok ? "Could not update that reaction." : result.message);
@@ -1603,9 +1674,10 @@ export function LeaderboardClient() {
         body: JSON.stringify({ eventId, body })
       });
 
-      const result = (await response.json()) as
+      const result = await parseJsonResponse<
         | { ok: true; comments: LeaderboardActivityItem["comments"] }
-        | { ok: false; message?: string };
+        | { ok: false; message?: string }
+      >(response, "Could not add that comment.", "leaderboard comments");
 
       if (!response.ok || !result.ok) {
         throw new Error(result.ok ? "Could not add that comment." : result.message);
@@ -1910,7 +1982,7 @@ function GroupStandingsSection({
   const allGroupsAreScoreless = groups.length > 0 && groups.every((group) => group.totalPoints <= 0);
 
   return (
-    <section className="space-y-2">
+      <section className="space-y-2">
           <div className="px-1 pt-1">
             <h3 className="text-base font-black text-gray-950">Average Group Points</h3>
             <p className="mt-1 text-xs font-semibold text-gray-500">
@@ -1966,7 +2038,7 @@ function GroupStandingsSection({
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-lg font-black text-accent-dark">{formatAveragePoints(group.avgPoints)}</p>
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Avg points</p>
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Avg standard pts</p>
                       </div>
                     </div>
 

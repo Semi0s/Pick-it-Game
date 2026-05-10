@@ -2,6 +2,7 @@
 
 import { getStoredPredictions, upsertStoredPrediction } from "@/lib/prediction-store";
 import { saveGroupPredictionAction } from "@/app/groups/actions";
+import { parseJsonResponse } from "@/lib/fetch-json";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import type { Prediction } from "@/lib/types";
 
@@ -12,21 +13,40 @@ export async function fetchPlayerPredictions(userId: string): Promise<Prediction
     return localPredictions;
   }
 
-  const response = await fetch("/api/predictions", { cache: "no-store" });
-  const result = (await response.json()) as
-    | { ok: true; predictions: Prediction[] }
-    | { ok: false; message?: string };
+  try {
+    const response = await fetch("/api/predictions", { cache: "no-store" });
+    const result = await parseJsonResponse<
+      | { ok: true; predictions: Prediction[] }
+      | { ok: false; message?: string }
+    >(response, "Could not load predictions.", "predictions");
 
-  if (!response.ok || !result.ok) {
-    console.error("Failed to fetch player predictions via API route.", {
+    if (!response.ok || !result.ok) {
+      if (response.status === 401) {
+        return localPredictions;
+      }
+
+      console.error("Failed to fetch player predictions via API route.", {
+        userId,
+        status: response.status,
+        message: "message" in result ? result.message : null
+      });
+      return localPredictions;
+    }
+
+    return result.predictions;
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "Unexpected client error";
+    console.warn("Falling back to stored predictions after predictions fetch failed.", {
       userId,
-      status: response.status,
-      message: "message" in result ? result.message : null
+      message
     });
     return localPredictions;
   }
-
-  return result.predictions;
 }
 
 export async function savePlayerPrediction(prediction: Prediction): Promise<Prediction> {
