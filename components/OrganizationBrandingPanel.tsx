@@ -111,6 +111,10 @@ export function OrganizationBrandingPanel() {
     );
   }
 
+  function resolvePreviewCopyValue(currentValue: string, persistedValue: string) {
+    return currentValue.trim() ? currentValue : persistedValue;
+  }
+
   async function handleSaveDraft() {
     const organization = workspace?.organization;
     if (!organization) {
@@ -405,9 +409,12 @@ export function OrganizationBrandingPanel() {
               <div className="space-y-4">
                 <OrganizationPortalPreview
                   organizationName={workspace.organization.organizationName}
-                  welcomeHeadline={welcomeHeadline || workspace.organization.welcomeHeadline}
-                  welcomeMessage={welcomeMessage || workspace.organization.welcomeMessage}
-                  sponsorPrizeMessage={sponsorPrizeMessage || workspace.organization.sponsorPrizeMessage}
+                  welcomeHeadline={resolvePreviewCopyValue(welcomeHeadline, workspace.organization.welcomeHeadline)}
+                  welcomeMessage={resolvePreviewCopyValue(welcomeMessage, workspace.organization.welcomeMessage)}
+                  sponsorPrizeMessage={resolvePreviewCopyValue(
+                    sponsorPrizeMessage,
+                    workspace.organization.sponsorPrizeMessage
+                  )}
                   logoUrl={workspace.organization.logo.signedUrl}
                   backgroundUrl={workspace.organization.background.signedUrl}
                   previewLabel="Portal preview"
