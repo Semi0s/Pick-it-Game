@@ -45,7 +45,7 @@ export function DismissibleHelperText({
         }}
         aria-label={dismissLabel}
         title={dismissLabel}
-        className="absolute right-0 top-0 inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white/80 text-gray-400 transition hover:border-gray-300 hover:text-gray-600"
+        className="absolute right-0 top-[-2px] inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white/80 text-gray-400 transition hover:border-gray-300 hover:text-gray-600"
       >
         <X aria-hidden className="h-3.5 w-3.5" />
       </button>
