@@ -33,12 +33,14 @@ create table public.invites (
   display_name text not null,
   language text not null default 'en',
   role public.user_role not null default 'player',
+  plan_tier text not null default 'player',
   accepted_at timestamptz,
   status public.invite_delivery_status not null default 'pending',
   last_sent_at timestamptz,
   send_attempts integer not null default 0,
   last_error text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint invites_plan_tier_check check (plan_tier in ('player', 'captain', 'manager', 'director', 'managing_director'))
 );
 
 create table public.teams (
@@ -61,11 +63,13 @@ create table public.users (
   home_team_id text references public.teams(id),
   preferred_language text not null default 'en',
   role public.user_role not null default 'player',
+  plan_tier text not null default 'player',
   status text not null default 'active',
   total_points integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint users_status_check check (status in ('active', 'inactive', 'suspended'))
+  constraint users_status_check check (status in ('active', 'inactive', 'suspended')),
+  constraint users_plan_tier_check check (plan_tier in ('player', 'captain', 'manager', 'director', 'managing_director'))
 );
 
 create table public.matches (
@@ -233,6 +237,25 @@ create table public.user_update_reads (
 create index app_updates_published_at_idx
   on public.app_updates (published_at desc);
 
+create unique index group_rulesets_active_group_unique_idx
+  on public.group_rulesets (group_id)
+  where status = 'active';
+
+create index side_pick_definitions_package_idx
+  on public.side_pick_definitions (package_id, sort_order);
+
+create index side_pick_entries_group_user_idx
+  on public.side_pick_entries (group_id, user_id);
+
+create index side_pick_scores_group_scope_idx
+  on public.side_pick_scores (group_id, scoring_scope);
+
+create index side_pick_scores_user_scope_idx
+  on public.side_pick_scores (user_id, scoring_scope);
+
+create index group_bonus_scores_group_scope_idx
+  on public.group_bonus_scores (group_id, scoring_scope);
+
 create index matches_external_id_idx
   on public.matches (external_id)
   where external_id is not null;
@@ -282,7 +305,7 @@ create table public.email_jobs (
 create table public.manager_limits (
   user_id uuid primary key references public.users(id) on delete cascade,
   max_groups integer not null default 3,
-  max_members_per_group integer not null default 4,
+  max_members_per_group integer not null default 30,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint manager_limits_max_groups_positive check (max_groups > 0),
@@ -292,13 +315,15 @@ create table public.manager_limits (
 create table public.groups (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  description text,
   owner_user_id uuid references public.users(id) on delete set null,
   created_by_user_id uuid references public.users(id) on delete set null,
   membership_limit integer not null default 15,
   status public.group_status not null default 'active',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint groups_membership_limit_positive check (membership_limit > 0)
+  constraint groups_membership_limit_positive check (membership_limit > 0),
+  constraint groups_description_length_check check (description is null or char_length(description) <= 250)
 );
 
 create table public.group_members (
@@ -459,6 +484,95 @@ create table public.push_tokens (
   constraint push_tokens_platform_check check (platform in ('ios', 'android', 'web'))
 );
 
+create table public.side_pick_packages (
+  id uuid primary key default gen_random_uuid(),
+  key text not null unique,
+  name text not null,
+  description text not null default '',
+  scoring_scope text not null check (scoring_scope in ('standard', 'group_custom')),
+  active boolean not null default true,
+  created_by_user_id uuid references public.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.side_pick_definitions (
+  id uuid primary key default gen_random_uuid(),
+  package_id uuid not null references public.side_pick_packages(id) on delete cascade,
+  key text not null,
+  label text not null,
+  description text not null default '',
+  response_kind text not null check (response_kind in ('team', 'text')),
+  scoring_scope text not null check (scoring_scope in ('standard', 'group_custom')),
+  point_value integer not null default 0,
+  sort_order integer not null default 0,
+  active boolean not null default true,
+  created_by_user_id uuid references public.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (package_id, key)
+);
+
+create table public.group_rulesets (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups(id) on delete cascade,
+  version integer not null,
+  status text not null default 'active' check (status in ('draft', 'active', 'locked', 'superseded', 'archived')),
+  early_group_stage_completion_bonus integer not null default 0,
+  knockout_completion_bonus integer not null default 0,
+  final_matchup_bonus integer not null default 0,
+  exact_final_score_bonus integer not null default 0,
+  side_pick_package_id uuid references public.side_pick_packages(id) on delete set null,
+  created_by_user_id uuid references public.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (group_id, version),
+  constraint group_rulesets_bonus_range_chk check (
+    early_group_stage_completion_bonus >= 0 and early_group_stage_completion_bonus <= 10
+    and knockout_completion_bonus >= 0 and knockout_completion_bonus <= 10
+    and final_matchup_bonus >= 0 and final_matchup_bonus <= 15
+    and exact_final_score_bonus >= 0 and exact_final_score_bonus <= 25
+  )
+);
+
+create table public.side_pick_entries (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups(id) on delete cascade,
+  definition_id uuid not null references public.side_pick_definitions(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  selected_team_id text references public.teams(id) on delete set null,
+  selected_text text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (group_id, definition_id, user_id)
+);
+
+create table public.side_pick_scores (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups(id) on delete cascade,
+  definition_id uuid not null references public.side_pick_definitions(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  scoring_scope text not null check (scoring_scope in ('standard', 'group_custom')),
+  points integer not null default 0,
+  note text,
+  awarded_by_user_id uuid references public.users(id) on delete set null,
+  awarded_at timestamptz not null default now(),
+  unique (group_id, definition_id, user_id, scoring_scope)
+);
+
+create table public.group_bonus_scores (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  ruleset_id uuid not null references public.group_rulesets(id) on delete cascade,
+  bonus_type text not null check (bonus_type in ('early_group_stage_completion', 'knockout_completion', 'final_matchup', 'exact_final_score')),
+  scoring_scope text not null default 'group_custom' check (scoring_scope in ('group_custom')),
+  points integer not null default 0,
+  metadata jsonb not null default '{}'::jsonb,
+  awarded_at timestamptz not null default now(),
+  unique (group_id, user_id, ruleset_id, bonus_type)
+);
+
 create index email_jobs_status_available_idx
   on public.email_jobs (status, available_at, created_at);
 
@@ -528,6 +642,10 @@ create index group_members_user_id_idx
 
 create index group_members_group_id_idx
   on public.group_members (group_id);
+
+create unique index group_members_one_manager_per_group_idx
+  on public.group_members (group_id)
+  where role = 'manager';
 
 create index group_invites_group_id_idx
   on public.group_invites (group_id);
@@ -887,18 +1005,149 @@ as $$
     and status = 'active';
 $$;
 
+create or replace function public.group_creation_limit_for_user(target_user_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_plan_tier text;
+  v_limit integer := 0;
+  v_override integer;
+begin
+  if target_user_id is null then
+    return 0;
+  end if;
+
+  if public.is_super_admin(target_user_id) then
+    return null;
+  end if;
+
+  select coalesce(nullif(trim(users.plan_tier), ''), 'player')
+  into v_plan_tier
+  from public.users
+  where users.id = target_user_id;
+
+  if not found then
+    return 0;
+  end if;
+
+  case v_plan_tier
+    when 'captain' then v_limit := 1;
+    when 'manager' then v_limit := 3;
+    when 'director' then v_limit := 10;
+    when 'managing_director' then v_limit := 25;
+    else v_limit := 0;
+  end case;
+
+  select manager_limits.max_groups
+  into v_override
+  from public.manager_limits
+  where manager_limits.user_id = target_user_id;
+
+  if v_override is not null then
+    v_limit := v_override;
+  end if;
+
+  return greatest(v_limit, 0);
+end;
+$$;
+
+create or replace function public.group_membership_limit_for_user(target_user_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_plan_tier text;
+  v_limit integer := 0;
+  v_override integer;
+begin
+  if target_user_id is null then
+    return 0;
+  end if;
+
+  if public.is_super_admin(target_user_id) then
+    return null;
+  end if;
+
+  select coalesce(nullif(trim(users.plan_tier), ''), 'player')
+  into v_plan_tier
+  from public.users
+  where users.id = target_user_id;
+
+  if not found then
+    return 0;
+  end if;
+
+  case v_plan_tier
+    when 'captain' then v_limit := 20;
+    when 'manager' then v_limit := 30;
+    when 'director' then v_limit := 100;
+    when 'managing_director' then v_limit := 100;
+    else v_limit := 0;
+  end case;
+
+  select manager_limits.max_members_per_group
+  into v_override
+  from public.manager_limits
+  where manager_limits.user_id = target_user_id;
+
+  if v_override is not null then
+    v_limit := v_override;
+  end if;
+
+  return greatest(v_limit, 0);
+end;
+$$;
+
+create or replace function public.effective_group_membership_limit(target_group_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_membership_limit integer;
+  v_owner_user_id uuid;
+  v_owner_limit integer;
+begin
+  select groups.membership_limit, groups.owner_user_id
+  into v_membership_limit, v_owner_user_id
+  from public.groups
+  where groups.id = target_group_id;
+
+  if not found then
+    return null;
+  end if;
+
+  if v_owner_user_id is null then
+    return v_membership_limit;
+  end if;
+
+  v_owner_limit := public.group_membership_limit_for_user(v_owner_user_id);
+  if v_owner_limit is null then
+    return v_membership_limit;
+  end if;
+
+  return least(v_membership_limit, v_owner_limit);
+end;
+$$;
+
 create or replace function public.can_create_group(target_user_id uuid)
 returns boolean
 language sql
 security definer
 set search_path = public
 as $$
-  select exists (
-    select 1
-    from public.manager_limits ml
-    where ml.user_id = target_user_id
-      and public.active_owned_group_count(target_user_id) < ml.max_groups
-  );
+  select case
+    when public.is_super_admin(target_user_id) then true
+    else
+      coalesce(public.group_creation_limit_for_user(target_user_id), 0) > 0
+      and public.active_owned_group_count(target_user_id) < coalesce(public.group_creation_limit_for_user(target_user_id), 0)
+  end;
 $$;
 
 create or replace function public.can_set_group_membership_limit(target_user_id uuid, requested_limit integer)
@@ -909,12 +1158,7 @@ set search_path = public
 as $$
   select case
     when public.is_super_admin(target_user_id) then true
-    else exists (
-      select 1
-      from public.manager_limits ml
-      where ml.user_id = target_user_id
-        and requested_limit <= ml.max_members_per_group
-    )
+    else requested_limit <= coalesce(public.group_membership_limit_for_user(target_user_id), 0)
   end;
 $$;
 
@@ -928,7 +1172,7 @@ as $$
     select 1
     from public.groups
     where id = target_group_id
-      and membership_limit > public.group_member_count(target_group_id)
+      and public.effective_group_membership_limit(target_group_id) > public.group_member_count(target_group_id)
   );
 $$;
 
@@ -938,7 +1182,9 @@ language sql
 security definer
 set search_path = public
 as $$
-  select exists (
+  select
+    public.is_super_admin(target_user_id)
+    or exists (
     select 1
     from public.groups g
     left join public.group_members gm
@@ -950,6 +1196,38 @@ as $$
   );
 $$;
 
+create or replace function public.enforce_owner_only_group_manager_membership()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  group_owner_id uuid;
+begin
+  if new.role <> 'manager' then
+    return new;
+  end if;
+
+  select owner_user_id
+  into group_owner_id
+  from public.groups
+  where id = new.group_id;
+
+  if group_owner_id is null then
+    raise exception 'Only groups with an owner can have a manager membership.'
+      using errcode = '23514';
+  end if;
+
+  if new.user_id <> group_owner_id then
+    raise exception 'Only the current group owner can hold manager access for this group. Transfer ownership first.'
+      using errcode = '23514';
+  end if;
+
+  return new;
+end;
+$$;
+
 create or replace function public.handle_group_owner_membership()
 returns trigger
 language plpgsql
@@ -957,12 +1235,20 @@ security definer
 set search_path = public
 as $$
 begin
-  if new.owner_user_id is not null then
-    insert into public.group_members (group_id, user_id, role)
-    values (new.id, new.owner_user_id, 'manager')
-    on conflict (group_id, user_id) do update
-      set role = 'manager';
+  update public.group_members
+  set role = 'member'
+  where group_id = new.id
+    and role = 'manager'
+    and (new.owner_user_id is null or user_id <> new.owner_user_id);
+
+  if new.owner_user_id is null then
+    return new;
   end if;
+
+  insert into public.group_members (group_id, user_id, role)
+  values (new.id, new.owner_user_id, 'manager')
+  on conflict (group_id, user_id) do update
+    set role = 'manager';
 
   return new;
 end;
@@ -1063,6 +1349,7 @@ begin
       groups.id,
       groups.status,
       groups.membership_limit,
+      public.effective_group_membership_limit(groups.id) as effective_membership_limit,
       (
         select count(*)
         from public.group_members
@@ -1076,7 +1363,7 @@ begin
       raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
     end if;
 
-    if v_target_group.member_count >= v_target_group.membership_limit then
+    if v_target_group.member_count >= v_target_group.effective_membership_limit then
       raise exception 'ACCESS_CODE_GROUP_FULL';
     end if;
   end if;
@@ -1138,8 +1425,16 @@ begin
 
   if invite_row.email is not null then
     debug_step := 'insert_user_direct_invite';
-    insert into public.users (id, name, email, preferred_language, role, needs_profile_setup)
-    values (new.id, invite_row.display_name, new.email, coalesce(nullif(trim(invite_row.language), ''), 'en'), invite_row.role, true)
+    insert into public.users (id, name, email, preferred_language, role, plan_tier, needs_profile_setup)
+    values (
+      new.id,
+      invite_row.display_name,
+      new.email,
+      coalesce(nullif(trim(invite_row.language), ''), 'en'),
+      invite_row.role,
+      coalesce(nullif(trim(invite_row.plan_tier), ''), 'player'),
+      true
+    )
     on conflict (id) do nothing;
     return new;
   end if;
@@ -1234,8 +1529,12 @@ create trigger sync_group_invites_email_fields
 before insert or update on public.group_invites
 for each row execute function public.sync_group_invite_email_fields();
 
+create trigger enforce_owner_only_group_manager_membership
+before insert or update on public.group_members
+for each row execute function public.enforce_owner_only_group_manager_membership();
+
 create trigger on_group_created_add_manager_membership
-after insert on public.groups
+after insert or update of owner_user_id on public.groups
 for each row execute function public.handle_group_owner_membership();
 
 create trigger set_app_settings_updated_at
@@ -1248,6 +1547,22 @@ for each row execute function public.set_updated_at();
 
 create trigger set_user_settings_updated_at
 before update on public.user_settings
+for each row execute function public.set_updated_at();
+
+create trigger set_side_pick_packages_updated_at
+before update on public.side_pick_packages
+for each row execute function public.set_updated_at();
+
+create trigger set_side_pick_definitions_updated_at
+before update on public.side_pick_definitions
+for each row execute function public.set_updated_at();
+
+create trigger set_group_rulesets_updated_at
+before update on public.group_rulesets
+for each row execute function public.set_updated_at();
+
+create trigger set_side_pick_entries_updated_at
+before update on public.side_pick_entries
 for each row execute function public.set_updated_at();
 
 insert into public.app_settings (key, boolean_value, integer_value)
@@ -1266,6 +1581,12 @@ alter table public.predictions enable row level security;
 alter table public.bracket_predictions enable row level security;
 alter table public.bracket_scores enable row level security;
 alter table public.side_picks enable row level security;
+alter table public.side_pick_packages enable row level security;
+alter table public.side_pick_definitions enable row level security;
+alter table public.group_rulesets enable row level security;
+alter table public.side_pick_entries enable row level security;
+alter table public.side_pick_scores enable row level security;
+alter table public.group_bonus_scores enable row level security;
 alter table public.leaderboard_entries enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.app_updates enable row level security;
@@ -1476,6 +1797,42 @@ on public.side_picks for all
 to authenticated
 using (user_id = auth.uid())
 with check (user_id = auth.uid());
+
+create policy "Authenticated users can read side pick packages"
+on public.side_pick_packages for select
+to authenticated
+using (true);
+
+create policy "Authenticated users can read side pick definitions"
+on public.side_pick_definitions for select
+to authenticated
+using (true);
+
+create policy "Authenticated users can read group rulesets"
+on public.group_rulesets for select
+to authenticated
+using (true);
+
+create policy "Authenticated users can read own side pick entries"
+on public.side_pick_entries for select
+to authenticated
+using (user_id = auth.uid() or public.is_admin());
+
+create policy "Authenticated users manage own side pick entries"
+on public.side_pick_entries for all
+to authenticated
+using (user_id = auth.uid() or public.is_admin())
+with check (user_id = auth.uid() or public.is_admin());
+
+create policy "Authenticated users can read side pick scores"
+on public.side_pick_scores for select
+to authenticated
+using (true);
+
+create policy "Authenticated users can read group bonus scores"
+on public.group_bonus_scores for select
+to authenticated
+using (true);
 
 create policy "Authenticated users can read leaderboard"
 on public.leaderboard_entries for select
@@ -2063,3 +2420,151 @@ with check (
   and status = 'pending'
   and public.group_has_open_seat(group_id)
 );
+
+create table public.organizations (
+  id uuid not null default gen_random_uuid(),
+  owner_user_id uuid not null,
+  name text not null,
+  slug text not null,
+  created_at timestamp with time zone not null default now(),
+  updated_at timestamp with time zone not null default now(),
+  constraint organizations_pkey primary key (id),
+  constraint organizations_owner_user_id_key unique (owner_user_id),
+  constraint organizations_slug_key unique (slug),
+  constraint organizations_name_length check ((char_length(TRIM(BOTH FROM name)) >= 1) and (char_length(TRIM(BOTH FROM name)) <= 120)),
+  constraint organizations_owner_user_id_fkey foreign key (owner_user_id) references public.users(id) on delete cascade,
+  constraint organizations_slug_format check (slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'::text)
+);
+
+create table public.organization_branding (
+  organization_id uuid not null,
+  status text not null default 'draft'::text,
+  review_note text,
+  draft_logo_storage_path text,
+  draft_background_storage_path text,
+  draft_welcome_headline text,
+  draft_welcome_message text,
+  draft_sponsor_prize_message text,
+  live_logo_storage_path text,
+  live_background_storage_path text,
+  live_welcome_headline text,
+  live_welcome_message text,
+  live_sponsor_prize_message text,
+  reviewed_by_user_id uuid,
+  reviewed_at timestamp with time zone,
+  disabled_by_user_id uuid,
+  disabled_at timestamp with time zone,
+  live_updated_at timestamp with time zone,
+  created_at timestamp with time zone not null default now(),
+  updated_at timestamp with time zone not null default now(),
+  constraint organization_branding_pkey primary key (organization_id),
+  constraint organization_branding_disabled_by_user_id_fkey foreign key (disabled_by_user_id) references public.users(id) on delete set null,
+  constraint organization_branding_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade,
+  constraint organization_branding_review_note_length check (char_length(coalesce(review_note, ''::text)) <= 280),
+  constraint organization_branding_reviewed_by_user_id_fkey foreign key (reviewed_by_user_id) references public.users(id) on delete set null,
+  constraint organization_branding_status_check check (status = any (array['draft'::text, 'pending_review'::text, 'approved'::text, 'rejected'::text, 'disabled'::text])),
+  constraint organization_branding_draft_headline_length check (char_length(coalesce(draft_welcome_headline, ''::text)) <= 80),
+  constraint organization_branding_draft_message_length check (char_length(coalesce(draft_welcome_message, ''::text)) <= 280),
+  constraint organization_branding_draft_sponsor_length check (char_length(coalesce(draft_sponsor_prize_message, ''::text)) <= 280),
+  constraint organization_branding_live_headline_length check (char_length(coalesce(live_welcome_headline, ''::text)) <= 80),
+  constraint organization_branding_live_message_length check (char_length(coalesce(live_welcome_message, ''::text)) <= 280),
+  constraint organization_branding_live_sponsor_length check (char_length(coalesce(live_sponsor_prize_message, ''::text)) <= 280)
+);
+
+create table public.organization_branding_audit_log (
+  id uuid not null default gen_random_uuid(),
+  organization_id uuid not null,
+  actor_user_id uuid,
+  action text not null,
+  details jsonb not null default '{}'::jsonb,
+  created_at timestamp with time zone not null default now(),
+  constraint organization_branding_audit_log_pkey primary key (id),
+  constraint organization_branding_audit_action_length check ((char_length(TRIM(BOTH FROM action)) >= 1) and (char_length(TRIM(BOTH FROM action)) <= 80)),
+  constraint organization_branding_audit_log_actor_user_id_fkey foreign key (actor_user_id) references public.users(id) on delete set null,
+  constraint organization_branding_audit_log_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade
+);
+
+create index organization_branding_status_idx on public.organization_branding using btree (status);
+
+create index organization_branding_audit_log_org_created_idx on public.organization_branding_audit_log using btree (organization_id, created_at desc);
+
+create or replace function public.initialize_organization_branding()
+returns trigger
+language plpgsql
+as $function$
+begin
+  insert into public.organization_branding (organization_id)
+  values (new.id)
+  on conflict (organization_id) do nothing;
+
+  return new;
+end;
+$function$;
+
+create trigger initialize_organization_branding
+after insert on public.organizations
+for each row execute function public.initialize_organization_branding();
+
+create trigger set_organizations_updated_at
+before update on public.organizations
+for each row execute function public.set_updated_at();
+
+create trigger set_organization_branding_updated_at
+before update on public.organization_branding
+for each row execute function public.set_updated_at();
+
+insert into storage.buckets (id, name, public)
+values ('organization-branding', 'organization-branding', false)
+on conflict (id) do nothing;
+
+alter table public.organizations enable row level security;
+alter table public.organization_branding enable row level security;
+alter table public.organization_branding_audit_log enable row level security;
+
+create policy "Users read own organizations"
+on public.organizations for select
+using ((owner_user_id = auth.uid()) or public.is_super_admin(auth.uid()));
+
+create policy "Users manage own organizations"
+on public.organizations for all
+using ((owner_user_id = auth.uid()) or public.is_super_admin(auth.uid()))
+with check ((owner_user_id = auth.uid()) or public.is_super_admin(auth.uid()));
+
+create policy "Users read own organization branding"
+on public.organization_branding for select
+using (
+  exists (
+    select 1
+    from public.organizations
+    where organizations.id = organization_branding.organization_id
+      and ((organizations.owner_user_id = auth.uid()) or public.is_super_admin(auth.uid()))
+  )
+);
+
+create policy "Users manage own organization branding"
+on public.organization_branding for all
+using (
+  exists (
+    select 1
+    from public.organizations
+    where organizations.id = organization_branding.organization_id
+      and ((organizations.owner_user_id = auth.uid()) or public.is_super_admin(auth.uid()))
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.organizations
+    where organizations.id = organization_branding.organization_id
+      and ((organizations.owner_user_id = auth.uid()) or public.is_super_admin(auth.uid()))
+  )
+);
+
+create policy "Super admins read organization branding audit log"
+on public.organization_branding_audit_log for select
+using (public.is_super_admin(auth.uid()));
+
+create policy "Super admins manage organization branding audit log"
+on public.organization_branding_audit_log for all
+using (public.is_super_admin(auth.uid()))
+with check (public.is_super_admin(auth.uid()));
