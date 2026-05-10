@@ -164,6 +164,34 @@ export async function fetchIntegerAppSetting(
   throw new Error(fullQuery.error.message);
 }
 
+export async function updateIntegerAppSetting(
+  key: string,
+  value: number
+): Promise<number> {
+  const adminSupabase = createAdminClient();
+  const { error } = await adminSupabase.from("app_settings").upsert(
+    {
+      key,
+      integer_value: value
+    },
+    { onConflict: "key" }
+  );
+
+  if (error) {
+    if (isMissingAppSettingsTableError(error.message)) {
+      throw new Error(`App setting ${key} is not available yet. Apply the app_settings migration first.`);
+    }
+
+    if (isMissingColumnError(error.message, "app_settings", "integer_value")) {
+      throw new Error(`App setting ${key} needs integer_value support before it can be updated.`);
+    }
+
+    throw new Error(error.message);
+  }
+
+  return fetchIntegerAppSetting(key, value);
+}
+
 function isMissingAppSettingsTableError(message: string) {
   return isMissingRelationError(message, "app_settings");
 }

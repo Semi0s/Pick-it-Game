@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { CalendarDays, Network, Sparkles, Trophy, X } from "lucide-react";
-import { fetchDashboardGroupAccessAction } from "@/app/my-groups/actions";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import {
   GroupStandingsMiniTable,
@@ -47,6 +46,10 @@ import {
 import { fetchPlayerPredictions } from "@/lib/player-predictions";
 import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
+import {
+  DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY,
+  DASHBOARD_STANDINGS_RESET_EPOCH_STORAGE_KEY
+} from "@/lib/ui-storage-keys";
 import type { MatchWithTeams, Prediction } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
@@ -59,10 +62,9 @@ const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: s
 };
 
 const DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-dismissed";
+const DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX = "pickit:dashboard-logo-hint-dismissed-session";
 const DASHBOARD_STANDINGS_GROUP_STORAGE_KEY = "dashboard-standings-group";
 const DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY = "dashboard-standings-disclosure";
-const DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY = "dashboard-standings-history-v1";
-
 const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
   en: "Tap the PICK-IT logo above to return to this page again.",
   es: "Toca el logo de PICK-IT! para volver aquí.",
@@ -81,6 +83,27 @@ type PersistedStandingsHistory = Record<
   }
 >;
 
+type DashboardGroupAccessResponse = {
+  ok: true;
+  groupAccess: {
+    hasAnyGroups: boolean;
+    joinedGroupCount: number;
+    managedGroupCount: number;
+  };
+  dashboardUiResetEpoch: number;
+} | {
+  ok: false;
+  message: string;
+};
+
+function isDashboardGroupAccessResponse(value: unknown): value is DashboardGroupAccessResponse {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  return "ok" in value;
+}
+
 const DEBUG_DASHBOARD_NEXT_PICK = process.env.NODE_ENV !== "production";
 
 function logDashboardNextPick(event: string, details?: Record<string, unknown>) {
@@ -97,6 +120,7 @@ function logDashboardNextPick(event: string, details?: Record<string, unknown>) 
 export function DashboardOverview() {
   const router = useRouter();
   const { user } = useCurrentUser();
+  const currentUserId = user?.id ?? null;
   const [groupMatches, setGroupMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
   const [adminCounts, setAdminCounts] = useState<AdminCounts | null>(null);
   const [adminError, setAdminError] = useState<string | null>(null);
@@ -104,6 +128,7 @@ export function DashboardOverview() {
     hasAnyGroups: boolean;
     joinedGroupCount: number;
     managedGroupCount: number;
+    dashboardUiResetEpoch: number;
   } | null>(null);
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
@@ -121,6 +146,51 @@ export function DashboardOverview() {
   );
   const [standingsHistoryByGroup, setStandingsHistoryByGroup] = useState<PersistedStandingsHistory>({});
   const [hasHydratedStandingsHistory, setHasHydratedStandingsHistory] = useState(false);
+  const refreshGroupAccess = useCallback(async () => {
+    if (!user) {
+      setGroupAccess(null);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/dashboard/group-access", {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      const responseText = await response.text();
+      if (!responseText) {
+        return;
+      }
+
+      let parsedResult: unknown;
+      try {
+        parsedResult = JSON.parse(responseText);
+      } catch (error) {
+        console.warn("Could not parse dashboard group access response.", {
+          status: response.status,
+          contentType: response.headers.get("content-type"),
+          preview: responseText.slice(0, 180),
+          error
+        });
+        return;
+      }
+
+      if (!isDashboardGroupAccessResponse(parsedResult) || !parsedResult.ok) {
+        return;
+      }
+
+      setGroupAccess({
+        hasAnyGroups: parsedResult.groupAccess.hasAnyGroups,
+        joinedGroupCount: parsedResult.groupAccess.joinedGroupCount,
+        managedGroupCount: parsedResult.groupAccess.managedGroupCount,
+        dashboardUiResetEpoch: parsedResult.dashboardUiResetEpoch
+      });
+    } catch {
+      setGroupAccess((current) => current);
+    }
+  }, [user]);
+
   const refreshGroupMatches = useCallback(async () => {
     try {
       const items = await fetchGroupMatchesForPredictions();
@@ -185,12 +255,14 @@ export function DashboardOverview() {
     }
 
     function handleWindowFocus() {
+      refreshGroupAccess().catch(() => undefined);
       refreshGroupMatches().catch(() => undefined);
       refreshPredictions().catch(() => undefined);
     }
 
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
+        refreshGroupAccess().catch(() => undefined);
         refreshGroupMatches().catch(() => undefined);
         refreshPredictions().catch(() => undefined);
       }
@@ -200,6 +272,7 @@ export function DashboardOverview() {
     document.addEventListener("visibilitychange", handleVisibilityChange);
     const pollWhenVisible = window.setInterval(() => {
       if (document.visibilityState === "visible") {
+        refreshGroupAccess().catch(() => undefined);
         refreshGroupMatches().catch(() => undefined);
         refreshPredictions().catch(() => undefined);
       }
@@ -210,7 +283,7 @@ export function DashboardOverview() {
       window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refreshGroupMatches, refreshPredictions, user]);
+  }, [refreshGroupAccess, refreshGroupMatches, refreshPredictions, user]);
 
   useEffect(() => {
     if (!user) {
@@ -218,29 +291,8 @@ export function DashboardOverview() {
       return;
     }
 
-    let isMounted = true;
-    fetchDashboardGroupAccessAction()
-      .then((result) => {
-        if (!isMounted || !result.ok) {
-          return;
-        }
-
-        setGroupAccess({
-          hasAnyGroups: result.groupAccess.hasAnyGroups,
-          joinedGroupCount: result.groupAccess.joinedGroupCount,
-          managedGroupCount: result.groupAccess.managedGroupCount
-        });
-      })
-      .catch(() => {
-        if (isMounted) {
-          setGroupAccess(null);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [user]);
+    refreshGroupAccess().catch(() => undefined);
+  }, [refreshGroupAccess, user]);
 
   useEffect(() => {
     if (user?.role !== "admin") {
@@ -529,37 +581,73 @@ export function DashboardOverview() {
   ]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !user) {
+    if (typeof window === "undefined" || !groupAccess) {
+      return;
+    }
+
+    const nextEpoch = String(groupAccess.dashboardUiResetEpoch);
+
+    try {
+      const lastSeenEpoch = window.localStorage.getItem(DASHBOARD_STANDINGS_RESET_EPOCH_STORAGE_KEY);
+      const shouldClearPersistedHistory =
+        groupAccess.dashboardUiResetEpoch > 0 &&
+        lastSeenEpoch !== nextEpoch;
+
+      if (shouldClearPersistedHistory) {
+        window.localStorage.removeItem(DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY);
+        setStandingsHistoryByGroup({});
+      }
+
+      window.localStorage.setItem(DASHBOARD_STANDINGS_RESET_EPOCH_STORAGE_KEY, nextEpoch);
+    } catch (error) {
+      console.warn("Could not reconcile dashboard standings reset epoch.", error);
+    }
+  }, [groupAccess]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !currentUserId) {
       setShowDashboardLogoHint(false);
       return;
     }
 
-    const storageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX}:${user.id}`;
+    const sharedPersistentStorageKey = DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX;
+    const sharedSessionStorageKey = DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX;
+    const persistentStorageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX}:${currentUserId}`;
+    const sessionStorageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX}:${currentUserId}`;
 
     try {
-      setShowDashboardLogoHint(window.localStorage.getItem(storageKey) !== "true");
+      const dismissedInSession =
+        window.sessionStorage.getItem(sharedSessionStorageKey) === "true" ||
+        window.sessionStorage.getItem(sessionStorageKey) === "true";
+      const dismissedPermanently =
+        window.localStorage.getItem(sharedPersistentStorageKey) === "true" ||
+        window.localStorage.getItem(persistentStorageKey) === "true";
+      setShowDashboardLogoHint(!(dismissedInSession || dismissedPermanently));
     } catch (error) {
       console.warn("Could not restore dashboard logo hint dismissal state.", error);
       setShowDashboardLogoHint(true);
     }
-  }, [user]);
+  }, [currentUserId]);
 
   const dismissDashboardLogoHint = useCallback(() => {
-    if (!user) {
-      setShowDashboardLogoHint(false);
-      return;
-    }
-
-    const storageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX}:${user.id}`;
+    const sharedPersistentStorageKey = DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX;
+    const sharedSessionStorageKey = DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX;
+    const persistentStorageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX}:${currentUserId}`;
+    const sessionStorageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX}:${currentUserId}`;
 
     try {
-      window.localStorage.setItem(storageKey, "true");
+      window.localStorage.setItem(sharedPersistentStorageKey, "true");
+      window.sessionStorage.setItem(sharedSessionStorageKey, "true");
+      if (currentUserId) {
+        window.localStorage.setItem(persistentStorageKey, "true");
+        window.sessionStorage.setItem(sessionStorageKey, "true");
+      }
     } catch (error) {
       console.warn("Could not persist dashboard logo hint dismissal state.", error);
     }
 
     setShowDashboardLogoHint(false);
-  }, [user]);
+  }, [currentUserId]);
 
   function handleInviteEntrySubmit() {
     const token = normalizeInviteTokenInput(inviteEntryValue);

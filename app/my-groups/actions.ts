@@ -2,7 +2,7 @@
 
 import { createHash, randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
-import { fetchBooleanAppSetting } from "@/lib/app-settings";
+import { fetchBooleanAppSetting, fetchIntegerAppSetting } from "@/lib/app-settings";
 import { normalizeAccessCode } from "@/lib/access-codes";
 import { buildGroupInviteEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
 import { ensureUserCanJoinAnotherGroup, fetchJoinedPlayerGroupCount } from "@/lib/group-membership-limits";
@@ -19,11 +19,21 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendTransactionalEmail } from "@/lib/email-sender";
 import { createTrophyEarnedNotifications } from "@/lib/notifications";
 import {
+  canAwardSocialTrophy,
+  canManageGroup,
+  canInviteMember,
+  getEffectiveManagedGroupLimit,
+  getEffectiveMembershipLimitForGroup,
+  hasDirectorAccess,
   hasManagingDirectorAccess,
+  hasManagerAccess,
+  isAtOrOverManagedGroupLimit,
   normalizeCommercialTier,
-  resolveAccessLevel,
+  resolveTierAccess,
   type AccessLevel,
-  type CommercialTier
+  type CommercialTier,
+  type GroupRelation,
+  type ResolvedTierAccess
 } from "@/lib/tier-access";
 import {
   fetchActiveGroupRulesets,
@@ -37,6 +47,7 @@ import {
 } from "@/lib/scoped-scoring";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
+import { DASHBOARD_UI_RESET_EPOCH_SETTING_KEY } from "@/lib/ui-storage-keys";
 
 const DEFAULT_GROUP_MEMBERSHIP_LIMIT = 15;
 const DEFAULT_INVITE_EXPIRY_DAYS = 14;
@@ -44,6 +55,7 @@ const MAX_CUSTOM_TROPHIES_PER_GROUP = 10;
 const MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH = 280;
 const MAX_MANAGED_GROUP_INVITE_CODE_ATTEMPTS = 5;
 const MANAGED_GROUP_INVITE_CODE_PATTERN = /^[A-Z0-9-]{4,24}$/;
+const MAX_GROUP_DESCRIPTION_LENGTH = 250;
 
 type GroupStatus = "active" | "archived";
 type GroupMemberRole = "manager" | "member";
@@ -58,6 +70,11 @@ type CurrentUserContext =
       role: PlatformRole;
       planTier: CommercialTier | null;
       accessLevel: AccessLevel;
+      tierAccess: ResolvedTierAccess;
+      managerLimits: {
+        maxGroups: number;
+        maxMembersPerGroup: number;
+      } | null;
       preferredLanguage: SupportedLanguage;
     }
   | {
@@ -77,6 +94,7 @@ type GroupRow = {
   owner_user_id: string | null;
   created_by_user_id: string | null;
   membership_limit: number;
+  description?: string | null;
   status: GroupStatus;
   created_at: string;
   updated_at: string;
@@ -170,6 +188,7 @@ type EnqueueEmailJobResult =
 
 export type CreateGroupInput = {
   name: string;
+  description?: string;
   membershipLimit?: number;
 };
 
@@ -179,6 +198,7 @@ export type CreateGroupResult =
       group: {
         id: string;
         name: string;
+        description: string | null;
         membershipLimit: number;
         status: GroupStatus;
       };
@@ -259,6 +279,12 @@ export type ManagedGroupInviteCode = {
   code: string;
   shareMessage: string;
   whatsAppUrl: string;
+  emailUrl: string;
+};
+
+export type ManagedGroupScoringPreview = {
+  standardScoringLabel: string;
+  groupScoringLabel: string;
 };
 
 export type CreateManagedGroupInviteCodeResult =
@@ -285,6 +311,7 @@ export type DeactivateManagedGroupInviteCodeResult =
 export type MyManagedGroup = {
   id: string;
   name: string;
+  description?: string | null;
   membershipLimit: number;
   status: GroupStatus;
   memberCount?: number;
@@ -333,6 +360,8 @@ export type ManagedGroupDetails = MyManagedGroup & {
   activeRuleset: ManagedGroupRulesetSummary | null;
   sidePickPackages: SidePickPackageOption[];
   canManageRuleset: boolean;
+  canManageSidePicks: boolean;
+  scoringPreview: ManagedGroupScoringPreview;
   trophies: Array<{
     id: string;
     key: string;
@@ -359,6 +388,26 @@ export type SaveManagedGroupRulesetInput = {
 
 export type SaveManagedGroupRulesetResult = ResendGroupInviteResult;
 
+export type SaveGroupSidePickEntryInput = {
+  groupId: string;
+  definitionId: string;
+  selectedTeamId?: string | null;
+  selectedText?: string | null;
+};
+
+export type SaveGroupSidePickEntryResult = ResendGroupInviteResult;
+
+export type ScoreManagedGroupSidePickInput = {
+  groupId: string;
+  definitionId: string;
+  userId: string;
+  points: number;
+  scoringScope: "standard" | "group_custom";
+  note?: string;
+};
+
+export type ScoreManagedGroupSidePickResult = ResendGroupInviteResult;
+
 export type FetchMyGroupsResult =
   | {
       ok: true;
@@ -366,13 +415,11 @@ export type FetchMyGroupsResult =
         userId: string;
         email: string;
         role: PlatformRole;
+        planTier: CommercialTier | null;
+        accessLevel: AccessLevel;
         preferredLanguage: SupportedLanguage;
       };
-      managerAccess: {
-        enabled: boolean;
-        maxGroups?: number;
-        maxMembersPerGroup?: number;
-      };
+      tierAccess: ResolvedTierAccess;
       groupAccess: {
         joinedGroupCount: number;
         managedGroupCount: number;
@@ -393,6 +440,7 @@ export type FetchDashboardGroupAccessResult =
         managedGroupCount: number;
         hasAnyGroups: boolean;
       };
+      dashboardUiResetEpoch: number;
     }
   | {
       ok: false;
@@ -488,50 +536,87 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
   }
 
   const name = input.name?.trim();
+  const description = normalizeGroupDescription(input.description);
   if (!name) {
     return { ok: false, message: "Group name is required." };
   }
 
-  const adminSupabase = createAdminClient();
-  const managerLimits = await getManagerLimits(adminSupabase, currentUser.userId);
+  if (description.length > MAX_GROUP_DESCRIPTION_LENGTH) {
+    return {
+      ok: false,
+      message: `Keep the group description under ${MAX_GROUP_DESCRIPTION_LENGTH} characters.`
+    };
+  }
 
-  if (currentUser.role !== "admin" && !managerLimits) {
-    return { ok: false, message: "You are not entitled to create groups yet." };
+  const adminSupabase = createAdminClient();
+  if (currentUser.role !== "admin" && !currentUser.tierAccess.capabilities.canCreateGroup) {
+    console.warn("[tier-access:create-group-blocked]", {
+      userId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      planTier: currentUser.planTier
+    });
+    return {
+      ok: false,
+      message: "Your current tier does not include group creation yet. Upgrade options are coming soon."
+    };
   }
 
   const requestedMembershipLimit = normalizeRequestedMembershipLimit(input.membershipLimit);
-  const membershipLimit =
-    currentUser.role === "admin"
-      ? requestedMembershipLimit
-      : Math.min(requestedMembershipLimit, managerLimits!.max_members_per_group);
+  const membershipLimit = getEffectiveMembershipLimitForGroup(requestedMembershipLimit, currentUser);
+  const effectiveManagedGroupLimit = getEffectiveManagedGroupLimit(currentUser);
 
-  if (currentUser.role !== "admin" && requestedMembershipLimit > managerLimits!.max_members_per_group) {
+  if (
+    currentUser.role !== "admin" &&
+    effectiveManagedGroupLimit !== null &&
+    requestedMembershipLimit > membershipLimit
+  ) {
+    console.warn("[tier-access:create-group-limit-blocked]", {
+      userId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      requestedMembershipLimit,
+      membershipLimit
+    });
     return {
       ok: false,
-      message: `Your plan allows up to ${managerLimits!.max_members_per_group} members per group.`
+      message: `Your current tier allows up to ${membershipLimit} members per group.`
     };
   }
 
   if (currentUser.role !== "admin") {
     const activeGroupCount = await getActiveOwnedGroupCount(adminSupabase, currentUser.userId);
-    if (activeGroupCount >= managerLimits!.max_groups) {
+    if (isAtOrOverManagedGroupLimit(activeGroupCount, currentUser)) {
+      console.warn("[tier-access:create-group-cap-blocked]", {
+        userId: currentUser.userId,
+        accessLevel: currentUser.accessLevel,
+        activeGroupCount,
+        effectiveManagedGroupLimit
+      });
       return {
         ok: false,
-        message: `You already manage ${managerLimits!.max_groups} active group${managerLimits!.max_groups === 1 ? "" : "s"}.`
+        message: `Your current tier allows ${effectiveManagedGroupLimit} active group${effectiveManagedGroupLimit === 1 ? "" : "s"}. Upgrade options are coming soon.`
       };
     }
   }
+
+  console.info("[tier-access:create-group]", {
+    userId: currentUser.userId,
+    accessLevel: currentUser.accessLevel,
+    requestedMembershipLimit,
+    membershipLimit,
+    hasDescription: Boolean(description)
+  });
 
   const { data, error } = await adminSupabase
     .from("groups")
     .insert({
       name,
+      description: description || null,
       owner_user_id: currentUser.userId,
       created_by_user_id: currentUser.userId,
       membership_limit: membershipLimit,
       status: "active"
     })
-    .select("id,name,membership_limit,status")
+    .select("id,name,description,membership_limit,status")
     .single();
 
   if (error) {
@@ -543,12 +628,13 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
 
   return {
     ok: true,
-    group: {
-      id: data.id,
-      name: data.name,
-      membershipLimit: data.membership_limit,
-      status: data.status
-    },
+      group: {
+        id: data.id,
+        name: data.name,
+        description: data.description ?? null,
+        membershipLimit: data.membership_limit,
+        status: data.status
+      },
     message: "Group created."
   };
 }
@@ -566,9 +652,17 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
   }
 
   const adminSupabase = createAdminClient();
-  const managedGroup = await getManagedGroup(adminSupabase, groupId, currentUser.userId, currentUser.role);
+  const managedGroup = await getManagedGroup(adminSupabase, groupId, currentUser);
   if (!managedGroup) {
     return { ok: false, message: "You do not manage that group." };
+  }
+
+  const relation: GroupRelation = {
+    isOwner: managedGroup.owner_user_id === currentUser.userId,
+    isGroupManager: true
+  };
+  if (!canInviteMember(currentUser, relation)) {
+    return { ok: false, message: "Your current tier does not include invite management for this group." };
   }
 
   console.info("Manager group invite requested.", {
@@ -577,7 +671,7 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
     email: normalizedEmail
   });
 
-  const seatCheck = await ensureGroupHasInviteCapacity(adminSupabase, managedGroup.id, managedGroup.membership_limit);
+  const seatCheck = await ensureGroupHasInviteCapacity(adminSupabase, managedGroup, currentUser);
   if (!seatCheck.ok) {
     return seatCheck;
   }
@@ -761,12 +855,20 @@ export async function createGroupInviteShareLinkAction(
   }
 
   const adminSupabase = createAdminClient();
-  const managedGroup = await getManagedGroup(adminSupabase, groupId, currentUser.userId, currentUser.role);
+  const managedGroup = await getManagedGroup(adminSupabase, groupId, currentUser);
   if (!managedGroup) {
     return { ok: false, message: "You do not manage that group." };
   }
 
-  const seatCheck = await ensureGroupHasInviteCapacity(adminSupabase, managedGroup.id, managedGroup.membership_limit);
+  const relation: GroupRelation = {
+    isOwner: managedGroup.owner_user_id === currentUser.userId,
+    isGroupManager: true
+  };
+  if (!canInviteMember(currentUser, relation)) {
+    return { ok: false, message: "Your current tier does not include invite management for this group." };
+  }
+
+  const seatCheck = await ensureGroupHasInviteCapacity(adminSupabase, managedGroup, currentUser);
   if (!seatCheck.ok) {
     return seatCheck;
   }
@@ -896,9 +998,17 @@ export async function createManagedGroupInviteCodeAction(input: {
   }
 
   const adminSupabase = createAdminClient();
-  const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+  const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
   if (!managedGroup) {
     return { ok: false, message: "You do not manage that group." };
+  }
+
+  const relation: GroupRelation = {
+    isOwner: managedGroup.owner_user_id === currentUser.userId,
+    isGroupManager: true
+  };
+  if (!canInviteMember(currentUser, relation)) {
+    return { ok: false, message: "Your current tier does not include invite management for this group." };
   }
 
   const existingInviteCode = await fetchPrimaryManagedGroupInviteCode(adminSupabase, managedGroup.id, managedGroup.name);
@@ -906,6 +1016,14 @@ export async function createManagedGroupInviteCodeAction(input: {
   if (!customCodeResult.ok) {
     return customCodeResult;
   }
+
+  console.info("[tier-access:invite-code-activate]", {
+    userId: currentUser.userId,
+    accessLevel: currentUser.accessLevel,
+    groupId: managedGroup.id,
+    replacingExisting: Boolean(existingInviteCode && input.replaceExisting),
+    hasCustomCode: Boolean(customCodeResult.code)
+  });
 
   if (existingInviteCode && !input.replaceExisting) {
     if (
@@ -1028,15 +1146,30 @@ export async function deactivateManagedGroupInviteCodeAction(
   }
 
   const adminSupabase = createAdminClient();
-  const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+  const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
   if (!managedGroup) {
     return { ok: false, message: "You do not manage that group." };
+  }
+
+  const relation: GroupRelation = {
+    isOwner: managedGroup.owner_user_id === currentUser.userId,
+    isGroupManager: true
+  };
+  if (!canInviteMember(currentUser, relation)) {
+    return { ok: false, message: "Your current tier does not include invite management for this group." };
   }
 
   const currentInviteCode = await fetchPrimaryManagedGroupInviteCode(adminSupabase, managedGroup.id, managedGroup.name);
   if (!currentInviteCode) {
     return { ok: false, message: "No active invite code found." };
   }
+
+  console.info("[tier-access:invite-code-deactivate]", {
+    userId: currentUser.userId,
+    accessLevel: currentUser.accessLevel,
+    groupId: managedGroup.id,
+    inviteCodeId: currentInviteCode.id
+  });
 
   await deactivateActiveManagedGroupInviteCodes(adminSupabase, managedGroup.id);
 
@@ -1111,7 +1244,7 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
 
   const { data: group, error: groupError } = await adminSupabase
     .from("groups")
-    .select("id,membership_limit,status")
+    .select("id,membership_limit,owner_user_id,status")
     .eq("id", inviteRow.group_id)
     .single();
 
@@ -1123,7 +1256,7 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
     return { ok: false, message: "That group is not accepting members right now." };
   }
 
-  const seatCheck = await ensureGroupHasOpenSeat(adminSupabase, group.id, group.membership_limit);
+  const seatCheck = await ensureGroupHasOpenSeat(adminSupabase, group as GroupRow, currentUser);
   if (!seatCheck.ok) {
     return seatCheck;
   }
@@ -1248,9 +1381,18 @@ export async function createManagedGroupTrophyAction(
   try {
     const adminSupabase = createAdminClient();
     const managerCustomTrophiesEnabled = await fetchBooleanAppSetting("manager_custom_trophies_enabled", false);
-    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
     if (!managedGroup) {
       return { ok: false, message: "You do not manage that group." };
+    }
+
+    const relation: GroupRelation = {
+      isOwner: managedGroup.owner_user_id === currentUser.userId,
+      isGroupManager: true
+    };
+
+    if (!hasManagerAccess(currentUser.accessLevel) || !canAwardSocialTrophy(currentUser, relation)) {
+      return { ok: false, message: "Custom group trophies are manager-only right now." };
     }
 
     if (currentUser.role !== "admin" && !managerCustomTrophiesEnabled) {
@@ -1348,9 +1490,18 @@ export async function awardManagedGroupTrophyAction(
 
   try {
     const adminSupabase = createAdminClient();
-    const visibleGroup = await getVisibleGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
-    if (!visibleGroup) {
-      return { ok: false, message: "You are not part of that group." };
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    const relation: GroupRelation = {
+      isOwner: managedGroup.owner_user_id === currentUser.userId,
+      isGroupManager: true
+    };
+
+    if (!canAwardSocialTrophy(currentUser, relation)) {
+      return { ok: false, message: "Awarding trophies is manager-only right now." };
     }
 
     if (trimmedUserId === currentUser.userId && currentUser.role !== "admin") {
@@ -1496,7 +1647,7 @@ export async function awardManagedGroupTrophyAction(
           trophyTier: awardedTrophy.tier ?? "special",
           trophyDescription: null,
           awardedAt,
-          groupName: visibleGroup.name
+          groupName: managedGroup.name
         }
       ]
     });
@@ -1573,7 +1724,7 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
 
   try {
     const adminSupabase = createAdminClient();
-    const invite = await getManagedGroupInvite(adminSupabase, trimmedInviteId, currentUser.userId, currentUser.role);
+    const invite = await getManagedGroupInvite(adminSupabase, trimmedInviteId, currentUser);
     if (!invite) {
       return { ok: false, message: "You do not manage that invite." };
     }
@@ -1582,12 +1733,12 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
       return { ok: false, message: "That invite has already been accepted." };
     }
 
-    const managedGroup = await getManagedGroup(adminSupabase, invite.group_id, currentUser.userId, currentUser.role);
+    const managedGroup = await getManagedGroup(adminSupabase, invite.group_id, currentUser);
     if (!managedGroup) {
       return { ok: false, message: "You do not manage that group." };
     }
 
-    const seatCheck = await ensureGroupHasInviteCapacity(adminSupabase, managedGroup.id, managedGroup.membership_limit, invite.id);
+    const seatCheck = await ensureGroupHasInviteCapacity(adminSupabase, managedGroup, currentUser, invite.id);
     if (!seatCheck.ok) {
       return seatCheck;
     }
@@ -1674,7 +1825,7 @@ export async function cancelGroupInviteAction(inviteId: string): Promise<CancelG
 
   try {
     const adminSupabase = createAdminClient();
-    const invite = await getManagedGroupInvite(adminSupabase, trimmedInviteId, currentUser.userId, currentUser.role);
+    const invite = await getManagedGroupInvite(adminSupabase, trimmedInviteId, currentUser);
     if (!invite) {
       return { ok: false, message: "You do not manage that invite." };
     }
@@ -1694,6 +1845,13 @@ export async function cancelGroupInviteAction(inviteId: string): Promise<CancelG
     if (error) {
       return { ok: false, message: error.message };
     }
+
+    console.info("[tier-access:group-invite-canceled]", {
+      userId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      groupId: invite.group_id,
+      inviteId: invite.id
+    });
 
     revalidatePath("/my-groups");
     return { ok: true, message: "Group invite canceled." };
@@ -1717,7 +1875,7 @@ export async function removeGroupMemberAction(groupId: string, userId: string): 
 
   try {
     const adminSupabase = createAdminClient();
-    const managedGroup = await getManagedGroup(adminSupabase, groupId.trim(), currentUser.userId, currentUser.role);
+    const managedGroup = await getManagedGroup(adminSupabase, groupId.trim(), currentUser);
     if (!managedGroup) {
       return { ok: false, message: "You do not manage that group." };
     }
@@ -1750,6 +1908,13 @@ export async function removeGroupMemberAction(groupId: string, userId: string): 
       return { ok: false, message: error.message };
     }
 
+    console.info("[tier-access:group-member-removed]", {
+      userId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      groupId: managedGroup.id,
+      removedUserId: userId.trim()
+    });
+
     revalidatePath("/my-groups");
     return { ok: true, message: "Player removed from the group." };
   } catch (error) {
@@ -1777,15 +1942,17 @@ export async function updateManagedGroupLimitAction(
 
   try {
     const adminSupabase = createAdminClient();
-    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
     if (!managedGroup) {
       return { ok: false, message: "You do not manage that group." };
     }
 
-    const [memberCountResult, pendingInviteCountResult, managerLimits] = await Promise.all([
+    const [memberCountResult, pendingInviteCountResult, allowedMembershipLimit] = await Promise.all([
       adminSupabase.from("group_members").select("id", { count: "exact", head: true }).eq("group_id", trimmedGroupId),
       adminSupabase.from("group_invites").select("id", { count: "exact", head: true }).eq("group_id", trimmedGroupId).eq("status", "pending"),
-      currentUser.role === "admin" ? Promise.resolve(null) : getManagerLimits(adminSupabase, currentUser.userId)
+      currentUser.role === "admin"
+        ? Promise.resolve<number | null>(null)
+        : getAllowedMembershipLimitForGroup(adminSupabase, managedGroup, currentUser)
     ]);
 
     if (memberCountResult.error || pendingInviteCountResult.error) {
@@ -1807,14 +1974,10 @@ export async function updateManagedGroupLimitAction(
     }
 
     if (currentUser.role !== "admin") {
-      if (!managerLimits) {
-        return { ok: false, message: "You are not entitled to update group limits." };
-      }
-
-      if (nextLimit > managerLimits.max_members_per_group) {
+      if (allowedMembershipLimit !== null && nextLimit > allowedMembershipLimit) {
         return {
           ok: false,
-          message: `Your current manager allowance is ${managerLimits.max_members_per_group} members per group.`
+          message: `Your current tier allows up to ${allowedMembershipLimit} members per group.`
         };
       }
     }
@@ -1831,6 +1994,13 @@ export async function updateManagedGroupLimitAction(
       return { ok: false, message: updateError.message };
     }
 
+    console.info("[tier-access:group-limit-updated]", {
+      userId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      groupId: trimmedGroupId,
+      nextLimit
+    });
+
     revalidatePath("/my-groups");
     revalidatePath("/dashboard");
 
@@ -1842,96 +2012,6 @@ export async function updateManagedGroupLimitAction(
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not update that group limit."
-    };
-  }
-}
-
-export async function updateGroupInviteNameAction(inviteId: string, suggestedDisplayName: string): Promise<UpdateGroupInviteNameResult> {
-  const currentUser = await getCurrentUserContext();
-  if (!currentUser.ok) {
-    return currentUser;
-  }
-
-  const trimmedInviteId = inviteId.trim();
-  if (!trimmedInviteId) {
-    return { ok: false, message: "Invite id is required." };
-  }
-
-  try {
-    const adminSupabase = createAdminClient();
-    const invite = await getManagedGroupInvite(adminSupabase, trimmedInviteId, currentUser.userId, currentUser.role);
-    if (!invite) {
-      return { ok: false, message: "You do not manage that invite." };
-    }
-
-    if (invite.status !== "pending") {
-      return { ok: false, message: "Only pending invites can be edited." };
-    }
-
-    const { error } = await adminSupabase
-      .from("group_invites")
-      .update({
-        suggested_display_name: suggestedDisplayName.trim() || null
-      })
-      .eq("id", invite.id);
-
-    if (error) {
-      return { ok: false, message: error.message };
-    }
-
-    revalidatePath("/my-groups");
-    return { ok: true, message: "Suggested temporary invite name updated." };
-  } catch (error) {
-    return {
-      ok: false,
-      message: error instanceof Error ? error.message : "Could not update that invite."
-    };
-  }
-}
-
-export async function deleteManagedGroupAction(groupId: string, confirmationName: string): Promise<DeleteManagedGroupResult> {
-  const currentUser = await getCurrentUserContext();
-  if (!currentUser.ok) {
-    return currentUser;
-  }
-
-  const trimmedGroupId = groupId.trim();
-  const trimmedConfirmationName = confirmationName.trim();
-  if (!trimmedGroupId || !trimmedConfirmationName) {
-    return { ok: false, message: "Group id and confirmation name are required." };
-  }
-
-  try {
-    const adminSupabase = createAdminClient();
-    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
-    if (!managedGroup) {
-      return { ok: false, message: "You do not manage that group." };
-    }
-
-    if (trimmedConfirmationName !== managedGroup.name.trim()) {
-      return { ok: false, message: "Type the exact group name before deleting it." };
-    }
-
-    const { error } = await adminSupabase
-      .from("groups")
-      .delete()
-      .eq("id", managedGroup.id);
-
-    if (error) {
-      return { ok: false, message: error.message };
-    }
-
-    revalidatePath("/my-groups");
-    revalidatePath("/dashboard");
-
-    return {
-      ok: true,
-      message: "Group deleted. Players kept their accounts, invites, and predictions."
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      message: error instanceof Error ? error.message : "Could not delete that group."
     };
   }
 }
@@ -1980,7 +2060,7 @@ export async function saveManagedGroupRulesetAction(
 
   try {
     const adminSupabase = createAdminClient();
-    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser.userId, currentUser.role);
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
     if (!managedGroup) {
       return { ok: false, message: "You do not manage that group." };
     }
@@ -2047,6 +2127,16 @@ export async function saveManagedGroupRulesetAction(
 
     await rebuildGroupCustomBonusScores(adminSupabase, [trimmedGroupId]);
 
+    console.info("[group-ruleset-saved]", {
+      actorUserId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      groupId: trimmedGroupId,
+      version: nextVersion,
+      status: nextRuleset.status,
+      presetKey: nextRuleset.presetKey,
+      sidePickPackageId: nextRuleset.sidePickPackageId
+    });
+
     revalidatePath("/my-groups");
     revalidatePath("/leaderboard");
 
@@ -2065,6 +2155,273 @@ export async function saveManagedGroupRulesetAction(
   }
 }
 
+export async function saveGroupSidePickEntryAction(
+  input: SaveGroupSidePickEntryInput
+): Promise<SaveGroupSidePickEntryResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const groupId = input.groupId.trim();
+  const definitionId = input.definitionId.trim();
+  if (!groupId || !definitionId) {
+    return { ok: false, message: "Group and side-pick definition are required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const visibleGroups = await fetchVisibleGroups(adminSupabase, currentUser);
+    if (!visibleGroups.some((group) => group.id === groupId)) {
+      return { ok: false, message: "You do not have access to that group." };
+    }
+
+    const { data: activeRulesets, error: activeRulesetsError } = await adminSupabase
+      .from("group_rulesets")
+      .select("side_pick_package_id")
+      .eq("group_id", groupId)
+      .eq("status", "active")
+      .limit(1)
+      .maybeSingle();
+
+    if (activeRulesetsError) {
+      return { ok: false, message: activeRulesetsError.message };
+    }
+
+    const activePackageId = (activeRulesets as { side_pick_package_id?: string | null } | null)?.side_pick_package_id ?? null;
+    if (!activePackageId) {
+      return { ok: false, message: "This group does not have an active side-pick package yet." };
+    }
+
+    const { data: definition, error: definitionError } = await adminSupabase
+      .from("side_pick_definitions")
+      .select("id,response_kind,package_id")
+      .eq("id", definitionId)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (definitionError) {
+      return { ok: false, message: definitionError.message };
+    }
+
+    if (!definition || definition.package_id !== activePackageId) {
+      return { ok: false, message: "That side pick is not active for this group." };
+    }
+
+    const selectedText = input.selectedText?.trim() || null;
+    const selectedTeamId = input.selectedTeamId?.trim() || null;
+    if (definition.response_kind === "team" && !selectedTeamId) {
+      return { ok: false, message: "Choose a team for that side pick." };
+    }
+
+    if (definition.response_kind === "text" && !selectedText) {
+      return { ok: false, message: "Enter a response for that side pick." };
+    }
+
+    const { error: upsertError } = await adminSupabase
+      .from("side_pick_entries")
+      .upsert(
+        {
+          group_id: groupId,
+          definition_id: definitionId,
+          user_id: currentUser.userId,
+          selected_team_id: selectedTeamId,
+          selected_text: selectedText
+        },
+        { onConflict: "group_id,definition_id,user_id" }
+      );
+
+    if (upsertError) {
+      return { ok: false, message: upsertError.message };
+    }
+
+    console.info("[side-pick-entry-saved]", {
+      userId: currentUser.userId,
+      groupId,
+      definitionId
+    });
+
+    revalidatePath("/my-groups");
+    return { ok: true, message: "Side pick saved." };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not save that side pick."
+    };
+  }
+}
+
+export async function scoreManagedGroupSidePickAction(
+  input: ScoreManagedGroupSidePickInput
+): Promise<ScoreManagedGroupSidePickResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  if (!hasDirectorAccess(currentUser.accessLevel)) {
+    return { ok: false, message: "Only Directors, Managing Directors, and Super Admins can score side picks." };
+  }
+
+  const groupId = input.groupId.trim();
+  const definitionId = input.definitionId.trim();
+  const userId = input.userId.trim();
+  if (!groupId || !definitionId || !userId) {
+    return { ok: false, message: "Group, player, and side-pick definition are required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managedGroup = await getManagedGroup(adminSupabase, groupId, currentUser);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    const points = normalizeRulesetBonusValue(input.points);
+    const note = input.note?.trim() || null;
+    const { error: upsertError } = await adminSupabase
+      .from("side_pick_scores")
+      .upsert(
+        {
+          group_id: groupId,
+          definition_id: definitionId,
+          user_id: userId,
+          scoring_scope: input.scoringScope,
+          points,
+          awarded_by_user_id: currentUser.userId,
+          note
+        },
+        { onConflict: "group_id,definition_id,user_id,scoring_scope" }
+      );
+
+    if (upsertError) {
+      return { ok: false, message: upsertError.message };
+    }
+
+    console.info("[side-pick-score-saved]", {
+      actorUserId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      groupId,
+      definitionId,
+      userId,
+      scoringScope: input.scoringScope,
+      points
+    });
+
+    revalidatePath("/leaderboard");
+    revalidatePath("/my-groups");
+    return { ok: true, message: "Side-pick score saved." };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not score that side pick."
+    };
+  }
+}
+
+export async function updateGroupInviteNameAction(inviteId: string, suggestedDisplayName: string): Promise<UpdateGroupInviteNameResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedInviteId = inviteId.trim();
+  if (!trimmedInviteId) {
+    return { ok: false, message: "Invite id is required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const invite = await getManagedGroupInvite(adminSupabase, trimmedInviteId, currentUser);
+    if (!invite) {
+      return { ok: false, message: "You do not manage that invite." };
+    }
+
+    if (invite.status !== "pending") {
+      return { ok: false, message: "Only pending invites can be edited." };
+    }
+
+    const { error } = await adminSupabase
+      .from("group_invites")
+      .update({
+        suggested_display_name: suggestedDisplayName.trim() || null
+      })
+      .eq("id", invite.id);
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    console.info("[tier-access:group-invite-name-updated]", {
+      userId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      groupId: invite.group_id,
+      inviteId: invite.id
+    });
+
+    revalidatePath("/my-groups");
+    return { ok: true, message: "Suggested temporary invite name updated." };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update that invite."
+    };
+  }
+}
+
+export async function deleteManagedGroupAction(groupId: string, confirmationName: string): Promise<DeleteManagedGroupResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedGroupId = groupId.trim();
+  const trimmedConfirmationName = confirmationName.trim();
+  if (!trimmedGroupId || !trimmedConfirmationName) {
+    return { ok: false, message: "Group id and confirmation name are required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    if (trimmedConfirmationName !== managedGroup.name.trim()) {
+      return { ok: false, message: "Type the exact group name before deleting it." };
+    }
+
+    const { error } = await adminSupabase
+      .from("groups")
+      .delete()
+      .eq("id", managedGroup.id);
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    console.info("[tier-access:group-deleted]", {
+      userId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      groupId: managedGroup.id
+    });
+
+    revalidatePath("/my-groups");
+    revalidatePath("/dashboard");
+
+    return {
+      ok: true,
+      message: "Group deleted. Players kept their accounts, invites, and predictions."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not delete that group."
+    };
+  }
+}
+
 export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
   const currentUser = await getCurrentUserContext();
   if (!currentUser.ok) {
@@ -2073,11 +2430,11 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
 
   try {
     const adminSupabase = createAdminClient();
-    const [managerLimits, groups, joinedGroupCount] = await Promise.all([
-      getManagerLimits(adminSupabase, currentUser.userId),
-      fetchVisibleGroups(adminSupabase, currentUser.userId, currentUser.role),
+    const [groups, joinedGroupCount] = await Promise.all([
+      fetchVisibleGroups(adminSupabase, currentUser),
       fetchJoinedPlayerGroupCount(adminSupabase, currentUser.userId)
     ]);
+    const managedGroupCount = groups.filter((group) => group.canManage).length;
 
     return {
       ok: true,
@@ -2085,20 +2442,14 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
         userId: currentUser.userId,
         email: currentUser.email,
         role: currentUser.role,
+        planTier: currentUser.planTier,
+        accessLevel: currentUser.accessLevel,
         preferredLanguage: currentUser.preferredLanguage
       },
-      managerAccess: currentUser.role === "admin"
-        ? {
-            enabled: true
-          }
-        : {
-            enabled: Boolean(managerLimits),
-            maxGroups: managerLimits?.max_groups,
-            maxMembersPerGroup: managerLimits?.max_members_per_group
-          },
+      tierAccess: currentUser.tierAccess,
       groupAccess: {
         joinedGroupCount,
-        managedGroupCount: groups.length,
+        managedGroupCount,
         hasAnyGroups: joinedGroupCount > 0 || groups.length > 0
       },
       groups
@@ -2111,7 +2462,7 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
   }
 }
 
-export async function fetchDashboardGroupAccessAction(): Promise<FetchDashboardGroupAccessResult> {
+export async function fetchDashboardGroupAccessDataForCurrentUser(): Promise<FetchDashboardGroupAccessResult> {
   const currentUser = await getCurrentUserContext();
   if (!currentUser.ok) {
     return currentUser;
@@ -2119,10 +2470,12 @@ export async function fetchDashboardGroupAccessAction(): Promise<FetchDashboardG
 
   try {
     const adminSupabase = createAdminClient();
-    const [joinedGroupCount, managedGroupCount] = await Promise.all([
+    const [joinedGroupCount, groups, dashboardUiResetEpoch] = await Promise.all([
       fetchJoinedPlayerGroupCount(adminSupabase, currentUser.userId),
-      fetchManagedGroupCount(adminSupabase, currentUser.userId, currentUser.role)
+      fetchVisibleGroups(adminSupabase, currentUser),
+      fetchIntegerAppSetting(DASHBOARD_UI_RESET_EPOCH_SETTING_KEY, 0)
     ]);
+    const managedGroupCount = groups.filter((group) => group.canManage).length;
 
     return {
       ok: true,
@@ -2130,7 +2483,8 @@ export async function fetchDashboardGroupAccessAction(): Promise<FetchDashboardG
         joinedGroupCount,
         managedGroupCount,
         hasAnyGroups: joinedGroupCount > 0 || managedGroupCount > 0
-      }
+      },
+      dashboardUiResetEpoch
     };
   } catch (error) {
     return {
@@ -2138,6 +2492,10 @@ export async function fetchDashboardGroupAccessAction(): Promise<FetchDashboardG
       message: error instanceof Error ? error.message : "Could not load your group access."
     };
   }
+}
+
+export async function fetchDashboardGroupAccessAction(): Promise<FetchDashboardGroupAccessResult> {
+  return fetchDashboardGroupAccessDataForCurrentUser();
 }
 
 export async function fetchGroupInvitePreviewAction(token: string): Promise<GroupInvitePreviewResult> {
@@ -2209,16 +2567,42 @@ async function getCurrentUserContext(): Promise<CurrentUserContext> {
     return { ok: false, message: "Your player profile could not be loaded." };
   }
 
+  let managerLimits: ManagerLimitsRow | null = null;
+  try {
+    const adminSupabase = createAdminClient();
+    managerLimits = await getManagerLimits(adminSupabase, profile.id);
+  } catch (error) {
+    console.warn("Could not load manager limit overrides for current user.", {
+      userId: profile.id,
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  const tierAccess = resolveTierAccess({
+    role: profile.role,
+    planTier: (profile as { plan_tier?: string | null }).plan_tier ?? null,
+    managerLimits: managerLimits
+      ? {
+          maxGroups: managerLimits.max_groups,
+          maxMembersPerGroup: managerLimits.max_members_per_group
+        }
+      : null
+  });
+
   return {
     ok: true,
     userId: profile.id,
     email: profile.email,
     role: profile.role,
     planTier: normalizeCommercialTier((profile as { plan_tier?: string | null }).plan_tier ?? null),
-    accessLevel: resolveAccessLevel({
-      role: profile.role,
-      planTier: (profile as { plan_tier?: string | null }).plan_tier ?? null
-    }),
+    accessLevel: tierAccess.accessLevel,
+    tierAccess,
+    managerLimits: managerLimits
+      ? {
+          maxGroups: managerLimits.max_groups,
+          maxMembersPerGroup: managerLimits.max_members_per_group
+        }
+      : null,
     preferredLanguage: normalizeLanguage((profile as { preferred_language?: string | null }).preferred_language)
   };
 }
@@ -2238,7 +2622,13 @@ async function fetchCurrentUserContextProfile(
 
   if (!fullProfileQuery.error) {
     return {
-      data: (fullProfileQuery.data as { id: string; email: string; role: PlatformRole; preferred_language?: string | null; plan_tier?: string | null } | null) ?? null,
+      data: (fullProfileQuery.data as {
+        id: string;
+        email: string;
+        role: PlatformRole;
+        preferred_language?: string | null;
+        plan_tier?: string | null;
+      } | null) ?? null,
       error: null
     };
   }
@@ -2281,10 +2671,20 @@ async function fetchCurrentUserContextProfile(
     return { data: null, error: { message: fallbackProfileQuery.error.message } };
   }
 
-  const fallbackRow = fallbackProfileQuery.data as { id: string; email: string; role: PlatformRole; preferred_language?: string | null; plan_tier?: string | null } | null;
+  const fallbackRow = fallbackProfileQuery.data as {
+    id: string;
+    email: string;
+    role: PlatformRole;
+    preferred_language?: string | null;
+    plan_tier?: string | null;
+  } | null;
   return {
     data: fallbackRow
-      ? { ...fallbackRow, preferred_language: fallbackRow.preferred_language ?? "en", plan_tier: fallbackRow.plan_tier ?? null }
+      ? {
+          ...fallbackRow,
+          preferred_language: fallbackRow.preferred_language ?? "en",
+          plan_tier: fallbackRow.plan_tier ?? null
+        }
       : null,
     error: null
   };
@@ -2304,6 +2704,97 @@ async function getManagerLimits(adminSupabase: ReturnType<typeof createAdminClie
   return (data as ManagerLimitsRow | null) ?? null;
 }
 
+async function fetchTierAccessForUser(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string
+): Promise<ResolvedTierAccess | null> {
+  const [{ data: userProfile, error: userError }, managerLimits] = await Promise.all([
+    adminSupabase.from("users").select("id,role,plan_tier").eq("id", userId).maybeSingle(),
+    getManagerLimits(adminSupabase, userId)
+  ]);
+
+  if (userError) {
+    throw new Error(userError.message);
+  }
+
+  if (!userProfile) {
+    return null;
+  }
+
+  return resolveTierAccess({
+    role: userProfile.role as PlatformRole,
+    planTier: (userProfile as { plan_tier?: string | null }).plan_tier ?? null,
+    managerLimits: managerLimits
+      ? {
+          maxGroups: managerLimits.max_groups,
+          maxMembersPerGroup: managerLimits.max_members_per_group
+        }
+      : null
+  });
+}
+
+async function getEffectiveGroupSeatLimit(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  group: Pick<GroupRow, "membership_limit" | "owner_user_id">,
+  currentUser?: Extract<CurrentUserContext, { ok: true }>
+) {
+  if (!group.owner_user_id) {
+    return group.membership_limit;
+  }
+
+  if (currentUser?.role === "admin") {
+    return group.membership_limit;
+  }
+
+  const ownerTierAccess =
+    currentUser?.userId === group.owner_user_id
+      ? currentUser.tierAccess
+      : await fetchTierAccessForUser(adminSupabase, group.owner_user_id);
+
+  if (!ownerTierAccess) {
+    return group.membership_limit;
+  }
+
+  return getEffectiveMembershipLimitForGroup(group.membership_limit, {
+    role: ownerTierAccess.accessLevel === "super_admin" ? "admin" : "player",
+    planTier: ownerTierAccess.commercialTier,
+    managerLimits:
+      ownerTierAccess.hasLegacyManagerOverride &&
+      ownerTierAccess.limits.maxGroups !== null &&
+      ownerTierAccess.limits.maxMembersPerGroup !== null
+        ? {
+            maxGroups: ownerTierAccess.limits.maxGroups,
+            maxMembersPerGroup: ownerTierAccess.limits.maxMembersPerGroup
+          }
+        : null
+  });
+}
+
+async function getAllowedMembershipLimitForGroup(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  group: Pick<GroupRow, "membership_limit" | "owner_user_id">,
+  currentUser?: Extract<CurrentUserContext, { ok: true }>
+) {
+  if (!group.owner_user_id) {
+    return group.membership_limit;
+  }
+
+  if (currentUser?.role === "admin") {
+    return group.membership_limit;
+  }
+
+  const ownerTierAccess =
+    currentUser?.userId === group.owner_user_id
+      ? currentUser.tierAccess
+      : await fetchTierAccessForUser(adminSupabase, group.owner_user_id);
+
+  if (!ownerTierAccess || ownerTierAccess.limits.isUnlimited || ownerTierAccess.limits.maxMembersPerGroup === null) {
+    return group.membership_limit;
+  }
+
+  return ownerTierAccess.limits.maxMembersPerGroup;
+}
+
 async function getActiveOwnedGroupCount(adminSupabase: ReturnType<typeof createAdminClient>, userId: string) {
   const { count, error } = await adminSupabase
     .from("groups")
@@ -2318,47 +2809,11 @@ async function getActiveOwnedGroupCount(adminSupabase: ReturnType<typeof createA
   return count ?? 0;
 }
 
-async function fetchManagedGroupCount(
-  adminSupabase: ReturnType<typeof createAdminClient>,
-  userId: string,
-  role: PlatformRole
-) {
-  if (role === "admin") {
-    const { count, error } = await adminSupabase.from("groups").select("id", { count: "exact", head: true });
-
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    return count ?? 0;
-  }
-
-  const membershipRoleByGroup = await fetchMembershipRolesByGroup(adminSupabase, userId);
-  const managedIds = Array.from(
-    new Set(
-      Array.from(membershipRoleByGroup.entries())
-        .filter(([, membershipRole]) => membershipRole === "manager")
-        .map(([groupId]) => groupId)
-    )
-  );
-
-  const { count, error } = await adminSupabase
-    .from("groups")
-    .select("id", { count: "exact", head: true })
-    .or(`owner_user_id.eq.${userId},id.in.(${managedIds.length > 0 ? managedIds.join(",") : "00000000-0000-0000-0000-000000000000"})`);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return count ?? 0;
-}
-
 async function fetchManagedGroupDetails(
   adminSupabase: ReturnType<typeof createAdminClient>,
   currentUser: Extract<CurrentUserContext, { ok: true }>
 ): Promise<ManagedGroupDetails[]> {
-  const groups = await fetchVisibleGroups(adminSupabase, currentUser.userId, currentUser.role);
+  const groups = await fetchVisibleGroups(adminSupabase, currentUser);
   if (groups.length === 0) {
     return [];
   }
@@ -2371,7 +2826,7 @@ async function fetchManagedGroupDetail(
   currentUser: Extract<CurrentUserContext, { ok: true }>,
   groupId: string
 ): Promise<ManagedGroupDetails | null> {
-  const groups = await fetchVisibleGroups(adminSupabase, currentUser.userId, currentUser.role);
+  const groups = await fetchVisibleGroups(adminSupabase, currentUser);
   const group = groups.find((entry) => entry.id === groupId);
   if (!group) {
     return null;
@@ -2605,6 +3060,11 @@ async function fetchManagedGroupDetailRows(
     activeRuleset: group.canManage ? activeRulesetsByGroup.get(group.id) ?? null : null,
     sidePickPackages: group.canManage ? groupCustomPackages : [],
     canManageRuleset: group.canManage && hasManagingDirectorAccess(currentUser.accessLevel),
+    canManageSidePicks: group.canManage && hasDirectorAccess(currentUser.accessLevel),
+    scoringPreview: {
+      standardScoringLabel: "Standard scoring applies to global rank and average group comparison.",
+      groupScoringLabel: "Applies to this group only. Affects the group leaderboard only."
+    },
     members: membersByGroup.get(group.id) ?? [],
     invites: invitesByGroup.get(group.id) ?? [],
     trophies: (trophiesByGroup.get(group.id) ?? []).sort((left, right) =>
@@ -2658,7 +3118,8 @@ function mapManagedGroupInviteCode(row: AccessCodeRecord, groupName: string): Ma
     id: row.id,
     code: row.code,
     shareMessage,
-    whatsAppUrl: buildManagedGroupInviteCodeWhatsAppUrl(shareMessage)
+    whatsAppUrl: buildManagedGroupInviteCodeWhatsAppUrl(shareMessage),
+    emailUrl: buildManagedGroupInviteCodeEmailUrl(groupName, shareMessage)
   };
 }
 
@@ -2727,14 +3188,6 @@ async function deactivateActiveManagedGroupInviteCodes(
   }
 }
 
-function normalizeRulesetBonusValue(value?: number | null, max = 50) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(max, Math.round(value)));
-}
-
 function buildManagedGroupInviteCodeMessage(input: { groupName: string; code: string }) {
   const appUrl = `${getPublicSiteUrl()}/login?mode=signup`;
 
@@ -2755,11 +3208,17 @@ function buildManagedGroupInviteCodeWhatsAppUrl(message: string) {
   return `https://wa.me/?text=${encodeURIComponent(message)}`;
 }
 
+function buildManagedGroupInviteCodeEmailUrl(groupName: string, message: string) {
+  const subject = `Join my PICK-IT! group: ${groupName}`;
+  return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`;
+}
+
 async function fetchVisibleGroups(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  userId: string,
-  role: PlatformRole
+  currentUser: Pick<Extract<CurrentUserContext, { ok: true }>, "userId" | "role" | "tierAccess">
 ): Promise<MyManagedGroup[]> {
+  const userId = currentUser.userId;
+  const role = currentUser.role;
   const membershipGroupIds = await allVisibleGroupIdList(adminSupabase, userId);
   const membershipRoleByGroup = await fetchMembershipRolesByGroup(
     adminSupabase,
@@ -2770,11 +3229,11 @@ async function fetchVisibleGroups(
   const { data: groups, error: groupsError } = role === "admin"
     ? await adminSupabase
         .from("groups")
-        .select("id,name,membership_limit,status,owner_user_id")
+        .select("id,name,description,membership_limit,status,owner_user_id")
         .order("created_at", { ascending: false })
     : await adminSupabase
         .from("groups")
-        .select("id,name,membership_limit,status,owner_user_id")
+        .select("id,name,description,membership_limit,status,owner_user_id")
         .or(`owner_user_id.eq.${userId},id.in.(${membershipGroupIds.length > 0 ? membershipGroupIds.join(",") : "00000000-0000-0000-0000-000000000000"})`)
         .order("created_at", { ascending: false });
 
@@ -2785,6 +3244,7 @@ async function fetchVisibleGroups(
   const groupRows = (groups ?? []) as Array<{
     id: string;
     name: string;
+    description?: string | null;
     membership_limit: number;
     status: GroupStatus;
     owner_user_id?: string | null;
@@ -2796,18 +3256,25 @@ async function fetchVisibleGroups(
 
   return groupRows.map((group) => {
     const membershipRole = membershipRoleByGroup.get(group.id);
-    const canManage = role === "admin" || group.owner_user_id === userId || membershipRole === "manager";
+    const relation: GroupRelation = {
+      isOwner: group.owner_user_id === userId,
+      isGroupManager: membershipRole === "manager"
+    };
+    const canManage = role === "admin" || canManageGroup(currentUser, relation);
 
     return {
       id: group.id,
       name: group.name,
+      description: group.description ?? null,
       membershipLimit: group.membership_limit,
       status: group.status,
       canManage,
       userRole:
         role === "admin"
           ? "super_admin"
-          : membershipRole ?? "viewer",
+          : canManage
+            ? membershipRole ?? "manager"
+            : membershipRole ?? "viewer",
       currentUserGroupLevelLabel:
         role === "admin"
           ? "Admin View"
@@ -2863,9 +3330,10 @@ async function fetchMembershipRolesByGroup(
 async function getManagedGroup(
   adminSupabase: ReturnType<typeof createAdminClient>,
   groupId: string,
-  userId: string,
-  role: PlatformRole
+  currentUser: Extract<CurrentUserContext, { ok: true }>
 ) {
+  const userId = currentUser.userId;
+  const role = currentUser.role;
   const { data, error } = await adminSupabase
     .from("groups")
     .select("id,name,owner_user_id,membership_limit,status")
@@ -2896,63 +3364,35 @@ async function getManagedGroup(
     throw new Error(membershipError.message);
   }
 
-  return membership ? (data as GroupRow) : null;
-}
-
-async function getVisibleGroup(
-  adminSupabase: ReturnType<typeof createAdminClient>,
-  groupId: string,
-  userId: string,
-  role: PlatformRole
-) {
-  const { data, error } = await adminSupabase
-    .from("groups")
-    .select("id,name,owner_user_id,membership_limit,status")
-    .eq("id", groupId)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  if (!data) {
+  if (!membership) {
     return null;
   }
 
-  if (role === "admin" || data.owner_user_id === userId) {
-    return data as GroupRow;
-  }
+  const relation: GroupRelation = {
+    isOwner: data.owner_user_id === userId,
+    isGroupManager: true
+  };
 
-  const { data: membership, error: membershipError } = await adminSupabase
-    .from("group_members")
-    .select("id")
-    .eq("group_id", groupId)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (membershipError) {
-    throw new Error(membershipError.message);
-  }
-
-  return membership ? (data as GroupRow) : null;
+  return canManageGroup(currentUser, relation) ? (data as GroupRow) : null;
 }
 
 async function ensureGroupHasOpenSeat(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  groupId: string,
-  membershipLimit: number
+  group: Pick<GroupRow, "id" | "membership_limit" | "owner_user_id">,
+  currentUser?: Extract<CurrentUserContext, { ok: true }>
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  const effectiveMembershipLimit = await getEffectiveGroupSeatLimit(adminSupabase, group, currentUser);
   const { count, error } = await adminSupabase
     .from("group_members")
     .select("id", { count: "exact", head: true })
-    .eq("group_id", groupId);
+    .eq("group_id", group.id);
 
   if (error) {
     return { ok: false, message: error.message };
   }
 
-  if ((count ?? 0) >= membershipLimit) {
-    return { ok: false, message: "This group is already full." };
+  if ((count ?? 0) >= effectiveMembershipLimit) {
+    return { ok: false, message: "This group is at its member limit." };
   }
 
   return { ok: true };
@@ -2960,14 +3400,15 @@ async function ensureGroupHasOpenSeat(
 
 async function ensureGroupHasInviteCapacity(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  groupId: string,
-  membershipLimit: number,
+  group: Pick<GroupRow, "id" | "membership_limit" | "owner_user_id">,
+  currentUser?: Extract<CurrentUserContext, { ok: true }>,
   ignoreInviteId?: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  const effectiveMembershipLimit = await getEffectiveGroupSeatLimit(adminSupabase, group, currentUser);
   const pendingInviteQuery = adminSupabase
     .from("group_invites")
     .select("id", { count: "exact", head: true })
-    .eq("group_id", groupId)
+    .eq("group_id", group.id)
     .eq("status", "pending");
 
   if (ignoreInviteId) {
@@ -2975,7 +3416,7 @@ async function ensureGroupHasInviteCapacity(
   }
 
   const [memberCountResult, pendingInviteCountResult] = await Promise.all([
-    adminSupabase.from("group_members").select("id", { count: "exact", head: true }).eq("group_id", groupId),
+    adminSupabase.from("group_members").select("id", { count: "exact", head: true }).eq("group_id", group.id),
     pendingInviteQuery
   ]);
 
@@ -2987,8 +3428,8 @@ async function ensureGroupHasInviteCapacity(
   }
 
   const usedSeats = (memberCountResult.count ?? 0) + (pendingInviteCountResult.count ?? 0);
-  if (usedSeats >= membershipLimit) {
-    return { ok: false, message: "This group has no open seats for another invite." };
+  if (usedSeats >= effectiveMembershipLimit) {
+    return { ok: false, message: "This group is at its member limit." };
   }
 
   return { ok: true };
@@ -3041,8 +3482,7 @@ function getGroupActivityDayWindow() {
 async function getManagedGroupInvite(
   adminSupabase: ReturnType<typeof createAdminClient>,
   inviteId: string,
-  userId: string,
-  role: PlatformRole
+  currentUser: Extract<CurrentUserContext, { ok: true }>
 ) {
   const { data, error } = await adminSupabase
     .from("group_invites")
@@ -3058,7 +3498,7 @@ async function getManagedGroupInvite(
     return null;
   }
 
-  const managedGroup = await getManagedGroup(adminSupabase, data.group_id, userId, role);
+  const managedGroup = await getManagedGroup(adminSupabase, data.group_id, currentUser);
   return managedGroup ? (data as GroupInviteRow) : null;
 }
 
@@ -3262,6 +3702,18 @@ function normalizeEmail(value?: string | null) {
 
 function normalizeGroupInviteCustomMessage(value?: string | null) {
   return value?.trim() ?? "";
+}
+
+function normalizeGroupDescription(value?: string | null) {
+  return value?.trim() ?? "";
+}
+
+function normalizeRulesetBonusValue(value?: number | null, max = 50) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(max, Math.floor(value)));
 }
 
 function hashInviteToken(token: string) {

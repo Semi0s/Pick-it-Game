@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Info } from "lucide-react";
 import {
   acceptGroupInviteAction,
@@ -25,15 +25,15 @@ import {
   type MyManagedGroup
 } from "@/app/my-groups/actions";
 import { Avatar } from "@/components/Avatar";
-import { ManagedGroupRulesetPanel } from "@/components/ManagedGroupRulesetPanel";
+import { DismissibleHelperText } from "@/components/DismissibleHelperText";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
-import { AdminInvitesSection } from "@/components/admin/AdminInvitesClient";
-import { AdminMessage } from "@/components/admin/AdminHomeClient";
-import { formatDate } from "@/components/admin/AdminInvitesClient";
+import { ManagedGroupRulesetPanel } from "@/components/ManagedGroupRulesetPanel";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { OrganizationBrandingPanel } from "@/components/OrganizationBrandingPanel";
+import { TierIconBadge } from "@/components/TierIconBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { showAppToast } from "@/lib/app-toast";
-import { getRoleBadgeLabel } from "@/lib/access-levels";
+import { formatDateOnly } from "@/lib/date-time";
 import {
   appendExplainerLanguageToPath,
   appendLanguageToPath,
@@ -58,6 +58,7 @@ import {
   normalizeInviteTokenInput,
   useSessionDisclosureState
 } from "@/components/player-management/Shared";
+import type { AccessLevel } from "@/lib/tier-access";
 
 type MyGroupsClientProps = {
   inviteToken?: string;
@@ -74,12 +75,25 @@ const GROUP_PEOPLE_SECTION_STORAGE_KEY = "my-groups-expanded-group-people-sectio
 const GROUP_TROPHY_SECTION_STORAGE_KEY = "my-groups-expanded-group-trophy-sections";
 const GROUP_INFO_SECTION_STORAGE_KEY = "my-groups-expanded-group-info-sections";
 const CREATE_GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-create-group";
+const GROUP_LIMIT_WARNING_DISMISS_PREFIX = "pickit:tip:my-groups-group-limit-warning";
 const TROPHY_PROMPTS = [
   { name: "Office Oracle", icon: "🧠", description: "Sees the result before the rest of the room does." },
   { name: "The Messi of Marketing", icon: "🐐", description: "Turns bold calls into highlight reels." },
   { name: "Data Wizard", icon: "📊", description: "Backs every pick with suspiciously good logic." },
   { name: "Drama King", icon: "🎭", description: "Never met a chaotic scoreline they didn't love." }
 ] as const;
+
+function getGroupCardTierAccessLevel(group: MyManagedGroup): AccessLevel {
+  if (group.userRole === "super_admin") {
+    return "super_admin";
+  }
+
+  if (group.canManage || group.userRole === "manager") {
+    return "manager";
+  }
+
+  return "player";
+}
 
 export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLanguage }: MyGroupsClientProps) {
   const router = useRouter();
@@ -92,6 +106,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [managerCustomTrophiesEnabled, setManagerCustomTrophiesEnabled] = useState(false);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [groupName, setGroupName] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
   const [membershipLimit, setMembershipLimit] = useState("");
   const [groupLimitForms, setGroupLimitForms] = useState<Record<string, string>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
@@ -138,6 +153,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [expandedTrophyIds, setExpandedTrophyIds] = useState<string[]>([]);
   const [expandedGroupInfoIds, setExpandedGroupInfoIds] = useState<string[]>([]);
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useSessionDisclosureState(CREATE_GROUP_DISCLOSURE_STORAGE_KEY, false);
+  const confirmationRef = useRef<HTMLDivElement | null>(null);
   const [hasRestoredGroupDisclosureState, setHasRestoredGroupDisclosureState] = useState(false);
   const [hasRestoredGroupLimitState, setHasRestoredGroupLimitState] = useState(false);
   const [hasRestoredInviteCodeState, setHasRestoredInviteCodeState] = useState(false);
@@ -248,6 +264,21 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       showAppToast({ tone: "error", text: inviteEntryError });
     }
   }, [inviteEntryError]);
+
+  useEffect(() => {
+    if ((!confirmation && !deleteConfirmation) || typeof window === "undefined") {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      confirmationRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [confirmation, deleteConfirmation]);
 
   useEffect(() => {
     try {
@@ -479,13 +510,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const currentUser = summary?.ok ? summary.currentUser : null;
   const isSignedIn = Boolean(currentUser);
   const hasAnyGroups = summary?.ok ? summary.groupAccess.hasAnyGroups : false;
+  const tierAccess = summary?.ok ? summary.tierAccess : null;
   const activeHierarchyLevel =
     summary?.ok
-      ? summary.currentUser.role === "admin"
-        ? "super_admin"
-        : summary.managerAccess.enabled
-          ? "manager"
-          : "player"
+      ? summary.currentUser.accessLevel
       : undefined;
   const hierarchyActiveDetails = useMemo(() => {
     if (isLoading) {
@@ -496,7 +524,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       return [summary?.message ?? "Sign in to manage groups."];
     }
 
-    if (summary.currentUser.role === "admin") {
+    if (summary.currentUser.accessLevel === "super_admin") {
       return [
         `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
         "Managed groups: Unlimited",
@@ -505,11 +533,12 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       ];
     }
 
-    if (summary.managerAccess.enabled) {
+    if (summary.tierAccess.capabilities.canSeeOrganizerControls) {
       return [
+        `Tier: ${summary.tierAccess.label}`,
         `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
-        `Managed groups: ${summary.groupAccess.managedGroupCount} / ${summary.managerAccess.maxGroups}`,
-        `New group limit: ${summary.managerAccess.maxMembersPerGroup} members`,
+        `Managed groups: ${summary.groupAccess.managedGroupCount} / ${summary.tierAccess.limits.maxGroups}`,
+        `Group member cap: ${summary.tierAccess.limits.maxMembersPerGroup} members`,
         "Scope: Assigned groups only"
       ];
     }
@@ -525,13 +554,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const managerGroupLimitReached = Boolean(
     summary?.ok &&
       summary.currentUser.role !== "admin" &&
-      summary.managerAccess.enabled &&
-      summary.managerAccess.maxGroups !== undefined &&
-      summary.groupAccess.managedGroupCount >= summary.managerAccess.maxGroups
+      summary.tierAccess.limits.maxGroups !== null &&
+      summary.groupAccess.managedGroupCount >= summary.tierAccess.limits.maxGroups
   );
-  const canCreateGroups = summary?.ok && summary.currentUser.role === "admin"
-    ? true
-    : Boolean(summary?.ok && summary.managerAccess.enabled);
+  const canCreateGroups = Boolean(summary?.ok && summary.tierAccess.capabilities.canCreateGroup);
+  const canManageSocialTrophies = Boolean(summary?.ok && summary.tierAccess.capabilities.canManageSocialTrophies);
   const filteredGroups = useMemo(() => {
     const orderedGroups = [...summaryGroups].sort((left, right) => {
       if (left.canManage !== right.canManage) {
@@ -564,12 +591,14 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
     const result = await createGroupAction({
       name: groupName,
+      description: groupDescription,
       membershipLimit: membershipLimit ? Number(membershipLimit) : undefined
     });
 
     setMessage({ tone: result.ok ? "success" : "error", text: result.message });
     if (result.ok) {
       setGroupName("");
+      setGroupDescription("");
       setMembershipLimit("");
       await load();
     }
@@ -816,7 +845,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       <ManagementIntro
         eyebrow="My Groups"
         title="Play in groups and manage them"
-        description="Players see the groups they belong to. Managers get group controls. Directors get an elevated control layer at the top."
+        description="Players see the groups they belong to. Organizers get the group controls their tier allows."
         statusChip={
           summary?.ok
             ? `${summary.groupAccess.joinedGroupCount} joined · ${summary.groupAccess.managedGroupCount} managed`
@@ -824,46 +853,48 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         }
       />
 
-      {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
+      {confirmation || deleteConfirmation ? (
+        <div ref={confirmationRef} className="scroll-mt-28 space-y-3">
+          {confirmation ? (
+            <InlineConfirmation
+              title={confirmation.title}
+              description={confirmation.description}
+              confirmLabel={confirmation.confirmLabel}
+              onConfirm={confirmation.onConfirm}
+              onCancel={() => setConfirmation(null)}
+              isPending={actionKey === confirmation.key}
+            />
+          ) : null}
 
-      {confirmation ? (
-        <InlineConfirmation
-          title={confirmation.title}
-          description={confirmation.description}
-          confirmLabel={confirmation.confirmLabel}
-          onConfirm={confirmation.onConfirm}
-          onCancel={() => setConfirmation(null)}
-          isPending={actionKey === confirmation.key}
-        />
-      ) : null}
-
-      {deleteConfirmation ? (
-        <InlineTextConfirmation
-          title={`Delete ${deleteConfirmation.groupName}?`}
-          description="This removes the group, its memberships, and its pending group invites. It does not delete player accounts, app-level invites, or predictions."
-          confirmLabel="Delete Group"
-          expectedValue={deleteConfirmation.groupName}
-          inputLabel="Type the group name to confirm"
-          inputPlaceholder={deleteConfirmation.groupName}
-          value={deleteConfirmationValue}
-          onValueChange={setDeleteConfirmationValue}
-          onConfirm={() => {
-            void withAction(deleteConfirmation.key, async () => {
-              const result = await deleteManagedGroupAction(deleteConfirmation.groupId, deleteConfirmationValue);
-              setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-              if (result.ok) {
+          {deleteConfirmation ? (
+            <InlineTextConfirmation
+              title={`Delete ${deleteConfirmation.groupName}?`}
+              description="This removes the group, its memberships, and its pending group invites. It does not delete player accounts, app-level invites, or predictions."
+              confirmLabel="Delete Group"
+              expectedValue={deleteConfirmation.groupName}
+              inputLabel="Type the group name to confirm"
+              inputPlaceholder={deleteConfirmation.groupName}
+              value={deleteConfirmationValue}
+              onValueChange={setDeleteConfirmationValue}
+              onConfirm={() => {
+                void withAction(deleteConfirmation.key, async () => {
+                  const result = await deleteManagedGroupAction(deleteConfirmation.groupId, deleteConfirmationValue);
+                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                  if (result.ok) {
+                    setDeleteConfirmation(null);
+                    setDeleteConfirmationValue("");
+                    await load();
+                  }
+                });
+              }}
+              onCancel={() => {
                 setDeleteConfirmation(null);
                 setDeleteConfirmationValue("");
-                await load();
-              }
-            });
-          }}
-          onCancel={() => {
-            setDeleteConfirmation(null);
-            setDeleteConfirmationValue("");
-          }}
-          isPending={actionKey === deleteConfirmation.key}
-        />
+              }}
+              isPending={actionKey === deleteConfirmation.key}
+            />
+          ) : null}
+        </div>
       ) : null}
 
       {inviteToken ? (
@@ -879,7 +910,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               </p>
               <p className="text-sm font-semibold text-gray-600">
                 Status: {invitePreview.status}
-                {invitePreview.expiresAt ? ` · Expires ${formatDate(invitePreview.expiresAt)}` : ""}
+                {invitePreview.expiresAt ? ` · Expires ${formatDateOnly(invitePreview.expiresAt)}` : ""}
               </p>
               {invitePreview.customMessage ? (
                 <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
@@ -888,9 +919,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     {invitePreview.customMessage}
                   </p>
                 </div>
-              ) : null}
-              {invitePreviewMessage ? (
-                <AdminMessage tone={invitePreviewMessage.tone} message={invitePreviewMessage.text} />
               ) : null}
               {isSignedIn && invitePreview.status === "pending" && isInviteEmailMatch ? (
                 <ActionButton type="button" onClick={handleAcceptInvite} disabled={isAcceptingInvite} tone="accent" fullWidth>
@@ -942,10 +970,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                 </div>
               )}
             </div>
-          ) : invitePreviewMessage ? (
-            <div className="mt-3">
-              <AdminMessage tone={invitePreviewMessage.tone} message={invitePreviewMessage.text} />
-            </div>
           ) : null}
         </section>
       ) : null}
@@ -956,7 +980,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
           subtitle="Full system control lives here without adding another dock tab."
           badges={
             <>
-              <ManagementBadge label={getRoleBadgeLabel("super admin")} tone="accent" />
+              <TierIconBadge accessLevel="super_admin" size={22} />
               <ManagementBadge label="unlimited" tone="accent" />
             </>
           }
@@ -975,10 +999,19 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             <p className="text-sm font-semibold leading-6 text-gray-600">
               Create groups without limits, invite players globally, and review every group from this hub.
             </p>
-            <AdminInvitesSection showHeader={false} showInviteList={false} />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Link href="/admin/invites" className="inline-flex">
+                <ActionButton fullWidth>Open Invite Controls</ActionButton>
+              </Link>
+              <Link href="/admin/groups" className="inline-flex">
+                <ActionButton fullWidth>Open Group Controls</ActionButton>
+              </Link>
+            </div>
           </div>
         </ManagementCard>
       ) : null}
+
+      {summary?.ok && summary.tierAccess.capabilities.canManageOrganizationBranding ? <OrganizationBrandingPanel /> : null}
 
       {summary?.ok && !hasAnyGroups ? (
         <ManagementCard
@@ -1011,20 +1044,26 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               onSubmit={handleInviteEntrySubmit}
               submitLabel="Open Invite"
             />
-            {inviteEntryError ? <AdminMessage tone="error" message={inviteEntryError} /> : null}
           </div>
         </ManagementCard>
       ) : null}
 
       {canCreateGroups ? (
         managerGroupLimitReached ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-            <div className="flex items-start gap-2 text-sm font-semibold text-amber-800">
-              <Info aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
-              <p>
-                You are already using all {summary?.ok ? summary.managerAccess.maxGroups : 0} of your available groups.
-                Ask a super admin if you need a higher group limit.
-              </p>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <div className="flex items-center gap-2 text-amber-800">
+              <Info aria-hidden className="h-3.5 w-3.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <DismissibleHelperText
+                  storageKey={`${GROUP_LIMIT_WARNING_DISMISS_PREFIX}:${currentUserId ?? "guest"}`}
+                  dismissLabel="Hide this limit note"
+                >
+                  <p className="text-[11px] font-semibold leading-4 text-amber-800">
+                    Your current tier allows {summary?.ok ? summary.tierAccess.limits.maxGroups : 0} group
+                    {summary?.ok && summary.tierAccess.limits.maxGroups === 1 ? "" : "s"}.
+                  </p>
+                </DismissibleHelperText>
+              </div>
             </div>
           </div>
         ) : (
@@ -1053,6 +1092,20 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   />
                 </label>
                 <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Short description</span>
+                  <textarea
+                    value={groupDescription}
+                    onChange={(event) => setGroupDescription(event.target.value)}
+                    rows={2}
+                    maxLength={250}
+                    placeholder="The family World Cup pool - winner gets eternal bragging rights."
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  />
+                  <p className="mt-2 text-xs font-semibold text-gray-500">
+                    Optional. Keep it short and friendly.
+                  </p>
+                </label>
+                <label className="block">
                   <span className="text-sm font-bold text-gray-800">Membership limit</span>
                   <input
                     type="number"
@@ -1060,8 +1113,17 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     value={membershipLimit}
                     onChange={(event) => setMembershipLimit(event.target.value)}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                    placeholder="Leave blank for the default"
+                    placeholder={
+                      summary?.ok && summary.currentUser.role !== "admin" && tierAccess?.limits.maxMembersPerGroup
+                        ? `Up to ${tierAccess.limits.maxMembersPerGroup}`
+                        : "Leave blank for the default"
+                    }
                   />
+                  {summary?.ok && summary.currentUser.role !== "admin" && tierAccess?.limits.maxMembersPerGroup ? (
+                    <p className="mt-2 text-xs font-semibold text-gray-500">
+                      Your current tier allows up to {tierAccess.limits.maxMembersPerGroup} members per group.
+                    </p>
+                  ) : null}
                 </label>
                 <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
                   {isCreatingGroup ? "Creating..." : "Create Group"}
@@ -1074,12 +1136,12 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
       <section className="space-y-3">
         <div>
-          <h3 className="text-lg font-bold">Groups</h3>
+          <h3 className="text-xl font-black">Groups</h3>
           <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-700">
             {summary?.ok && summary.currentUser.role === "admin"
               ? "See every group, members, invites, and the admin control layer."
-              : summary?.ok && summary.managerAccess.enabled
-                ? "See your groups, members, invites, and the limits that apply to you."
+              : summary?.ok && summary.tierAccess.capabilities.canSeeOrganizerControls
+                ? "See your groups, members, invites, and the limits that apply to your tier."
                 : "See the groups you belong to and who is in them."}
           </p>
         </div>
@@ -1102,7 +1164,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               isSuperAdmin && superAdminGroupQuery.trim()
                 ? "No groups match that search."
                 : summary?.ok && !summary.groupAccess.hasAnyGroups
-                ? "No managed groups yet. Use a new invite link or create a group if you have manager access."
+                ? "No managed groups yet. Use a new invite link or create a group if your tier includes it."
                 : "No groups available right now."
             }
           />
@@ -1122,6 +1184,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const groupLimitFormValue = groupLimitForms[group.id] ?? String(group.membershipLimit);
             const usesDisclosure = true;
             const isExpanded = usesDisclosure ? expandedGroupIds.includes(group.id) : true;
+            const compactMemberCount = resolvedMemberCount ?? 0;
+            const compactPendingInviteCount = resolvedPendingInviteCount ?? 0;
             const isInviteCodeExpanded = expandedInviteCodeIds.includes(group.id);
             const isGroupLimitExpanded = expandedGroupLimitIds.includes(group.id);
             const isPeopleInvitesExpanded = expandedPeopleInviteIds.includes(group.id);
@@ -1156,10 +1220,21 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         <div className="min-w-0 flex-1 truncate text-base font-black leading-tight text-gray-950">
                           {group.name}
                         </div>
-                        <ManagementBadge
-                          label={group.currentUserGroupLevelLabel}
-                          tone={group.canManage ? "accent" : "neutral"}
-                        />
+                        <span
+                          className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-black leading-none ${
+                            group.canManage
+                              ? "border-accent/30 bg-accent-light text-accent-dark"
+                              : "border-gray-200 bg-white text-gray-700"
+                          }`}
+                          aria-label={`${group.currentUserGroupLevelLabel} in this group`}
+                        >
+                          <TierIconBadge
+                            accessLevel={getGroupCardTierAccessLevel(group)}
+                            size={16}
+                            title={group.currentUserGroupLevelLabel}
+                          />
+                          <span>{group.currentUserGroupLevelLabel}</span>
+                        </span>
                       </div>
                       <div className="mt-1 truncate text-[10px] font-semibold uppercase tracking-wide text-gray-700">
                         {group.canManage
@@ -1170,25 +1245,34 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   </div>
                 }
                 className="bg-gray-50"
+                badges={
+                  <>
+                    <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
+                    <ManagementBadge label={`Cap ${group.membershipLimit}`} tone="neutral" />
+                  </>
+                }
                 headerActions={
                   usesDisclosure ? (
-                    <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center gap-2">
                       <InlineDisclosureButton
                         isOpen={isExpanded}
+                        variant="subtle"
                         onClick={() => toggleExpandedGroup(group.id)}
                       />
-                      <Link
-                        href={getGroupLeaderboardHref(group)}
-                        className="inline-flex rounded-md border border-gray-300 bg-gray-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
-                      >
-                        Leaderboard
-                      </Link>
                     </div>
                   ) : null
                 }
               >
                 {isExpanded ? (
                   <>
+                    <div className="mt-1 flex justify-end">
+                      <Link
+                        href={getGroupLeaderboardHref(group)}
+                        className="inline-flex rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
+                      >
+                        Leaderboard
+                      </Link>
+                    </div>
                     {group.canManage ? (
                       <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1208,7 +1292,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               <p className="text-sm font-semibold text-gray-600">Loading invite code...</p>
                             ) : inviteCode ? (
                               <>
-                                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-3">
                                   <code className="text-base font-black uppercase tracking-[0.18em] text-gray-950">
                                     {inviteCode.code}
                                   </code>
@@ -1223,7 +1307,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     Copy code
                                   </button>
                                 </div>
-                                <div className="grid gap-2 sm:grid-cols-2">
+                                <div className="grid gap-2 sm:grid-cols-3">
                                   <ActionButton
                                     type="button"
                                     onClick={() => {
@@ -1237,6 +1321,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   <Link href={inviteCode.whatsAppUrl} target="_blank" rel="noreferrer" className="inline-flex">
                                     <ActionButton fullWidth>Send via WhatsApp</ActionButton>
                                   </Link>
+                                  <a href={inviteCode.emailUrl} className="inline-flex">
+                                    <ActionButton fullWidth>Send via Email</ActionButton>
+                                  </a>
+                                </div>
+                                <div className="grid gap-2 sm:grid-cols-3">
                                   <ActionButton
                                     type="button"
                                     disabled={inviteCodeActionGroupId === group.id}
@@ -1268,7 +1357,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                         }))
                                       }
                                       disabled={inviteCodeActionGroupId === group.id}
-                                      placeholder="Leave blank for an automatic code"
+                                      placeholder="Type your code here"
                                       className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold uppercase tracking-[0.14em] text-gray-950 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                                       aria-label={`Choose an invite code for ${group.name}`}
                                     />
@@ -1475,25 +1564,27 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     )}
                                   </div>
                                   <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {member.role} · Joined {formatDate(member.joinedAt)}
+                                    {member.role} · Joined {formatDateOnly(member.joinedAt)}
                                   </p>
                                 </div>
                               </div>
-                                  {group.canManage && (member.userId !== currentUserId || canSelfAwardTrophies) ? (
+                                  {group.canManage ? (
                                     <div className="flex flex-col items-end gap-2">
-                                      <button
-                                        type="button"
-                                      onClick={() => {
-                                        setTrophySheetTarget({ groupId: group.id, userId: member.userId });
-                                    }}
-                                    className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-lg transition hover:border-amber-300 hover:bg-amber-100"
-                                    aria-label={`Award ${member.name} a trophy`}
-                                  >
-                                    🏆
-                                  </button>
-                                  {member.role === "member" ? (
-                                    <ActionButton
-                                      tone="danger"
+                                      {canManageSocialTrophies && (member.userId !== currentUserId || canSelfAwardTrophies) ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setTrophySheetTarget({ groupId: group.id, userId: member.userId });
+                                          }}
+                                          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-lg transition hover:border-amber-300 hover:bg-amber-100"
+                                          aria-label={`Award ${member.name} a trophy`}
+                                        >
+                                          🏆
+                                        </button>
+                                      ) : null}
+                                      {member.role === "member" ? (
+                                        <ActionButton
+                                          tone="danger"
                                       disabled={actionKey === `remove-member-${member.membershipId}`}
                                       onClick={() => {
                                         setConfirmation({
@@ -1535,11 +1626,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   <p className="truncate text-sm font-black text-gray-950">{invite.email}</p>
                                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
                                     {inviteStatusLabel}
-                                    {invite.expiresAt ? ` · Expires ${formatDate(invite.expiresAt)}` : ""}
+                                    {invite.expiresAt ? ` · Expires ${formatDateOnly(invite.expiresAt)}` : ""}
                                   </p>
                                   <p className="mt-1 text-xs font-semibold text-gray-500">
                                     {invite.invitedByLabel ? `Invited by ${invite.invitedByLabel}` : "Group invite"}
-                                    {invite.lastSentAt ? ` · Last sent ${formatDate(invite.lastSentAt)}` : ""}
+                                    {invite.lastSentAt ? ` · Last sent ${formatDateOnly(invite.lastSentAt)}` : ""}
                                     {` · Send attempts ${invite.sendAttempts}`}
                                   </p>
                                   {invite.lastError ? (
@@ -1640,6 +1731,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         ) : null}
                       </div>
 
+                      {canManageSocialTrophies ? (
                       <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
@@ -1657,7 +1749,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
                         {isTrophyExpanded ? (
                           <>
-                            {group.userRole === "super_admin" || managerCustomTrophiesEnabled ? (
+                            {isSuperAdmin || managerCustomTrophiesEnabled ? (
                               <div className="mt-3 space-y-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-600">
                                 <div>
                                   <p className="font-black text-gray-900">Create Trophy</p>
@@ -1863,6 +1955,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                           </>
                         ) : null}
                       </div>
+                      ) : null}
                           </>
                         ) : null}
                       </div>
@@ -1892,7 +1985,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     </div>
                                   ) : null}
                                   <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {member.role} · Joined {formatDate(member.joinedAt)}
+                                    {member.role} · Joined {formatDateOnly(member.joinedAt)}
                                   </p>
                                 </div>
                               </div>
@@ -1910,7 +2003,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                             <p className="mt-1 text-xs font-semibold text-gray-500">
                               {isSuperAdmin
                                 ? "Adjust this group directly with unlimited super admin access."
-                                : `Your current manager allowance is ${summary?.ok ? summary.managerAccess.maxMembersPerGroup : group.membershipLimit} members per group.`}
+                                : `Your current tier allows up to ${summary?.ok ? summary.tierAccess.limits.maxMembersPerGroup : group.membershipLimit} members per group.`}
                             </p>
                           </div>
                           <InlineDisclosureButton
@@ -1975,7 +2068,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               {isGroupInfoExpanded ? (
                                 <div className="mt-3 space-y-4">
                                   <ManagementGrid>
-                                    <ManagementDatum
+                                  <ManagementDatum
                                       label="Capacity"
                                       value={
                                         resolvedMemberCount !== undefined && resolvedPendingInviteCount !== undefined
@@ -1983,6 +2076,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                           : `Open group details to load seat usage`
                                       }
                                     />
+                                    <ManagementDatum label="Description" value={group.description?.trim() || "None"} />
                                     <ManagementDatum label="Group limit" value={`${group.membershipLimit} members`} />
                                     <ManagementDatum label="Members" value={resolvedMemberCount ?? "—"} />
                                     <ManagementDatum label="Pending invites" value={resolvedPendingInviteCount ?? "—"} />
