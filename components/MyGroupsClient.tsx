@@ -1149,29 +1149,25 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               <ManagementCard
                 key={group.id}
                 title={
-                  <>
-                    <div className="text-xl font-black leading-tight text-gray-950">{group.name}</div>
-                    <div className="mt-1 truncate text-[10px] font-semibold uppercase tracking-wide text-gray-700">
-                      {group.canManage
-                        ? resolvedMemberCount !== undefined && resolvedPendingInviteCount !== undefined
-                          ? `${resolvedMemberCount} members · ${resolvedPendingInviteCount} pending invites`
-                          : "Open to load members and invites"
-                        : resolvedMemberCount !== undefined
-                          ? `${resolvedMemberCount} members`
-                          : "Open to load members"}
+                  <div className="flex min-w-0 items-start gap-3">
+                    <Avatar name={group.name} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="min-w-0 flex-1 truncate text-base font-black leading-tight text-gray-950">
+                          {group.name}
+                        </div>
+                        <ManagementBadge
+                          label={group.currentUserGroupLevelLabel}
+                          tone={group.canManage ? "accent" : "neutral"}
+                        />
+                      </div>
+                      <div className="mt-1 truncate text-[10px] font-semibold uppercase tracking-wide text-gray-700">
+                        {group.canManage
+                          ? `${compactMemberCount} members · ${compactPendingInviteCount} pending invites`
+                          : `${compactMemberCount} members`}
+                      </div>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
-                      <ManagementBadge label={`${group.membershipLimit} seats`} tone="neutral" />
-                      {group.userRole === "super_admin" ? (
-                        <ManagementBadge label={getRoleBadgeLabel("super admin")} tone="accent" />
-                      ) : group.userRole === "manager" ? (
-                        <ManagementBadge label={getRoleBadgeLabel("manager")} tone="accent" />
-                      ) : (
-                        <ManagementBadge label={getRoleBadgeLabel("player")} tone="neutral" />
-                      )}
-                    </div>
-                  </>
+                  </div>
                 }
                 className="bg-gray-50"
                 headerActions={
