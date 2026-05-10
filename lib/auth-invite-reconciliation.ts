@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getEffectiveGroupSeatLimit } from "@/lib/group-tier-limits";
 import { ensureUserCanJoinAnotherGroup } from "@/lib/group-membership-limits";
 
 type AuthUserForReconciliation = {
@@ -38,6 +39,7 @@ type UserRow = {
 type GroupRow = {
   id: string;
   membership_limit: number;
+  owner_user_id?: string | null;
   status: "active" | "archived";
 };
 
@@ -173,7 +175,7 @@ export async function reconcileInvitesForAuthUser(user: AuthUserForReconciliatio
 
     const { data: group, error: groupError } = await adminSupabase
       .from("groups")
-      .select("id,membership_limit,status")
+      .select("id,membership_limit,owner_user_id,status")
       .eq("id", invite.group_id)
       .maybeSingle();
 
@@ -212,7 +214,8 @@ export async function reconcileInvitesForAuthUser(user: AuthUserForReconciliatio
         throw new Error(memberCountError.message);
       }
 
-      if ((memberCount ?? 0) >= (group as GroupRow).membership_limit) {
+      const effectiveSeatLimit = await getEffectiveGroupSeatLimit(adminSupabase, group as GroupRow);
+      if ((memberCount ?? 0) >= effectiveSeatLimit) {
         notes.push(`Skipped group invite ${invite.id} because the group is full.`);
         continue;
       }

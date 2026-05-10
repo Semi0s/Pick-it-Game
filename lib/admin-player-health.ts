@@ -11,6 +11,11 @@ import {
   type RawAdminAuthUser,
   type RawAdminInvite
 } from "@/lib/admin-auth-health";
+import {
+  resolveTierAccess,
+  type AccessLevel,
+  type CommercialTier
+} from "@/lib/tier-access";
 import type { UserRole, UserStatus } from "@/lib/types";
 
 type UserRow = {
@@ -23,6 +28,7 @@ type UserRow = {
   username?: string | null;
   username_set_at?: string | null;
   needs_profile_setup?: boolean | null;
+  plan_tier?: CommercialTier | null;
   total_points: number;
   created_at: string;
 };
@@ -66,6 +72,8 @@ export type AdminPlayerHealthRow = {
   email: string;
   avatarUrl?: string | null;
   roleLabel: string;
+  accessLevel: AccessLevel;
+  planTier?: CommercialTier | null;
   totalPoints: number;
   appState: AdminAppState;
   authState: AdminAuthState;
@@ -102,7 +110,7 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
   const adminSupabase = createAdminClient();
 
   const [{ data: users, error: usersError }, { data: invites, error: invitesError }, { data: managerLimits, error: managerLimitsError }, { data: groups, error: groupsError }, emailJobsResult, groupInviteStatusesResult, groupMembershipsResult, authUsers] = await Promise.all([
-    adminSupabase.from("users").select("id,name,email,avatar_url,role,status,username,username_set_at,needs_profile_setup,total_points,created_at").order("created_at", { ascending: false }),
+    adminSupabase.from("users").select("id,name,email,avatar_url,role,status,username,username_set_at,needs_profile_setup,plan_tier,total_points,created_at").order("created_at", { ascending: false }),
     adminSupabase
       .from("invites")
       .select("email,display_name,role,status,accepted_at,created_at,last_sent_at,send_attempts,last_error")
@@ -146,7 +154,7 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
     ? ((groupMembershipsResult.data ?? []) as GroupMembershipRow[])
     : [];
 
-  const rowsByKey = new Map<string, { appUser?: RawAdminAppUser; invite?: RawAdminInvite; authUser?: RawAdminAuthUser }>();
+  const rowsByKey = new Map<string, { appUser?: RawAdminAppUser & { planTier?: CommercialTier | null }; invite?: RawAdminInvite; authUser?: RawAdminAuthUser }>();
   const managerLimitsByUserId = new Map(
     ((managerLimits ?? []) as ManagerLimitsRow[]).map((row) => [row.user_id, row])
   );
@@ -211,6 +219,7 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         username: user.username ?? null,
         usernameSetAt: user.username_set_at ?? null,
         needsProfileSetup: user.needs_profile_setup ?? null,
+        planTier: user.plan_tier ?? null,
         totalPoints: user.total_points,
         createdAt: user.created_at
       }
@@ -256,6 +265,21 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         value.authUser?.email?.split("@")[0] ??
         "Unknown user";
       const roleLabel = value.appUser?.role ?? value.invite?.role ?? "player";
+      const accessLevel = resolveTierAccess({
+        role: value.appUser?.role === "admin" ? "admin" : "player",
+        planTier: value.appUser?.planTier ?? null,
+        managerLimits: health.appUserId
+          ? (() => {
+              const row = managerLimitsByUserId.get(health.appUserId);
+              return row
+                ? {
+                    maxGroups: row.max_groups,
+                    maxMembersPerGroup: row.max_members_per_group
+                  }
+                : null;
+            })()
+          : null
+      }).accessLevel;
       const inviteDeliveryState = deriveInviteDeliveryState(value.invite);
 
       return {
@@ -264,6 +288,8 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         email: health.email ?? value.invite?.email ?? "Unknown email",
         avatarUrl: value.appUser?.avatar_url ?? null,
         roleLabel,
+        accessLevel,
+        planTier: value.appUser?.planTier ?? null,
         totalPoints: value.appUser?.totalPoints ?? 0,
         appState: health.appState,
         authState: health.authState,

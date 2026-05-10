@@ -1,30 +1,34 @@
 import type { UserProfile } from "@/lib/types";
+import {
+  resolveAccessLevel,
+  resolveTierAccess,
+  type AccessLevel
+} from "@/lib/tier-access";
 
-export type AccessLevel = "player" | "manager" | "super_admin";
-
-export function getAccessLevel(user: Pick<UserProfile, "accessLevel" | "role">): AccessLevel {
+export function getAccessLevel(
+  user: Pick<UserProfile, "accessLevel" | "role" | "planTier" | "managerLimits">
+): AccessLevel {
   if (user.accessLevel) {
     return user.accessLevel;
   }
 
-  if (user.role === "admin") {
-    return "super_admin";
-  }
-
-  return "player";
+  return resolveAccessLevel({
+    role: user.role,
+    planTier: user.planTier,
+    managerLimits: user.managerLimits ?? null
+  });
 }
 
-export function getAccessLevelLabel(user: Pick<UserProfile, "accessLevel" | "role">) {
-  const accessLevel = getAccessLevel(user);
-  if (accessLevel === "super_admin") {
-    return "SA";
-  }
+export function getAccessLevelLabel(
+  user: Pick<UserProfile, "accessLevel" | "role" | "planTier" | "managerLimits">
+) {
+  const access = resolveTierAccess({
+    role: user.role,
+    planTier: user.planTier,
+    managerLimits: user.managerLimits ?? null
+  });
 
-  if (accessLevel === "manager") {
-    return "M";
-  }
-
-  return "P";
+  return access.shortLabel;
 }
 
 export function getRoleBadgeLabel(role: string | null | undefined) {
@@ -42,8 +46,16 @@ export function getRoleBadgeLabel(role: string | null | undefined) {
     return "M";
   }
 
+  if (normalizedRole === "captain") {
+    return "C";
+  }
+
   if (normalizedRole === "director") {
     return "D";
+  }
+
+  if (normalizedRole === "managing director" || normalizedRole === "managing_director") {
+    return "MD";
   }
 
   if (normalizedRole === "admin") {
@@ -57,19 +69,30 @@ export function getRoleBadgeLabel(role: string | null | undefined) {
   return role;
 }
 
-export function getAccessLevelDescription(user: Pick<UserProfile, "accessLevel" | "role">) {
-  const accessLevel = getAccessLevel(user);
-  if (accessLevel === "super_admin") {
+export function getAccessLevelDescription(
+  user: Pick<UserProfile, "accessLevel" | "role" | "planTier" | "managerLimits">
+) {
+  const access = resolveTierAccess({
+    role: user.role,
+    planTier: user.planTier,
+    managerLimits: user.managerLimits ?? null
+  });
+
+  if (access.accessLevel === "super_admin") {
     return "Unlimited access";
   }
 
-  if (accessLevel === "manager") {
-    return "Limited access";
+  if (access.accessLevel === "player") {
+    return null;
   }
 
-  return null;
+  return access.limits.isUnlimited
+    ? "Unlimited organizer access"
+    : `Up to ${access.limits.maxGroups ?? 0} group${access.limits.maxGroups === 1 ? "" : "s"} · ${access.limits.maxMembersPerGroup ?? 0} members per group`;
 }
 
-export function shouldShowAccessBadge(user: Pick<UserProfile, "accessLevel" | "role">) {
+export function shouldShowAccessBadge(
+  user: Pick<UserProfile, "accessLevel" | "role" | "planTier" | "managerLimits">
+) {
   return getAccessLevel(user) !== "player";
 }

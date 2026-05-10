@@ -5,6 +5,7 @@ import {
   normalizeAccessCode,
   type AccessCodeFailureReason
 } from "@/lib/access-codes";
+import { getEffectiveGroupSeatLimit } from "@/lib/group-tier-limits";
 import type { UserRole } from "@/lib/types";
 
 type AccessCodeRow = {
@@ -30,6 +31,7 @@ type GroupRow = {
   name: string;
   status: "active" | "archived";
   membership_limit: number;
+  owner_user_id?: string | null;
 };
 
 export type AccessCodeAvailability =
@@ -92,7 +94,11 @@ export async function validateAccessCodeAvailability(rawCode: string): Promise<A
 
   if (code.group_id) {
     const [{ data: group, error: groupError }, { count, error: memberCountError }] = await Promise.all([
-      adminSupabase.from("groups").select("id,name,status,membership_limit").eq("id", code.group_id).maybeSingle(),
+      adminSupabase
+        .from("groups")
+        .select("id,name,status,membership_limit,owner_user_id")
+        .eq("id", code.group_id)
+        .maybeSingle(),
       adminSupabase.from("group_members").select("id", { count: "exact", head: true }).eq("group_id", code.group_id)
     ]);
 
@@ -109,7 +115,8 @@ export async function validateAccessCodeAvailability(rawCode: string): Promise<A
       return invalidAvailability("group_unavailable");
     }
 
-    if ((count ?? 0) >= resolvedGroup.membership_limit) {
+    const effectiveSeatLimit = await getEffectiveGroupSeatLimit(adminSupabase, resolvedGroup);
+    if ((count ?? 0) >= effectiveSeatLimit) {
       return invalidAvailability("group_full");
     }
   }

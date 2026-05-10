@@ -1,5 +1,6 @@
 import { escapeHtml } from "@/lib/email-sender";
 import { defaultLanguage, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
+import { getAccessLevelDisplayLabel, type AccessLevel } from "@/lib/tier-access";
 
 export function buildGroupInviteEmailCopy(input: {
   language?: string | null;
@@ -116,6 +117,55 @@ export function buildAdminRecoveryEmailCopy(input: {
   };
 }
 
+export function buildAdminAccessLevelChangeEmailCopy(input: {
+  language?: string | null;
+  recipientLabel: string;
+  accessLevel: AccessLevel;
+  loginUrl: string;
+}) {
+  const language = normalizeLanguage(input.language);
+  const copy = language === "es" ? ADMIN_ACCESS_LEVEL_CHANGE_COPY.es : ADMIN_ACCESS_LEVEL_CHANGE_COPY.en;
+  const accessLevelLabel = getAccessLevelDisplayLabel(input.accessLevel);
+  const intro = copy.intro(input.recipientLabel, accessLevelLabel);
+  const escapedLoginUrl = escapeHtml(input.loginUrl);
+
+  return {
+    subject: copy.subject(accessLevelLabel),
+    html: `
+      <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+        <h1 style="font-size: 24px; margin-bottom: 16px;">${escapeHtml(copy.heading(accessLevelLabel))}</h1>
+        <p style="margin-bottom: 16px;">${escapeHtml(intro)}</p>
+        <div style="margin-bottom: 16px; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px 14px; background: #f9fafb;">
+          <p style="margin: 0 0 6px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; font-weight: 700;">${escapeHtml(copy.levelLabel)}</p>
+          <p style="margin: 0; font-weight: 700;">${escapeHtml(accessLevelLabel)}</p>
+        </div>
+        <p style="margin: 24px 0;">
+          <a href="${escapedLoginUrl}" style="display: inline-block; background: #1f8b4c; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-weight: 700;">
+            ${escapeHtml(copy.actionLabel)}
+          </a>
+        </p>
+        <p style="margin-bottom: 12px; font-size: 14px; color: #4b5563;">
+          ${escapeHtml(copy.fallbackLabel)}<br />
+          <span style="word-break: break-all;">${escapedLoginUrl}</span>
+        </p>
+        <p style="font-size: 14px; color: #6b7280;">${escapeHtml(copy.note)}</p>
+      </div>
+    `,
+    text: [
+      copy.subject(accessLevelLabel),
+      "",
+      intro,
+      "",
+      `${copy.levelLabel}: ${accessLevelLabel}`,
+      "",
+      `${copy.actionLabel}:`,
+      input.loginUrl,
+      "",
+      copy.note
+    ].join("\n")
+  };
+}
+
 type GroupInviteCopy = {
   subject: (inviterLabel: string, groupName: string) => string;
   heading: (inviterLabel: string, groupName: string) => string;
@@ -201,6 +251,29 @@ const ADMIN_RECOVERY_COPY = {
     setupAction: "Abrir Configuración de Perfil",
     setupNote: "Este enlace inicia sesión al jugador y lo lleva directamente a la configuración de perfil.",
     fallbackLabel: "Si el botón no funciona, pega este enlace en tu navegador:"
+  }
+} as const;
+
+const ADMIN_ACCESS_LEVEL_CHANGE_COPY = {
+  en: {
+    subject: (accessLevelLabel: string) => `Your PICK-IT! access level is now ${accessLevelLabel}`,
+    heading: (accessLevelLabel: string) => `Your access level is now ${accessLevelLabel}`,
+    intro: (recipientLabel: string, accessLevelLabel: string) =>
+      `${recipientLabel}, your PICK-IT! access level has been updated to ${accessLevelLabel}.`,
+    levelLabel: "Access level",
+    actionLabel: "Open PICK-IT!",
+    fallbackLabel: "If the button does not work, paste this link into your browser:",
+    note: "Use this link to sign in with your existing account."
+  },
+  es: {
+    subject: (accessLevelLabel: string) => `Tu nivel de acceso de PICK-IT! ahora es ${accessLevelLabel}`,
+    heading: (accessLevelLabel: string) => `Tu nivel de acceso ahora es ${accessLevelLabel}`,
+    intro: (recipientLabel: string, accessLevelLabel: string) =>
+      `${recipientLabel}, tu nivel de acceso de PICK-IT! se actualizó a ${accessLevelLabel}.`,
+    levelLabel: "Nivel de acceso",
+    actionLabel: "Abrir PICK-IT!",
+    fallbackLabel: "Si el botón no funciona, pega este enlace en tu navegador:",
+    note: "Usa este enlace para iniciar sesión con tu cuenta actual."
   }
 } as const;
 
