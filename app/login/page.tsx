@@ -16,9 +16,17 @@ export default async function LoginPage({
   const next = typeof resolvedSearchParams.next === "string" ? resolvedSearchParams.next : undefined;
 
   return (
-    <main className="min-h-screen bg-white px-4 py-8">
-      <section className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-md flex-col justify-center">
-        <div className="mb-8 rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <main className="relative min-h-screen overflow-hidden bg-neutral-950 px-4 py-8">
+      <Image
+        src="/images/signin-stadium.jpeg"
+        alt="Soccer stadium background"
+        fill
+        priority
+        className="object-cover object-center"
+      />
+      <div className="absolute inset-0 bg-black/30" aria-hidden />
+      <section className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] max-w-[17.85rem] flex-col justify-center">
+        <div className="mb-8 rounded-lg border border-white/60 bg-white/90 p-4 shadow-2xl shadow-black/25">
           <div className="mx-auto mb-6 max-w-[30rem]">
             <Image
               src="/images/pickit-signin-logo.png"
@@ -46,16 +54,16 @@ export default async function LoginPage({
             href="https://www.semiosdesign.com"
             target="_blank"
             rel="noreferrer"
-            className="inline-flex flex-col items-center gap-2 text-center text-xs font-normal tracking-wide text-gray-500 transition hover:text-accent-dark"
+            className="inline-flex flex-col items-center justify-center gap-2 text-center text-base font-semibold tracking-wide text-white transition hover:text-white/80"
           >
-            <span>Game Developed by semi0s</span>
             <Image
-              src="/images/semios-orange-icon.png"
+              src="/images/semios-orange-icon-auth.png"
               alt="semi0s"
-              width={24}
-              height={24}
-              className="h-5 w-5 rounded-sm"
+              width={40}
+              height={40}
+              className="h-8 w-8 rounded-sm"
             />
+            <span>by semi0s</span>
           </a>
         </div>
       </section>

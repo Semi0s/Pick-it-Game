@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ChevronDown, CircleUserRound, Globe, ListOrdered, SquareCheckBig, UsersRound } from "lucide-react";
 import { NotificationsBell } from "@/components/NotificationsBell";
+import { TierIconBadge } from "@/components/TierIconBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { APP_TOAST_EVENT, markAppToastsReady, type AppToastDetail } from "@/lib/app-toast";
 import { getStrings } from "@/lib/strings";
@@ -17,8 +18,9 @@ import {
   signOutCurrentUser,
   type PendingTrophyCelebration
 } from "@/lib/auth-client";
-import { getAccessLevelLabel, shouldShowAccessBadge } from "@/lib/access-levels";
+import { getAccessLevel, shouldShowAccessBadge } from "@/lib/access-levels";
 import { getStartupReadinessSummary, type SystemReadinessReport } from "@/lib/system-readiness";
+import { parseJsonResponse } from "@/lib/fetch-json";
 import { createClient } from "@/lib/supabase/client";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -410,9 +412,10 @@ export function AppShell({ children }: AppShellProps) {
     const loadReadiness = async () => {
       try {
         const response = await fetch("/api/admin/system-readiness", { cache: "no-store" });
-        const result = (await response.json()) as
+        const result = await parseJsonResponse<
           | { ok: true; report: SystemReadinessReport }
-          | { ok: false; message?: string };
+          | { ok: false; message?: string }
+        >(response, "Could not load the system readiness report.", "system readiness");
 
         if (!isMounted || !response.ok || !result.ok) {
           return;
@@ -471,9 +474,7 @@ export function AppShell({ children }: AppShellProps) {
           <div className="flex items-center gap-2">
             <NotificationsBell />
             {shouldShowAccessBadge(user) ? (
-              <span className="rounded-md bg-accent-light px-2 py-1 text-xs font-bold uppercase text-accent-dark">
-                {getAccessLevelLabel(user)}
-              </span>
+              <TierIconBadge accessLevel={getAccessLevel(user)} size={24} />
             ) : null}
             <div ref={languageMenuRef} className="relative">
               <button
