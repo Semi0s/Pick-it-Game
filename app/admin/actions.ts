@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import {
+  fetchIntegerAppSetting,
   fetchLeaderboardFeatureSettings,
+  updateIntegerAppSetting,
   updateLeaderboardFeatureSetting,
   type LeaderboardFeatureSettingKey,
   type LeaderboardFeatureSettings
@@ -17,7 +19,11 @@ import {
 } from "@/lib/legal";
 import { fetchAdminPlayerHealthRows, type AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import { sendTransactionalEmail } from "@/lib/email-sender";
-import { buildAdminRecoveryEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
+import {
+  buildAdminAccessLevelChangeEmailCopy,
+  buildAdminRecoveryEmailCopy,
+  getSafeEmailLanguage
+} from "@/lib/email-copy";
 import { ensureUserCanJoinAnotherGroup } from "@/lib/group-membership-limits";
 import { appendLanguageToPath, normalizeLanguage } from "@/lib/i18n";
 import { fetchGlobalLeaderboardRankMovement, fetchGroupLeaderboardRankMovement } from "@/lib/leaderboard-movement";
@@ -46,6 +52,21 @@ import {
   getTestingResetAvailability,
   logTestingResetEnvDiagnostics
 } from "@/lib/admin/destructive-tools";
+import {
+  compareAccessLevels,
+  getAccessLevelDisplayLabel,
+  normalizeAccessLevel,
+  normalizeCommercialTier,
+  resolveTierAccess,
+  type AccessLevel,
+  type CommercialTier
+} from "@/lib/tier-access";
+import {
+  fetchGroupCustomScoreTotals,
+  fetchStandardSidePickTotalsByUser,
+  rebuildGroupCustomBonusScores
+} from "@/lib/scoped-scoring";
+import { DASHBOARD_UI_RESET_EPOCH_SETTING_KEY } from "@/lib/ui-storage-keys";
 import type { MatchNextSlot, MatchStage, Team, UserRole } from "@/lib/types";
 
 type MatchRow = {
@@ -131,6 +152,7 @@ type InviteLookupRow = {
   display_name: string;
   language?: string | null;
   role: UserRole;
+  plan_tier?: CommercialTier | null;
   accepted_at?: string | null;
   status?: "pending" | "accepted" | "revoked" | "expired" | "failed" | null;
   last_sent_at?: string | null;
@@ -146,6 +168,7 @@ type EmailJobPayload = {
   displayName?: string;
   language?: string;
   role?: UserRole;
+  planTier?: CommercialTier;
   source?: "admin_invites" | "admin_players";
 };
 
@@ -402,7 +425,8 @@ export type CreateInviteInput = {
   email: string;
   displayName?: string;
   language?: string;
-  role: UserRole;
+  role?: UserRole;
+  accessLevel?: AccessLevel | string;
 };
 
 export type CreateInviteResult =
@@ -430,6 +454,73 @@ export type ResetUserAccessResult =
       ok: false;
       message: string;
     };
+
+export type DemotionImpactOwnedGroup = {
+  id: string;
+  name: string;
+  status: GroupStatus;
+  membershipLimit: number;
+  memberCount: number;
+  activeInviteCodeCount: number;
+  pendingInviteCount: number;
+  exceedsTargetMemberLimit: boolean;
+  blockerReason: string | null;
+};
+
+export type DemotionImpactSummary = {
+  userId: string;
+  email: string;
+  displayName: string;
+  currentRole: UserRole;
+  currentPlanTier: CommercialTier | null;
+  currentAccessLevel: AccessLevel;
+  targetRole: UserRole;
+  targetPlanTier: CommercialTier;
+  targetAccessLevel: AccessLevel;
+  ownedGroupCount: number;
+  managedGroupCount: number;
+  groupsThatWouldExceedTarget: DemotionImpactOwnedGroup[];
+  ownedGroups: DemotionImpactOwnedGroup[];
+  activeInviteCodeCount: number;
+  pendingInviteCount: number;
+  hasManagerLimits: boolean;
+  managerLimits: { maxGroups: number; maxMembersPerGroup: number } | null;
+  organizationOwnershipCount: number;
+  organizationBrandingCount: number;
+  customTrophyOwnershipCount: number;
+  sidePickOwnershipCount: number;
+  isSuperAdmin: boolean;
+  status: "safe" | "blocked" | "cleanup_required";
+  blockers: string[];
+  cleanupActions: string[];
+};
+
+export type FetchUserDemotionImpactResult =
+  | {
+      ok: true;
+      impact: DemotionImpactSummary;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type DemoteUserWithImpactResolutionInput = {
+  userId: string;
+  targetAccessLevel: AccessLevel;
+  expectedEmail: string;
+  reason: string;
+};
+
+export type DemoteUserWithImpactResolutionResult = ResetUserAccessResult;
+
+export type DeactivateOrganizerAccessInput = {
+  userId: string;
+  expectedEmail: string;
+  reason: string;
+};
+
+export type DeactivateOrganizerAccessResult = ResetUserAccessResult;
 
 export type FetchAdminPlayerHealthResult =
   | {
@@ -514,6 +605,9 @@ export type AdminGroupSummary = {
   ownerEmail: string | null;
   membershipLimit: number;
   memberCount: number;
+  activeAccessCodeCount: number;
+  pendingInviteCount: number;
+  staleInviteCount: number;
   members: Array<{
     membershipId: string;
     userId: string;
@@ -582,10 +676,19 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
     return { ok: false, message: "Email is required." };
   }
 
-  const [{ data: existingInvite, error: inviteLookupError }, { data: existingUser, error: userLookupError }, authUser] =
+  const normalizedAccessLevel =
+    normalizeAccessLevel(input.accessLevel ?? (input.role === "admin" ? "super_admin" : "player")) ?? "player";
+  const inviteRole: UserRole = normalizedAccessLevel === "super_admin" ? "admin" : "player";
+  const invitePlanTier: CommercialTier = normalizedAccessLevel === "super_admin" ? "player" : normalizedAccessLevel;
+
+  const [
+    { data: existingInvite, error: inviteLookupError },
+    { data: existingUser, error: userLookupError },
+    authUser
+  ] =
     await Promise.all([
       fetchInviteLookup(adminSupabase, normalizedEmail),
-      adminSupabase.from("users").select("id").eq("email", normalizedEmail).maybeSingle(),
+      adminSupabase.from("users").select("id,email,name,preferred_language,role,plan_tier").eq("email", normalizedEmail).maybeSingle(),
       findAuthUserByEmail(adminSupabase, normalizedEmail)
     ]);
 
@@ -602,13 +705,116 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
     return { ok: false, message: rateLimitResult.message };
   }
 
+  if (authUser && existingUser) {
+    const existingUserRow = existingUser as {
+      id: string;
+      email?: string | null;
+      name?: string | null;
+      preferred_language?: string | null;
+      role?: UserRole | null;
+      plan_tier?: string | null;
+    };
+    const currentAccessLevel =
+      normalizeAccessLevel(existingUserRow.role === "admin" ? "super_admin" : existingUserRow.plan_tier ?? "player") ?? "player";
+
+    if (existingUserRow.id === adminCheck.userId && currentAccessLevel !== normalizedAccessLevel) {
+      return { ok: false, message: "Use a different super admin account before changing your own access level here." };
+    }
+
+    if (compareAccessLevels(normalizedAccessLevel, currentAccessLevel) < 0) {
+      return {
+        ok: false,
+        message: `Direct demotion from ${getAccessLevelDisplayLabel(currentAccessLevel)} to ${getAccessLevelDisplayLabel(normalizedAccessLevel)} is handled in the Super Admin Demote / Remove Access workflow on the player card.`
+      };
+    }
+
+    const { error: updateUserError } = await adminSupabase
+      .from("users")
+      .update({
+        role: inviteRole,
+        plan_tier: invitePlanTier,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", existingUserRow.id);
+
+    if (updateUserError) {
+      return { ok: false, message: updateUserError.message };
+    }
+
+    const inviteUpsertResult = await upsertInviteRow(adminSupabase, {
+      email: normalizedEmail,
+      displayName: trimmedDisplayName,
+      language: inviteLanguage,
+      role: inviteRole,
+      planTier: invitePlanTier,
+      status: "accepted",
+      lastError: null,
+      preserveAcceptedAt:
+        (existingInvite as InviteLookupRow | null)?.accepted_at ?? new Date().toISOString()
+    });
+
+    if (!inviteUpsertResult.ok) {
+      return { ok: false, message: inviteUpsertResult.message };
+    }
+
+    const loginUrl = buildAccessLevelLoginUrl(inviteLanguage, normalizedAccessLevel);
+    try {
+      const emailCopy = buildAdminAccessLevelChangeEmailCopy({
+        language:
+          inviteLanguage ??
+          ((existingUserRow.preferred_language ?? null) as string | null),
+        recipientLabel: existingUserRow.name?.trim() || normalizedEmail,
+        accessLevel: normalizedAccessLevel,
+        loginUrl
+      });
+
+      await sendTransactionalEmail({
+        to: normalizedEmail,
+        subject: emailCopy.subject,
+        html: emailCopy.html,
+        text: emailCopy.text
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : `Could not send the ${getAccessLevelDisplayLabel(normalizedAccessLevel)} access update email.`
+      };
+    }
+
+    console.info("[admin-player-access-level-updated]", {
+      adminUserId: adminCheck.userId,
+      targetUserId: existingUserRow.id,
+      email: normalizedEmail,
+      previousAccessLevel: currentAccessLevel,
+      nextAccessLevel: normalizedAccessLevel
+    });
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/invites");
+    revalidatePath("/admin/players");
+    revalidatePath("/my-groups");
+
+    return {
+      ok: true,
+      created: true,
+      message:
+        currentAccessLevel === normalizedAccessLevel
+          ? `${normalizedEmail} already has ${getAccessLevelDisplayLabel(normalizedAccessLevel)} access. A fresh sign-in email was sent.`
+          : `${normalizedEmail} is now ${getAccessLevelDisplayLabel(normalizedAccessLevel)}. An access update email was sent.`
+    };
+  }
+
   const sendKind: EmailJobKind = authUser && existingUser ? "password_recovery" : "access_email";
   const supportsEmailJobs = await hasEmailJobsTable(adminSupabase);
   const inviteUpsertResult = await upsertInviteRow(adminSupabase, {
     email: normalizedEmail,
     displayName: trimmedDisplayName,
     language: inviteLanguage,
-    role: input.role,
+    role: inviteRole,
+    planTier: invitePlanTier,
     status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
     lastError: null,
     preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
@@ -630,7 +836,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
         email: normalizedEmail,
         displayName: trimmedDisplayName,
         language: inviteLanguage,
-        role: input.role,
+        role: inviteRole,
+        planTier: invitePlanTier,
         status: "failed",
         lastError: sendResult.message,
         preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
@@ -643,7 +850,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
         email: normalizedEmail,
         displayName: trimmedDisplayName,
         language: inviteLanguage,
-        role: input.role,
+        role: inviteRole,
+        planTier: invitePlanTier,
         status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
         lastError: null,
         preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at,
@@ -674,7 +882,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
     payload: {
       displayName: trimmedDisplayName,
       language: inviteLanguage,
-      role: input.role,
+      role: inviteRole,
+      planTier: invitePlanTier,
       source: "admin_invites"
     }
   });
@@ -691,7 +900,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
         email: normalizedEmail,
         displayName: trimmedDisplayName,
         language: inviteLanguage,
-        role: input.role,
+        role: inviteRole,
+        planTier: invitePlanTier,
         status: "failed",
         lastError: sendResult.message,
         preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
@@ -704,7 +914,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
         email: normalizedEmail,
         displayName: trimmedDisplayName,
         language: inviteLanguage,
-        role: input.role,
+        role: inviteRole,
+        planTier: invitePlanTier,
         status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
         lastError: null,
         preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at,
@@ -733,7 +944,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
       email: normalizedEmail,
       displayName: trimmedDisplayName,
       language: inviteLanguage,
-      role: input.role,
+      role: inviteRole,
+      planTier: invitePlanTier,
       status: "failed",
       lastError: enqueueResult.message,
       preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
@@ -847,7 +1059,10 @@ export async function repairPendingInviteAction(email: string): Promise<RepairPe
 
   const repairResult = await createAdminInviteAction({
     email: normalizedEmail,
-    role: inviteLookup.data.role ?? "player",
+    accessLevel:
+      inviteLookup.data.role === "admin"
+        ? "super_admin"
+        : inviteLookup.data.plan_tier ?? "player",
     displayName: inviteLookup.data.display_name ?? normalizedEmail.split("@")[0]
   });
 
@@ -1009,13 +1224,13 @@ export async function deleteUserAndStartOverAction(
     return adminCheck;
   }
 
-  if (confirmationText.trim() !== "DELETE") {
-    return { ok: false, message: "Type DELETE to confirm this destructive reset." };
-  }
-
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) {
     return { ok: false, message: "A valid email is required." };
+  }
+
+  if (confirmationText.trim().toLowerCase() !== normalizedEmail) {
+    return { ok: false, message: `Type ${normalizedEmail} to confirm this destructive reset.` };
   }
 
   const adminSupabase = createAdminClient();
@@ -1116,6 +1331,164 @@ export async function fetchAdminPlayerHealthAction(): Promise<FetchAdminPlayerHe
       message: error instanceof Error ? error.message : "Could not load admin player health right now."
     };
   }
+}
+
+export async function getUserDemotionImpactAction(
+  userId: string,
+  targetAccessLevel: AccessLevel
+): Promise<FetchUserDemotionImpactResult> {
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const impact = await buildUserDemotionImpact(adminSupabase, userId, targetAccessLevel);
+    return { ok: true, impact };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not inspect the impact of that demotion."
+    };
+  }
+}
+
+export async function demoteUserWithImpactResolutionAction(
+  input: DemoteUserWithImpactResolutionInput
+): Promise<DemoteUserWithImpactResolutionResult> {
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const trimmedUserId = input.userId.trim();
+  const normalizedExpectedEmail = input.expectedEmail.trim().toLowerCase();
+  const trimmedReason = input.reason.trim();
+
+  if (!trimmedUserId) {
+    return { ok: false, message: "A valid user is required." };
+  }
+
+  if (!trimmedReason) {
+    return { ok: false, message: "A reason is required before changing organizer access." };
+  }
+
+  if (input.targetAccessLevel === "super_admin") {
+    return { ok: false, message: "Use promotion/access setup to grant Super Admin. Demotion flow cannot target Super Admin." };
+  }
+
+  const adminSupabase = createAdminClient();
+
+  try {
+    const impact = await buildUserDemotionImpact(adminSupabase, trimmedUserId, input.targetAccessLevel);
+
+    if (impact.userId === adminCheck.userId) {
+      return { ok: false, message: "Use a different super admin account before changing your own access level here." };
+    }
+
+    if (compareAccessLevels(impact.targetAccessLevel, impact.currentAccessLevel) >= 0) {
+      return {
+        ok: false,
+        message: `This workflow is for demotions only. ${getAccessLevelDisplayLabel(impact.targetAccessLevel)} is not lower than ${getAccessLevelDisplayLabel(impact.currentAccessLevel)}.`
+      };
+    }
+
+    if (impact.status === "blocked") {
+      return {
+        ok: false,
+        message: impact.blockers[0] ?? "Resolve the listed blockers before changing this user's organizer access."
+      };
+    }
+
+    if (normalizedExpectedEmail !== impact.email.trim().toLowerCase()) {
+      return { ok: false, message: `Type ${impact.email} to confirm this access change.` };
+    }
+
+    const cleanupSummary = await applyOrganizerAccessCleanup(adminSupabase, impact);
+
+    const { error: updateUserError } = await adminSupabase
+      .from("users")
+      .update({
+        role: impact.targetRole,
+        plan_tier: impact.targetPlanTier,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", impact.userId);
+
+    if (updateUserError) {
+      return { ok: false, message: updateUserError.message };
+    }
+
+    const inviteUpsertResult = await upsertInviteRow(adminSupabase, {
+      email: impact.email,
+      displayName: impact.displayName,
+      language: "en",
+      role: impact.targetRole,
+      planTier: impact.targetPlanTier,
+      status: "accepted",
+      lastError: null,
+      preserveAcceptedAt: new Date().toISOString()
+    });
+
+    if (!inviteUpsertResult.ok) {
+      return { ok: false, message: inviteUpsertResult.message };
+    }
+
+    await sendAccessLevelChangeEmail(adminSupabase, impact, impact.targetAccessLevel);
+
+    console.info("[admin-player-access-demoted]", {
+      actorUserId: adminCheck.userId,
+      targetUserId: impact.userId,
+      email: impact.email,
+      previousRole: impact.currentRole,
+      previousPlanTier: impact.currentPlanTier,
+      previousAccessLevel: impact.currentAccessLevel,
+      newRole: impact.targetRole,
+      newPlanTier: impact.targetPlanTier,
+      newAccessLevel: impact.targetAccessLevel,
+      impactStatus: impact.status,
+      impactSummary: {
+        ownedGroupCount: impact.ownedGroupCount,
+        managedGroupCount: impact.managedGroupCount,
+        activeInviteCodeCount: impact.activeInviteCodeCount,
+        pendingInviteCount: impact.pendingInviteCount,
+        organizationOwnershipCount: impact.organizationOwnershipCount,
+        organizationBrandingCount: impact.organizationBrandingCount,
+        hasManagerLimits: impact.hasManagerLimits
+      },
+      cleanupActionsTaken: cleanupSummary.actionsTaken,
+      cleanupCounts: cleanupSummary.counts,
+      reason: trimmedReason
+    });
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/invites");
+    revalidatePath("/admin/players");
+    revalidatePath("/my-groups");
+    revalidatePath("/dashboard");
+
+    return {
+      ok: true,
+      message: `${impact.displayName}'s access was changed from ${getAccessLevelDisplayLabel(impact.currentAccessLevel)} to ${getAccessLevelDisplayLabel(impact.targetAccessLevel)}.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not apply that demotion safely."
+    };
+  }
+}
+
+export async function deactivateOrganizerAccessAction(
+  input: DeactivateOrganizerAccessInput
+): Promise<DeactivateOrganizerAccessResult> {
+  return demoteUserWithImpactResolutionAction({
+    userId: input.userId,
+    expectedEmail: input.expectedEmail,
+    reason: input.reason,
+    targetAccessLevel: "player"
+  });
 }
 
 export async function fetchLeaderboardFeatureSettingsAction(): Promise<FetchLeaderboardFeatureSettingsResult> {
@@ -1372,6 +1745,18 @@ export async function resetTestingSocialStateAction(): Promise<ResetTestingSocia
     return { ok: false, message: deleteLeaderboardSnapshotsResult.error.message };
   }
 
+  let resetMarkerWarning: string | null = null;
+  try {
+    const currentResetEpoch = await fetchIntegerAppSetting(DASHBOARD_UI_RESET_EPOCH_SETTING_KEY, 0);
+    await updateIntegerAppSetting(DASHBOARD_UI_RESET_EPOCH_SETTING_KEY, currentResetEpoch + 1);
+  } catch (error) {
+    console.warn("Could not update dashboard reset epoch during testing reset.", error);
+    resetMarkerWarning =
+      error instanceof Error
+        ? error.message
+        : "Dashboard reset marker could not be updated.";
+  }
+
   revalidatePath("/dashboard");
   revalidatePath("/leaderboard");
   revalidatePath("/my-groups");
@@ -1381,7 +1766,9 @@ export async function resetTestingSocialStateAction(): Promise<ResetTestingSocia
 
   return {
     ok: true,
-    message: "Testing notifications, leaderboard events, trophies, and movement history were cleared."
+    message: resetMarkerWarning
+      ? `Testing notifications, leaderboard events, trophies, and movement history were cleared. ${resetMarkerWarning}`
+      : "Testing notifications, leaderboard events, trophies, and movement history were cleared."
   };
 }
 
@@ -1408,7 +1795,7 @@ export async function upsertManagerLimitsAction(
   const adminSupabase = createAdminClient();
   const { data: existingUser, error: userError } = await adminSupabase
     .from("users")
-    .select("id")
+    .select("id,role,plan_tier")
     .eq("id", userId)
     .maybeSingle();
 
@@ -1420,21 +1807,50 @@ export async function upsertManagerLimitsAction(
     return { ok: false, message: "That user was not found." };
   }
 
-  const { data, error } = await adminSupabase
-    .from("manager_limits")
-    .upsert(
-      {
-        user_id: userId,
-        max_groups: maxGroups,
-        max_members_per_group: maxMembersPerGroup
-      },
-      { onConflict: "user_id" }
-    )
-    .select("user_id,max_groups,max_members_per_group")
-    .single();
+  const existingPlanTier = normalizeCommercialTier(
+    (existingUser as { plan_tier?: string | null }).plan_tier ?? null
+  );
+  const shouldPromotePlanTier =
+    (existingUser as { role: UserRole }).role !== "admin" &&
+    existingPlanTier !== "director" &&
+    existingPlanTier !== "managing_director";
+
+  console.info("[tier-access:manager-limits-upsert]", {
+    adminUserId: adminCheck.userId,
+    targetUserId: userId,
+    maxGroups,
+    maxMembersPerGroup,
+    existingPlanTier,
+    shouldPromotePlanTier
+  });
+
+  const [{ data, error }, planTierUpdateResult] = await Promise.all([
+    adminSupabase
+      .from("manager_limits")
+      .upsert(
+        {
+          user_id: userId,
+          max_groups: maxGroups,
+          max_members_per_group: maxMembersPerGroup
+        },
+        { onConflict: "user_id" }
+      )
+      .select("user_id,max_groups,max_members_per_group")
+      .single(),
+    shouldPromotePlanTier
+      ? adminSupabase
+          .from("users")
+          .update({ plan_tier: "manager", updated_at: new Date().toISOString() })
+          .eq("id", userId)
+      : Promise.resolve({ error: null })
+  ]);
 
   if (error) {
     return { ok: false, message: error.message };
+  }
+
+  if (planTierUpdateResult.error) {
+    return { ok: false, message: planTierUpdateResult.error.message };
   }
 
   revalidatePath("/dashboard");
@@ -1474,7 +1890,7 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
     adminSupabase
       .from("groups")
       .select(
-        "id,name,status,owner_user_id,membership_limit,owner:users!groups_owner_user_id_fkey(id,name,email),members:group_members(id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email,avatar_url,home_team_id))"
+        "id,name,status,owner_user_id,membership_limit,owner:users!groups_owner_user_id_fkey(id,name,email),members:group_members(id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email,avatar_url,home_team_id)),access_codes(id,active,expires_at,max_uses,used_count),group_invites(id,status,expires_at)"
       )
       .order("created_at", { ascending: false }),
     adminSupabase
@@ -1508,6 +1924,18 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
         | Array<{ id: string; name: string; email: string; avatar_url?: string | null; home_team_id?: string | null }>
         | null;
     }> | null;
+    access_codes?: Array<{
+      id: string;
+      active: boolean;
+      expires_at?: string | null;
+      max_uses?: number | null;
+      used_count?: number | null;
+    }> | null;
+    group_invites?: Array<{
+      id: string;
+      status: "pending" | "accepted" | "revoked" | "expired";
+      expires_at?: string | null;
+    }> | null;
   }>).map((group) => {
     const owner = unwrapRelation(group.owner);
     const members = (group.members ?? []).map((member) => {
@@ -1523,6 +1951,26 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
         joinedAt: member.joined_at
       };
     });
+    const now = Date.now();
+    const activeAccessCodeCount = (group.access_codes ?? []).filter((code) => {
+      if (!code.active) {
+        return false;
+      }
+
+      if (code.expires_at && new Date(code.expires_at).getTime() <= now) {
+        return false;
+      }
+
+      if (code.max_uses != null && (code.used_count ?? 0) >= code.max_uses) {
+        return false;
+      }
+
+      return true;
+    }).length;
+    const pendingInviteCount = (group.group_invites ?? []).filter((invite) => invite.status === "pending").length;
+    const staleInviteCount = (group.group_invites ?? []).filter(
+      (invite) => invite.status === "pending" && Boolean(invite.expires_at) && new Date(invite.expires_at as string).getTime() <= now
+    ).length;
 
     return {
       id: group.id,
@@ -1533,6 +1981,9 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
       ownerEmail: owner?.email ?? null,
       membershipLimit: group.membership_limit,
       memberCount: members.length,
+      activeAccessCodeCount,
+      pendingInviteCount,
+      staleInviteCount,
       members
     } satisfies AdminGroupSummary;
   });
@@ -1580,6 +2031,10 @@ export async function addUserToGroupAction(input: AddUserToGroupInput): Promise<
 
   if (!groupId || !userIdentifier) {
     return { ok: false, message: "A valid group and user are required." };
+  }
+
+  if (role === "manager") {
+    return { ok: false, message: "Each group has one manager. Use Change owner to transfer management." };
   }
 
   const targetUser = await findUserByIdOrEmail(adminSupabase, userIdentifier);
@@ -1701,22 +2156,6 @@ export async function removeUserFromGroupAction(userId: string, groupId: string)
     return { ok: false, message: "Change the group owner first before removing this user from the group." };
   }
 
-  if (membership.role === "manager") {
-    const { count: managerCount, error: managerCountError } = await adminSupabase
-      .from("group_members")
-      .select("id", { count: "exact", head: true })
-      .eq("group_id", trimmedGroupId)
-      .eq("role", "manager");
-
-    if (managerCountError) {
-      return { ok: false, message: managerCountError.message };
-    }
-
-    if ((managerCount ?? 0) <= 1) {
-      return { ok: false, message: "This is the only manager in the group. Add or assign another manager first." };
-    }
-  }
-
   const { error: deleteError } = await adminSupabase
     .from("group_members")
     .delete()
@@ -1802,39 +2241,6 @@ export async function changeGroupOwnerAction(groupId: string, newOwnerUserId: st
     return { ok: false, message: "That group was not found." };
   }
 
-  const { data: existingMembership, error: membershipLookupError } = await adminSupabase
-    .from("group_members")
-    .select("id,role")
-    .eq("group_id", trimmedGroupId)
-    .eq("user_id", nextOwner.id)
-    .maybeSingle();
-
-  if (membershipLookupError) {
-    return { ok: false, message: membershipLookupError.message };
-  }
-
-  if (!existingMembership) {
-    const { error: insertError } = await adminSupabase.from("group_members").insert({
-      group_id: trimmedGroupId,
-      user_id: nextOwner.id,
-      role: "manager"
-    });
-
-    if (insertError) {
-      return { ok: false, message: insertError.message };
-    }
-  } else if (existingMembership.role !== "manager") {
-    const { error: updateMembershipError } = await adminSupabase
-      .from("group_members")
-      .update({ role: "manager" })
-      .eq("group_id", trimmedGroupId)
-      .eq("user_id", nextOwner.id);
-
-    if (updateMembershipError) {
-      return { ok: false, message: updateMembershipError.message };
-    }
-  }
-
   const { error: updateGroupError } = await adminSupabase
     .from("groups")
     .update({
@@ -1868,13 +2274,40 @@ export async function removeManagerAccessAction(userId: string): Promise<RemoveM
   }
 
   const adminSupabase = createAdminClient();
-  const { error } = await adminSupabase
-    .from("manager_limits")
-    .delete()
-    .eq("user_id", trimmedUserId);
+  const [{ data: existingUser, error: existingUserError }, { error }] = await Promise.all([
+    adminSupabase
+      .from("users")
+      .select("id,role,plan_tier")
+      .eq("id", trimmedUserId)
+      .maybeSingle(),
+    adminSupabase
+      .from("manager_limits")
+      .delete()
+      .eq("user_id", trimmedUserId)
+  ]);
 
-  if (error) {
-    return { ok: false, message: error.message };
+  if (existingUserError || error) {
+    return { ok: false, message: existingUserError?.message ?? error?.message ?? "Could not remove manager access." };
+  }
+
+  const existingPlanTier = normalizeCommercialTier(
+    (existingUser as { plan_tier?: string | null } | null)?.plan_tier ?? null
+  );
+  console.info("[tier-access:manager-access-removed]", {
+    adminUserId: adminCheck.userId,
+    targetUserId: trimmedUserId,
+    existingPlanTier
+  });
+
+  if ((existingUser as { role?: UserRole } | null)?.role !== "admin" && existingPlanTier === "manager") {
+    const { error: downgradeError } = await adminSupabase
+      .from("users")
+      .update({ plan_tier: "player", updated_at: new Date().toISOString() })
+      .eq("id", trimmedUserId);
+
+    if (downgradeError) {
+      return { ok: false, message: downgradeError.message };
+    }
   }
 
   revalidatePath("/dashboard");
@@ -4072,11 +4505,24 @@ async function recalculateLeaderboard(
   adminSupabase: ReturnType<typeof createAdminClient>,
   triggeringMatchId?: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const [{ data: predictionPoints, error: predictionPointsError }, { data: bracketPoints, error: bracketPointsError }] =
-    await Promise.all([
-      adminSupabase.from("predictions").select("user_id,points_awarded"),
-      adminSupabase.from("bracket_scores").select("user_id,points")
-    ]);
+  try {
+    await rebuildGroupCustomBonusScores(adminSupabase);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not rebuild group-local bonus scores."
+    };
+  }
+
+  const [
+    { data: predictionPoints, error: predictionPointsError },
+    { data: bracketPoints, error: bracketPointsError },
+    standardSidePickTotals
+  ] = await Promise.all([
+    adminSupabase.from("predictions").select("user_id,points_awarded"),
+    adminSupabase.from("bracket_scores").select("user_id,points"),
+    fetchStandardSidePickTotalsByUser(adminSupabase)
+  ]);
 
   if (predictionPointsError) {
     return { ok: false, message: predictionPointsError.message };
@@ -4091,6 +4537,9 @@ async function recalculateLeaderboard(
   }
   for (const row of bracketPoints as { user_id: string; points: number | null }[]) {
     totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points ?? 0));
+  }
+  for (const [userId, total] of standardSidePickTotals.entries()) {
+    totalsByUser.set(userId, (totalsByUser.get(userId) ?? 0) + total);
   }
 
   const { data: users, error: usersError } = await adminSupabase.from("users").select("id");
@@ -4158,12 +4607,14 @@ async function recalculateLeaderboard(
         membersByGroupId.set(membership.group_id, existing);
       }
 
+      const groupCustomTotals = await fetchGroupCustomScoreTotals(adminSupabase, Array.from(membersByGroupId.keys()));
       const groupSnapshotRows = Array.from(membersByGroupId.entries()).flatMap(([groupId, memberUserIds]) => {
+        const customTotalsByUserId = groupCustomTotals.get(groupId) ?? new Map<string, number>();
         const rankedGroupEntries = assignRanks(
           Array.from(new Set(memberUserIds))
             .map((userId) => ({
               user_id: userId,
-              total_points: totalsByUser.get(userId) ?? 0
+              total_points: (totalsByUser.get(userId) ?? 0) + (customTotalsByUserId.get(userId) ?? 0)
             }))
             .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id))
         );
@@ -4774,6 +5225,7 @@ async function upsertInviteRow(
     displayName: string;
     language: string;
     role: UserRole;
+    planTier: CommercialTier;
     status: "pending" | "accepted" | "revoked" | "expired" | "failed";
     lastError: string | null;
     preserveAcceptedAt?: string | null;
@@ -4802,6 +5254,7 @@ async function upsertInviteRow(
     display_name: input.displayName,
     language: normalizeLanguage(input.language),
     role: input.role,
+    plan_tier: input.planTier,
     accepted_at: input.preserveAcceptedAt ?? null,
     status: input.status,
     last_error: input.lastError,
@@ -4860,6 +5313,426 @@ async function enqueueEmailJob(
   return { ok: true, alreadyQueued: false };
 }
 
+async function buildUserDemotionImpact(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  targetAccessLevel: AccessLevel
+): Promise<DemotionImpactSummary> {
+  if (targetAccessLevel === "super_admin") {
+    throw new Error("Use promotion/access setup to grant Super Admin. Demotion flow cannot target Super Admin.");
+  }
+
+  const trimmedUserId = userId.trim();
+  if (!trimmedUserId) {
+    throw new Error("A valid user is required.");
+  }
+
+  const [
+    { data: existingUser, error: existingUserError },
+    managerLimitsResult,
+    ownedGroupsResult,
+    managedMembershipsResult,
+    organizationsResult,
+    customTrophiesResult
+  ] = await Promise.all([
+    adminSupabase
+      .from("users")
+      .select("id,email,name,preferred_language,role,plan_tier")
+      .eq("id", trimmedUserId)
+      .maybeSingle(),
+    adminSupabase.from("manager_limits").select("user_id,max_groups,max_members_per_group").eq("user_id", trimmedUserId).maybeSingle(),
+    adminSupabase
+      .from("groups")
+      .select("id,name,status,membership_limit,group_members(count)")
+      .eq("owner_user_id", trimmedUserId),
+    adminSupabase
+      .from("group_members")
+      .select("id,group_id")
+      .eq("user_id", trimmedUserId)
+      .eq("role", "manager"),
+    adminSupabase.from("organizations").select("id").eq("owner_user_id", trimmedUserId),
+    adminSupabase
+      .from("trophies")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by", trimmedUserId)
+      .not("group_id", "is", null)
+  ]);
+
+  if (existingUserError) {
+    throw new Error(existingUserError.message);
+  }
+
+  if (!existingUser) {
+    throw new Error("That user was not found.");
+  }
+
+  if (managerLimitsResult.error) {
+    throw new Error(managerLimitsResult.error.message);
+  }
+
+  if (ownedGroupsResult.error) {
+    throw new Error(ownedGroupsResult.error.message);
+  }
+
+  if (managedMembershipsResult.error) {
+    throw new Error(managedMembershipsResult.error.message);
+  }
+
+  let organizationOwnershipRows: Array<{ id: string }> = [];
+  if (organizationsResult.error) {
+    if (!isMissingRelationError(organizationsResult.error.message, "public.organizations")) {
+      throw new Error(organizationsResult.error.message);
+    }
+  } else {
+    organizationOwnershipRows = ((organizationsResult.data as Array<{ id: string }> | null) ?? []);
+  }
+
+  let customTrophyOwnershipCount = 0;
+  if (customTrophiesResult.error) {
+    if (!isMissingRelationError(customTrophiesResult.error.message, "public.trophies")) {
+      throw new Error(customTrophiesResult.error.message);
+    }
+  } else {
+    customTrophyOwnershipCount = customTrophiesResult.count ?? 0;
+  }
+
+  const organizationIds = organizationOwnershipRows.map((organization) => organization.id);
+  const organizationBrandingCount = organizationIds.length
+    ? await countOrganizationBrandingRows(adminSupabase, organizationIds)
+    : 0;
+
+  const ownedGroups = ((ownedGroupsResult.data as Array<{
+    id: string;
+    name: string;
+    status: GroupStatus;
+    membership_limit: number;
+    group_members?: Array<{ count: number | null }> | { count: number | null } | null;
+  }> | null) ?? []).map((group) => ({
+    id: group.id,
+    name: group.name,
+    status: group.status,
+    membershipLimit: group.membership_limit,
+    memberCount: Array.isArray(group.group_members)
+      ? (group.group_members[0]?.count ?? 0)
+      : (group.group_members?.count ?? 0)
+  }));
+
+  const ownedGroupIds = ownedGroups.map((group) => group.id);
+  const [accessCodeCountsByGroupId, pendingInviteCountsByGroupId] = await Promise.all([
+    countActiveGroupAccessCodes(adminSupabase, ownedGroupIds),
+    countPendingGroupInvites(adminSupabase, ownedGroupIds)
+  ]);
+
+  const currentPlanTier = normalizeCommercialTier(
+    (existingUser as { plan_tier?: string | null }).plan_tier ?? null
+  );
+  const currentRole = ((existingUser as { role?: UserRole | null }).role ?? "player") as UserRole;
+  const currentAccessLevel =
+    normalizeAccessLevel(currentRole === "admin" ? "super_admin" : currentPlanTier ?? "player") ?? "player";
+  const targetPlanTier: CommercialTier = targetAccessLevel;
+  const targetRole: UserRole = "player";
+  const targetTierAccess = resolveTierAccess({ role: targetRole, planTier: targetPlanTier });
+  const targetMemberLimit = targetTierAccess.limits.maxMembersPerGroup;
+  const targetGroupLimit = targetTierAccess.limits.maxGroups;
+  const managerLimitsRow = managerLimitsResult.data as
+    | { user_id: string; max_groups?: number | null; max_members_per_group?: number | null }
+    | null;
+  const managedMembershipGroupIds = new Set(
+    (((managedMembershipsResult.data as Array<{ id: string; group_id: string }> | null) ?? []).map((row) => row.group_id))
+  );
+  const ownedGroupIdSet = new Set(ownedGroupIds);
+  for (const groupId of ownedGroupIds) {
+    managedMembershipGroupIds.add(groupId);
+  }
+  const managedGroupCount = managedMembershipGroupIds.size;
+  const legacyManagedGroupCount = Array.from(managedMembershipGroupIds).filter((groupId) => !ownedGroupIdSet.has(groupId)).length;
+
+  const ownedGroupsWithImpact: DemotionImpactOwnedGroup[] = ownedGroups.map((group) => {
+    const exceedsTargetMemberLimit =
+      typeof targetMemberLimit === "number" ? group.memberCount > targetMemberLimit : false;
+    const blockerReason =
+      targetAccessLevel === "player"
+        ? "Transfer, archive, or remove this owned group before demoting to Player."
+        : exceedsTargetMemberLimit
+          ? `${group.name} has ${group.memberCount} members, which exceeds the ${targetMemberLimit ?? 0}-member limit for ${getAccessLevelDisplayLabel(targetAccessLevel)}.`
+          : null;
+
+    return {
+      ...group,
+      activeInviteCodeCount: accessCodeCountsByGroupId.get(group.id) ?? 0,
+      pendingInviteCount: pendingInviteCountsByGroupId.get(group.id) ?? 0,
+      exceedsTargetMemberLimit,
+      blockerReason
+    };
+  });
+
+  const groupsThatWouldExceedTarget =
+    targetAccessLevel === "player"
+      ? ownedGroupsWithImpact
+      : ownedGroupsWithImpact.filter((group) => group.exceedsTargetMemberLimit);
+
+  const blockers: string[] = [];
+  const cleanupActions: string[] = [];
+
+  if (currentAccessLevel === "super_admin") {
+    blockers.push("Super Admin demotion is not available through this workflow.");
+  }
+
+  if (compareAccessLevels(targetAccessLevel, currentAccessLevel) >= 0) {
+    blockers.push(
+      `${getAccessLevelDisplayLabel(targetAccessLevel)} is not lower than ${getAccessLevelDisplayLabel(currentAccessLevel)}. Use the invite/access setup flow for promotions or lateral changes.`
+    );
+  }
+
+  if (targetAccessLevel !== "managing_director" && organizationOwnershipRows.length > 0) {
+    blockers.push("Transfer or archive the user's organization before lowering Managing Director access.");
+  }
+
+  if (targetAccessLevel === "player" && ownedGroupsWithImpact.length > 0) {
+    blockers.push("Transfer, archive, or remove owned groups before demoting this organizer to Player.");
+  }
+
+  if (typeof targetGroupLimit === "number" && targetGroupLimit > 0 && ownedGroupsWithImpact.length > targetGroupLimit) {
+    blockers.push(
+      `${getAccessLevelDisplayLabel(targetAccessLevel)} supports ${targetGroupLimit} group${targetGroupLimit === 1 ? "" : "s"}, but this user owns ${ownedGroupsWithImpact.length}.`
+    );
+  }
+
+  if (groupsThatWouldExceedTarget.length > 0 && targetAccessLevel !== "player") {
+    blockers.push(
+      `${groupsThatWouldExceedTarget.length} owned group${groupsThatWouldExceedTarget.length === 1 ? "" : "s"} exceed the member cap for ${getAccessLevelDisplayLabel(targetAccessLevel)}.`
+    );
+  }
+
+  if (managerLimitsRow && targetAccessLevel !== "manager") {
+    cleanupActions.push("Remove stale manager limit overrides.");
+  }
+
+  if (legacyManagedGroupCount > 0) {
+    cleanupActions.push("Downgrade legacy manager memberships to member while preserving player access.");
+  }
+
+  const status =
+    blockers.length > 0 ? "blocked" : cleanupActions.length > 0 ? "cleanup_required" : "safe";
+
+  return {
+    userId: trimmedUserId,
+    email: (existingUser as { email?: string | null }).email?.trim() || "",
+    displayName: (existingUser as { name?: string | null }).name?.trim() || (existingUser as { email?: string | null }).email?.trim() || "Unknown user",
+    currentRole,
+    currentPlanTier,
+    currentAccessLevel,
+    targetRole,
+    targetPlanTier,
+    targetAccessLevel,
+    ownedGroupCount: ownedGroupsWithImpact.length,
+    managedGroupCount,
+    groupsThatWouldExceedTarget,
+    ownedGroups: ownedGroupsWithImpact,
+    activeInviteCodeCount: ownedGroupsWithImpact.reduce((sum, group) => sum + group.activeInviteCodeCount, 0),
+    pendingInviteCount: ownedGroupsWithImpact.reduce((sum, group) => sum + group.pendingInviteCount, 0),
+    hasManagerLimits: Boolean(managerLimitsRow),
+    managerLimits: managerLimitsRow
+      ? {
+          maxGroups: managerLimitsRow.max_groups ?? 0,
+          maxMembersPerGroup: managerLimitsRow.max_members_per_group ?? 0
+        }
+      : null,
+    organizationOwnershipCount: organizationOwnershipRows.length,
+    organizationBrandingCount,
+    customTrophyOwnershipCount,
+    sidePickOwnershipCount: 0,
+    isSuperAdmin: currentAccessLevel === "super_admin",
+    status,
+    blockers,
+    cleanupActions
+  };
+}
+
+async function countActiveGroupAccessCodes(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupIds: string[]
+) {
+  const counts = new Map<string, number>();
+  if (groupIds.length === 0) {
+    return counts;
+  }
+
+  const { data, error } = await adminSupabase
+    .from("access_codes")
+    .select("group_id")
+    .in("group_id", groupIds)
+    .eq("active", true);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  for (const row of ((data as Array<{ group_id?: string | null }> | null) ?? [])) {
+    if (!row.group_id) {
+      continue;
+    }
+
+    counts.set(row.group_id, (counts.get(row.group_id) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
+async function countPendingGroupInvites(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupIds: string[]
+) {
+  const counts = new Map<string, number>();
+  if (groupIds.length === 0) {
+    return counts;
+  }
+
+  const { data, error } = await adminSupabase
+    .from("group_invites")
+    .select("group_id,status")
+    .in("group_id", groupIds)
+    .eq("status", "pending");
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  for (const row of ((data as Array<{ group_id?: string | null }> | null) ?? [])) {
+    if (!row.group_id) {
+      continue;
+    }
+
+    counts.set(row.group_id, (counts.get(row.group_id) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
+async function countOrganizationBrandingRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  organizationIds: string[]
+) {
+  if (organizationIds.length === 0) {
+    return 0;
+  }
+
+  const result = await adminSupabase
+    .from("organization_branding")
+    .select("organization_id", { count: "exact", head: true })
+    .in("organization_id", organizationIds);
+
+  if (isMissingRelationError(result.error?.message ?? "", "public.organization_branding")) {
+    return 0;
+  }
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return result.count ?? 0;
+}
+
+async function applyOrganizerAccessCleanup(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  impact: DemotionImpactSummary
+) {
+  const actionsTaken: string[] = [];
+  const counts = {
+    removedManagerLimits: 0,
+    downgradedLegacyManagerMemberships: 0
+  };
+
+  if (impact.targetAccessLevel !== "manager" && impact.hasManagerLimits) {
+    const { error } = await adminSupabase.from("manager_limits").delete().eq("user_id", impact.userId);
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    actionsTaken.push("removed_manager_limits");
+    counts.removedManagerLimits = 1;
+  }
+
+  const { data: legacyManagerMemberships, error: legacyManagerMembershipsError } = await adminSupabase
+    .from("group_members")
+    .select("id,group_id,group:groups!group_members_group_id_fkey(owner_user_id)")
+    .eq("user_id", impact.userId)
+    .eq("role", "manager");
+
+  if (legacyManagerMembershipsError) {
+    throw new Error(legacyManagerMembershipsError.message);
+  }
+
+  const legacyMembershipIds = (((legacyManagerMemberships as Array<{
+    id: string;
+    group_id: string;
+    group?: { owner_user_id?: string | null } | Array<{ owner_user_id?: string | null }> | null;
+  }> | null) ?? []).filter((membership) => {
+    const group = Array.isArray(membership.group) ? (membership.group[0] ?? null) : membership.group;
+    return group?.owner_user_id !== impact.userId;
+  })).map((membership) => membership.id);
+
+  if (legacyMembershipIds.length > 0) {
+    const { error } = await adminSupabase
+      .from("group_members")
+      .update({ role: "member" })
+      .in("id", legacyMembershipIds);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    actionsTaken.push("downgraded_legacy_manager_memberships");
+    counts.downgradedLegacyManagerMemberships = legacyMembershipIds.length;
+  }
+
+  return { actionsTaken, counts };
+}
+
+async function sendAccessLevelChangeEmail(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  impact: DemotionImpactSummary,
+  targetAccessLevel: AccessLevel
+) {
+  const { data: userProfile, error } = await adminSupabase
+    .from("users")
+    .select("preferred_language")
+    .eq("id", impact.userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const preferredLanguage = normalizeLanguage(
+    ((userProfile as { preferred_language?: string | null } | null)?.preferred_language ?? null)
+  );
+  const loginUrl = buildAccessLevelLoginUrl(preferredLanguage, targetAccessLevel);
+  const emailCopy = buildAdminAccessLevelChangeEmailCopy({
+    language: preferredLanguage,
+    recipientLabel: impact.displayName,
+    accessLevel: targetAccessLevel,
+    loginUrl
+  });
+
+  await sendTransactionalEmail({
+    to: impact.email,
+    subject: emailCopy.subject,
+    html: emailCopy.html,
+    text: emailCopy.text
+  });
+}
+
+function buildAccessLevelLoginUrl(language: string | null | undefined, accessLevel: AccessLevel) {
+  const normalizedLanguage = normalizeLanguage(language);
+  const loginPath =
+    accessLevel === "director" || accessLevel === "managing_director"
+      ? "/login" // TODO(launch): switch organizer tiers to /organizer/login when that route exists.
+      : "/login";
+
+  return new URL(appendLanguageToPath(loginPath, normalizedLanguage), getPublicSiteUrl()).toString();
+}
+
 type TriggerEmailWorkerResult =
   | { ok: true; status: number }
   | { ok: false; message: string };
@@ -4903,7 +5776,7 @@ async function fetchInviteLookup(
 ) {
   const fullResult = await adminSupabase
     .from("invites")
-    .select("email,display_name,language,role,accepted_at,status,last_sent_at,send_attempts,last_error")
+    .select("email,display_name,language,role,plan_tier,accepted_at,status,last_sent_at,send_attempts,last_error")
     .eq("email", normalizedEmail)
     .maybeSingle();
 
@@ -4922,6 +5795,7 @@ async function fetchInviteLookup(
       data: {
         ...fallbackResult.data,
         language: "en",
+        plan_tier: "player",
           last_sent_at: null,
           send_attempts: 0,
           last_error: null
@@ -4945,6 +5819,7 @@ async function fetchInviteLookup(
       ? {
           ...minimalResult.data,
           language: "en",
+          plan_tier: "player",
           status: minimalResult.data.accepted_at ? "accepted" : "pending",
           last_sent_at: null,
           send_attempts: 0,
@@ -5009,6 +5884,7 @@ async function sendAdminEmailInline(
 function isMissingInviteLifecycleColumnError(message: string) {
   return (
     isMissingColumnError(message, "language") ||
+    isMissingColumnError(message, "plan_tier") ||
     isMissingColumnError(message, "status") ||
     isMissingColumnError(message, "last_sent_at") ||
     isMissingColumnError(message, "send_attempts") ||

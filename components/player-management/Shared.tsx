@@ -3,6 +3,7 @@
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react";
 import { Dispatch, SetStateAction, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import type { AccessLevel } from "@/lib/tier-access";
 
 export type PlayerManagementPermissions = {
   canViewAllPlayers: boolean;
@@ -530,49 +531,84 @@ export function HierarchyPanel({
   activeLevel,
   activeDetails
 }: {
-  activeLevel?: "super_admin" | "manager" | "player";
+  activeLevel?: AccessLevel;
   activeDetails?: string[];
 }) {
+  const levels: Array<{
+    key: AccessLevel;
+    title: string;
+    badge: string;
+    copy: string;
+    tone: "success" | "warning" | "accent" | "neutral";
+  }> = [
+    {
+      key: "player",
+      title: "Player",
+      badge: "Gameplay only",
+      copy: "Can join groups, make picks, and follow leaderboards.",
+      tone: "success"
+    },
+    {
+      key: "captain",
+      title: "Captain",
+      badge: "1 group",
+      copy: "Can run one group with lightweight invite and membership tools.",
+      tone: "neutral"
+    },
+    {
+      key: "manager",
+      title: "Manager",
+      badge: "3 groups",
+      copy: "Can manage multiple groups, invites, and the current social group tooling.",
+      tone: "warning"
+    },
+    {
+      key: "director",
+      title: "Director",
+      badge: "10 groups",
+      copy: "Can use broader organizer controls for larger pools and future customization.",
+      tone: "warning"
+    },
+    {
+      key: "managing_director",
+      title: "Managing Director",
+      badge: "Scoped org admin",
+      copy: "Reserved for future umbrella-level organization tools without platform-wide access.",
+      tone: "warning"
+    }
+  ];
+
   return (
     <section className="space-y-3">
-      <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">LEVELS</p>
-      <div className="grid gap-3 md:grid-cols-3">
-        <HierarchyCard
-          title={
-            <>
-              Player {activeLevel === "player" ? <span className="text-sm font-black text-green-700">(YOU)</span> : null}
-            </>
-          }
-          badge="Participant"
-          copy="Can join groups, make predictions, and view scores and leaderboards."
-          tone="success"
-          isActive={activeLevel === "player"}
-          detailLines={activeLevel === "player" ? activeDetails : undefined}
-        />
-        <HierarchyCard
-          title={
-            <>
-              Manager {activeLevel === "manager" ? <span className="text-sm font-black text-amber-700">(YOU)</span> : null}
-            </>
-          }
-          badge="Limited by assigned permissions"
-          copy="Can manage assigned groups only. Can invite players and manage membership within the limits set by a super admin."
-          tone="warning"
-          isActive={activeLevel === "manager"}
-          detailLines={activeLevel === "manager" ? activeDetails : undefined}
-        />
-        <HierarchyCard
-          title={
-            <>
-              Director {activeLevel === "super_admin" ? <span className="text-sm font-black text-accent-dark">(YOU)</span> : null}
-            </>
-          }
-          badge="Full access"
-          copy="Can create and manage groups, players and managers with some limits."
-          tone="accent"
-          isActive={activeLevel === "super_admin"}
-          detailLines={activeLevel === "super_admin" ? activeDetails : undefined}
-        />
+      <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">LEVELS</p>
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {levels.map((level) => {
+          const isActive = activeLevel === level.key;
+          const accentClass =
+            level.key === "super_admin"
+              ? "text-accent-dark"
+              : level.key === "manager" || level.key === "director" || level.key === "managing_director"
+                ? "text-amber-700"
+                : "text-green-700";
+
+          return (
+            <HierarchyCard
+              key={level.key}
+              storageKey={`my-groups:hierarchy-level:${level.key}`}
+              title={
+                <>
+                  {level.title}{" "}
+                  {isActive ? <span className={`text-sm font-black ${accentClass}`}>(YOU)</span> : null}
+                </>
+              }
+              badge={level.badge}
+              copy={level.copy}
+              tone={level.tone}
+              isActive={isActive}
+              detailLines={isActive ? activeDetails : undefined}
+            />
+          );
+        })}
       </div>
     </section>
   );
@@ -584,7 +620,8 @@ export function ManagementToolbar({
   filterValue,
   onFilterChange,
   filters,
-  trailing
+  trailing,
+  className
 }: {
   searchValue: string;
   onSearchChange: (value: string) => void;
@@ -592,9 +629,10 @@ export function ManagementToolbar({
   onFilterChange: (value: string) => void;
   filters: Array<{ value: string; label: string }>;
   trailing?: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="grid gap-3 rounded-lg border border-gray-200 bg-white p-4 md:grid-cols-[minmax(0,1fr)_220px_auto] md:items-end">
+    <div className={`grid gap-3 rounded-lg border border-gray-200 bg-white p-4 md:grid-cols-[minmax(0,1fr)_220px_auto] md:items-end ${className ?? ""}`}>
       <label className="block">
         <span className="text-sm font-bold text-gray-800">Search</span>
         <input
@@ -620,6 +658,46 @@ export function ManagementToolbar({
       </label>
       <div className="md:justify-self-end">{trailing}</div>
     </div>
+  );
+}
+
+export function ManagementSection({
+  title,
+  description,
+  storageKey,
+  defaultOpen = true,
+  badge,
+  children
+}: {
+  title: string;
+  description?: string;
+  storageKey: string;
+  defaultOpen?: boolean;
+  badge?: ReactNode;
+  children: ReactNode;
+}) {
+  const [isOpen, setIsOpen] = useSessionDisclosureState(storageKey, defaultOpen);
+
+  return (
+    <section className="space-y-3">
+      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-xl font-black">{title}</h3>
+            {description ? <p className="mt-1 text-sm font-semibold text-gray-600">{description}</p> : null}
+          </div>
+          <div className="flex shrink-0 items-start gap-2">
+            {badge}
+            <InlineDisclosureButton
+              isOpen={isOpen}
+              variant="subtle"
+              onClick={() => setIsOpen((current) => !current)}
+            />
+          </div>
+        </div>
+      </div>
+      {isOpen ? children : null}
+    </section>
   );
 }
 
@@ -669,16 +747,19 @@ export function ManagementGrid({ children }: { children: ReactNode }) {
 export function ManagementDatum({
   label,
   value,
+  note,
   fullWidth = false
 }: {
   label: string;
   value: ReactNode;
+  note?: ReactNode;
   fullWidth?: boolean;
 }) {
   return (
     <div className={fullWidth ? "col-span-2" : undefined}>
       <dt className="font-bold text-gray-500">{label}</dt>
       <dd className="font-semibold text-gray-900">{value}</dd>
+      {note ? <p className="mt-0.5 text-xs font-semibold text-gray-500">{note}</p> : null}
     </div>
   );
 }
@@ -772,6 +853,7 @@ export function InviteEntryForm({
       <label className="mt-4 block">
         <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Invite link or token</span>
         <input
+          autoFocus
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           placeholder="Paste a link or token"
@@ -882,6 +964,7 @@ export function InlineTextConfirmation({
 }
 
 function HierarchyCard({
+  storageKey,
   title,
   badge,
   copy,
@@ -889,33 +972,48 @@ function HierarchyCard({
   isActive = false,
   detailLines
 }: {
+  storageKey: string;
   title: ReactNode;
   badge: string;
   copy: string;
-  tone: "accent" | "warning" | "success";
+  tone: "accent" | "warning" | "success" | "neutral";
   isActive?: boolean;
   detailLines?: string[];
 }) {
+  const [isMoreOpen, setIsMoreOpen] = useSessionDisclosureState(storageKey, false);
   const activeClasses =
     tone === "accent"
       ? "border-accent-light bg-accent-light/40"
       : tone === "warning"
         ? "border-amber-200 bg-amber-50"
-        : "border-green-200 bg-green-50";
+        : tone === "neutral"
+          ? "border-gray-300 bg-gray-100"
+          : "border-green-200 bg-green-50";
 
   return (
-    <div className={`rounded-lg border p-4 transition-colors ${isActive ? activeClasses : "border-gray-200 bg-gray-50"}`}>
+    <div className={`rounded-md border p-2 transition-colors ${isActive ? activeClasses : "border-gray-200 bg-gray-50"}`}>
       <div className="flex items-center justify-between gap-3">
-        <h3 className={`text-lg font-black ${isActive ? "text-gray-950" : "text-gray-500"}`}>{title}</h3>
-        <ManagementBadge label={badge} tone={isActive ? tone : "neutral"} />
-      </div>
-      <p className={`mt-3 text-sm font-semibold leading-6 ${isActive ? "text-gray-700" : "text-gray-500"}`}>{copy}</p>
-      {isActive && detailLines && detailLines.length > 0 ? (
-        <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs font-semibold text-gray-700">
-          {detailLines.map((line) => (
-            <p key={line}>{line}</p>
-          ))}
+        <h3 className={`text-xs font-black ${isActive ? "text-gray-950" : "text-gray-500"}`}>{title}</h3>
+        <div className="flex items-center gap-2">
+          <ManagementBadge label={badge} tone={isActive ? tone : "neutral"} />
+          <InlineDisclosureButton
+            isOpen={isMoreOpen}
+            variant="subtle"
+            onClick={() => setIsMoreOpen((current) => !current)}
+          />
         </div>
+      </div>
+      {isMoreOpen ? (
+        <>
+          <p className={`mt-1.5 text-[11px] font-semibold leading-4 ${isActive ? "text-gray-700" : "text-gray-500"}`}>{copy}</p>
+          {isActive && detailLines && detailLines.length > 0 ? (
+            <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] font-semibold text-gray-700">
+              {detailLines.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
