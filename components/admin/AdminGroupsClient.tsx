@@ -7,6 +7,7 @@ import {
   changeGroupOwnerAction,
   fetchAdminGroupsAction,
   removeUserFromGroupAction,
+  resetGroupLocalDerivedStateAction,
   updateGroupLimitAction,
   updateManagerLimitsAction,
   type AdminGroupSummary,
@@ -61,6 +62,13 @@ export function AdminGroupsSection({
     confirmLabel: string;
     onConfirm: () => void;
   } | null>(null);
+  const [groupResetConfirmation, setGroupResetConfirmation] = useState<{
+    key: string;
+    groupId: string;
+    groupName: string;
+  } | null>(null);
+  const [groupResetConfirmationValue, setGroupResetConfirmationValue] = useState("");
+  const [groupResetReason, setGroupResetReason] = useState("");
 
   useEffect(() => {
     void load();
@@ -193,6 +201,77 @@ export function AdminGroupsSection({
           onCancel={() => setConfirmation(null)}
           isPending={activeKey === confirmation.key}
         />
+      ) : null}
+
+      {groupResetConfirmation ? (
+        <div className="rounded-lg border border-rose-200 bg-rose-50/70 p-4">
+          <div className="space-y-2">
+            <p className="text-lg font-black text-gray-950">
+              Reset local test state for {groupResetConfirmation.groupName}?
+            </p>
+            <p className="text-sm font-semibold text-gray-700">
+              This clears only group-local derived state such as group leaderboard snapshots, group leaderboard events,
+              group bonus overlays, and group-local side-pick scoring overlays. It preserves the group, members, owner,
+              and global predictions.
+            </p>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-bold text-gray-800">Type group name</span>
+              <input
+                value={groupResetConfirmationValue}
+                onChange={(event) => setGroupResetConfirmationValue(event.target.value)}
+                placeholder={groupResetConfirmation.groupName}
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-bold text-gray-800">Reason</span>
+              <input
+                value={groupResetReason}
+                onChange={(event) => setGroupResetReason(event.target.value)}
+                placeholder="Explain why this group recovery reset is needed"
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <ActionButton
+              tone="danger"
+              disabled={activeKey === groupResetConfirmation.key}
+              onClick={() => {
+                void withAction(groupResetConfirmation.key, async () => {
+                  const result = await resetGroupLocalDerivedStateAction({
+                    groupId: groupResetConfirmation.groupId,
+                    expectedGroupName: groupResetConfirmationValue,
+                    reason: groupResetReason
+                  });
+                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                  if (result.ok) {
+                    setGroupResetConfirmation(null);
+                    setGroupResetConfirmationValue("");
+                    setGroupResetReason("");
+                    await load();
+                  }
+                });
+              }}
+            >
+              {activeKey === groupResetConfirmation.key ? "Resetting..." : "Reset Group Local Test State"}
+            </ActionButton>
+            <ActionButton
+              onClick={() => {
+                setGroupResetConfirmation(null);
+                setGroupResetConfirmationValue("");
+                setGroupResetReason("");
+              }}
+              disabled={activeKey === groupResetConfirmation.key}
+            >
+              Cancel
+            </ActionButton>
+          </div>
+        </div>
       ) : null}
 
       <ManagementSection
@@ -354,6 +433,15 @@ export function AdminGroupsSection({
                       }
                     });
                   }}
+                  onOpenGroupReset={() => {
+                    setGroupResetConfirmation({
+                      key: `reset-group-local-${group.id}`,
+                      groupId: group.id,
+                      groupName: group.name
+                    });
+                    setGroupResetConfirmationValue("");
+                    setGroupResetReason("");
+                  }}
                 />
               );
             })
@@ -440,7 +528,8 @@ function CompactGroupManagementCard({
   onSaveLimit,
   onAddUser,
   onChangeOwner,
-  onRemoveMember
+  onRemoveMember,
+  onOpenGroupReset
 }: {
   group: AdminGroupSummary;
   groupLimit: string;
@@ -454,6 +543,7 @@ function CompactGroupManagementCard({
   onAddUser: () => void;
   onChangeOwner: () => void;
   onRemoveMember: (member: AdminGroupSummary["members"][number]) => void;
+  onOpenGroupReset: () => void;
 }) {
   const [isOpen, setIsOpen] = useSessionDisclosureState(`admin-groups:group:${group.id}`, false);
   const isFull = group.memberCount >= group.membershipLimit;
@@ -572,6 +662,9 @@ function CompactGroupManagementCard({
               <div className="mt-3 flex flex-wrap gap-2">
                 <ActionButton tone="accent" disabled={activeKey === `owner-${group.id}`} onClick={onChangeOwner}>
                   {activeKey === `owner-${group.id}` ? "Saving..." : "Change Owner"}
+                </ActionButton>
+                <ActionButton tone="danger" disabled={activeKey === `reset-group-local-${group.id}`} onClick={onOpenGroupReset}>
+                  {activeKey === `reset-group-local-${group.id}` ? "Resetting..." : "Reset Group Local Test State"}
                 </ActionButton>
                 <Link
                   href="/leaderboard"

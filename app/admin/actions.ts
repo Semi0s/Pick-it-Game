@@ -48,6 +48,8 @@ import {
 } from "@/lib/knockout-seeding";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 import {
+  ADMIN_RESET_TOOL_DEFINITIONS,
+  type AdminRecoveryScope,
   getResetDiagnostics,
   getTestingResetAvailability,
   logTestingResetEnvDiagnostics
@@ -302,14 +304,15 @@ export type SyncMatchesNowResult =
 export type ResetTestingDataInput = {
   confirmationText: string;
   scope: string;
+  reason?: string;
 };
 
 export type DestructiveAdminToolStatusResult =
   | {
       ok: true;
-      knockout: ReturnType<typeof getTestingResetAvailability>;
-      group: ReturnType<typeof getTestingResetAvailability>;
+      scopes: Record<AdminRecoveryScope, ReturnType<typeof getTestingResetAvailability>>;
       diagnostics: ReturnType<typeof getResetDiagnostics>;
+      toolDefinitions: typeof ADMIN_RESET_TOOL_DEFINITIONS;
     }
   | {
       ok: false;
@@ -414,6 +417,101 @@ type ResetOperationSummary = {
   lingeringScoredMatchCount?: number;
 };
 
+export type ClearUserTestPredictionsInput = {
+  userId: string;
+  expectedEmail: string;
+  reason: string;
+};
+
+export type ClearUserTestPredictionsResult =
+  | {
+      ok: true;
+      affectedPredictionCount: number;
+      affectedBracketPredictionCount: number;
+      affectedLegacyBracketPickCount: number;
+      affectedBracketScoreCount: number;
+      affectedPredictionScoreCount: number;
+      affectedLeaderboardEventCount: number;
+      affectedLeaderboardSnapshotCount: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type ResetGroupLocalStateInput = {
+  groupId: string;
+  expectedGroupName: string;
+  reason: string;
+};
+
+export type ResetGroupLocalStateResult =
+  | {
+      ok: true;
+      clearedLeaderboardEvents: number;
+      clearedLeaderboardSnapshots: number;
+      clearedGroupBonusScores: number;
+      clearedSidePickScores: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type ResetMatchToOpenInput = {
+  matchId: string;
+  expectedMatchId: string;
+  reason: string;
+};
+
+export type ResetMatchToOpenResult =
+  | {
+      ok: true;
+      clearedPredictionScores: number;
+      clearedBracketScores: number;
+      clearedLeaderboardEvents: number;
+      clearedLeaderboardSnapshots: number;
+      clearedDownstreamPredictions: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type RepairLeaderboardStateInput = {
+  reason: string;
+};
+
+export type RepairLeaderboardStateResult =
+  | {
+      ok: true;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type FullPreLaunchTestResetInput = {
+  confirmationText: string;
+  reason: string;
+};
+
+export type FullPreLaunchTestResetResult =
+  | {
+      ok: true;
+      groupResetMatchCount: number;
+      knockoutResetMatchCount: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export type CreateInviteInput = {
   email: string;
   displayName?: string;
@@ -460,6 +558,18 @@ export type DemotionImpactOwnedGroup = {
   blockerReason: string | null;
 };
 
+export type DemotionCleanupOption =
+  | "remove_manager_limits"
+  | "downgrade_legacy_manager_memberships"
+  | "deactivate_created_access_codes";
+
+export type DemotionCleanupOptionDetail = {
+  key: DemotionCleanupOption;
+  label: string;
+  description: string;
+  selectedByDefault: boolean;
+};
+
 export type DemotionImpactSummary = {
   userId: string;
   email: string;
@@ -478,6 +588,8 @@ export type DemotionImpactSummary = {
   pendingInviteCount: number;
   hasManagerLimits: boolean;
   managerLimits: { maxGroups: number; maxMembersPerGroup: number } | null;
+  legacyManagedGroupCount: number;
+  activeCreatedAccessCodeCount: number;
   organizationOwnershipCount: number;
   organizationBrandingCount: number;
   customTrophyOwnershipCount: number;
@@ -486,6 +598,7 @@ export type DemotionImpactSummary = {
   status: "safe" | "blocked" | "cleanup_required";
   blockers: string[];
   cleanupActions: string[];
+  cleanupOptions: DemotionCleanupOptionDetail[];
 };
 
 export type FetchUserDemotionImpactResult =
@@ -503,6 +616,7 @@ export type DemoteUserWithImpactResolutionInput = {
   targetAccessLevel: AccessLevel;
   expectedEmail: string;
   reason: string;
+  resolutionPlan?: Partial<Record<DemotionCleanupOption, boolean>>;
 };
 
 export type DemoteUserWithImpactResolutionResult = ResetUserAccessResult;
@@ -511,6 +625,7 @@ export type DeactivateOrganizerAccessInput = {
   userId: string;
   expectedEmail: string;
   reason: string;
+  resolutionPlan?: Partial<Record<DemotionCleanupOption, boolean>>;
 };
 
 export type DeactivateOrganizerAccessResult = ResetUserAccessResult;
@@ -1309,6 +1424,439 @@ export async function deleteUserAndStartOverAction(
   };
 }
 
+export async function clearUserTestPredictionsAction(
+  input: ClearUserTestPredictionsInput
+): Promise<ClearUserTestPredictionsResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  const trimmedUserId = input.userId.trim();
+  if (!trimmedUserId) {
+    return { ok: false, message: "A valid user is required." };
+  }
+
+  try {
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    ensureRecoveryActionAllowed("user", "clearUserTestPredictionsAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+
+    const adminSupabase = createAdminClient();
+    const { data: userProfile, error: userProfileError } = await adminSupabase
+      .from("users")
+      .select("id,email")
+      .eq("id", trimmedUserId)
+      .maybeSingle();
+
+    if (userProfileError) {
+      return { ok: false, message: userProfileError.message };
+    }
+
+    if (!userProfile) {
+      return { ok: false, message: "That user was not found." };
+    }
+
+    const normalizedEmail = (userProfile.email ?? "").trim().toLowerCase();
+    if (normalizedEmail !== input.expectedEmail.trim().toLowerCase()) {
+      return { ok: false, message: `Type ${normalizedEmail} to confirm this user reset.` };
+    }
+
+    const [
+      predictionsResult,
+      bracketPredictionsResult,
+      legacyBracketPicksResult,
+      bracketScoresResult,
+      predictionScoresResult,
+      leaderboardEventsResult,
+      leaderboardSnapshotsResult
+    ] = await Promise.all([
+      adminSupabase.from("predictions").select("id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
+      countOptionalGameplayRows(adminSupabase, "bracket_predictions", trimmedUserId),
+      countOptionalGameplayRows(adminSupabase, "bracket_picks", trimmedUserId),
+      adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
+      adminSupabase.from("prediction_scores").select("prediction_id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
+      adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
+      adminSupabase.from("leaderboard_snapshots").select("id", { count: "exact", head: true }).eq("user_id", trimmedUserId)
+    ]);
+
+    const deletionResults = await Promise.all([
+      adminSupabase.from("predictions").delete().eq("user_id", trimmedUserId),
+      deleteOptionalGameplayRows(adminSupabase, "bracket_predictions", trimmedUserId),
+      deleteOptionalGameplayRows(adminSupabase, "bracket_picks", trimmedUserId),
+      adminSupabase.from("bracket_scores").delete().eq("user_id", trimmedUserId),
+      adminSupabase.from("prediction_scores").delete().eq("user_id", trimmedUserId),
+      adminSupabase.from("leaderboard_events").delete().eq("user_id", trimmedUserId),
+      adminSupabase.from("leaderboard_snapshots").delete().eq("user_id", trimmedUserId)
+    ]);
+
+    const failedDeletion = deletionResults.find((result) => result.error);
+    if (failedDeletion?.error) {
+      return { ok: false, message: failedDeletion.error.message };
+    }
+
+    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+    if (!leaderboardResult.ok) {
+      return leaderboardResult;
+    }
+
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("user test reset");
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "clear_user_test_predictions",
+      scope: "user",
+      reason: trimmedReason,
+      success: true,
+      targetIds: [trimmedUserId],
+      affectedCounts: {
+        predictions: predictionsResult.count ?? 0,
+        bracketPredictions: bracketPredictionsResult.count ?? 0,
+        legacyBracketPicks: legacyBracketPicksResult.count ?? 0,
+        bracketScores: bracketScoresResult.count ?? 0,
+        predictionScores: predictionScoresResult.count ?? 0,
+        leaderboardEvents: leaderboardEventsResult.count ?? 0,
+        leaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0
+      }
+    });
+
+    revalidatePath("/admin/players");
+    revalidatePath("/dashboard");
+    revalidatePath("/leaderboard");
+    revalidatePath("/groups");
+    revalidatePath("/knockout");
+    revalidatePath("/profile");
+
+    return {
+      ok: true,
+      affectedPredictionCount: predictionsResult.count ?? 0,
+      affectedBracketPredictionCount: bracketPredictionsResult.count ?? 0,
+      affectedLegacyBracketPickCount: legacyBracketPicksResult.count ?? 0,
+      affectedBracketScoreCount: bracketScoresResult.count ?? 0,
+      affectedPredictionScoreCount: predictionScoresResult.count ?? 0,
+      affectedLeaderboardEventCount: leaderboardEventsResult.count ?? 0,
+      affectedLeaderboardSnapshotCount: leaderboardSnapshotsResult.count ?? 0,
+      message: resetMarkerWarning
+        ? `Cleared ${userProfile.email}'s test predictions and rebuilt leaderboard state. ${resetMarkerWarning}`
+        : `Cleared ${userProfile.email}'s test predictions and rebuilt leaderboard state.`
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not clear that user's test data.") };
+  }
+}
+
+export async function resetGroupLocalDerivedStateAction(
+  input: ResetGroupLocalStateInput
+): Promise<ResetGroupLocalStateResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  const trimmedGroupId = input.groupId.trim();
+  if (!trimmedGroupId) {
+    return { ok: false, message: "A valid group is required." };
+  }
+
+  try {
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    ensureRecoveryActionAllowed("group", "resetGroupLocalDerivedStateAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+
+    const adminSupabase = createAdminClient();
+    const { data: groupRow, error: groupError } = await adminSupabase
+      .from("groups")
+      .select("id,name")
+      .eq("id", trimmedGroupId)
+      .maybeSingle();
+
+    if (groupError) {
+      return { ok: false, message: groupError.message };
+    }
+
+    if (!groupRow) {
+      return { ok: false, message: "That group was not found." };
+    }
+
+    if (groupRow.name.trim().toLowerCase() !== input.expectedGroupName.trim().toLowerCase()) {
+      return { ok: false, message: `Type ${groupRow.name} to confirm this group reset.` };
+    }
+
+    const [
+      leaderboardEventsResult,
+      leaderboardSnapshotsResult,
+      groupBonusScoresResult,
+      sidePickScoresResult
+    ] = await Promise.all([
+      adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).eq("group_id", trimmedGroupId),
+      adminSupabase.from("leaderboard_snapshots").select("id", { count: "exact", head: true }).eq("group_id", trimmedGroupId),
+      adminSupabase.from("group_bonus_scores").select("group_id", { count: "exact", head: true }).eq("group_id", trimmedGroupId),
+      adminSupabase.from("side_pick_scores").select("group_id", { count: "exact", head: true }).eq("group_id", trimmedGroupId)
+    ]);
+
+    const deletionResults = await Promise.all([
+      adminSupabase.from("leaderboard_events").delete().eq("group_id", trimmedGroupId),
+      adminSupabase.from("leaderboard_snapshots").delete().eq("group_id", trimmedGroupId),
+      adminSupabase.from("group_bonus_scores").delete().eq("group_id", trimmedGroupId),
+      adminSupabase.from("side_pick_scores").delete().eq("group_id", trimmedGroupId)
+    ]);
+
+    const failedDeletion = deletionResults.find((result) => result.error && !isMissingRelationError(result.error.message, "public.side_pick_scores"));
+    if (failedDeletion?.error) {
+      return { ok: false, message: failedDeletion.error.message };
+    }
+
+    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+    if (!leaderboardResult.ok) {
+      return leaderboardResult;
+    }
+
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("group-local reset");
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "reset_group_local_state",
+      scope: "group",
+      reason: trimmedReason,
+      success: true,
+      targetIds: [trimmedGroupId],
+      affectedCounts: {
+        leaderboardEvents: leaderboardEventsResult.count ?? 0,
+        leaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0,
+        groupBonusScores: groupBonusScoresResult.count ?? 0,
+        sidePickScores: sidePickScoresResult.count ?? 0
+      }
+    });
+
+    revalidatePath("/admin/groups");
+    revalidatePath("/my-groups");
+    revalidatePath("/leaderboard");
+    revalidatePath("/groups");
+
+    return {
+      ok: true,
+      clearedLeaderboardEvents: leaderboardEventsResult.count ?? 0,
+      clearedLeaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0,
+      clearedGroupBonusScores: groupBonusScoresResult.count ?? 0,
+      clearedSidePickScores: sidePickScoresResult.count ?? 0,
+      message: resetMarkerWarning
+        ? `Cleared ${groupRow.name}'s local derived state and rebuilt leaderboard data. ${resetMarkerWarning}`
+        : `Cleared ${groupRow.name}'s local derived state and rebuilt leaderboard data.`
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not reset that group's local state.") };
+  }
+}
+
+export async function resetMatchToOpenAction(
+  input: ResetMatchToOpenInput
+): Promise<ResetMatchToOpenResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  const trimmedMatchId = input.matchId.trim();
+  if (!trimmedMatchId) {
+    return { ok: false, message: "A valid match is required." };
+  }
+
+  try {
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    ensureRecoveryActionAllowed("match", "resetMatchToOpenAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+
+    if (input.expectedMatchId.trim() !== trimmedMatchId) {
+      return { ok: false, message: `Type ${trimmedMatchId} to confirm this match reset.` };
+    }
+
+    const adminSupabase = createAdminClient();
+    const { data: matchRow, error: matchError } = await adminSupabase
+      .from("matches")
+      .select("id,stage,status,home_team_id,away_team_id,home_score,away_score,winner_team_id,finalized_at,is_manual_override")
+      .eq("id", trimmedMatchId)
+      .maybeSingle();
+
+    if (matchError) {
+      return { ok: false, message: matchError.message };
+    }
+
+    if (!matchRow) {
+      return { ok: false, message: "That match was not found." };
+    }
+
+    const [
+      predictionScoresResult,
+      bracketScoresResult,
+      leaderboardEventsResult,
+      leaderboardSnapshotsResult
+    ] = await Promise.all([
+      adminSupabase.from("prediction_scores").select("prediction_id", { count: "exact", head: true }).eq("match_id", trimmedMatchId),
+      adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).eq("match_id", trimmedMatchId),
+      adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).eq("match_id", trimmedMatchId),
+      adminSupabase.from("leaderboard_snapshots").select("id", { count: "exact", head: true }).eq("match_id", trimmedMatchId)
+    ]);
+
+    const updateResult = await adminSupabase
+      .from("matches")
+      .update({
+        status: "scheduled",
+        home_score: null,
+        away_score: null,
+        winner_team_id: null,
+        finalized_at: null,
+        last_synced_at: null,
+        is_manual_override: false,
+        sync_status: null,
+        sync_error: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", trimmedMatchId);
+
+    if (updateResult.error && !isOptionalResetColumnError(updateResult.error.message)) {
+      return { ok: false, message: updateResult.error.message };
+    }
+
+    if (updateResult.error) {
+      const fallbackUpdate = await adminSupabase
+        .from("matches")
+        .update({
+          status: "scheduled",
+          home_score: null,
+          away_score: null,
+          winner_team_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", trimmedMatchId);
+      if (fallbackUpdate.error) {
+        return { ok: false, message: fallbackUpdate.error.message };
+      }
+    }
+
+    let clearedDownstreamPredictions = 0;
+    if ((matchRow as MatchRow).stage === "group") {
+      const resetResult = await resetGroupMatchScoring(adminSupabase, trimmedMatchId);
+      if (!resetResult.ok) {
+        return resetResult;
+      }
+    } else {
+      await resetKnockoutMatchScoring(trimmedMatchId);
+      const advancementSummary = await rebuildKnockoutAdvancementSharedWithClient(adminSupabase);
+      clearedDownstreamPredictions = advancementSummary.clearedPredictions;
+      const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+      if (!leaderboardResult.ok) {
+        return leaderboardResult;
+      }
+    }
+
+    await appendMatchEvent(adminSupabase, {
+      matchId: trimmedMatchId,
+      eventType: "reopen",
+      payload: {
+        source: "admin-reset-to-open",
+        actorUserId: superAdminCheck.userId,
+        previousStatus: (matchRow as MatchRow).status,
+        nextStatus: "scheduled"
+      }
+    });
+
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("match reset");
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "reset_match_to_open",
+      scope: "match",
+      reason: trimmedReason,
+      success: true,
+      targetIds: [trimmedMatchId],
+      affectedCounts: {
+        predictionScores: predictionScoresResult.count ?? 0,
+        bracketScores: bracketScoresResult.count ?? 0,
+        leaderboardEvents: leaderboardEventsResult.count ?? 0,
+        leaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0,
+        clearedDownstreamPredictions
+      }
+    });
+
+    revalidatePath("/admin/matches");
+    revalidatePath("/dashboard");
+    revalidatePath("/groups");
+    revalidatePath("/knockout");
+    revalidatePath("/leaderboard");
+    revalidatePath("/profile");
+
+    return {
+      ok: true,
+      clearedPredictionScores: predictionScoresResult.count ?? 0,
+      clearedBracketScores: bracketScoresResult.count ?? 0,
+      clearedLeaderboardEvents: leaderboardEventsResult.count ?? 0,
+      clearedLeaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0,
+      clearedDownstreamPredictions,
+      message: resetMarkerWarning
+        ? `Reset match ${trimmedMatchId} to open and repaired derived state. ${resetMarkerWarning}`
+        : `Reset match ${trimmedMatchId} to open and repaired derived state.`
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not reset that match to open.") };
+  }
+}
+
+export async function repairLeaderboardStateAction(
+  input: RepairLeaderboardStateInput
+): Promise<RepairLeaderboardStateResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  try {
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    ensureRecoveryActionAllowed("leaderboard", "repairLeaderboardStateAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+
+    const adminSupabase = createAdminClient();
+    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+    if (!leaderboardResult.ok) {
+      return leaderboardResult;
+    }
+
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("leaderboard repair");
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "repair_leaderboards",
+      scope: "leaderboard",
+      reason: trimmedReason,
+      success: true,
+      targetIds: [],
+      affectedCounts: {}
+    });
+
+    revalidatePath("/dashboard");
+    revalidatePath("/leaderboard");
+    revalidatePath("/groups");
+    revalidatePath("/knockout");
+    revalidatePath("/my-groups");
+
+    return {
+      ok: true,
+      message: resetMarkerWarning
+        ? `Rebuilt leaderboard snapshots from persisted scores. ${resetMarkerWarning}`
+        : "Rebuilt leaderboard snapshots from persisted scores."
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not repair leaderboard state.") };
+  }
+}
+
 export async function fetchAdminPlayerHealthAction(): Promise<FetchAdminPlayerHealthResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
@@ -1349,6 +1897,13 @@ export async function getUserDemotionImpactAction(
 
 export async function demoteUserWithImpactResolutionAction(
   input: DemoteUserWithImpactResolutionInput
+): Promise<DemoteUserWithImpactResolutionResult> {
+  return applyAccessChangeWithImpactResolution(input, "demote_access");
+}
+
+async function applyAccessChangeWithImpactResolution(
+  input: DemoteUserWithImpactResolutionInput,
+  action: "demote_access" | "deactivate_organizer_access"
 ): Promise<DemoteUserWithImpactResolutionResult> {
   const adminCheck = await assertCurrentUserIsSuperAdmin();
   if (!adminCheck.ok) {
@@ -1398,7 +1953,14 @@ export async function demoteUserWithImpactResolutionAction(
       return { ok: false, message: `Type ${impact.email} to confirm this access change.` };
     }
 
-    const cleanupSummary = await applyOrganizerAccessCleanup(adminSupabase, impact);
+    const resolutionPlan = input.resolutionPlan ?? {};
+    const resolutionPlanError = validateDemotionResolutionPlan(impact, resolutionPlan);
+    if (resolutionPlanError) {
+      return { ok: false, message: resolutionPlanError };
+    }
+
+    // Standard player participation should survive organizer access changes whenever possible.
+    const cleanupSummary = await applyOrganizerAccessCleanup(adminSupabase, impact, resolutionPlan);
 
     const { error: updateUserError } = await adminSupabase
       .from("users")
@@ -1429,6 +1991,22 @@ export async function demoteUserWithImpactResolutionAction(
     }
 
     await sendAccessLevelChangeEmail(adminSupabase, impact, impact.targetAccessLevel);
+    await writeAdminAccessChangeAuditLog(adminSupabase, {
+      actorUserId: adminCheck.userId,
+      targetUserId: impact.userId,
+      targetEmail: impact.email,
+      action,
+      previousRole: impact.currentRole,
+      previousPlanTier: impact.currentPlanTier,
+      previousAccessLevel: impact.currentAccessLevel,
+      newRole: impact.targetRole,
+      newPlanTier: impact.targetPlanTier,
+      newAccessLevel: impact.targetAccessLevel,
+      impact,
+      cleanupActionsTaken: cleanupSummary.actionsTaken,
+      cleanupCounts: cleanupSummary.counts,
+      reason: trimmedReason
+    });
 
     console.info("[admin-player-access-demoted]", {
       actorUserId: adminCheck.userId,
@@ -1463,7 +2041,10 @@ export async function demoteUserWithImpactResolutionAction(
 
     return {
       ok: true,
-      message: `${impact.displayName}'s access was changed from ${getAccessLevelDisplayLabel(impact.currentAccessLevel)} to ${getAccessLevelDisplayLabel(impact.targetAccessLevel)}.`
+      message:
+        action === "deactivate_organizer_access"
+          ? `Organizer access was removed for ${impact.displayName} while preserving player access where possible.`
+          : `${impact.displayName}'s access was changed from ${getAccessLevelDisplayLabel(impact.currentAccessLevel)} to ${getAccessLevelDisplayLabel(impact.targetAccessLevel)}.`
     };
   } catch (error) {
     return {
@@ -1476,12 +2057,13 @@ export async function demoteUserWithImpactResolutionAction(
 export async function deactivateOrganizerAccessAction(
   input: DeactivateOrganizerAccessInput
 ): Promise<DeactivateOrganizerAccessResult> {
-  return demoteUserWithImpactResolutionAction({
+  return applyAccessChangeWithImpactResolution({
     userId: input.userId,
     expectedEmail: input.expectedEmail,
     reason: input.reason,
-    targetAccessLevel: "player"
-  });
+    targetAccessLevel: "player",
+    resolutionPlan: input.resolutionPlan
+  }, "deactivate_organizer_access");
 }
 
 export async function fetchLeaderboardFeatureSettingsAction(): Promise<FetchLeaderboardFeatureSettingsResult> {
@@ -1683,72 +2265,21 @@ export async function resetTestingSocialStateAction(): Promise<ResetTestingSocia
   }
 
   const adminSupabase = createAdminClient();
-
-  const deleteCommentsResult = await adminSupabase
-    .from("leaderboard_event_comments")
-    .delete()
-    .not("id", "is", null);
-  if (deleteCommentsResult.error && !isMissingSocialResetTableError(deleteCommentsResult.error.message)) {
-    return { ok: false, message: deleteCommentsResult.error.message };
-  }
-
-  const deleteReactionsResult = await adminSupabase
-    .from("leaderboard_event_reactions")
-    .delete()
-    .not("id", "is", null);
-  if (deleteReactionsResult.error && !isMissingSocialResetTableError(deleteReactionsResult.error.message)) {
-    return { ok: false, message: deleteReactionsResult.error.message };
-  }
-
-  const deleteNotificationsResult = await adminSupabase
-    .from("user_notifications")
-    .delete()
-    .not("id", "is", null);
-  if (deleteNotificationsResult.error && !isMissingSocialResetTableError(deleteNotificationsResult.error.message)) {
-    return { ok: false, message: deleteNotificationsResult.error.message };
-  }
-
-  const deleteLeaderboardEventsResult = await adminSupabase
-    .from("leaderboard_events")
-    .delete()
-    .not("id", "is", null);
-  if (
-    deleteLeaderboardEventsResult.error &&
-    !isMissingSocialResetTableError(deleteLeaderboardEventsResult.error.message)
-  ) {
-    return { ok: false, message: deleteLeaderboardEventsResult.error.message };
-  }
-
-  const deleteUserTrophiesResult = await adminSupabase
-    .from("user_trophies")
-    .delete()
-    .not("id", "is", null);
-  if (deleteUserTrophiesResult.error && !isMissingSocialResetTableError(deleteUserTrophiesResult.error.message)) {
-    return { ok: false, message: deleteUserTrophiesResult.error.message };
-  }
-
-  const deleteLeaderboardSnapshotsResult = await adminSupabase
-    .from("leaderboard_snapshots")
-    .delete()
-    .not("id", "is", null);
-  if (
-    deleteLeaderboardSnapshotsResult.error &&
-    !isMissingSocialResetTableError(deleteLeaderboardSnapshotsResult.error.message)
-  ) {
-    return { ok: false, message: deleteLeaderboardSnapshotsResult.error.message };
-  }
-
-  let resetMarkerWarning: string | null = null;
-  try {
-    const currentResetEpoch = await fetchIntegerAppSetting(DASHBOARD_UI_RESET_EPOCH_SETTING_KEY, 0);
-    await updateIntegerAppSetting(DASHBOARD_UI_RESET_EPOCH_SETTING_KEY, currentResetEpoch + 1);
-  } catch (error) {
-    console.warn("Could not update dashboard reset epoch during testing reset.", error);
-    resetMarkerWarning =
-      error instanceof Error
-        ? error.message
-        : "Dashboard reset marker could not be updated.";
-  }
+  const clearedCounts = await clearTestingSocialStateWithClient(adminSupabase);
+  const resetMarkerWarning = await bumpDashboardUiResetEpoch("testing social reset");
+  await writeAdminResetAuditLog(adminSupabase, {
+    actorUserId: adminCheck.userId,
+    actorEmail: null,
+    actionKey: "reset_testing_social_state",
+    scope: "social",
+    reason: "Clear testing social state",
+    success: true,
+    targetIds: [],
+    affectedCounts: clearedCounts,
+    details: {
+      preserves: ADMIN_RESET_TOOL_DEFINITIONS.reset_testing_social_state.preserves
+    }
+  });
 
   revalidatePath("/dashboard");
   revalidatePath("/leaderboard");
@@ -1763,6 +2294,160 @@ export async function resetTestingSocialStateAction(): Promise<ResetTestingSocia
       ? `Testing notifications, leaderboard events, trophies, and movement history were cleared. ${resetMarkerWarning}`
       : "Testing notifications, leaderboard events, trophies, and movement history were cleared."
   };
+}
+
+async function clearTestingSocialStateWithClient(
+  adminSupabase: ReturnType<typeof createAdminClient>
+) {
+  const [
+    commentsCountResult,
+    reactionsCountResult,
+    notificationsCountResult,
+    leaderboardEventsCountResult,
+    userTrophiesCountResult,
+    leaderboardSnapshotsCountResult
+  ] = await Promise.all([
+    countWholeTableRows(adminSupabase, "leaderboard_event_comments"),
+    countWholeTableRows(adminSupabase, "leaderboard_event_reactions"),
+    countWholeTableRows(adminSupabase, "user_notifications"),
+    countWholeTableRows(adminSupabase, "leaderboard_events"),
+    countWholeTableRows(adminSupabase, "user_trophies"),
+    countWholeTableRows(adminSupabase, "leaderboard_snapshots")
+  ]);
+
+  const deleteCommentsResult = await adminSupabase
+    .from("leaderboard_event_comments")
+    .delete()
+    .not("id", "is", null);
+  if (deleteCommentsResult.error && !isMissingSocialResetTableError(deleteCommentsResult.error.message)) {
+    throw new Error(deleteCommentsResult.error.message);
+  }
+
+  const deleteReactionsResult = await adminSupabase
+    .from("leaderboard_event_reactions")
+    .delete()
+    .not("id", "is", null);
+  if (deleteReactionsResult.error && !isMissingSocialResetTableError(deleteReactionsResult.error.message)) {
+    throw new Error(deleteReactionsResult.error.message);
+  }
+
+  const deleteNotificationsResult = await adminSupabase
+    .from("user_notifications")
+    .delete()
+    .not("id", "is", null);
+  if (deleteNotificationsResult.error && !isMissingSocialResetTableError(deleteNotificationsResult.error.message)) {
+    throw new Error(deleteNotificationsResult.error.message);
+  }
+
+  const deleteLeaderboardEventsResult = await adminSupabase
+    .from("leaderboard_events")
+    .delete()
+    .not("id", "is", null);
+  if (
+    deleteLeaderboardEventsResult.error &&
+    !isMissingSocialResetTableError(deleteLeaderboardEventsResult.error.message)
+  ) {
+    throw new Error(deleteLeaderboardEventsResult.error.message);
+  }
+
+  const deleteUserTrophiesResult = await adminSupabase
+    .from("user_trophies")
+    .delete()
+    .not("id", "is", null);
+  if (deleteUserTrophiesResult.error && !isMissingSocialResetTableError(deleteUserTrophiesResult.error.message)) {
+    throw new Error(deleteUserTrophiesResult.error.message);
+  }
+
+  const deleteLeaderboardSnapshotsResult = await adminSupabase
+    .from("leaderboard_snapshots")
+    .delete()
+    .not("id", "is", null);
+  if (
+    deleteLeaderboardSnapshotsResult.error &&
+    !isMissingSocialResetTableError(deleteLeaderboardSnapshotsResult.error.message)
+  ) {
+    throw new Error(deleteLeaderboardSnapshotsResult.error.message);
+  }
+
+  return {
+    deletedComments: commentsCountResult.count ?? 0,
+    deletedReactions: reactionsCountResult.count ?? 0,
+    deletedNotifications: notificationsCountResult.count ?? 0,
+    deletedLeaderboardEvents: leaderboardEventsCountResult.count ?? 0,
+    deletedUserTrophies: userTrophiesCountResult.count ?? 0,
+    deletedLeaderboardSnapshots: leaderboardSnapshotsCountResult.count ?? 0
+  };
+}
+
+async function bumpDashboardUiResetEpoch(reason: string) {
+  try {
+    const currentResetEpoch = await fetchIntegerAppSetting(DASHBOARD_UI_RESET_EPOCH_SETTING_KEY, 0);
+    await updateIntegerAppSetting(DASHBOARD_UI_RESET_EPOCH_SETTING_KEY, currentResetEpoch + 1);
+    return null;
+  } catch (error) {
+    console.warn(`Could not update dashboard reset epoch during ${reason}.`, error);
+    return error instanceof Error ? error.message : "Dashboard reset marker could not be updated.";
+  }
+}
+
+async function writeAdminResetAuditLog(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    actorUserId: string;
+    actorEmail: string | null;
+    actionKey: string;
+    scope: AdminRecoveryScope;
+    reason: string;
+    success: boolean;
+    targetIds: string[];
+    affectedCounts: Record<string, number>;
+    details?: Record<string, unknown>;
+  }
+) {
+  const { error } = await adminSupabase.from("admin_reset_audit_log").insert({
+    actor_user_id: input.actorUserId,
+    actor_email: input.actorEmail,
+    action_key: input.actionKey,
+    scope: input.scope,
+    target_ids: input.targetIds,
+    affected_counts: input.affectedCounts,
+    reason: input.reason,
+    success: input.success,
+    details: input.details ?? {}
+  });
+
+  if (isMissingRelationError(error?.message ?? "", "public.admin_reset_audit_log")) {
+    console.warn("Could not write admin reset audit log because the table is missing.", {
+      actionKey: input.actionKey,
+      scope: input.scope
+    });
+    return;
+  }
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+function buildRequiredResetReason(reason: string) {
+  const trimmedReason = reason.trim();
+  if (!trimmedReason) {
+    throw new Error("A reason is required before running this recovery action.");
+  }
+
+  return trimmedReason;
+}
+
+function ensureRecoveryActionAllowed(
+  scope: AdminRecoveryScope,
+  actionName: Parameters<typeof logTestingResetEnvDiagnostics>[0],
+  actor: { adminUserId: string; adminEmail: string | null }
+) {
+  const availability = getTestingResetAvailability(scope);
+  logTestingResetEnvDiagnostics(actionName, actor);
+  if (!availability.canRun) {
+    throw new Error(availability.disabledReason ?? "This recovery tool is disabled in the current environment.");
+  }
 }
 
 export async function upsertManagerLimitsAction(
@@ -2255,60 +2940,11 @@ export async function changeGroupOwnerAction(groupId: string, newOwnerUserId: st
   };
 }
 
-export async function removeManagerAccessAction(userId: string): Promise<RemoveManagerAccessResult> {
-  const adminCheck = await assertCurrentUserIsAdmin();
-  if (!adminCheck.ok) {
-    return adminCheck;
-  }
-
-  const trimmedUserId = userId.trim();
-  if (!trimmedUserId) {
-    return { ok: false, message: "A valid user is required." };
-  }
-
-  const adminSupabase = createAdminClient();
-  const [{ data: existingUser, error: existingUserError }, { error }] = await Promise.all([
-    adminSupabase
-      .from("users")
-      .select("id,role,plan_tier")
-      .eq("id", trimmedUserId)
-      .maybeSingle(),
-    adminSupabase
-      .from("manager_limits")
-      .delete()
-      .eq("user_id", trimmedUserId)
-  ]);
-
-  if (existingUserError || error) {
-    return { ok: false, message: existingUserError?.message ?? error?.message ?? "Could not remove manager access." };
-  }
-
-  const existingPlanTier = normalizeCommercialTier(
-    (existingUser as { plan_tier?: string | null } | null)?.plan_tier ?? null
-  );
-  console.info("[tier-access:manager-access-removed]", {
-    adminUserId: adminCheck.userId,
-    targetUserId: trimmedUserId,
-    existingPlanTier
-  });
-
-  if ((existingUser as { role?: UserRole } | null)?.role !== "admin" && existingPlanTier === "manager") {
-    const { error: downgradeError } = await adminSupabase
-      .from("users")
-      .update({ plan_tier: "player", updated_at: new Date().toISOString() })
-      .eq("id", trimmedUserId);
-
-    if (downgradeError) {
-      return { ok: false, message: downgradeError.message };
-    }
-  }
-
-  revalidatePath("/dashboard");
-  revalidatePath("/admin/players");
-
+export async function removeManagerAccessAction(_userId: string): Promise<RemoveManagerAccessResult> {
+  void _userId;
   return {
-    ok: true,
-    message: "Manager access removed."
+    ok: false,
+    message: "Direct manager removal is disabled. Use the Super Admin Demote / Remove Access workflow on the player card instead."
   };
 }
 
@@ -2355,6 +2991,7 @@ type KnockoutResetRpcRow = {
   reset_match_count: number;
   deleted_bracket_prediction_count: number;
   deleted_bracket_score_count: number;
+  deleted_legacy_bracket_pick_count: number;
   deleted_prediction_score_count: number;
   deleted_leaderboard_event_count: number;
   deleted_leaderboard_snapshot_count: number;
@@ -2378,15 +3015,18 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
     return { ok: false, message: previousMatchError.message };
   }
 
+  const isResettingToOpen = input.status === "scheduled";
   const { data, error } = await adminSupabase
     .from("matches")
     .update({
       status: input.status,
-      home_score: input.homeScore ?? null,
-      away_score: input.awayScore ?? null,
-      winner_team_id: input.winnerTeamId ?? null,
+      home_score: isResettingToOpen ? null : input.homeScore ?? null,
+      away_score: isResettingToOpen ? null : input.awayScore ?? null,
+      winner_team_id: isResettingToOpen ? null : input.winnerTeamId ?? null,
       finalized_at: input.status === "final" ? new Date().toISOString() : null,
-      is_manual_override: true,
+      last_synced_at: isResettingToOpen ? null : undefined,
+      is_manual_override: !isResettingToOpen,
+      sync_status: isResettingToOpen ? null : undefined,
       sync_error: null,
       updated_at: new Date().toISOString()
     })
@@ -2535,16 +3175,13 @@ export async function batchFinalizeMatchResultsAction(
     return { ok: false, message: "Batch finalization confirmation did not match. No matches were changed." };
   }
 
-  const availability = getTestingResetAvailability("knockout");
-  logTestingResetEnvDiagnostics("batchFinalizeMatchResultsAction", {
-    adminUserId: superAdminCheck.userId,
-    adminEmail: superAdminCheck.email
-  });
-  if (!availability.canRun) {
-    return {
-      ok: false,
-      message: availability.disabledReason ?? "Testing tools are disabled in this environment."
-    };
+  try {
+    ensureRecoveryActionAllowed("batch_finalize", "batchFinalizeMatchResultsAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Testing tools are disabled in this environment.") };
   }
 
   if (!input.fromDate || !input.toDate) {
@@ -2693,6 +3330,28 @@ export async function batchFinalizeMatchResultsAction(
     scoringJobsTriggered,
     errorCount: errors.length
   });
+  await writeAdminResetAuditLog(adminSupabase, {
+    actorUserId: superAdminCheck.userId,
+    actorEmail: superAdminCheck.email,
+    actionKey: "batch_finalize_test_matches",
+    scope: "batch_finalize",
+    reason: `Batch finalize ${input.scope} matches from ${input.fromDate} to ${input.toDate}`,
+    success: true,
+    targetIds: candidateMatches.map((match) => match.id),
+    affectedCounts: {
+      processed,
+      finalized,
+      skipped,
+      overwritten,
+      scoringJobsTriggered,
+      errors: errors.length
+    },
+    details: {
+      scope: input.scope,
+      resultStyle: input.resultStyle,
+      overwriteMode: input.overwriteMode
+    }
+  });
 
   return {
     ok: true,
@@ -2802,18 +3461,14 @@ export async function resetKnockoutTestingDataAction(
     return { ok: false, message: "Reset confirmation did not match. No data was changed." };
   }
 
-  const destructiveToolStatus = getTestingResetAvailability("knockout");
-  logTestingResetEnvDiagnostics("resetKnockoutTestingDataAction", {
-    adminUserId: superAdminCheck.userId,
-    adminEmail: superAdminCheck.email
-  });
-  if (!destructiveToolStatus.canRun) {
-    return {
-      ok: false,
-      message:
-        destructiveToolStatus.disabledReason ??
-        "Production knockout reset is disabled. Set ALLOW_PRODUCTION_KNOCKOUT_RESET=true and redeploy."
-    };
+  try {
+    buildRequiredResetReason(input.reason ?? "Reset knockout test data");
+    ensureRecoveryActionAllowed("knockout", "resetKnockoutTestingDataAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Knockout reset is disabled in this environment.") };
   }
 
   const adminSupabase = createAdminClient();
@@ -2833,6 +3488,7 @@ export async function resetKnockoutTestingDataAction(
       });
     }
 
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("knockout reset");
     console.info("[knockout-reset]", {
       adminUserId: superAdminCheck.userId,
       adminEmail: superAdminCheck.email,
@@ -2852,7 +3508,30 @@ export async function resetKnockoutTestingDataAction(
       deletedUserNotifications: summary.deleted_user_notification_count,
       leaderboardRecalculation: leaderboardWarning ? "failed" : "ok"
     });
-    // TODO: write a dedicated admin audit record here if/when the app adds an admin audit table.
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "reset_knockout_test_data",
+      scope: "knockout",
+      reason: input.reason?.trim() || "Reset knockout test data",
+      success: true,
+      targetIds: [],
+      affectedCounts: {
+        targetMatchCount: summary.targetMatchCount,
+        resetMatchCount: summary.reset_match_count,
+        bracketPredictions: summary.deleted_bracket_prediction_count,
+        bracketScores: summary.deleted_bracket_score_count,
+        legacyBracketPicks: summary.deleted_legacy_bracket_pick_count ?? 0,
+        predictionScores: summary.deleted_prediction_score_count,
+        leaderboardEvents: summary.deleted_leaderboard_event_count,
+        leaderboardSnapshots: summary.deleted_leaderboard_snapshot_count,
+        userNotifications: summary.deleted_user_notification_count
+      },
+      details: {
+        statusBreakdownBeforeReset: summary.statusBreakdown,
+        leaderboardRecalculation: leaderboardWarning ? "failed" : "ok"
+      }
+    });
 
     revalidatePath("/admin/matches");
     revalidatePath("/knockout");
@@ -2873,7 +3552,7 @@ export async function resetKnockoutTestingDataAction(
         deletedLeaderboardSnapshots: summary.deleted_leaderboard_snapshot_count,
         deletedUserNotifications: summary.deleted_user_notification_count,
         message:
-          "Knockout testing data was reset across all statuses, including locked/live/final matches, but leaderboard recalculation failed. Run leaderboard repair manually."
+          `Knockout testing data was reset across all statuses, including locked/live/final matches, but leaderboard recalculation failed. Run leaderboard repair manually.${resetMarkerWarning ? ` ${resetMarkerWarning}` : ""}`
       };
     }
 
@@ -2888,7 +3567,7 @@ export async function resetKnockoutTestingDataAction(
       deletedLeaderboardEvents: summary.deleted_leaderboard_event_count,
       deletedLeaderboardSnapshots: summary.deleted_leaderboard_snapshot_count,
       deletedUserNotifications: summary.deleted_user_notification_count,
-      message: "Knockout testing data was reset across all statuses, including locked/live/final matches. Group-stage data was not changed."
+      message: `Knockout testing data was reset across all statuses, including locked/live/final matches. Group-stage data was not changed.${resetMarkerWarning ? ` ${resetMarkerWarning}` : ""}`
     };
   } catch (error) {
     return { ok: false, message: (error as Error).message };
@@ -2907,18 +3586,14 @@ export async function resetGroupStageTestingDataAction(
     return { ok: false, message: "Reset confirmation did not match. No data was changed." };
   }
 
-  const destructiveToolStatus = getTestingResetAvailability("group");
-  logTestingResetEnvDiagnostics("resetGroupStageTestingDataAction", {
-    adminUserId: superAdminCheck.userId,
-    adminEmail: superAdminCheck.email
-  });
-  if (!destructiveToolStatus.canRun) {
-    return {
-      ok: false,
-      message:
-        destructiveToolStatus.disabledReason ??
-        "Production group-stage reset is disabled. Set ALLOW_PRODUCTION_GROUP_RESET=true and redeploy."
-    };
+  try {
+    buildRequiredResetReason(input.reason ?? "Reset group-stage test data");
+    ensureRecoveryActionAllowed("group_stage", "resetGroupStageTestingDataAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Group-stage reset is disabled in this environment.") };
   }
 
   const adminSupabase = createAdminClient();
@@ -2945,6 +3620,7 @@ export async function resetGroupStageTestingDataAction(
       });
     }
 
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("group-stage reset");
     console.info("[group-reset]", {
       resetType: "group",
       adminUserId: superAdminCheck.userId,
@@ -2965,6 +3641,33 @@ export async function resetGroupStageTestingDataAction(
       deletedLeaderboardSnapshots: summary.deletedLeaderboardSnapshots,
       deletedUserNotifications: summary.deletedUserNotifications,
       leaderboardRecalculation: leaderboardWarning ? "failed" : "ok"
+    });
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "reset_group_stage_test_data",
+      scope: "group_stage",
+      reason: input.reason?.trim() || "Reset group-stage test data",
+      success: true,
+      targetIds: [],
+      affectedCounts: {
+        targetMatchCount: summary.targetMatchCount,
+        resetMatchCount: summary.resetMatchCount,
+        predictions: summary.deletedPredictions,
+        predictionScores: summary.deletedPredictionScores,
+        leaderboardEvents: summary.deletedLeaderboardEvents,
+        leaderboardSnapshots: summary.deletedLeaderboardSnapshots,
+        generatedArtifacts: summary.deletedGeneratedArtifacts ?? 0,
+        knockoutSeedArtifacts: summary.deletedKnockoutSeedArtifacts ?? 0,
+        userNotifications: summary.deletedUserNotifications
+      },
+      details: {
+        statusBreakdownBeforeReset: summary.statusBreakdown,
+        statusBreakdownAfterReset: summary.postResetStatusBreakdown ?? {},
+        lingeringNonOpenMatchCount: summary.lingeringNonOpenMatchCount ?? 0,
+        lingeringScoredMatchCount: summary.lingeringScoredMatchCount ?? 0,
+        leaderboardRecalculation: leaderboardWarning ? "failed" : "ok"
+      }
     });
 
     revalidatePath("/");
@@ -3003,8 +3706,8 @@ export async function resetGroupStageTestingDataAction(
         deletedCounts,
         message:
           leaderboardWarning
-            ? "Group-stage testing data was reset, but leaderboard recalculation failed. Run leaderboard repair manually."
-            : "Group-stage testing data was reset, but some matches or generated artifacts may still remain. Check logs."
+            ? `Group-stage testing data was reset, but leaderboard recalculation failed. Run leaderboard repair manually.${resetMarkerWarning ? ` ${resetMarkerWarning}` : ""}`
+            : `Group-stage testing data was reset, but some matches or generated artifacts may still remain. Check logs.${resetMarkerWarning ? ` ${resetMarkerWarning}` : ""}`
       } satisfies ResetGroupStageTestingDataResult;
       console.info("[group-reset] reset completed", {
         ok: result.ok,
@@ -3026,7 +3729,7 @@ export async function resetGroupStageTestingDataAction(
       deletedUserNotifications: summary.deletedUserNotifications,
       deletedCounts,
       message:
-        "Group-stage testing data was reset. Group matches were returned to open, player predictions were cleared, and generated group standings/seed artifacts were removed."
+        `Group-stage testing data was reset. Group matches were returned to open, player predictions were cleared, and generated group standings/seed artifacts were removed.${resetMarkerWarning ? ` ${resetMarkerWarning}` : ""}`
     } satisfies ResetGroupStageTestingDataResult;
     console.info("[group-reset] reset completed", {
       ok: result.ok,
@@ -3046,6 +3749,81 @@ export async function resetGroupStageTestingDataAction(
   }
 }
 
+export async function fullPreLaunchTestResetAction(
+  input: FullPreLaunchTestResetInput
+): Promise<FullPreLaunchTestResetResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  if (input.confirmationText !== "FULL PRE-LAUNCH TEST RESET") {
+    return { ok: false, message: "Full reset confirmation did not match. No data was changed." };
+  }
+
+  try {
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    ensureRecoveryActionAllowed("full_test", "fullPreLaunchTestResetAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+
+    const adminSupabase = createAdminClient();
+    const groupSummary = await resetGroupStageTestingDataWithClient(adminSupabase);
+    const knockoutSummary = await resetKnockoutTestingDataWithClient(adminSupabase);
+    await clearTestingSocialStateWithClient(adminSupabase);
+    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+    if (!leaderboardResult.ok) {
+      return leaderboardResult;
+    }
+
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("full pre-launch reset");
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "full_prelaunch_test_reset",
+      scope: "full_test",
+      reason: trimmedReason,
+      success: true,
+      targetIds: [],
+      affectedCounts: {
+        groupResetMatchCount: groupSummary.resetMatchCount,
+        knockoutResetMatchCount: knockoutSummary.reset_match_count,
+        groupPredictions: groupSummary.deletedPredictions,
+        groupPredictionScores: groupSummary.deletedPredictionScores,
+        knockoutBracketPredictions: knockoutSummary.deleted_bracket_prediction_count,
+        knockoutBracketScores: knockoutSummary.deleted_bracket_score_count,
+        knockoutLegacyBracketPicks: knockoutSummary.deleted_legacy_bracket_pick_count ?? 0
+      },
+      details: {
+        groupStatusBreakdownBeforeReset: groupSummary.statusBreakdown,
+        knockoutStatusBreakdownBeforeReset: knockoutSummary.statusBreakdown
+      }
+    });
+
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/groups");
+    revalidatePath("/knockout");
+    revalidatePath("/leaderboard");
+    revalidatePath("/my-groups");
+    revalidatePath("/profile");
+    revalidatePath("/trophies");
+    revalidatePath("/admin/matches");
+
+    return {
+      ok: true,
+      groupResetMatchCount: groupSummary.resetMatchCount,
+      knockoutResetMatchCount: knockoutSummary.reset_match_count,
+      message: resetMarkerWarning
+        ? `Full pre-launch test reset completed. Group-stage, knockout, social, and derived leaderboard state were cleared. ${resetMarkerWarning}`
+        : "Full pre-launch test reset completed. Group-stage, knockout, social, and derived leaderboard state were cleared."
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not complete the full pre-launch test reset.") };
+  }
+}
+
 export async function getDestructiveAdminToolStatusAction(): Promise<DestructiveAdminToolStatusResult> {
   const superAdminCheck = await assertCurrentUserIsSuperAdmin();
   if (!superAdminCheck.ok) {
@@ -3059,9 +3837,19 @@ export async function getDestructiveAdminToolStatusAction(): Promise<Destructive
   const diagnostics = getResetDiagnostics();
   return {
     ok: true,
-    knockout: getTestingResetAvailability("knockout"),
-    group: getTestingResetAvailability("group"),
-    diagnostics
+    scopes: {
+      user: getTestingResetAvailability("user"),
+      group: getTestingResetAvailability("group"),
+      match: getTestingResetAvailability("match"),
+      group_stage: getTestingResetAvailability("group_stage"),
+      knockout: getTestingResetAvailability("knockout"),
+      leaderboard: getTestingResetAvailability("leaderboard"),
+      social: getTestingResetAvailability("social"),
+      full_test: getTestingResetAvailability("full_test"),
+      batch_finalize: getTestingResetAvailability("batch_finalize")
+    },
+    diagnostics,
+    toolDefinitions: ADMIN_RESET_TOOL_DEFINITIONS
   };
 }
 
@@ -3103,6 +3891,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
 
   const [
     bracketPredictionsResult,
+    legacyBracketPicksResult,
     bracketScoresResult,
     predictionScoresResult,
     leaderboardEventsResult,
@@ -3110,6 +3899,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
     userNotificationsResult
   ] = await Promise.all([
     adminSupabase.from("bracket_predictions").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
+    countOptionalLegacyBracketPickRows(adminSupabase, knockoutMatchIds),
     adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
     adminSupabase.from("prediction_scores").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
     adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
@@ -3121,6 +3911,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
 
   for (const result of [
     bracketPredictionsResult,
+    legacyBracketPicksResult,
     bracketScoresResult,
     predictionScoresResult,
     leaderboardEventsResult,
@@ -3133,7 +3924,11 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
   }
 
   const deletionResults = await Promise.all([
+    leaderboardEventIds.length > 0
+      ? adminSupabase.from("user_notifications").delete().in("event_id", leaderboardEventIds)
+      : Promise.resolve({ error: null }),
     adminSupabase.from("bracket_predictions").delete().in("match_id", knockoutMatchIds),
+    deleteOptionalLegacyBracketPickRows(adminSupabase, knockoutMatchIds),
     adminSupabase.from("bracket_scores").delete().in("match_id", knockoutMatchIds),
     adminSupabase.from("prediction_scores").delete().in("match_id", knockoutMatchIds),
     adminSupabase.from("leaderboard_snapshots").delete().in("match_id", knockoutMatchIds),
@@ -3145,7 +3940,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
     throw failedDeletion.error;
   }
 
-  const { data: updatedMatches, error: updateMatchesError } = await adminSupabase
+  const fullUpdateResult = await adminSupabase
     .from("matches")
     .update({
       home_team_id: null,
@@ -3154,12 +3949,45 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
       away_score: null,
       status: "scheduled",
       winner_team_id: null,
+      finalized_at: null,
+      last_synced_at: null,
+      is_manual_override: false,
+      sync_status: null,
+      sync_error: null,
       updated_at: new Date().toISOString()
     })
-    .in("id", knockoutMatchIds)
-    .select("id");
-  if (updateMatchesError) {
-    throw updateMatchesError;
+    .in("id", knockoutMatchIds);
+  if (fullUpdateResult.error && !isOptionalResetColumnError(fullUpdateResult.error.message)) {
+    throw fullUpdateResult.error;
+  }
+
+  let updatedMatches: Array<{ id: string }> | null = null;
+  if (fullUpdateResult.error) {
+    const fallbackUpdateResult = await adminSupabase
+      .from("matches")
+      .update({
+        home_team_id: null,
+        away_team_id: null,
+        home_score: null,
+        away_score: null,
+        status: "scheduled",
+        winner_team_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .in("id", knockoutMatchIds)
+      .select("id");
+    if (fallbackUpdateResult.error) {
+      throw fallbackUpdateResult.error;
+    }
+
+    updatedMatches = fallbackUpdateResult.data ?? [];
+  } else {
+    const verificationResult = await adminSupabase.from("matches").select("id").in("id", knockoutMatchIds);
+    if (verificationResult.error) {
+      throw verificationResult.error;
+    }
+
+    updatedMatches = verificationResult.data ?? [];
   }
 
   return {
@@ -3168,6 +3996,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
     reset_match_count: (updatedMatches ?? []).length,
     deleted_bracket_prediction_count: bracketPredictionsResult.count ?? 0,
     deleted_bracket_score_count: bracketScoresResult.count ?? 0,
+    deleted_legacy_bracket_pick_count: legacyBracketPicksResult.count ?? 0,
     deleted_prediction_score_count: predictionScoresResult.count ?? 0,
     deleted_leaderboard_event_count: leaderboardEventsResult.count ?? 0,
     deleted_leaderboard_snapshot_count: leaderboardSnapshotsResult.count ?? 0,
@@ -3240,6 +4069,21 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
   }
 
   const leaderboardEventIds = (leaderboardEventRows ?? []).map((row) => row.id);
+  const { data: knockoutLeaderboardEventRows, error: knockoutLeaderboardEventRowsError } = knockoutMatchIds.length
+    ? await adminSupabase.from("leaderboard_events").select("id").in("match_id", knockoutMatchIds)
+    : { data: [], error: null };
+  if (knockoutLeaderboardEventRowsError) {
+    throw new Error(
+      buildAdminActionErrorMessage(
+        knockoutLeaderboardEventRowsError,
+        "Could not load knockout leaderboard events for derived artifact reset."
+      )
+    );
+  }
+  const allAffectedEventIds = [
+    ...leaderboardEventIds,
+    ...((knockoutLeaderboardEventRows ?? []).map((row) => row.id))
+  ];
 
   const [
     predictionsResult,
@@ -3253,8 +4097,8 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
     countOptionalMatchRows(adminSupabase, "prediction_scores", groupMatchIds),
     countOptionalMatchRows(adminSupabase, "leaderboard_events", groupMatchIds),
     countOptionalMatchRows(adminSupabase, "leaderboard_snapshots", groupMatchIds),
-    leaderboardEventIds.length > 0
-      ? countOptionalEventNotificationRows(adminSupabase, leaderboardEventIds)
+    allAffectedEventIds.length > 0
+      ? countOptionalEventNotificationRows(adminSupabase, allAffectedEventIds)
       : Promise.resolve({ count: 0, error: null } as { count: number; error: null }),
     Promise.resolve({ count: 0, error: null } as { count: number; error: null })
   ]);
@@ -3294,6 +4138,9 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
   });
 
   const deletionResults = await Promise.all([
+    leaderboardEventIds.length > 0
+      ? adminSupabase.from("user_notifications").delete().in("event_id", leaderboardEventIds)
+      : Promise.resolve({ error: null }),
     adminSupabase.from("predictions").delete().in("match_id", groupMatchIds),
     deleteOptionalMatchRows(adminSupabase, "prediction_scores", groupMatchIds),
     deleteOptionalMatchRows(adminSupabase, "leaderboard_snapshots", groupMatchIds),
@@ -3307,7 +4154,14 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
   let deletedKnockoutSeedArtifacts = 0;
   if (knockoutMatchIds.length > 0) {
     const knockoutDeletionResults = await Promise.all([
+      knockoutLeaderboardEventRows.length > 0
+        ? adminSupabase.from("user_notifications").delete().in(
+            "event_id",
+            knockoutLeaderboardEventRows.map((row) => row.id)
+          )
+        : Promise.resolve({ error: null }),
       adminSupabase.from("bracket_predictions").delete().in("match_id", knockoutMatchIds),
+      deleteOptionalLegacyBracketPickRows(adminSupabase, knockoutMatchIds),
       adminSupabase.from("bracket_scores").delete().in("match_id", knockoutMatchIds),
       adminSupabase.from("prediction_scores").delete().in("match_id", knockoutMatchIds),
       adminSupabase.from("leaderboard_snapshots").delete().in("match_id", knockoutMatchIds),
@@ -3490,6 +4344,24 @@ async function countOptionalEventNotificationRows(
 ) {
   const result = await adminSupabase.from("user_notifications").select("id", { count: "exact", head: true }).in("event_id", eventIds);
   if (result.error && isMissingRelationError(result.error.message, "public.user_notifications")) {
+    return { count: 0, error: null };
+  }
+
+  return result;
+}
+
+async function countWholeTableRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  tableName:
+    | "leaderboard_event_comments"
+    | "leaderboard_event_reactions"
+    | "user_notifications"
+    | "leaderboard_events"
+    | "user_trophies"
+    | "leaderboard_snapshots"
+) {
+  const result = await adminSupabase.from(tableName).select("id", { count: "exact", head: true });
+  if (result.error && isMissingSocialResetTableError(result.error.message)) {
     return { count: 0, error: null };
   }
 
@@ -5158,7 +6030,11 @@ async function buildUserDemotionImpact(
     ownedGroupsResult,
     managedMembershipsResult,
     organizationsResult,
-    customTrophiesResult
+    customTrophiesResult,
+    createdAccessCodesResult,
+    sidePickPackagesResult,
+    sidePickDefinitionsResult,
+    groupRulesetsResult
   ] = await Promise.all([
     adminSupabase
       .from("users")
@@ -5180,7 +6056,24 @@ async function buildUserDemotionImpact(
       .from("trophies")
       .select("id", { count: "exact", head: true })
       .eq("created_by", trimmedUserId)
-      .not("group_id", "is", null)
+      .not("group_id", "is", null),
+    adminSupabase
+      .from("access_codes")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by", trimmedUserId)
+      .eq("active", true),
+    adminSupabase
+      .from("side_pick_packages")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by_user_id", trimmedUserId),
+    adminSupabase
+      .from("side_pick_definitions")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by_user_id", trimmedUserId),
+    adminSupabase
+      .from("group_rulesets")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by_user_id", trimmedUserId)
   ]);
 
   if (existingUserError) {
@@ -5220,6 +6113,12 @@ async function buildUserDemotionImpact(
   } else {
     customTrophyOwnershipCount = customTrophiesResult.count ?? 0;
   }
+
+  const activeCreatedAccessCodeCount = readOptionalExactCount(createdAccessCodesResult, "public.access_codes");
+  const sidePickOwnershipCount =
+    readOptionalExactCount(sidePickPackagesResult, "public.side_pick_packages") +
+    readOptionalExactCount(sidePickDefinitionsResult, "public.side_pick_definitions") +
+    readOptionalExactCount(groupRulesetsResult, "public.group_rulesets");
 
   const organizationIds = organizationOwnershipRows.map((organization) => organization.id);
   const organizationBrandingCount = organizationIds.length
@@ -5337,6 +6236,38 @@ async function buildUserDemotionImpact(
     cleanupActions.push("Downgrade legacy manager memberships to member while preserving player access.");
   }
 
+  if (targetAccessLevel === "player" && activeCreatedAccessCodeCount > 0) {
+    cleanupActions.push("Deactivate active access codes created by this organizer.");
+  }
+
+  const cleanupOptions: DemotionCleanupOptionDetail[] = [];
+  if (managerLimitsRow && targetAccessLevel !== "manager") {
+    cleanupOptions.push({
+      key: "remove_manager_limits",
+      label: "Remove stale manager limits",
+      description: "Delete the legacy manager_limits override so the user falls back to the lower tier cleanly.",
+      selectedByDefault: true
+    });
+  }
+
+  if (legacyManagedGroupCount > 0) {
+    cleanupOptions.push({
+      key: "downgrade_legacy_manager_memberships",
+      label: "Downgrade organizer memberships",
+      description: "Convert legacy manager memberships to member while keeping player membership intact.",
+      selectedByDefault: true
+    });
+  }
+
+  if (targetAccessLevel === "player" && activeCreatedAccessCodeCount > 0) {
+    cleanupOptions.push({
+      key: "deactivate_created_access_codes",
+      label: "Deactivate created access codes",
+      description: "Turn off any still-active access codes created by this organizer before removing organizer powers.",
+      selectedByDefault: true
+    });
+  }
+
   const status =
     blockers.length > 0 ? "blocked" : cleanupActions.length > 0 ? "cleanup_required" : "safe";
 
@@ -5363,14 +6294,17 @@ async function buildUserDemotionImpact(
           maxMembersPerGroup: managerLimitsRow.max_members_per_group ?? 0
         }
       : null,
+    legacyManagedGroupCount,
+    activeCreatedAccessCodeCount,
     organizationOwnershipCount: organizationOwnershipRows.length,
     organizationBrandingCount,
     customTrophyOwnershipCount,
-    sidePickOwnershipCount: 0,
+    sidePickOwnershipCount,
     isSuperAdmin: currentAccessLevel === "super_admin",
     status,
     blockers,
-    cleanupActions
+    cleanupActions,
+    cleanupOptions
   };
 }
 
@@ -5402,6 +6336,21 @@ async function countActiveGroupAccessCodes(
   }
 
   return counts;
+}
+
+function readOptionalExactCount(
+  result: { count: number | null; error: { message?: string | null } | null },
+  relationName: string
+) {
+  if (isMissingRelationError(result.error?.message ?? "", relationName)) {
+    return 0;
+  }
+
+  if (result.error) {
+    throw new Error(result.error.message ?? `Could not load ${relationName}.`);
+  }
+
+  return result.count ?? 0;
 }
 
 async function countPendingGroupInvites(
@@ -5460,15 +6409,17 @@ async function countOrganizationBrandingRows(
 
 async function applyOrganizerAccessCleanup(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  impact: DemotionImpactSummary
+  impact: DemotionImpactSummary,
+  resolutionPlan: Partial<Record<DemotionCleanupOption, boolean>>
 ) {
   const actionsTaken: string[] = [];
   const counts = {
     removedManagerLimits: 0,
-    downgradedLegacyManagerMemberships: 0
+    downgradedLegacyManagerMemberships: 0,
+    deactivatedCreatedAccessCodes: 0
   };
 
-  if (impact.targetAccessLevel !== "manager" && impact.hasManagerLimits) {
+  if (impact.targetAccessLevel !== "manager" && impact.hasManagerLimits && resolutionPlan.remove_manager_limits) {
     const { error } = await adminSupabase.from("manager_limits").delete().eq("user_id", impact.userId);
     if (error) {
       throw new Error(error.message);
@@ -5478,40 +6429,165 @@ async function applyOrganizerAccessCleanup(
     counts.removedManagerLimits = 1;
   }
 
-  const { data: legacyManagerMemberships, error: legacyManagerMembershipsError } = await adminSupabase
-    .from("group_members")
-    .select("id,group_id,group:groups!group_members_group_id_fkey(owner_user_id)")
-    .eq("user_id", impact.userId)
-    .eq("role", "manager");
-
-  if (legacyManagerMembershipsError) {
-    throw new Error(legacyManagerMembershipsError.message);
-  }
-
-  const legacyMembershipIds = (((legacyManagerMemberships as Array<{
-    id: string;
-    group_id: string;
-    group?: { owner_user_id?: string | null } | Array<{ owner_user_id?: string | null }> | null;
-  }> | null) ?? []).filter((membership) => {
-    const group = Array.isArray(membership.group) ? (membership.group[0] ?? null) : membership.group;
-    return group?.owner_user_id !== impact.userId;
-  })).map((membership) => membership.id);
-
-  if (legacyMembershipIds.length > 0) {
-    const { error } = await adminSupabase
+  if (resolutionPlan.downgrade_legacy_manager_memberships) {
+    const { data: legacyManagerMemberships, error: legacyManagerMembershipsError } = await adminSupabase
       .from("group_members")
-      .update({ role: "member" })
-      .in("id", legacyMembershipIds);
+      .select("id,group_id,group:groups!group_members_group_id_fkey(owner_user_id)")
+      .eq("user_id", impact.userId)
+      .eq("role", "manager");
 
-    if (error) {
-      throw new Error(error.message);
+    if (legacyManagerMembershipsError) {
+      throw new Error(legacyManagerMembershipsError.message);
     }
 
-    actionsTaken.push("downgraded_legacy_manager_memberships");
-    counts.downgradedLegacyManagerMemberships = legacyMembershipIds.length;
+    const legacyMembershipIds = (((legacyManagerMemberships as Array<{
+      id: string;
+      group_id: string;
+      group?: { owner_user_id?: string | null } | Array<{ owner_user_id?: string | null }> | null;
+    }> | null) ?? []).filter((membership) => {
+      const group = Array.isArray(membership.group) ? (membership.group[0] ?? null) : membership.group;
+      return group?.owner_user_id !== impact.userId;
+    })).map((membership) => membership.id);
+
+    if (legacyMembershipIds.length > 0) {
+      const { error } = await adminSupabase
+        .from("group_members")
+        .update({ role: "member" })
+        .in("id", legacyMembershipIds);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      actionsTaken.push("downgraded_legacy_manager_memberships");
+      counts.downgradedLegacyManagerMemberships = legacyMembershipIds.length;
+    }
+  }
+
+  if (resolutionPlan.deactivate_created_access_codes) {
+    const { data: createdAccessCodes, error: createdAccessCodesError } = await adminSupabase
+      .from("access_codes")
+      .select("id")
+      .eq("created_by", impact.userId)
+      .eq("active", true);
+
+    if (createdAccessCodesError) {
+      throw new Error(createdAccessCodesError.message);
+    }
+
+    const activeCodeIds = (((createdAccessCodes as Array<{ id: string }> | null) ?? [])).map((row) => row.id);
+    if (activeCodeIds.length > 0) {
+      const { error } = await adminSupabase
+        .from("access_codes")
+        .update({ active: false, updated_at: new Date().toISOString() })
+        .in("id", activeCodeIds);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      actionsTaken.push("deactivated_created_access_codes");
+      counts.deactivatedCreatedAccessCodes = activeCodeIds.length;
+    }
   }
 
   return { actionsTaken, counts };
+}
+
+function buildRequiredDemotionCleanupPlan(
+  impact: DemotionImpactSummary
+): Partial<Record<DemotionCleanupOption, boolean>> {
+  return {
+    remove_manager_limits: impact.cleanupOptions.some((option) => option.key === "remove_manager_limits"),
+    downgrade_legacy_manager_memberships: impact.cleanupOptions.some(
+      (option) => option.key === "downgrade_legacy_manager_memberships"
+    ),
+    deactivate_created_access_codes: impact.cleanupOptions.some(
+      (option) => option.key === "deactivate_created_access_codes"
+    )
+  };
+}
+
+function validateDemotionResolutionPlan(
+  impact: DemotionImpactSummary,
+  resolutionPlan: Partial<Record<DemotionCleanupOption, boolean>>
+) {
+  const requiredPlan = buildRequiredDemotionCleanupPlan(impact);
+  const missingOption = (Object.entries(requiredPlan) as Array<[DemotionCleanupOption, boolean | undefined]>).find(
+    ([key, isRequired]) => isRequired && !resolutionPlan[key]
+  );
+
+  if (!missingOption) {
+    return null;
+  }
+
+  const option = impact.cleanupOptions.find((item) => item.key === missingOption[0]);
+  return option
+    ? `Select the cleanup step "${option.label}" before applying this access change.`
+    : "Select every required cleanup step before applying this access change.";
+}
+
+async function writeAdminAccessChangeAuditLog(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    actorUserId: string;
+    targetUserId: string;
+    targetEmail: string;
+    action: "demote_access" | "deactivate_organizer_access";
+    previousRole: UserRole;
+    previousPlanTier: CommercialTier | null;
+    previousAccessLevel: AccessLevel;
+    newRole: UserRole;
+    newPlanTier: CommercialTier;
+    newAccessLevel: AccessLevel;
+    impact: DemotionImpactSummary;
+    cleanupActionsTaken: string[];
+    cleanupCounts: Record<string, number>;
+    reason: string;
+  }
+) {
+  const { error } = await adminSupabase.from("admin_access_change_audit_log").insert({
+    actor_user_id: input.actorUserId,
+    target_user_id: input.targetUserId,
+    target_email: input.targetEmail,
+    action: input.action,
+    previous_role: input.previousRole,
+    previous_plan_tier: input.previousPlanTier,
+    previous_access_level: input.previousAccessLevel,
+    new_role: input.newRole,
+    new_plan_tier: input.newPlanTier,
+    new_access_level: input.newAccessLevel,
+    impact_summary: {
+      ownedGroupCount: input.impact.ownedGroupCount,
+      managedGroupCount: input.impact.managedGroupCount,
+      legacyManagedGroupCount: input.impact.legacyManagedGroupCount,
+      activeInviteCodeCount: input.impact.activeInviteCodeCount,
+      pendingInviteCount: input.impact.pendingInviteCount,
+      activeCreatedAccessCodeCount: input.impact.activeCreatedAccessCodeCount,
+      organizationOwnershipCount: input.impact.organizationOwnershipCount,
+      organizationBrandingCount: input.impact.organizationBrandingCount,
+      customTrophyOwnershipCount: input.impact.customTrophyOwnershipCount,
+      sidePickOwnershipCount: input.impact.sidePickOwnershipCount,
+      hasManagerLimits: input.impact.hasManagerLimits,
+      blockers: input.impact.blockers,
+      cleanupActions: input.impact.cleanupActions
+    },
+    cleanup_actions_taken: input.cleanupActionsTaken,
+    cleanup_counts: input.cleanupCounts,
+    reason: input.reason
+  });
+
+  if (isMissingRelationError(error?.message ?? "", "public.admin_access_change_audit_log")) {
+    console.warn("Could not write admin access change audit log because the table is missing.", {
+      targetUserId: input.targetUserId,
+      action: input.action
+    });
+    return;
+  }
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }
 
 async function sendAccessLevelChangeEmail(
@@ -5733,6 +6809,18 @@ function isMissingRelationError(message: string, relation: string) {
   return normalized.includes(relation.toLowerCase()) && (normalized.includes("schema cache") || normalized.includes("does not exist"));
 }
 
+async function countOptionalLegacyBracketPickRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchIds: string[]
+) {
+  const result = await adminSupabase.from("bracket_picks").select("match_id", { count: "exact", head: true }).in("match_id", matchIds);
+  if (result.error && isMissingRelationError(result.error.message, "public.bracket_picks")) {
+    return { count: 0, error: null };
+  }
+
+  return result;
+}
+
 async function countOptionalGameplayRows(
   adminSupabase: ReturnType<typeof createAdminClient>,
   tableName: "bracket_predictions" | "bracket_picks",
@@ -5741,6 +6829,31 @@ async function countOptionalGameplayRows(
   const result = await adminSupabase.from(tableName).select("id", { count: "exact", head: true }).eq("user_id", userId);
   if (result.error && isMissingRelationError(result.error.message, `public.${tableName}`)) {
     return { count: 0, error: null };
+  }
+
+  return result;
+}
+
+async function deleteOptionalGameplayRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  tableName: "bracket_predictions" | "bracket_picks",
+  userId: string
+) {
+  const result = await adminSupabase.from(tableName).delete().eq("user_id", userId);
+  if (result.error && isMissingRelationError(result.error.message, `public.${tableName}`)) {
+    return { error: null };
+  }
+
+  return result;
+}
+
+async function deleteOptionalLegacyBracketPickRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchIds: string[]
+) {
+  const result = await adminSupabase.from("bracket_picks").delete().in("match_id", matchIds);
+  if (result.error && isMissingRelationError(result.error.message, "public.bracket_picks")) {
+    return { error: null };
   }
 
   return result;

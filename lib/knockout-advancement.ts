@@ -58,10 +58,6 @@ export async function rebuildKnockoutAdvancementWithClient(
   let updatedSlots = 0;
 
   const assignTeamToSlot = (matchId: string, slot: MatchNextSlot, teamId: string | null | undefined) => {
-    if (!teamId) {
-      return;
-    }
-
     const match = matchesById.get(matchId);
     if (!match) {
       return;
@@ -69,29 +65,43 @@ export async function rebuildKnockoutAdvancementWithClient(
 
     const targetField = slot === "home" ? "home_team_id" : "away_team_id";
     const currentValue = match[targetField] ?? null;
-    if (currentValue === teamId) {
+    const nextValue = teamId ?? null;
+    if (currentValue === nextValue) {
       return;
     }
 
-    if (match.status === "scheduled") {
+    if (match.status !== "final") {
       stalePredictionMatchIds.add(matchId);
     }
 
     if (currentValue) {
       updatedSlots += 1;
-    } else {
+    } else if (nextValue) {
       populatedSlots += 1;
     }
 
-    match[targetField] = teamId;
+    match[targetField] = nextValue;
     const currentUpdate = updatesByMatchId.get(matchId) ?? { matchId };
     if (slot === "home") {
-      currentUpdate.homeTeamId = teamId;
+      currentUpdate.homeTeamId = nextValue;
     } else {
-      currentUpdate.awayTeamId = teamId;
+      currentUpdate.awayTeamId = nextValue;
     }
     updatesByMatchId.set(matchId, currentUpdate);
   };
+
+  for (const match of knockoutMatches) {
+    if (match.status === "final") {
+      continue;
+    }
+
+    if (match.home_team_id) {
+      assignTeamToSlot(match.id, "home", null);
+    }
+    if (match.away_team_id) {
+      assignTeamToSlot(match.id, "away", null);
+    }
+  }
 
   for (const match of knockoutMatches) {
     if (match.status !== "final" || !match.winner_team_id || !match.next_match_id || !match.next_match_slot) {

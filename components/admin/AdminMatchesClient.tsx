@@ -5,11 +5,14 @@ import { useRouter } from "next/navigation";
 import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
 import {
   batchFinalizeMatchResultsAction,
+  fullPreLaunchTestResetAction,
   type BatchFinalizeMatchOverwriteMode,
   type BatchFinalizeMatchResultStyle,
   type BatchFinalizeMatchScope,
   getDestructiveAdminToolStatusAction,
+  repairLeaderboardStateAction,
   repairKnockoutAdvancementAction,
+  resetMatchToOpenAction,
   resetGroupStageTestingDataAction,
   resetKnockoutTestingDataAction,
   rescoreKnockoutScoresAction,
@@ -44,6 +47,7 @@ const stageSortOrder: Record<MatchStage, number> = {
 const KNOCKOUT_RESET_CONFIRMATION_PHRASE = "RESET KNOCKOUT TEST DATA";
 const GROUP_RESET_CONFIRMATION_PHRASE = "RESET GROUP TEST DATA";
 const BATCH_FINALIZE_CONFIRMATION_PHRASE = "FINALIZE TEST MATCHES";
+const FULL_TEST_RESET_CONFIRMATION_PHRASE = "FULL PRE-LAUNCH TEST RESET";
 
 export function AdminMatchesClient() {
   const expectedGroupMatchCount = 72;
@@ -75,6 +79,20 @@ export function AdminMatchesClient() {
   const [batchFinalizeConfirmationText, setBatchFinalizeConfirmationText] = useState("");
   const [isBatchFinalizingMatches, setIsBatchFinalizingMatches] = useState(false);
   const [destructiveToolStatus, setDestructiveToolStatus] = useState<DestructiveAdminToolStatusResult | null>(null);
+  const [resetReasonByScope, setResetReasonByScope] = useState<Record<string, string>>({
+    knockout: "",
+    group_stage: "",
+    match: "",
+    leaderboard: "",
+    full_test: ""
+  });
+  const [selectedResetMatchId, setSelectedResetMatchId] = useState("");
+  const [matchResetConfirmationText, setMatchResetConfirmationText] = useState("");
+  const [isResettingMatch, setIsResettingMatch] = useState(false);
+  const [isRepairingLeaderboard, setIsRepairingLeaderboard] = useState(false);
+  const [fullResetConfirmationText, setFullResetConfirmationText] = useState("");
+  const [isFullResetAcknowledged, setIsFullResetAcknowledged] = useState(false);
+  const [isRunningFullReset, setIsRunningFullReset] = useState(false);
 
   useEffect(() => {
     loadMatches();
@@ -193,8 +211,13 @@ export function AdminMatchesClient() {
   }, [matches]);
   const hasSyncErrors = useMemo(() => matches.some((match) => match.syncStatus === "error"), [matches]);
   const canUseDangerZone = user ? getAccessLevel(user) === "super_admin" : false;
-  const knockoutAvailability = destructiveToolStatus?.ok ? destructiveToolStatus.knockout : null;
-  const groupAvailability = destructiveToolStatus?.ok ? destructiveToolStatus.group : null;
+  const scopeAvailability = destructiveToolStatus?.ok ? destructiveToolStatus.scopes : null;
+  const knockoutAvailability = scopeAvailability?.knockout ?? null;
+  const groupAvailability = scopeAvailability?.group_stage ?? null;
+  const matchAvailability = scopeAvailability?.match ?? null;
+  const leaderboardAvailability = scopeAvailability?.leaderboard ?? null;
+  const fullResetAvailability = scopeAvailability?.full_test ?? null;
+  const batchFinalizeAvailability = scopeAvailability?.batch_finalize ?? null;
   const diagnostics = destructiveToolStatus?.ok ? destructiveToolStatus.diagnostics : null;
   const isKnockoutResetPhraseValid = knockoutResetConfirmationText === KNOCKOUT_RESET_CONFIRMATION_PHRASE;
   const isKnockoutResetPhraseClose =
@@ -216,23 +239,40 @@ export function AdminMatchesClient() {
   const canSubmitKnockoutReset =
     canUseDangerZone &&
     Boolean(knockoutAvailability?.environmentResetAllowed) &&
+    Boolean(resetReasonByScope.knockout.trim()) &&
     isKnockoutResetAcknowledged &&
     isKnockoutResetPhraseValid &&
     !isResettingKnockout;
   const canSubmitGroupReset =
     canUseDangerZone &&
     Boolean(groupAvailability?.environmentResetAllowed) &&
+    Boolean(resetReasonByScope.group_stage.trim()) &&
     isGroupResetAcknowledged &&
     isGroupResetPhraseValid &&
     !isResettingGroup;
   const canSubmitBatchFinalize =
     canUseDangerZone &&
-    Boolean(knockoutAvailability?.environmentResetAllowed) &&
+    Boolean(batchFinalizeAvailability?.environmentResetAllowed) &&
     Boolean(batchFinalizeFromDate) &&
     Boolean(batchFinalizeToDate) &&
     isBatchFinalizeAcknowledged &&
     isBatchFinalizePhraseValid &&
     !isBatchFinalizingMatches;
+  const isFullResetPhraseValid = fullResetConfirmationText === FULL_TEST_RESET_CONFIRMATION_PHRASE;
+  const resettableMatches = useMemo(
+    () =>
+      matches.filter(
+        (match) =>
+          match.status !== "scheduled" ||
+          match.homeScore !== undefined ||
+          match.awayScore !== undefined ||
+          Boolean(match.winnerTeamId) ||
+          Boolean(match.finalizedAt) ||
+          Boolean(match.isManualOverride) ||
+          Boolean(match.lastSyncedAt)
+      ),
+    [matches]
+  );
 
   useEffect(() => {
     if (!canUseDangerZone) {
@@ -273,6 +313,17 @@ export function AdminMatchesClient() {
     setBatchFinalizeFromDate((current) => current || dateOptions[0]);
     setBatchFinalizeToDate((current) => current || dateOptions[dateOptions.length - 1]);
   }, [dateOptions]);
+
+  useEffect(() => {
+    if (resettableMatches.length === 0) {
+      setSelectedResetMatchId("");
+      return;
+    }
+
+    setSelectedResetMatchId((current) =>
+      current && resettableMatches.some((match) => match.id === current) ? current : resettableMatches[0]?.id ?? ""
+    );
+  }, [resettableMatches]);
 
   useEffect(() => {
     if (!knockoutSeedStatus.hasAnySeeds || knockoutSeedStatus.hasKnockoutStarted || !knockoutSeedStatus.isReady) {
@@ -379,7 +430,8 @@ export function AdminMatchesClient() {
     try {
       const result = await resetKnockoutTestingDataAction({
         confirmationText: knockoutResetConfirmationText,
-        scope: "knockout-only"
+        scope: "knockout-only",
+        reason: resetReasonByScope.knockout
       });
 
       if (result.ok) {
@@ -421,7 +473,8 @@ export function AdminMatchesClient() {
     try {
       const result = await resetGroupStageTestingDataAction({
         confirmationText: groupResetConfirmationText,
-        scope: "group-only"
+        scope: "group-only",
+        reason: resetReasonByScope.group_stage
       });
       console.info("[group-reset:client] action returned result", result);
 
@@ -503,6 +556,96 @@ export function AdminMatchesClient() {
       });
     } finally {
       setIsBatchFinalizingMatches(false);
+    }
+  }
+
+  async function handleResetMatchToOpen() {
+    if (!selectedResetMatchId || !matchAvailability?.environmentResetAllowed) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "You are about to reset this match to open. This clears actual scores, finalization state, sync/manual-override flags, dependent score rows, and stale knockout advancement derived from this match. Continue?"
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsResettingMatch(true);
+    try {
+      const result = await resetMatchToOpenAction({
+        matchId: selectedResetMatchId,
+        expectedMatchId: matchResetConfirmationText,
+        reason: resetReasonByScope.match
+      });
+
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        setMatchResetConfirmationText("");
+        setResetReasonByScope((current) => ({ ...current, match: "" }));
+        await loadMatches();
+        router.refresh();
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsResettingMatch(false);
+    }
+  }
+
+  async function handleRepairLeaderboard() {
+    if (!leaderboardAvailability?.environmentResetAllowed) {
+      return;
+    }
+
+    setIsRepairingLeaderboard(true);
+    try {
+      const result = await repairLeaderboardStateAction({
+        reason: resetReasonByScope.leaderboard
+      });
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        setResetReasonByScope((current) => ({ ...current, leaderboard: "" }));
+        await loadMatches();
+        router.refresh();
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsRepairingLeaderboard(false);
+    }
+  }
+
+  async function handleFullPreLaunchReset() {
+    if (!fullResetAvailability?.environmentResetAllowed || !isFullResetAcknowledged || !isFullResetPhraseValid) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "You are about to run the full pre-launch test reset. This clears group-stage test state, knockout test state, social/movement state, and derived leaderboard state across the app. Accounts, groups, tier access, and branding stay intact. Continue?"
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsRunningFullReset(true);
+    try {
+      const result = await fullPreLaunchTestResetAction({
+        confirmationText: fullResetConfirmationText,
+        reason: resetReasonByScope.full_test
+      });
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        setFullResetConfirmationText("");
+        setIsFullResetAcknowledged(false);
+        setResetReasonByScope((current) => ({ ...current, full_test: "" }));
+        await loadMatches();
+        router.refresh();
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsRunningFullReset(false);
     }
   }
 
@@ -810,6 +953,22 @@ export function AdminMatchesClient() {
                     <p>VERCEL_ENV: {diagnostics.vercelEnv}</p>
                     <p>Is production deployment: {diagnostics.isProductionDeployment ? "yes" : "no"}</p>
                     <p>
+                      ENABLE_DESTRUCTIVE_ADMIN_TOOLS present:{" "}
+                      {diagnostics.enableDestructiveAdminToolsPresent ? "yes" : "no"}
+                    </p>
+                    <p>
+                      ENABLE_DESTRUCTIVE_ADMIN_TOOLS equals &quot;true&quot;:{" "}
+                      {diagnostics.enableDestructiveAdminToolsIsTrue ? "yes" : "no"}
+                    </p>
+                    <p>
+                      ALLOW_PRODUCTION_ADMIN_RESETS present:{" "}
+                      {diagnostics.allowProductionAdminResetsPresent ? "yes" : "no"}
+                    </p>
+                    <p>
+                      ALLOW_PRODUCTION_ADMIN_RESETS equals &quot;true&quot;:{" "}
+                      {diagnostics.allowProductionAdminResetsIsTrue ? "yes" : "no"}
+                    </p>
+                    <p>
                       ALLOW_PRODUCTION_KNOCKOUT_RESET present:{" "}
                       {diagnostics.allowProductionKnockoutResetPresent ? "yes" : "no"}
                     </p>
@@ -950,11 +1109,11 @@ export function AdminMatchesClient() {
 
                   {renderResetReadiness({
                     title: "Finalize readiness",
-                    availability: knockoutAvailability,
+                    availability: batchFinalizeAvailability,
                     checkboxChecked: isBatchFinalizeAcknowledged,
                     phraseMatches: isBatchFinalizePhraseValid,
                     productionBlockedMessage:
-                      "Production testing tools are blocked. Set ALLOW_PRODUCTION_KNOCKOUT_RESET=true and redeploy."
+                      "Production testing tools are blocked. Enable ALLOW_PRODUCTION_KNOCKOUT_RESET=true or ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
                   })}
 
                   <button
@@ -992,6 +1151,19 @@ export function AdminMatchesClient() {
                   </label>
 
                   <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Reason</span>
+                    <input
+                      type="text"
+                      value={resetReasonByScope.knockout}
+                      onChange={(event) =>
+                        setResetReasonByScope((current) => ({ ...current, knockout: event.target.value }))
+                      }
+                      placeholder="Explain why this knockout recovery reset is needed"
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                  </label>
+
+                  <label className="mt-4 block">
                     <span className="text-sm font-bold text-gray-700">Type confirmation exactly</span>
                     <input
                       type="text"
@@ -1012,7 +1184,7 @@ export function AdminMatchesClient() {
                     checkboxChecked: isKnockoutResetAcknowledged,
                     phraseMatches: isKnockoutResetPhraseValid,
                     productionBlockedMessage:
-                      "Production knockout reset is disabled. Set ALLOW_PRODUCTION_KNOCKOUT_RESET=true and redeploy."
+                      "Production knockout reset is disabled. Enable ALLOW_PRODUCTION_KNOCKOUT_RESET=true or ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
                   })}
 
                   <button
@@ -1052,6 +1224,19 @@ export function AdminMatchesClient() {
                   </label>
 
                   <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Reason</span>
+                    <input
+                      type="text"
+                      value={resetReasonByScope.group_stage}
+                      onChange={(event) =>
+                        setResetReasonByScope((current) => ({ ...current, group_stage: event.target.value }))
+                      }
+                      placeholder="Explain why this group-stage recovery reset is needed"
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                  </label>
+
+                  <label className="mt-4 block">
                     <span className="text-sm font-bold text-gray-700">Type confirmation exactly</span>
                     <input
                       type="text"
@@ -1072,7 +1257,7 @@ export function AdminMatchesClient() {
                     checkboxChecked: isGroupResetAcknowledged,
                     phraseMatches: isGroupResetPhraseValid,
                     productionBlockedMessage:
-                      "Production group-stage reset is disabled. Set ALLOW_PRODUCTION_GROUP_RESET=true and redeploy."
+                      "Production group-stage reset is disabled. Enable ALLOW_PRODUCTION_GROUP_RESET=true or ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
                   })}
 
                   <button
@@ -1082,6 +1267,197 @@ export function AdminMatchesClient() {
                     className="mt-4 rounded-md bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
                   >
                     {isResettingGroup ? "Resetting group-stage test data..." : "Reset group-stage test data"}
+                  </button>
+                </section>
+
+                <section className="rounded-lg border border-rose-200 bg-white p-4">
+                  <div className="space-y-1">
+                    <h4 className="text-base font-black text-gray-950">Reset match to open</h4>
+                    <p className="text-sm font-semibold text-gray-600">
+                      Restore one test match to a clean editable open state. This clears actual scores, finalization,
+                      manual override and sync flags, dependent scoring rows, and stale knockout advancement derived from
+                      that match.
+                    </p>
+                  </div>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Match</span>
+                    <select
+                      value={selectedResetMatchId}
+                      onChange={(event) => setSelectedResetMatchId(event.target.value)}
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    >
+                      <option value="">Select a match</option>
+                      {resettableMatches.map((match) => (
+                        <option key={`reset-match-${match.id}`} value={match.id}>
+                          {match.id} · {formatStage(match.stage)} · {formatMatchStatus(match.status)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Reason</span>
+                    <input
+                      type="text"
+                      value={resetReasonByScope.match}
+                      onChange={(event) =>
+                        setResetReasonByScope((current) => ({ ...current, match: event.target.value }))
+                      }
+                      placeholder="Explain why this match recovery reset is needed"
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                  </label>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Type match id exactly</span>
+                    <input
+                      type="text"
+                      value={matchResetConfirmationText}
+                      onChange={(event) => setMatchResetConfirmationText(event.target.value)}
+                      placeholder={selectedResetMatchId || "Select a match first"}
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                  </label>
+
+                  {renderResetReadiness({
+                    title: "Match reset readiness",
+                    availability: matchAvailability,
+                    checkboxChecked: Boolean(selectedResetMatchId) && Boolean(resetReasonByScope.match.trim()),
+                    phraseMatches: Boolean(selectedResetMatchId) && matchResetConfirmationText === selectedResetMatchId,
+                    productionBlockedMessage:
+                      "Production match reset is disabled. Enable ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
+                  })}
+
+                  <button
+                    type="button"
+                    disabled={
+                      !matchAvailability?.environmentResetAllowed ||
+                      !selectedResetMatchId ||
+                      !resetReasonByScope.match.trim() ||
+                      matchResetConfirmationText !== selectedResetMatchId ||
+                      isResettingMatch
+                    }
+                    onClick={() => void handleResetMatchToOpen()}
+                    className="mt-4 rounded-md bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                  >
+                    {isResettingMatch ? "Resetting match..." : "Reset Match to Open"}
+                  </button>
+                </section>
+
+                <section className="rounded-lg border border-rose-200 bg-white p-4">
+                  <div className="space-y-1">
+                    <h4 className="text-base font-black text-gray-950">Recalculate leaderboards</h4>
+                    <p className="text-sm font-semibold text-gray-600">
+                      Rebuild persisted leaderboard totals and snapshots from saved scoring rows without changing
+                      predictions or match results.
+                    </p>
+                  </div>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Reason</span>
+                    <input
+                      type="text"
+                      value={resetReasonByScope.leaderboard}
+                      onChange={(event) =>
+                        setResetReasonByScope((current) => ({ ...current, leaderboard: event.target.value }))
+                      }
+                      placeholder="Explain why this leaderboard repair is needed"
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                  </label>
+
+                  {renderResetReadiness({
+                    title: "Leaderboard repair readiness",
+                    availability: leaderboardAvailability,
+                    checkboxChecked: Boolean(resetReasonByScope.leaderboard.trim()),
+                    phraseMatches: true,
+                    productionBlockedMessage:
+                      "Production leaderboard repair is disabled. Enable ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
+                  })}
+
+                  <button
+                    type="button"
+                    disabled={
+                      !leaderboardAvailability?.environmentResetAllowed ||
+                      !resetReasonByScope.leaderboard.trim() ||
+                      isRepairingLeaderboard
+                    }
+                    onClick={() => void handleRepairLeaderboard()}
+                    className="mt-4 rounded-md bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                  >
+                    {isRepairingLeaderboard ? "Rebuilding..." : "Recalculate Leaderboards"}
+                  </button>
+                </section>
+
+                <section className="rounded-lg border border-rose-200 bg-white p-4 xl:col-span-2">
+                  <div className="space-y-1">
+                    <h4 className="text-base font-black text-gray-950">Full pre-launch test reset</h4>
+                    <p className="text-sm font-semibold text-gray-600">
+                      Return the app to a clean pre-launch test state. This clears group-stage test data, knockout seeds,
+                      picks, and scores, social/movement history, and derived leaderboard state. Accounts, groups, tier
+                      access, and branding stay intact.
+                    </p>
+                  </div>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Reason</span>
+                    <input
+                      type="text"
+                      value={resetReasonByScope.full_test}
+                      onChange={(event) =>
+                        setResetReasonByScope((current) => ({ ...current, full_test: event.target.value }))
+                      }
+                      placeholder="Explain why the full pre-launch recovery reset is needed"
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                  </label>
+
+                  <label className="mt-4 flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isFullResetAcknowledged}
+                      onChange={(event) => setIsFullResetAcknowledged(event.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                    />
+                    <span className="text-sm font-semibold text-gray-700">
+                      I understand this will clear all platform-wide test state and force clients to drop stale resettable UI state.
+                    </span>
+                  </label>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Type confirmation exactly</span>
+                    <input
+                      type="text"
+                      value={fullResetConfirmationText}
+                      onChange={(event) => setFullResetConfirmationText(event.target.value)}
+                      placeholder={FULL_TEST_RESET_CONFIRMATION_PHRASE}
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                  </label>
+
+                  {renderResetReadiness({
+                    title: "Full reset readiness",
+                    availability: fullResetAvailability,
+                    checkboxChecked: isFullResetAcknowledged && Boolean(resetReasonByScope.full_test.trim()),
+                    phraseMatches: isFullResetPhraseValid,
+                    productionBlockedMessage:
+                      "Production full reset is disabled. Enable ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
+                  })}
+
+                  <button
+                    type="button"
+                    disabled={
+                      !fullResetAvailability?.environmentResetAllowed ||
+                      !resetReasonByScope.full_test.trim() ||
+                      !isFullResetAcknowledged ||
+                      !isFullResetPhraseValid ||
+                      isRunningFullReset
+                    }
+                    onClick={() => void handleFullPreLaunchReset()}
+                    className="mt-4 rounded-md bg-rose-700 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                  >
+                    {isRunningFullReset ? "Running full reset..." : "Full Pre-Launch Test Reset"}
                   </button>
                 </section>
               </div>

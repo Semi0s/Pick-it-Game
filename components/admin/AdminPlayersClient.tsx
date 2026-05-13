@@ -2,6 +2,7 @@
 
 import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  clearUserTestPredictionsAction,
   deactivateOrganizerAccessAction,
   demoteUserWithImpactResolutionAction,
   deleteUserAndStartOverAction,
@@ -13,12 +14,12 @@ import {
   repairPendingInviteAction,
   resetTestingSocialStateAction,
   resendConfirmationOrOnboardingNudgeAction,
-  removeManagerAccessAction,
   resetOnboardingStateAction,
   resetUserAccess,
   updateLeaderboardFeatureSettingAction,
   updateUserDisplayNameAction,
   upsertManagerLimitsAction,
+  type DemotionCleanupOption,
   type DemotionImpactSummary
 } from "@/app/admin/actions";
 import type { AdminPlayerHealthRow } from "@/lib/admin-player-health";
@@ -88,7 +89,15 @@ export function AdminPlayersClient() {
     email: string;
     displayName: string;
   } | null>(null);
+  const [userResetConfirmation, setUserResetConfirmation] = useState<{
+    key: string;
+    userId: string;
+    email: string;
+    displayName: string;
+  } | null>(null);
   const [deleteConfirmationValue, setDeleteConfirmationValue] = useState("");
+  const [userResetConfirmationValue, setUserResetConfirmationValue] = useState("");
+  const [userResetReason, setUserResetReason] = useState("");
   const [legalEditor, setLegalEditor] = useState({
     documentType: "eula",
     language: "en",
@@ -530,6 +539,76 @@ export function AdminPlayersClient() {
         />
       ) : null}
 
+      {userResetConfirmation ? (
+        <div className="rounded-lg border border-rose-200 bg-rose-50/70 p-4">
+          <div className="space-y-2">
+            <p className="text-lg font-black text-gray-950">
+              Clear test predictions for {userResetConfirmation.displayName}?
+            </p>
+            <p className="text-sm font-semibold text-gray-700">
+              This clears this user&apos;s group predictions, knockout predictions, legacy bracket picks, saved score rows,
+              and derived leaderboard rows, then rebuilds the leaderboard. Their account, profile, memberships, and groups stay intact.
+            </p>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-bold text-gray-800">Typed confirmation</span>
+              <input
+                value={userResetConfirmationValue}
+                onChange={(event) => setUserResetConfirmationValue(event.target.value)}
+                placeholder={userResetConfirmation.email}
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-bold text-gray-800">Reason</span>
+              <input
+                value={userResetReason}
+                onChange={(event) => setUserResetReason(event.target.value)}
+                placeholder="Explain why this recovery reset is needed"
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <ActionButton
+              tone="danger"
+              disabled={activeActionKey === userResetConfirmation.key}
+              onClick={() => {
+                void withAction(userResetConfirmation.key, async () => {
+                  const result = await clearUserTestPredictionsAction({
+                    userId: userResetConfirmation.userId,
+                    expectedEmail: userResetConfirmationValue,
+                    reason: userResetReason
+                  });
+                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                  if (result.ok) {
+                    setUserResetConfirmation(null);
+                    setUserResetConfirmationValue("");
+                    setUserResetReason("");
+                    await loadPlayers();
+                  }
+                });
+              }}
+            >
+              {activeActionKey === userResetConfirmation.key ? "Clearing..." : "Clear User Test Predictions"}
+            </ActionButton>
+            <ActionButton
+              onClick={() => {
+                setUserResetConfirmation(null);
+                setUserResetConfirmationValue("");
+                setUserResetReason("");
+              }}
+              disabled={activeActionKey === userResetConfirmation.key}
+            >
+              Cancel
+            </ActionButton>
+          </div>
+        </div>
+      ) : null}
+
       <ManagementToolbar
         searchValue={searchValue}
         onSearchChange={setSearchValue}
@@ -583,27 +662,6 @@ export function AdminPlayersClient() {
                     });
                   }}
                   onManageManager={() => handleManagerAccess(player)}
-                  onRemoveManager={() => {
-                    if (!player.appUserId) {
-                      return;
-                    }
-                    setConfirmation({
-                      key: `remove-manager-${player.appUserId}`,
-                      title: `Remove manager access for ${player.displayName}?`,
-                      description: "Their groups, players, account, and predictions will stay intact. This only removes their manager entitlement.",
-                      confirmLabel: "Remove Manager Access",
-                      onConfirm: () => {
-                        void withAction(`remove-manager-${player.appUserId}`, async () => {
-                          const result = await removeManagerAccessAction(player.appUserId!);
-                          setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                          if (result.ok) {
-                            setConfirmation(null);
-                            await loadPlayers();
-                          }
-                        });
-                      }
-                    });
-                  }}
                   onPasswordReset={() => void handleResetUserAccess(player)}
                   onSendNudge={() => {
                     void withAction(`nudge-${player.email}`, async () => {
@@ -642,6 +700,21 @@ export function AdminPlayersClient() {
                       displayName: player.displayName
                     });
                     setDeleteConfirmationValue("");
+                  }}
+                  onOpenClearUserTestData={() => {
+                    if (!player.appUserId) {
+                      setMessage({ tone: "error", text: "This row does not have an app user profile to reset yet." });
+                      return;
+                    }
+
+                    setUserResetConfirmation({
+                      key: `clear-test-data-${player.email}`,
+                      userId: player.appUserId,
+                      email: player.email,
+                      displayName: player.displayName
+                    });
+                    setUserResetConfirmationValue("");
+                    setUserResetReason("");
                   }}
                   onNotify={(tone, text) => setMessage({ tone, text })}
                   onReload={loadPlayers}
@@ -702,12 +775,12 @@ function PlayerSummaryCard({
   sendingResetForUserId,
   onRename,
   onManageManager,
-  onRemoveManager,
   onPasswordReset,
   onSendNudge,
   onResetOnboarding,
   onRepairInvite,
   onOpenDelete,
+  onOpenClearUserTestData,
   onNotify,
   onReload,
   setManagerEditor,
@@ -724,12 +797,12 @@ function PlayerSummaryCard({
   sendingResetForUserId: string | null;
   onRename: () => void;
   onManageManager: () => void;
-  onRemoveManager: () => void;
   onPasswordReset: () => void;
   onSendNudge: () => void;
   onResetOnboarding: () => void;
   onRepairInvite: () => void;
   onOpenDelete: () => void;
+  onOpenClearUserTestData: () => void;
   onNotify: (tone: "success" | "error", text: string) => void;
   onReload: () => Promise<void>;
   setManagerEditor: Dispatch<
@@ -761,6 +834,7 @@ function PlayerSummaryCard({
   const [isApplyingDeactivateOrganizer, setIsApplyingDeactivateOrganizer] = useState(false);
   const [demotionReason, setDemotionReason] = useState("");
   const [demotionConfirmationValue, setDemotionConfirmationValue] = useState("");
+  const [cleanupSelections, setCleanupSelections] = useState<Partial<Record<DemotionCleanupOption, boolean>>>({});
   const showDemotionTools = player.roleLabel !== "admin" && player.accessLevel !== "player" && Boolean(player.appUserId);
 
   useEffect(() => {
@@ -795,6 +869,12 @@ function PlayerSummaryCard({
         }
 
         setDemotionImpact(result.impact);
+        setCleanupSelections(
+          result.impact.cleanupOptions.reduce<Partial<Record<DemotionCleanupOption, boolean>>>((next, option) => {
+            next[option.key] = option.selectedByDefault;
+            return next;
+          }, {})
+        );
       })
       .catch((error) => {
         if (!isActive) {
@@ -867,11 +947,6 @@ function PlayerSummaryCard({
                       : "Make Manager"}
               </ActionButton>
             ) : null}
-            {player.appUserId && player.isManager && player.roleLabel !== "admin" ? (
-              <ActionButton tone="danger" onClick={onRemoveManager} disabled={activeActionKey === `remove-manager-${player.appUserId}`}>
-                {activeActionKey === `remove-manager-${player.appUserId}` ? "Removing..." : "Remove Manager Access"}
-              </ActionButton>
-            ) : null}
             <ActionButton onClick={onPasswordReset} disabled={sendingResetForUserId === player.appUserId || !player.appUserId}>
               {sendingResetForUserId === player.appUserId ? "Sending..." : "Send Password Reset"}
             </ActionButton>
@@ -901,6 +976,11 @@ function PlayerSummaryCard({
             {showDemotionTools ? (
               <ActionButton tone="danger" onClick={() => setIsDemotionPanelOpen((current) => !current)}>
                 {isDemotionPanelOpen ? "Hide Demote / Remove Access" : "Demote / Remove Access"}
+              </ActionButton>
+            ) : null}
+            {player.appUserId ? (
+              <ActionButton tone="danger" onClick={onOpenClearUserTestData} disabled={activeActionKey === `clear-test-data-${player.email}`}>
+                {activeActionKey === `clear-test-data-${player.email}` ? "Clearing..." : "Clear User Test Predictions"}
               </ActionButton>
             ) : null}
           </div>
@@ -1056,7 +1136,9 @@ function PlayerSummaryCard({
                     <ManagementDatum label="Target access" value={getAccessLevelDisplayLabel(demotionImpact.targetAccessLevel)} />
                     <ManagementDatum label="Owned groups" value={demotionImpact.ownedGroupCount} />
                     <ManagementDatum label="Managed groups" value={demotionImpact.managedGroupCount} />
+                    <ManagementDatum label="Legacy manager groups" value={demotionImpact.legacyManagedGroupCount} />
                     <ManagementDatum label="Active invite codes" value={demotionImpact.activeInviteCodeCount} />
+                    <ManagementDatum label="Codes created by user" value={demotionImpact.activeCreatedAccessCodeCount} />
                     <ManagementDatum label="Pending invites" value={demotionImpact.pendingInviteCount} />
                     <ManagementDatum label="Manager limits" value={demotionImpact.hasManagerLimits ? "Present" : "None"} />
                     <ManagementDatum label="Organizations" value={demotionImpact.organizationOwnershipCount} />
@@ -1079,10 +1161,37 @@ function PlayerSummaryCard({
 
                   {demotionImpact.cleanupActions.length > 0 ? (
                     <div className="mt-4 rounded-md border border-amber-200 bg-white px-3 py-3">
-                      <p className="text-sm font-black text-gray-900">Cleanup that will run automatically</p>
+                      <p className="text-sm font-black text-gray-900">Cleanup required before applying</p>
                       <div className="mt-2 space-y-1 text-sm font-semibold text-gray-700">
                         {demotionImpact.cleanupActions.map((action) => (
                           <p key={action}>{action}</p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {demotionImpact.cleanupOptions.length > 0 ? (
+                    <div className="mt-4 rounded-md border border-amber-200 bg-white px-3 py-3">
+                      <p className="text-sm font-black text-gray-900">Select cleanup steps</p>
+                      <div className="mt-3 space-y-3">
+                        {demotionImpact.cleanupOptions.map((option) => (
+                          <label key={option.key} className="flex items-start gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(cleanupSelections[option.key])}
+                              onChange={(event) =>
+                                setCleanupSelections((current) => ({
+                                  ...current,
+                                  [option.key]: event.target.checked
+                                }))
+                              }
+                              className="mt-1 h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent"
+                            />
+                            <div>
+                              <p className="text-sm font-black text-gray-950">{option.label}</p>
+                              <p className="mt-1 text-sm font-semibold text-gray-600">{option.description}</p>
+                            </div>
+                          </label>
                         ))}
                       </div>
                     </div>
@@ -1144,13 +1253,15 @@ function PlayerSummaryCard({
                             userId: player.appUserId,
                             targetAccessLevel: demotionTargetAccessLevel,
                             expectedEmail: demotionConfirmationValue,
-                            reason: demotionReason
+                            reason: demotionReason,
+                            resolutionPlan: cleanupSelections
                           });
                           onNotify(result.ok ? "success" : "error", result.message);
                           if (result.ok) {
                             setIsDemotionPanelOpen(false);
                             setDemotionReason("");
                             setDemotionConfirmationValue("");
+                            setCleanupSelections({});
                             await onReload();
                           }
                         } finally {
@@ -1181,13 +1292,15 @@ function PlayerSummaryCard({
                           const result = await deactivateOrganizerAccessAction({
                             userId: player.appUserId,
                             expectedEmail: demotionConfirmationValue,
-                            reason: demotionReason
+                            reason: demotionReason,
+                            resolutionPlan: cleanupSelections
                           });
                           onNotify(result.ok ? "success" : "error", result.message);
                           if (result.ok) {
                             setIsDemotionPanelOpen(false);
                             setDemotionReason("");
                             setDemotionConfirmationValue("");
+                            setCleanupSelections({});
                             await onReload();
                           }
                         } finally {
@@ -1203,6 +1316,9 @@ function PlayerSummaryCard({
                       Select <span className="font-black">Player</span> above to preview and apply organizer deactivation.
                     </p>
                   ) : null}
+                  <p className="mt-2 text-xs font-semibold text-gray-600">
+                    Use the admin group tools below to transfer ownership or archive groups before retrying a blocked demotion.
+                  </p>
                 </>
               ) : null}
             </div>

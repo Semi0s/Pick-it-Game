@@ -2488,6 +2488,62 @@ create index organization_branding_status_idx on public.organization_branding us
 
 create index organization_branding_audit_log_org_created_idx on public.organization_branding_audit_log using btree (organization_id, created_at desc);
 
+create table public.admin_access_change_audit_log (
+  id uuid not null default gen_random_uuid(),
+  actor_user_id uuid,
+  target_user_id uuid,
+  target_email text not null,
+  action text not null,
+  previous_role public.user_role not null,
+  previous_plan_tier text,
+  previous_access_level text not null,
+  new_role public.user_role not null,
+  new_plan_tier text not null,
+  new_access_level text not null,
+  impact_summary jsonb not null default '{}'::jsonb,
+  cleanup_actions_taken jsonb not null default '[]'::jsonb,
+  cleanup_counts jsonb not null default '{}'::jsonb,
+  reason text not null,
+  created_at timestamp with time zone not null default now(),
+  constraint admin_access_change_audit_log_pkey primary key (id),
+  constraint admin_access_change_audit_log_action_length check (char_length(trim(action)) between 1 and 80),
+  constraint admin_access_change_audit_log_reason_length check (char_length(trim(reason)) between 1 and 500),
+  constraint admin_access_change_audit_log_previous_plan_tier_check check (previous_plan_tier is null or previous_plan_tier in ('player', 'captain', 'manager', 'director', 'managing_director')),
+  constraint admin_access_change_audit_log_new_plan_tier_check check (new_plan_tier in ('player', 'captain', 'manager', 'director', 'managing_director')),
+  constraint admin_access_change_audit_log_previous_access_level_check check (previous_access_level in ('player', 'captain', 'manager', 'director', 'managing_director', 'super_admin')),
+  constraint admin_access_change_audit_log_new_access_level_check check (new_access_level in ('player', 'captain', 'manager', 'director', 'managing_director', 'super_admin')),
+  constraint admin_access_change_audit_log_actor_user_id_fkey foreign key (actor_user_id) references public.users(id) on delete set null,
+  constraint admin_access_change_audit_log_target_user_id_fkey foreign key (target_user_id) references public.users(id) on delete set null
+);
+
+create index admin_access_change_audit_log_target_created_idx
+  on public.admin_access_change_audit_log using btree (target_user_id, created_at desc);
+
+create table public.admin_reset_audit_log (
+  id uuid not null default gen_random_uuid(),
+  actor_user_id uuid,
+  actor_email text,
+  action_key text not null,
+  scope text not null,
+  target_ids jsonb not null default '[]'::jsonb,
+  affected_counts jsonb not null default '{}'::jsonb,
+  reason text not null,
+  success boolean not null default true,
+  details jsonb not null default '{}'::jsonb,
+  created_at timestamp with time zone not null default now(),
+  constraint admin_reset_audit_log_pkey primary key (id),
+  constraint admin_reset_audit_log_action_key_length check (char_length(trim(action_key)) between 1 and 80),
+  constraint admin_reset_audit_log_scope_check check (scope in ('user', 'group', 'match', 'group_stage', 'knockout', 'leaderboard', 'social', 'full_test', 'batch_finalize')),
+  constraint admin_reset_audit_log_reason_length check (char_length(trim(reason)) between 1 and 500),
+  constraint admin_reset_audit_log_actor_user_id_fkey foreign key (actor_user_id) references public.users(id) on delete set null
+);
+
+create index admin_reset_audit_log_scope_created_idx
+  on public.admin_reset_audit_log using btree (scope, created_at desc);
+
+create index admin_reset_audit_log_actor_created_idx
+  on public.admin_reset_audit_log using btree (actor_user_id, created_at desc);
+
 create or replace function public.initialize_organization_branding()
 returns trigger
 language plpgsql
@@ -2520,6 +2576,8 @@ on conflict (id) do nothing;
 alter table public.organizations enable row level security;
 alter table public.organization_branding enable row level security;
 alter table public.organization_branding_audit_log enable row level security;
+alter table public.admin_access_change_audit_log enable row level security;
+alter table public.admin_reset_audit_log enable row level security;
 
 create policy "Users read own organizations"
 on public.organizations for select
@@ -2566,5 +2624,23 @@ using (public.is_super_admin(auth.uid()));
 
 create policy "Super admins manage organization branding audit log"
 on public.organization_branding_audit_log for all
+using (public.is_super_admin(auth.uid()))
+with check (public.is_super_admin(auth.uid()));
+
+create policy "Super admins read admin access change audit log"
+on public.admin_access_change_audit_log for select
+using (public.is_super_admin(auth.uid()));
+
+create policy "Super admins manage admin access change audit log"
+on public.admin_access_change_audit_log for all
+using (public.is_super_admin(auth.uid()))
+with check (public.is_super_admin(auth.uid()));
+
+create policy "Super admins read admin reset audit log"
+on public.admin_reset_audit_log for select
+using (public.is_super_admin(auth.uid()));
+
+create policy "Super admins manage admin reset audit log"
+on public.admin_reset_audit_log for all
 using (public.is_super_admin(auth.uid()))
 with check (public.is_super_admin(auth.uid()));
