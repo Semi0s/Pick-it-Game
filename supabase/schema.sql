@@ -2544,6 +2544,138 @@ create index admin_reset_audit_log_scope_created_idx
 create index admin_reset_audit_log_actor_created_idx
   on public.admin_reset_audit_log using btree (actor_user_id, created_at desc);
 
+-- Supabase no longer auto-exposes new public tables to the Data API.
+-- Keep table grants explicit and least-privilege so PostgREST, GraphQL, and supabase-js
+-- only see the tables each role is meant to access.
+
+alter table public.trophies enable row level security;
+alter table public.user_trophies enable row level security;
+
+revoke all on public.email_jobs from anon, authenticated, public;
+revoke all on public.match_events from anon, authenticated, public;
+revoke all on public.leaderboard_events from anon, authenticated, public;
+revoke all on public.leaderboard_event_reactions from anon, authenticated, public;
+revoke all on public.leaderboard_event_comments from anon, authenticated, public;
+revoke all on public.access_codes from anon, authenticated, public;
+revoke all on public.access_code_redemptions from anon, authenticated, public;
+revoke all on public.organization_branding_audit_log from anon, authenticated, public;
+revoke all on public.admin_access_change_audit_log from anon, authenticated, public;
+revoke all on public.admin_reset_audit_log from anon, authenticated, public;
+revoke all on public.prediction_scores from anon, authenticated, public;
+revoke all on public.leaderboard_snapshots from anon, authenticated, public;
+
+grant select, insert, update, delete on public.email_jobs to service_role;
+grant select, insert, update, delete on public.match_events to service_role;
+grant select, insert, update, delete on public.leaderboard_events to service_role;
+grant select, insert, update, delete on public.leaderboard_event_reactions to service_role;
+grant select, insert, update, delete on public.leaderboard_event_comments to service_role;
+grant select, insert, update, delete on public.access_codes to service_role;
+grant select, insert, update, delete on public.access_code_redemptions to service_role;
+grant select, insert, update, delete on public.organization_branding_audit_log to service_role;
+grant select, insert, update, delete on public.admin_access_change_audit_log to service_role;
+grant select, insert, update, delete on public.admin_reset_audit_log to service_role;
+grant select, insert, update, delete on public.prediction_scores to service_role;
+grant select, insert, update, delete on public.leaderboard_snapshots to service_role;
+
+revoke all on public.invites from anon, authenticated, public;
+revoke all on public.teams from anon, authenticated, public;
+revoke all on public.users from anon, authenticated, public;
+revoke all on public.matches from anon, authenticated, public;
+revoke all on public.predictions from anon, authenticated, public;
+revoke all on public.side_picks from anon, authenticated, public;
+revoke all on public.leaderboard_entries from anon, authenticated, public;
+revoke all on public.push_tokens from anon, authenticated, public;
+revoke all on public.app_settings from anon, authenticated, public;
+revoke all on public.user_settings from anon, authenticated, public;
+revoke all on public.user_notifications from anon, authenticated, public;
+revoke all on public.groups from anon, authenticated, public;
+revoke all on public.manager_limits from anon, authenticated, public;
+revoke all on public.group_members from anon, authenticated, public;
+revoke all on public.group_invites from anon, authenticated, public;
+revoke all on public.bracket_predictions from anon, authenticated, public;
+revoke all on public.bracket_scores from anon, authenticated, public;
+revoke all on public.match_probability_snapshots from anon, authenticated, public;
+revoke all on public.app_updates from anon, authenticated, public;
+revoke all on public.user_update_reads from anon, authenticated, public;
+revoke all on public.legal_documents from anon, authenticated, public;
+revoke all on public.user_legal_acceptances from anon, authenticated, public;
+revoke all on public.trophies from anon, authenticated, public;
+revoke all on public.user_trophies from anon, authenticated, public;
+revoke all on public.side_pick_packages from anon, authenticated, public;
+revoke all on public.side_pick_definitions from anon, authenticated, public;
+revoke all on public.group_rulesets from anon, authenticated, public;
+revoke all on public.side_pick_entries from anon, authenticated, public;
+revoke all on public.side_pick_scores from anon, authenticated, public;
+revoke all on public.group_bonus_scores from anon, authenticated, public;
+revoke all on public.organizations from anon, authenticated, public;
+revoke all on public.organization_branding from anon, authenticated, public;
+
+grant select, insert, update, delete on public.invites to authenticated;
+grant select on public.teams to authenticated;
+grant select, update on public.users to authenticated;
+grant select on public.matches to authenticated;
+grant select, insert, update, delete on public.predictions to authenticated;
+grant select, insert, update, delete on public.side_picks to authenticated;
+grant select on public.leaderboard_entries to authenticated;
+grant select, insert, update, delete on public.push_tokens to authenticated;
+grant select on public.app_settings to authenticated;
+grant select, insert, update, delete on public.user_settings to authenticated;
+grant select, update on public.user_notifications to authenticated;
+grant select, insert, update, delete on public.groups to authenticated;
+grant select on public.manager_limits to authenticated;
+grant select, insert, update, delete on public.group_members to authenticated;
+grant select, insert, update, delete on public.group_invites to authenticated;
+grant select, insert, update, delete on public.bracket_predictions to authenticated;
+grant select on public.bracket_scores to authenticated;
+grant select on public.match_probability_snapshots to authenticated;
+grant select on public.app_updates to authenticated;
+grant select, insert on public.user_update_reads to authenticated;
+grant select on public.legal_documents to authenticated;
+grant select, insert on public.user_legal_acceptances to authenticated;
+grant select on public.trophies to authenticated;
+grant select on public.user_trophies to authenticated;
+grant select on public.side_pick_packages to authenticated;
+grant select on public.side_pick_definitions to authenticated;
+grant select on public.group_rulesets to authenticated;
+grant select, insert, update, delete on public.side_pick_entries to authenticated;
+grant select on public.side_pick_scores to authenticated;
+grant select on public.group_bonus_scores to authenticated;
+grant select, insert, update, delete on public.organizations to authenticated;
+grant select, insert, update, delete on public.organization_branding to authenticated;
+
+grant select, insert, update, delete on public.invites to service_role;
+grant select, insert, update, delete on public.teams to service_role;
+grant select, insert, update, delete on public.users to service_role;
+grant select, insert, update, delete on public.matches to service_role;
+grant select, insert, update, delete on public.predictions to service_role;
+grant select, insert, update, delete on public.side_picks to service_role;
+grant select, insert, update, delete on public.leaderboard_entries to service_role;
+grant select, insert, update, delete on public.push_tokens to service_role;
+grant select, insert, update, delete on public.app_settings to service_role;
+grant select, insert, update, delete on public.user_settings to service_role;
+grant select, insert, update, delete on public.user_notifications to service_role;
+grant select, insert, update, delete on public.groups to service_role;
+grant select, insert, update, delete on public.manager_limits to service_role;
+grant select, insert, update, delete on public.group_members to service_role;
+grant select, insert, update, delete on public.group_invites to service_role;
+grant select, insert, update, delete on public.bracket_predictions to service_role;
+grant select, insert, update, delete on public.bracket_scores to service_role;
+grant select, insert, update, delete on public.match_probability_snapshots to service_role;
+grant select, insert, update, delete on public.app_updates to service_role;
+grant select, insert, update, delete on public.user_update_reads to service_role;
+grant select, insert, update, delete on public.legal_documents to service_role;
+grant select, insert, update, delete on public.user_legal_acceptances to service_role;
+grant select, insert, update, delete on public.trophies to service_role;
+grant select, insert, update, delete on public.user_trophies to service_role;
+grant select, insert, update, delete on public.side_pick_packages to service_role;
+grant select, insert, update, delete on public.side_pick_definitions to service_role;
+grant select, insert, update, delete on public.group_rulesets to service_role;
+grant select, insert, update, delete on public.side_pick_entries to service_role;
+grant select, insert, update, delete on public.side_pick_scores to service_role;
+grant select, insert, update, delete on public.group_bonus_scores to service_role;
+grant select, insert, update, delete on public.organizations to service_role;
+grant select, insert, update, delete on public.organization_branding to service_role;
+
 create or replace function public.initialize_organization_branding()
 returns trigger
 language plpgsql
