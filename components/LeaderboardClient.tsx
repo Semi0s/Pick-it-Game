@@ -201,6 +201,12 @@ function LeaderboardPlayerRow({
                       ))}
                     </span>
                   ) : null}
+                  {profile.homeTeamId ? (
+                    <HomeTeamBadge
+                      teamId={profile.homeTeamId}
+                      className={isCurrentUser ? "bg-white/85" : "bg-white/70"}
+                    />
+                  ) : null}
                 </span>
               </span>
               <span className="ml-auto flex shrink-0 items-center gap-2">
