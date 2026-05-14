@@ -1,6 +1,20 @@
 import Image from "next/image";
 import { LoginForm } from "@/components/LoginForm";
 
+function extractInviteTokenFromNextPath(nextPath?: string) {
+  if (!nextPath?.startsWith("/")) {
+    return null;
+  }
+
+  try {
+    const url = new URL(nextPath, "https://example.test");
+    const inviteToken = url.searchParams.get("invite");
+    return inviteToken?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function LoginPage({
   searchParams
 }: {
@@ -14,6 +28,7 @@ export default async function LoginPage({
   const language = typeof resolvedSearchParams.lang === "string" ? resolvedSearchParams.lang : undefined;
   const callbackError = typeof resolvedSearchParams.error === "string" ? resolvedSearchParams.error : undefined;
   const next = typeof resolvedSearchParams.next === "string" ? resolvedSearchParams.next : undefined;
+  const inviteToken = extractInviteTokenFromNextPath(next);
 
   return (
     <main className="min-h-screen bg-white px-4 py-8">
@@ -38,6 +53,7 @@ export default async function LoginPage({
             language={language}
             callbackError={callbackError}
             nextPath={next}
+            inviteToken={inviteToken}
           />
         </div>
 

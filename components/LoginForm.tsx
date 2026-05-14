@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { fetchGroupInvitePreviewAction } from "@/app/my-groups/actions";
 import { authenticateWithEmail, isUsingDemoAuthFallback, sendCurrentUserPasswordReset } from "@/lib/auth-client";
 import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 
@@ -14,7 +15,8 @@ export function LoginForm({
   flow,
   language,
   callbackError,
-  nextPath
+  nextPath,
+  inviteToken
 }: {
   confirmed?: boolean;
   reset?: boolean;
@@ -23,6 +25,7 @@ export function LoginForm({
   language?: string;
   callbackError?: string;
   nextPath?: string;
+  inviteToken?: string | null;
 }) {
   const router = useRouter();
   const inviteFlow = flow === "invite";
@@ -36,11 +39,53 @@ export function LoginForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingReset, setIsSendingReset] = useState(false);
   const [isInviteInfoOpen, setIsInviteInfoOpen] = useSessionDisclosureState("login-invite-info-disclosure", false);
+  const [inviteContext, setInviteContext] = useState<{
+    groupName: string;
+    email: string;
+    existingAccount: boolean;
+    status: string;
+    expiresAt: string | null;
+  } | null>(null);
   const isDemoFallback = isUsingDemoAuthFallback();
+  const emailBoundInviteFlow = inviteFlow && Boolean(inviteToken);
+
+  useEffect(() => {
+    if (!inviteToken) {
+      setInviteContext(null);
+      return;
+    }
+
+    let isMounted = true;
+    fetchGroupInvitePreviewAction(inviteToken).then((result) => {
+      if (!isMounted || !result.ok) {
+        return;
+      }
+
+      setInviteContext({
+        groupName: result.invite.groupName,
+        email: result.invite.email,
+        existingAccount: result.invite.existingAccount,
+        status: result.invite.status,
+        expiresAt: result.invite.expiresAt
+      });
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [inviteToken]);
 
   useEffect(() => {
     setMode(initialMode);
   }, [initialMode]);
+
+  useEffect(() => {
+    if (!inviteContext?.email) {
+      return;
+    }
+
+    setEmail((current) => current || inviteContext.email);
+  }, [inviteContext?.email]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -72,7 +117,7 @@ export function LoginForm({
     }
 
     if (result.user?.needsProfileSetup) {
-      router.replace("/profile-setup");
+      router.replace(nextPath?.startsWith("/") ? `/profile-setup?next=${encodeURIComponent(nextPath)}` : "/profile-setup");
       router.refresh();
       return;
     }
@@ -159,9 +204,21 @@ export function LoginForm({
         </p>
       ) : null}
 
-      {!confirmed && (inviteFlow || signupContext) ? (
+      {emailBoundInviteFlow && inviteContext ? (
         <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
-          Use your invited email or the access code from your group organizer to create your account.
+          {inviteContext.status !== "pending"
+            ? "This invite is no longer active. Ask the organizer for a fresh link if you still need access."
+            : confirmed
+              ? `Your email is confirmed. Sign in to finish joining ${inviteContext.groupName}.`
+              : mode === "login"
+                ? `You've been invited to join ${inviteContext.groupName}. Sign in with ${inviteContext.email} to continue.`
+                : `You've been invited to join ${inviteContext.groupName}. Create an account with ${inviteContext.email} to continue.`}
+        </p>
+      ) : !confirmed && (inviteFlow || signupContext) ? (
+        <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
+          {inviteFlow && mode === "login"
+            ? "Use the invited email to sign in and complete your group join."
+            : "Use your invited email or the access code from your group organizer to create your account."}
         </p>
       ) : null}
 
@@ -182,6 +239,11 @@ export function LoginForm({
           autoComplete="email"
           required
         />
+        {emailBoundInviteFlow && inviteContext?.email ? (
+          <p className="mt-2 text-sm font-medium text-gray-600">
+            Use the invited email: {inviteContext.email}
+          </p>
+        ) : null}
       </label>
 
       <label className="block">
@@ -197,7 +259,7 @@ export function LoginForm({
         />
       </label>
 
-      {mode === "signup" ? (
+      {mode === "signup" && !emailBoundInviteFlow ? (
         <label className="block">
           <span className="text-sm font-semibold text-gray-800">Access code</span>
           <input
@@ -243,7 +305,17 @@ export function LoginForm({
         disabled={isSubmitting}
         className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white shadow-soft"
       >
-        {isSubmitting ? "Working..." : mode === "login" ? "Sign in" : "Create account"}
+        {isSubmitting
+          ? "Working..."
+          : emailBoundInviteFlow
+            ? mode === "login"
+              ? confirmed
+                ? "Sign in to finish joining"
+                : "Sign in to join"
+              : "Create account to join"
+            : mode === "login"
+              ? "Sign in"
+              : "Create account"}
       </button>
       {isDemoFallback ? (
         <p className="text-sm leading-6 text-gray-600">

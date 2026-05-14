@@ -30,6 +30,7 @@ export type AvatarUploadResult =
   | { ok: false; message: string };
 
 export type PushRegistrationResult = AuthResult;
+export type DisplayNameUpdateResult = AuthResult;
 
 type AuthOptions = {
   nextPath?: string;
@@ -145,7 +146,8 @@ export async function authenticateWithEmail(
     confirmed: true,
     nextPath: options?.nextPath,
     flow: options?.flow,
-    language: options?.language
+    language: options?.language,
+    mode: options?.flow === "invite" ? "login" : undefined
   });
   const signupRedirectUrl = buildAuthCallbackUrl(loginReturnPath, options?.language);
   if (mode === "signup") {
@@ -919,6 +921,44 @@ export async function registerCurrentBrowserPushNotifications(): Promise<PushReg
   }
 }
 
+export async function updateCurrentUserDisplayName(displayName: string): Promise<DisplayNameUpdateResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Display name editing needs a configured Supabase project." };
+  }
+
+  const supabase = createClient();
+  const normalizedDisplayName = normalizeDisplayNameValue(displayName);
+  if (!isValidDisplayName(normalizedDisplayName)) {
+    return {
+      ok: false,
+      message: "Display name must be 2-30 characters and can use letters, numbers, spaces, periods, hyphens, and underscores."
+    };
+  }
+
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to update your display name." };
+  }
+
+  const { error } = await supabase
+    .from("users")
+    .update({
+      name: normalizedDisplayName,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", user.id);
+
+  if (error) {
+    return { ok: false, message: error.message || "Could not update your display name." };
+  }
+
+  return { ok: true, message: "Display name updated." };
+}
+
 function decodeBase64UrlToUint8Array(value: string) {
   const padding = "=".repeat((4 - (value.length % 4)) % 4);
   const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -1156,7 +1196,13 @@ function isMissingPreferredLanguageColumnError(message?: string) {
   return isMissingColumnError(message, "users", "preferred_language");
 }
 
-function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; flow?: string; language?: string }) {
+function buildLoginReturnPath(input: {
+  confirmed?: boolean;
+  nextPath?: string;
+  flow?: string;
+  language?: string;
+  mode?: AuthMode;
+}) {
   const params = new URLSearchParams();
 
   if (input.confirmed) {
@@ -1166,7 +1212,7 @@ function buildLoginReturnPath(input: { confirmed?: boolean; nextPath?: string; f
   if (input.flow) {
     params.set("flow", input.flow);
     if (input.flow === "invite") {
-      params.set("mode", "signup");
+      params.set("mode", input.mode ?? "signup");
     }
   }
 
@@ -1190,6 +1236,14 @@ function buildAuthCallbackUrl(nextPath: string, language?: string | null) {
   }
 
   return callbackUrl.toString();
+}
+
+function normalizeDisplayNameValue(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function isValidDisplayName(value: string) {
+  return /^[A-Za-z0-9._ -]{2,30}$/.test(value);
 }
 
 function mapPendingTrophyCelebration(row: TrophyNotificationRow): PendingTrophyCelebration | null {

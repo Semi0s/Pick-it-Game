@@ -5,7 +5,7 @@ import { normalizeLanguage } from "@/lib/i18n";
 import { teams } from "@/lib/mock-data";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
-const DISPLAY_NAME_PATTERN = /^[A-Za-z0-9._ -]{3,24}$/;
+const DISPLAY_NAME_PATTERN = /^[A-Za-z0-9._ -]{2,30}$/;
 
 export type CompleteProfileSetupResult =
   | {
@@ -39,7 +39,7 @@ export async function completeProfileSetupAction(input: {
   if (!DISPLAY_NAME_PATTERN.test(normalizedDisplayName)) {
     return {
       ok: false,
-      message: "Display name must be 3-24 characters and can use letters, numbers, spaces, periods, hyphens, and underscores."
+      message: "Display name must be 2-30 characters and can use letters, numbers, spaces, periods, hyphens, and underscores."
     };
   }
 

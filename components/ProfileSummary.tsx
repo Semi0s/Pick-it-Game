@@ -12,6 +12,7 @@ import {
   fetchCurrentUserTrophies,
   registerCurrentBrowserPushNotifications,
   sendCurrentUserPasswordReset,
+  updateCurrentUserDisplayName,
   updateCurrentUserHomeTeam,
   updateCurrentUserPreferredLanguage,
   updateCurrentUserNotificationPreferences,
@@ -40,6 +41,8 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
   const [isRegisteringPush, setIsRegisteringPush] = useState(false);
   const [isUpdatingHomeTeam, setIsUpdatingHomeTeam] = useState(false);
   const [isUpdatingLanguage, setIsUpdatingLanguage] = useState(false);
+  const [isUpdatingDisplayName, setIsUpdatingDisplayName] = useState(false);
+  const [displayNameDraft, setDisplayNameDraft] = useState("");
   const [trophies, setTrophies] = useState<UserTrophy[]>([]);
   const [isLoadingTrophies, setIsLoadingTrophies] = useState(true);
   const [currentLegalDocument, setCurrentLegalDocument] = useState<CurrentLegalDocument | null>(
@@ -100,6 +103,10 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    setDisplayNameDraft(user?.name ?? "");
+  }, [user?.name]);
 
   useEffect(() => {
     if (passwordMessage) {
@@ -272,6 +279,39 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
 
       <div className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">Profile editing</h3>
+        <label className="mt-4 block">
+          <span className="text-sm font-bold text-gray-800">Display name</span>
+          <p className="mt-1 text-sm font-semibold text-gray-500">
+            This is how other players will see you on leaderboards and in groups.
+          </p>
+          <div className="mt-2 flex flex-col gap-3 sm:flex-row">
+            <input
+              value={displayNameDraft}
+              onChange={(event) => setDisplayNameDraft(event.target.value)}
+              className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            />
+            <button
+              type="button"
+              disabled={isUpdatingDisplayName}
+              onClick={async () => {
+                setIsUpdatingDisplayName(true);
+                setPasswordMessage(null);
+                const result = await updateCurrentUserDisplayName(displayNameDraft);
+                setPasswordMessage({
+                  tone: result.ok ? "success" : "error",
+                  text: result.message ?? "Something went wrong."
+                });
+                if (result.ok) {
+                  await refresh();
+                }
+                setIsUpdatingDisplayName(false);
+              }}
+              className="inline-flex items-center justify-center rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+            >
+              {isUpdatingDisplayName ? "Saving..." : "Save Display Name"}
+            </button>
+          </div>
+        </label>
         <label className="mt-4 block">
           <span className="text-sm font-bold text-gray-800">Home Team</span>
           <p className="mt-1 text-sm font-semibold text-gray-500">Choose the team you&apos;re backing.</p>

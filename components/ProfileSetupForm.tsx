@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { fetchGroupInvitePreviewAction } from "@/app/my-groups/actions";
 import { completeProfileSetupAction } from "@/app/profile-setup/actions";
 import { showAppToast } from "@/lib/app-toast";
 import { PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY } from "@/lib/i18n";
@@ -9,7 +10,7 @@ import { teams } from "@/lib/mock-data";
 import { getStrings } from "@/lib/strings";
 import { useCurrentUser } from "@/lib/use-current-user";
 
-export function ProfileSetupForm() {
+export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
   const router = useRouter();
   const { user, isLoading } = useCurrentUser();
   const [displayName, setDisplayName] = useState("");
@@ -17,6 +18,7 @@ export function ProfileSetupForm() {
   const [homeTeamId, setHomeTeamId] = useState("");
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [inviteGroupName, setInviteGroupName] = useState<string | null>(null);
 
   const placeholderName = useMemo(() => {
     if (!user) {
@@ -32,21 +34,21 @@ export function ProfileSetupForm() {
 
   useEffect(() => {
     if (!isLoading && !user) {
-      router.replace("/login?next=/profile-setup&mode=signup");
+      router.replace(`/login?next=${encodeURIComponent(nextPath?.startsWith("/") ? nextPath : "/profile-setup")}&mode=signup`);
     }
-  }, [isLoading, router, user]);
+  }, [isLoading, nextPath, router, user]);
 
   useEffect(() => {
     if (!isLoading && user?.needsLegalAcceptance) {
-      router.replace("/legal/accept?next=/profile-setup");
+      router.replace(`/legal/accept?next=${encodeURIComponent(nextPath?.startsWith("/") ? nextPath : "/profile-setup")}`);
     }
-  }, [isLoading, router, user]);
+  }, [isLoading, nextPath, router, user]);
 
   useEffect(() => {
     if (!isLoading && user && !user.needsLegalAcceptance && !user.needsProfileSetup) {
-      router.replace("/dashboard");
+      router.replace(nextPath?.startsWith("/") ? nextPath : "/dashboard");
     }
-  }, [isLoading, router, user]);
+  }, [isLoading, nextPath, router, user]);
 
   useEffect(() => {
     if (message) {
@@ -63,6 +65,25 @@ export function ProfileSetupForm() {
     setPreferredLanguage((current) => current || user.preferredLanguage || "en");
     setHomeTeamId((current) => current || user.homeTeamId || "");
   }, [placeholderName, user]);
+
+  useEffect(() => {
+    const inviteToken = extractInviteTokenFromNextPath(nextPath);
+    if (!inviteToken) {
+      setInviteGroupName(null);
+      return;
+    }
+
+    let isMounted = true;
+    fetchGroupInvitePreviewAction(inviteToken).then((result) => {
+      if (isMounted && result.ok) {
+        setInviteGroupName(result.invite.groupName);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [nextPath]);
 
   if (isLoading || !user || user.needsLegalAcceptance) {
     return (
@@ -96,7 +117,7 @@ export function ProfileSetupForm() {
       console.warn("Could not persist preferred language during profile setup.", error);
     }
 
-    router.replace("/dashboard");
+    router.replace(nextPath?.startsWith("/") ? nextPath : "/dashboard");
     router.refresh();
   }
 
@@ -110,6 +131,11 @@ export function ProfileSetupForm() {
         <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">
           Finish this once so your picks, groups, and leaderboard show the right identity from the start.
         </p>
+        {inviteGroupName ? (
+          <p className="mt-2 text-sm font-semibold leading-6 text-accent-dark">
+            Choose your display name to finish joining {inviteGroupName}.
+          </p>
+        ) : null}
         <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Your email stays as your sign-in.</p>
       </div>
 
@@ -183,4 +209,17 @@ export function ProfileSetupForm() {
       </form>
     </section>
   );
+}
+
+function extractInviteTokenFromNextPath(nextPath?: string) {
+  if (!nextPath?.startsWith("/")) {
+    return null;
+  }
+
+  try {
+    const url = new URL(nextPath, "https://example.test");
+    return url.searchParams.get("invite");
+  } catch {
+    return null;
+  }
 }
