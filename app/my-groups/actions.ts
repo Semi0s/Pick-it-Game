@@ -44,6 +44,7 @@ const MAX_CUSTOM_TROPHIES_PER_GROUP = 10;
 const MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH = 280;
 const MAX_MANAGED_GROUP_INVITE_CODE_ATTEMPTS = 5;
 const MANAGED_GROUP_INVITE_CODE_PATTERN = /^[A-Z0-9-]{4,24}$/;
+const BASIC_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type GroupStatus = "active" | "archived";
 type GroupMemberRole = "manager" | "member";
@@ -165,12 +166,13 @@ type GroupMemberRecord = {
 };
 
 type EnqueueEmailJobResult =
-  | { ok: true; alreadyQueued: boolean }
+  | { ok: true; alreadyQueued: boolean; deliveryMethod: "queued" | "sent_inline" }
   | { ok: false; message: string };
 
 export type CreateGroupInput = {
   name: string;
   membershipLimit?: number;
+  inviteEmailsText?: string;
 };
 
 export type CreateGroupResult =
@@ -206,9 +208,12 @@ export type CreateGroupInviteResult =
         id: string;
         groupId: string;
         email: string;
+        existingAccount: boolean;
         status: GroupInviteStatus;
         expiresAt: string | null;
       };
+      claimUrl: string;
+      deliveryStatus: "queued" | "already_queued" | "sent_inline" | "queue_failed";
       message: string;
     }
   | {
@@ -223,6 +228,7 @@ export type CreateGroupInviteShareLinkResult =
         id: string;
         groupId: string;
         email: string;
+        existingAccount: boolean;
         status: GroupInviteStatus;
         expiresAt: string | null;
       };
@@ -312,6 +318,7 @@ export type ManagedGroupMember = {
 export type ManagedGroupInvite = {
   id: string;
   email: string;
+  existingAccount: boolean;
   suggestedDisplayName?: string;
   customMessage?: string;
   invitedByLabel?: string;
@@ -406,6 +413,7 @@ export type GroupInvitePreviewResult =
         groupName: string;
         inviterLabel: string;
         email: string;
+        existingAccount: boolean;
         suggestedDisplayName?: string | null;
         customMessage?: string | null;
         language?: SupportedLanguage;
@@ -491,6 +499,11 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
     return { ok: false, message: "Group name is required." };
   }
 
+  const parsedInviteEmails = parseInviteEmailInput(input.inviteEmailsText);
+  if (!parsedInviteEmails.ok) {
+    return { ok: false, message: parsedInviteEmails.message };
+  }
+
   const adminSupabase = createAdminClient();
   const managerLimits = await getManagerLimits(adminSupabase, currentUser.userId);
 
@@ -521,6 +534,13 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
     }
   }
 
+  if (parsedInviteEmails.emails.length > membershipLimit) {
+    return {
+      ok: false,
+      message: `You can only pre-invite up to ${membershipLimit} player${membershipLimit === 1 ? "" : "s"} for this group.`
+    };
+  }
+
   const { data, error } = await adminSupabase
     .from("groups")
     .insert({
@@ -537,6 +557,25 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
     return { ok: false, message: error.message };
   }
 
+  let inviteCreationWarning: string | null = null;
+  if (parsedInviteEmails.emails.length > 0) {
+    try {
+      await createPendingGroupInvites(adminSupabase, {
+        groupId: data.id,
+        groupName: data.name,
+        normalizedEmails: parsedInviteEmails.emails,
+        invitedByUserId: currentUser.userId,
+        inviteLanguage: currentUser.preferredLanguage,
+        helperLanguage: currentUser.preferredLanguage
+      });
+    } catch (inviteCreationError) {
+      inviteCreationWarning =
+        inviteCreationError instanceof Error
+          ? inviteCreationError.message
+          : "Pending email invites could not be created.";
+    }
+  }
+
   revalidatePath("/my-groups");
   revalidatePath("/dashboard");
 
@@ -548,7 +587,12 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
       membershipLimit: data.membership_limit,
       status: data.status
     },
-    message: "Group created."
+    message:
+      inviteCreationWarning
+        ? `Group created, but the pending email invites could not be added: ${inviteCreationWarning}`
+        : parsedInviteEmails.emails.length > 0
+        ? `Group created with ${parsedInviteEmails.emails.length} pending email invite${parsedInviteEmails.emails.length === 1 ? "" : "s"}.`
+        : "Group created."
   };
 }
 
@@ -650,7 +694,12 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
       message: `Keep the custom message under ${MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH} characters.`
     };
   }
-  const claimUrl = buildGroupInviteClaimUrl(token, inviteLanguage, helperLanguage);
+  const claimUrl = buildGroupInviteClaimUrl(
+    token,
+    inviteLanguage,
+    helperLanguage,
+    existingUserId ? "login" : "signup"
+  );
   const expiresAt = new Date(Date.now() + normalizeExpiryDays(input.expiresInDays) * 24 * 60 * 60 * 1000).toISOString();
 
   console.info("Manager group invite claim link generated.", {
@@ -696,6 +745,7 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
     customMessage: customMessage || null,
     language: inviteLanguage,
     helperLanguage,
+    existingAccount: Boolean(existingUserId),
     claimUrl
   });
 
@@ -711,7 +761,17 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
     await markGroupInviteEmailFailure(adminSupabase, data.id, enqueueResult.message);
     revalidatePath("/my-groups");
     return {
-      ok: false,
+      ok: true,
+      invite: {
+        id: data.id,
+        groupId: data.group_id,
+        email: data.email,
+        existingAccount: Boolean(existingUserId),
+        status: data.status,
+        expiresAt: data.expires_at ?? null
+      },
+      claimUrl,
+      deliveryStatus: "queue_failed",
       message: `Group invite saved, but the email could not be queued: ${enqueueResult.message}`
     };
   }
@@ -733,15 +793,25 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
       id: data.id,
       groupId: data.group_id,
       email: data.email,
+      existingAccount: Boolean(existingUserId),
       status: data.status,
       expiresAt: data.expires_at ?? null
     },
-    message:
-      !workerTriggerResult.ok
-        ? "Group invite email queued. Automatic sending could not be triggered right away, so the worker cron will pick it up shortly."
+    claimUrl,
+    deliveryStatus:
+      enqueueResult.deliveryMethod === "sent_inline"
+        ? "sent_inline"
         : enqueueResult.alreadyQueued
-          ? "A matching group invite email is already queued."
-          : "Group invite email queued and sending started."
+          ? "already_queued"
+          : "queued",
+    message:
+      enqueueResult.deliveryMethod === "sent_inline"
+        ? "Group invite email sent right away."
+        : !workerTriggerResult.ok
+          ? `Group invite email queued. ${existingUserId ? "The invited player can log in and join from the link." : "The invited player can finish signup from the link."} Automatic sending could not be triggered right away, so the worker cron will pick it up shortly.`
+          : enqueueResult.alreadyQueued
+            ? "A matching group invite email is already queued."
+            : "Group invite email queued."
   };
 }
 
@@ -771,6 +841,13 @@ export async function createGroupInviteShareLinkAction(
   }
 
   const existingUserId = await findUserIdByEmail(adminSupabase, normalizedEmail);
+
+  console.info("Manager group share-link invite requested.", {
+    managerUserId: currentUser.userId,
+    groupId: managedGroup.id,
+    email: normalizedEmail,
+    existingAccount: Boolean(existingUserId)
+  });
 
   let existingMembership: { id: string } | null = null;
   let existingMembershipError: { message: string } | null = null;
@@ -830,11 +907,17 @@ export async function createGroupInviteShareLinkAction(
     };
   }
 
-  const claimUrl = buildGroupInviteClaimUrl(token, inviteLanguage, helperLanguage);
+  const claimUrl = buildGroupInviteClaimUrl(
+    token,
+    inviteLanguage,
+    helperLanguage,
+    existingUserId ? "login" : "signup"
+  );
   const whatsAppUrl = buildWhatsAppShareUrl({
     claimUrl,
     groupName: managedGroup.name ?? "Group",
-    invitedEmail: normalizedEmail
+    invitedEmail: normalizedEmail,
+    existingAccount: Boolean(existingUserId)
   });
   const expiresAt = new Date(Date.now() + normalizeExpiryDays(input.expiresInDays) * 24 * 60 * 60 * 1000).toISOString();
 
@@ -860,6 +943,14 @@ export async function createGroupInviteShareLinkAction(
     return { ok: false, message: error.message };
   }
 
+  console.info("Manager group share-link invite created.", {
+    managerUserId: currentUser.userId,
+    groupInviteId: data.id,
+    groupId: managedGroup.id,
+    email: normalizedEmail,
+    existingAccount: Boolean(existingUserId)
+  });
+
   revalidatePath("/my-groups");
   revalidatePath("/dashboard");
 
@@ -869,12 +960,15 @@ export async function createGroupInviteShareLinkAction(
       id: data.id,
       groupId: data.group_id,
       email: data.email,
+      existingAccount: Boolean(existingUserId),
       status: data.status,
       expiresAt: data.expires_at
     },
     claimUrl,
     whatsAppUrl,
-    message: "Share link ready."
+    message: existingUserId
+      ? "Share link ready. Existing user — they can log in and join from the invite link."
+      : "Share link ready. Pending signup."
   };
 }
 
@@ -1072,11 +1166,18 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
   }
 
   if (!invite) {
+    console.info("Group invite acceptance blocked because invite was not found.", {
+      tokenHash
+    });
     return { ok: false, message: "That invite could not be found." };
   }
 
   const inviteRow = invite as GroupInviteRow;
   if (inviteRow.status !== "pending") {
+    console.info("Group invite acceptance blocked because invite is not pending.", {
+      groupInviteId: inviteRow.id,
+      status: inviteRow.status
+    });
     return { ok: false, message: "That invite is no longer pending." };
   }
 
@@ -1086,10 +1187,21 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
       .update({ status: "expired" })
       .eq("id", inviteRow.id);
 
+    console.info("Group invite acceptance blocked because invite expired.", {
+      groupInviteId: inviteRow.id,
+      groupId: inviteRow.group_id
+    });
     return { ok: false, message: "That invite has expired." };
   }
 
   if (normalizeEmail(currentUser.email) !== inviteRow.normalized_email) {
+    console.info("Group invite acceptance blocked because signed-in email did not match.", {
+      groupInviteId: inviteRow.id,
+      groupId: inviteRow.group_id,
+      currentUserId: currentUser.userId,
+      currentUserEmail: normalizeEmail(currentUser.email),
+      invitedEmail: inviteRow.normalized_email
+    });
     return { ok: false, message: "You must sign in with the invited email to accept this invite." };
   }
 
@@ -1105,6 +1217,11 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
   }
 
   if (existingMembership) {
+    console.info("Group invite acceptance skipped because the user is already a member.", {
+      groupInviteId: inviteRow.id,
+      groupId: inviteRow.group_id,
+      currentUserId: currentUser.userId
+    });
     return { ok: false, message: "You are already a member of this group." };
   }
 
@@ -1119,16 +1236,30 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
   }
 
   if (group.status !== "active") {
+    console.info("Group invite acceptance blocked because the group is not active.", {
+      groupInviteId: inviteRow.id,
+      groupId: inviteRow.group_id,
+      status: group.status
+    });
     return { ok: false, message: "That group is not accepting members right now." };
   }
 
   const seatCheck = await ensureGroupHasOpenSeat(adminSupabase, group.id, group.membership_limit);
   if (!seatCheck.ok) {
+    console.info("Group invite acceptance blocked because the group is full.", {
+      groupInviteId: inviteRow.id,
+      groupId: inviteRow.group_id
+    });
     return seatCheck;
   }
 
   const joinLimitResult = await ensureUserCanJoinAnotherGroup(adminSupabase, currentUser.userId);
   if (!joinLimitResult.ok) {
+    console.info("Group invite acceptance blocked because the player hit the join limit.", {
+      groupInviteId: inviteRow.id,
+      groupId: inviteRow.group_id,
+      currentUserId: currentUser.userId
+    });
     return joinLimitResult;
   }
 
@@ -1156,6 +1287,12 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
   if (inviteUpdateError) {
     return { ok: false, message: inviteUpdateError.message };
   }
+
+  console.info("Group invite accepted.", {
+    groupInviteId: inviteRow.id,
+    groupId: inviteRow.group_id,
+    currentUserId: currentUser.userId
+  });
 
   revalidatePath("/my-groups");
   revalidatePath("/dashboard");
@@ -1595,7 +1732,13 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
     const freshTokenHash = hashInviteToken(freshToken);
     const inviteLanguage = normalizeLanguage(invite.language ?? currentUser.preferredLanguage);
     const helperLanguage = normalizeExplainerLanguage(invite.helper_language ?? inviteLanguage);
-    const claimUrl = buildGroupInviteClaimUrl(freshToken, inviteLanguage, helperLanguage);
+    const existingUserId = await findUserIdByEmail(adminSupabase, normalizeEmail(invite.email));
+    const claimUrl = buildGroupInviteClaimUrl(
+      freshToken,
+      inviteLanguage,
+      helperLanguage,
+      existingUserId ? "login" : "signup"
+    );
     const refreshedExpiry = new Date(Date.now() + DEFAULT_INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const inviterProfile = await getUserLabel(adminSupabase, invite.invited_by_user_id ?? currentUser.userId);
 
@@ -1625,6 +1768,7 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
       customMessage: invite.custom_message ?? null,
       language: inviteLanguage,
       helperLanguage,
+      existingAccount: Boolean(existingUserId),
       claimUrl
     });
 
@@ -1693,6 +1837,13 @@ export async function cancelGroupInviteAction(inviteId: string): Promise<CancelG
     if (error) {
       return { ok: false, message: error.message };
     }
+
+    console.info("Group invite canceled.", {
+      groupInviteId: invite.id,
+      groupId: invite.group_id,
+      managerUserId: currentUser.userId,
+      invitedEmail: invite.normalized_email
+    });
 
     revalidatePath("/my-groups");
     return { ok: true, message: "Group invite canceled." };
@@ -2162,6 +2313,7 @@ export async function fetchGroupInvitePreviewAction(token: string): Promise<Grou
       return { ok: false, message: "That invite could not be found." };
     }
 
+    const existingUserId = await findUserIdByEmail(adminSupabase, normalizeEmail(data.email));
     const groupName =
       Array.isArray(data.groups) ? data.groups[0]?.name :
       (data.groups as { name?: string } | null)?.name;
@@ -2175,6 +2327,7 @@ export async function fetchGroupInvitePreviewAction(token: string): Promise<Grou
         groupName: groupName ?? "Group",
         inviterLabel,
         email: data.email,
+        existingAccount: Boolean(existingUserId),
         suggestedDisplayName: data.suggested_display_name ?? null,
         customMessage: data.custom_message ?? null,
         language: normalizeLanguage((data as { language?: string | null }).language ?? null),
@@ -2465,12 +2618,23 @@ async function fetchManagedGroupDetailRows(
   }
 
   const invitesByGroup = new Map<string, ManagedGroupInvite[]>();
+  const normalizedInviteEmails = new Set<string>();
+  for (const row of ((inviteResult.data ?? []) as GroupInviteRecord[])) {
+    normalizedInviteEmails.add(row.normalized_email);
+  }
+
+  const inviteAccountLookup = await findUsersByNormalizedEmails(
+    adminSupabase,
+    Array.from(normalizedInviteEmails)
+  );
+
   for (const row of ((inviteResult.data ?? []) as GroupInviteRecord[])) {
     const inviterRow = Array.isArray(row.invited_by) ? row.invited_by[0] : row.invited_by;
     const list = invitesByGroup.get(row.group_id) ?? [];
     list.push({
       id: row.id,
       email: row.email,
+      existingAccount: inviteAccountLookup.has(row.normalized_email),
       suggestedDisplayName: row.suggested_display_name ?? undefined,
       customMessage: row.custom_message ?? undefined,
       invitedByLabel: inviterRow?.name ?? inviterRow?.email ?? undefined,
@@ -2999,6 +3163,31 @@ async function findUserIdByEmail(adminSupabase: ReturnType<typeof createAdminCli
   return data?.id ?? null;
 }
 
+async function findUsersByNormalizedEmails(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  normalizedEmails: string[]
+) {
+  const lookup = new Set<string>();
+  if (normalizedEmails.length === 0) {
+    return lookup;
+  }
+
+  const { data, error } = await adminSupabase
+    .from("users")
+    .select("email")
+    .in("email", normalizedEmails);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  for (const row of ((data ?? []) as Array<{ email: string }>)) {
+    lookup.add(normalizeEmail(row.email));
+  }
+
+  return lookup;
+}
+
 function buildCustomTrophyKey(groupId: string | null, name: string) {
   const normalizedName = name
     .toLowerCase()
@@ -3084,6 +3273,7 @@ async function enqueueGroupInviteEmail(
     customMessage?: string | null;
     language?: string | null;
     helperLanguage?: string | null;
+    existingAccount?: boolean;
     claimUrl: string;
   }
 ): Promise<EnqueueEmailJobResult> {
@@ -3101,6 +3291,7 @@ async function enqueueGroupInviteEmail(
       inviterEmail: input.inviterEmail ?? undefined,
       suggestedDisplayName: input.suggestedDisplayName ?? undefined,
       customMessage: input.customMessage ?? undefined,
+      existingAccount: input.existingAccount ?? undefined,
       claimUrl: input.claimUrl,
       language: preferredLanguage,
       helperLanguage: input.helperLanguage ? normalizeExplainerLanguage(input.helperLanguage) : undefined
@@ -3110,7 +3301,7 @@ async function enqueueGroupInviteEmail(
 
   if (error) {
     if (error.code === "23505") {
-      return { ok: true, alreadyQueued: true };
+      return { ok: true, alreadyQueued: true, deliveryMethod: "queued" };
     }
 
     if (isMissingEmailJobsError(error.message)) {
@@ -3123,10 +3314,11 @@ async function enqueueGroupInviteEmail(
           customMessage: input.customMessage ?? null,
           inviterName: input.inviterName ?? null,
           inviterEmail: input.inviterEmail ?? null,
+          existingAccount: input.existingAccount ?? null,
           claimUrl: input.claimUrl,
           language: preferredLanguage
         });
-        return { ok: true, alreadyQueued: false };
+        return { ok: true, alreadyQueued: false, deliveryMethod: "sent_inline" };
       } catch (inlineError) {
         return {
           ok: false,
@@ -3138,7 +3330,7 @@ async function enqueueGroupInviteEmail(
     return { ok: false, message: error.message };
   }
 
-  return { ok: true, alreadyQueued: false };
+  return { ok: true, alreadyQueued: false, deliveryMethod: "queued" };
 }
 
 type TriggerEmailWorkerResult =
@@ -3199,6 +3391,7 @@ async function sendGroupInviteEmailInline(input: {
   customMessage?: string | null;
   inviterName?: string | null;
   inviterEmail?: string | null;
+  existingAccount?: boolean | null;
   claimUrl: string;
   language?: string | null;
 }) {
@@ -3209,6 +3402,7 @@ async function sendGroupInviteEmailInline(input: {
     suggestedDisplayName: input.suggestedDisplayName ?? null,
     customMessage: input.customMessage ?? null,
     inviterLabel: input.inviterName?.trim() || input.inviterEmail?.trim() || null,
+    existingAccount: input.existingAccount ?? null,
     claimUrl: input.claimUrl
   });
 
@@ -3259,19 +3453,105 @@ function hashInviteToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function buildGroupInviteClaimUrl(token: string, language?: string | null, helperLanguage?: string | null) {
+function buildGroupInviteClaimUrl(
+  token: string,
+  language?: string | null,
+  helperLanguage?: string | null,
+  authMode: "login" | "signup" = "signup"
+) {
   const inviteReturnPath = appendExplainerLanguageToPath(
     appendLanguageToPath(`/my-groups?invite=${token}`, language),
     helperLanguage
   );
   const loginPath = appendLanguageToPath(
-    `/login?mode=signup&flow=invite&next=${encodeURIComponent(inviteReturnPath)}`,
+    `/login?mode=${authMode}&flow=invite&next=${encodeURIComponent(inviteReturnPath)}`,
     language
   );
   return `${getPublicSiteUrl()}${loginPath}`;
 }
 
-function buildWhatsAppShareUrl(input: { claimUrl: string; groupName: string; invitedEmail: string }) {
-  const text = `Join ${input.groupName} on PICK-IT! This invite is for ${input.invitedEmail}. Use this link to sign up: ${input.claimUrl}`;
+function parseInviteEmailInput(value?: string | null):
+  | { ok: true; emails: string[] }
+  | { ok: false; message: string } {
+  const rawValue = value?.trim() ?? "";
+  if (!rawValue) {
+    return { ok: true, emails: [] };
+  }
+
+  const emails = Array.from(
+    new Set(
+      rawValue
+        .split(/[\n,]+/)
+        .map((entry) => normalizeEmail(entry))
+        .filter(Boolean)
+    )
+  );
+
+  const invalidEmails = emails.filter((email) => !BASIC_EMAIL_PATTERN.test(email));
+  if (invalidEmails.length > 0) {
+    return {
+      ok: false,
+      message: `Enter valid email addresses only. Problem entries: ${invalidEmails.join(", ")}`
+    };
+  }
+
+  return { ok: true, emails };
+}
+
+async function createPendingGroupInvites(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    groupId: string;
+    groupName: string;
+    normalizedEmails: string[];
+    invitedByUserId: string;
+    inviteLanguage: SupportedLanguage;
+    helperLanguage: ExplainerLanguage;
+  }
+) {
+  if (input.normalizedEmails.length === 0) {
+    return;
+  }
+
+  const expiresAt = new Date(Date.now() + DEFAULT_INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const existingUsersByEmail = await findUsersByNormalizedEmails(adminSupabase, input.normalizedEmails);
+
+  const rows = input.normalizedEmails.map((email) => ({
+    group_id: input.groupId,
+    email,
+    normalized_email: email,
+    invited_by_user_id: input.invitedByUserId,
+    suggested_display_name: null,
+    custom_message: null,
+    language: normalizeLanguage(input.inviteLanguage),
+    helper_language: normalizeExplainerLanguage(input.helperLanguage),
+    status: "pending" as const,
+    token_hash: hashInviteToken(randomBytes(24).toString("hex")),
+    expires_at: expiresAt
+  }));
+
+  const { error } = await adminSupabase.from("group_invites").insert(rows);
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  console.info("Group email allowlist invites created.", {
+    managerUserId: input.invitedByUserId,
+    groupId: input.groupId,
+    groupName: input.groupName,
+    inviteCount: input.normalizedEmails.length,
+    existingUserCount: input.normalizedEmails.filter((email) => existingUsersByEmail.has(email)).length
+  });
+}
+
+function buildWhatsAppShareUrl(input: {
+  claimUrl: string;
+  groupName: string;
+  invitedEmail: string;
+  existingAccount?: boolean;
+}) {
+  const text = `Join ${input.groupName} on PICK-IT! This invite is for ${input.invitedEmail}. Use this link to ${
+    input.existingAccount ? "log in and join" : "sign up"
+  }: ${input.claimUrl}`;
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
