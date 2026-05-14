@@ -9,6 +9,7 @@ import {
   awardManagedGroupTrophyAction,
   cancelGroupInviteAction,
   createGroupAction,
+  createGroupInviteAction,
   createManagedGroupInviteCodeAction,
   createManagedGroupTrophyAction,
   deactivateManagedGroupInviteCodeAction,
@@ -26,8 +27,8 @@ import {
 } from "@/app/my-groups/actions";
 import { Avatar } from "@/components/Avatar";
 import { DismissibleHelperText } from "@/components/DismissibleHelperText";
-import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { ManagedGroupRulesetPanel } from "@/components/ManagedGroupRulesetPanel";
+import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { OrganizationBrandingPanel } from "@/components/OrganizationBrandingPanel";
 import { TierIconBadge } from "@/components/TierIconBadge";
@@ -108,16 +109,20 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [groupName, setGroupName] = useState("");
   const [groupDescription, setGroupDescription] = useState("");
   const [membershipLimit, setMembershipLimit] = useState("");
+  const [createGroupInviteEmails, setCreateGroupInviteEmails] = useState("");
   const [groupLimitForms, setGroupLimitForms] = useState<Record<string, string>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
+  const [newInviteEmailsByGroup, setNewInviteEmailsByGroup] = useState<Record<string, string>>({});
   const [inviteCodeDrafts, setInviteCodeDrafts] = useState<Record<string, string>>({});
   const [inviteCodeActionGroupId, setInviteCodeActionGroupId] = useState<string | null>(null);
   const [inviteCodeActionType, setInviteCodeActionType] = useState<"create" | "replace" | "deactivate" | null>(null);
   const [actionKey, setActionKey] = useState<string | null>(null);
+  const [manualInviteLinkByGroup, setManualInviteLinkByGroup] = useState<Record<string, { url: string; note: string }>>({});
   const [invitePreviewMessage, setInvitePreviewMessage] = useState<ToastState>(null);
   const [invitePreview, setInvitePreview] = useState<{
     groupName: string;
     email: string;
+    existingAccount: boolean;
     customMessage?: string | null;
     language: SupportedLanguage;
     helperLanguage: ExplainerLanguage;
@@ -479,6 +484,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         setInvitePreview({
           groupName: result.invite.groupName,
           email: result.invite.email,
+          existingAccount: result.invite.existingAccount,
           customMessage: result.invite.customMessage ?? null,
           language: normalizeLanguage(result.invite.language ?? inviteLanguage),
           helperLanguage: normalizeExplainerLanguage(result.invite.helperLanguage ?? inviteHelperLanguage),
@@ -595,7 +601,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     const result = await createGroupAction({
       name: groupName,
       description: groupDescription,
-      membershipLimit: membershipLimit ? Number(membershipLimit) : undefined
+      membershipLimit: membershipLimit ? Number(membershipLimit) : undefined,
+      inviteEmailsText: createGroupInviteEmails
     });
 
     setMessage({ tone: result.ok ? "success" : "error", text: result.message });
@@ -603,6 +610,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       setGroupName("");
       setGroupDescription("");
       setMembershipLimit("");
+      setCreateGroupInviteEmails("");
       await load();
     }
 
@@ -695,6 +703,72 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       setInviteCodeActionGroupId(null);
       setInviteCodeActionType(null);
     }
+  }
+
+  async function handleCreateEmailInvite(group: MyManagedGroup) {
+    const email = newInviteEmailsByGroup[group.id]?.trim() ?? "";
+    if (!email) {
+      setMessage({ tone: "error", text: "Enter an email address first." });
+      return;
+    }
+
+    await withAction(`create-email-invite-${group.id}`, async () => {
+      const result = await createGroupInviteAction({
+        groupId: group.id,
+        email
+      });
+
+      if (result.ok) {
+        let copiedToClipboard = false;
+        try {
+          await navigator.clipboard.writeText(result.claimUrl);
+          copiedToClipboard = true;
+        } catch (clipboardError) {
+          console.warn("Could not copy group invite link.", clipboardError);
+          setManualInviteLinkByGroup((current) => ({
+            ...current,
+            [group.id]: {
+              url: result.claimUrl,
+              note:
+                result.deliveryStatus === "queue_failed"
+                  ? "Invite created, but email could not be queued. Copy the link below and share it manually."
+                  : "Invite email queued. The link is shown below if you also want to share it manually."
+            }
+          }));
+        }
+
+        setNewInviteEmailsByGroup((current) => ({
+          ...current,
+          [group.id]: ""
+        }));
+
+        if (copiedToClipboard) {
+          setManualInviteLinkByGroup((current) => {
+            if (!current[group.id]) {
+              return current;
+            }
+
+            const next = { ...current };
+            delete next[group.id];
+            return next;
+          });
+        }
+
+        setMessage({
+          tone: result.deliveryStatus === "queue_failed" || !copiedToClipboard ? "error" : "success",
+          text:
+            result.deliveryStatus === "queue_failed"
+              ? "Invite created, but email could not be queued. Copy the link from the field below and share it manually."
+              : copiedToClipboard
+                ? "Invite email queued. The invite link is also available if you want to share it manually."
+                : "Copy failed. Copy the link from the field below."
+        });
+
+        await loadGroupDetail(group.id, true);
+      } else {
+        setMessage({ tone: "error", text: result.message });
+      }
+    });
   }
 
   async function handleAcceptInvite() {
@@ -930,46 +1004,72 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               ) : isSignedIn && invitePreview.status === "pending" ? (
                 <div className="space-y-3">
                   <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-                    This invite is for {invitePreview.email}. You are currently signed in as {currentUser?.email}. Please use the invited account to continue.
+                    This invite is limited to {invitePreview.email}. Please sign in with that email or ask the organizer to invite this account.
                   </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Link
-                      href={inviteSignupPath}
-                      className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
-                    >
-                      Create Account
-                    </Link>
+                  {invitePreview.existingAccount ? (
                     <Link
                       href={inviteLoginPath}
-                      className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                      className="inline-flex w-full items-center justify-center rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
                     >
                       Switch Account
                     </Link>
-                  </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Link
+                        href={inviteSignupPath}
+                        className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
+                      >
+                        Create Account
+                      </Link>
+                      <Link
+                        href={inviteLoginPath}
+                        className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                      >
+                        Switch Account
+                      </Link>
+                    </div>
+                  )}
                 </div>
               ) : isSignedIn ? (
                 <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">
-                  This invite has already been handled for your account.
+                  {invitePreview.status === "accepted"
+                    ? `Invite accepted — welcome to ${invitePreview.groupName}.`
+                    : invitePreview.status === "expired" || invitePreview.status === "revoked"
+                      ? "Invite expired or canceled."
+                      : "This invite has already been handled for your account."}
                 </p>
               ) : (
                 <div className="space-y-3">
                   <p className="text-sm font-semibold text-gray-600">
-                    Sign in or create your account with the invited email first. You can come right back to this invite.
+                    {invitePreview.status !== "pending"
+                      ? "Invite expired or canceled."
+                      : invitePreview.existingAccount
+                        ? "This invited email already has an account. Sign in with that email to join the group."
+                        : "Sign in or create your account with the invited email first. You can come right back to this invite."}
                   </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Link
-                      href={inviteSignupPath}
-                      className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
-                    >
-                      Create Account
-                    </Link>
+                  {invitePreview.status !== "pending" ? null : invitePreview.existingAccount ? (
                     <Link
                       href={inviteLoginPath}
-                      className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                      className="inline-flex w-full items-center justify-center rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
                     >
-                      Sign In
+                      Sign In To Join
                     </Link>
-                  </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Link
+                        href={inviteSignupPath}
+                        className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
+                      >
+                        Create Account
+                      </Link>
+                      <Link
+                        href={inviteLoginPath}
+                        className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                      >
+                        Sign In
+                      </Link>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1127,6 +1227,19 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       Your current tier allows up to {tierAccess.limits.maxMembersPerGroup} members per group.
                     </p>
                   ) : null}
+                </label>
+                <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Invite specific players by email</span>
+                  <textarea
+                    value={createGroupInviteEmails}
+                    onChange={(event) => setCreateGroupInviteEmails(event.target.value)}
+                    rows={3}
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                    placeholder="name@example.com, teammate@example.com"
+                  />
+                  <p className="mt-2 text-xs font-semibold text-gray-500">
+                    Optional. Use commas or new lines. We&apos;ll create pending email invites without changing the invite-code flow.
+                  </p>
                 </label>
                 <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
                   {isCreatingGroup ? "Creating..." : "Create Group"}
@@ -1382,6 +1495,104 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 </div>
                               </>
                             )}
+                            <div className="rounded-md border border-dashed border-gray-300 bg-white px-3 py-3">
+                              <div>
+                                <p className="text-sm font-black text-gray-900">Invite specific player by email</p>
+                                <p className="mt-1 text-xs font-semibold text-gray-500">
+                                  Create a pending email invite and copy the join link for that player.
+                                </p>
+                              </div>
+                              <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-start">
+                                <label className="min-w-0 flex-1">
+                                  <span className="sr-only">Invite player email</span>
+                                  <input
+                                    type="email"
+                                    value={newInviteEmailsByGroup[group.id] ?? ""}
+                                    onChange={(event) =>
+                                      setNewInviteEmailsByGroup((current) => ({
+                                        ...current,
+                                        [group.id]: event.target.value
+                                      }))
+                                    }
+                                    disabled={actionKey === `create-email-invite-${group.id}`}
+                                    placeholder="player@example.com"
+                                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                  />
+                                </label>
+                                <ActionButton
+                                  type="button"
+                                  disabled={actionKey === `create-email-invite-${group.id}`}
+                                  onClick={() => void handleCreateEmailInvite(group)}
+                                >
+                                  {actionKey === `create-email-invite-${group.id}` ? "Creating..." : "Create Invite"}
+                                </ActionButton>
+                              </div>
+
+                              {groupInvites.filter((invite) => invite.status === "pending").length > 0 ? (
+                                <div className="mt-3 space-y-2">
+                                  {groupInvites
+                                    .filter((invite) => invite.status === "pending")
+                                    .map((invite) => (
+                                      <div
+                                        key={`compact-invite-${invite.id}`}
+                                        className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2"
+                                      >
+                                        <div className="min-w-0">
+                                          <p className="truncate text-sm font-black text-gray-950">{invite.email}</p>
+                                          <p className="mt-1 text-xs font-semibold text-gray-500">
+                                            {invite.existingAccount
+                                              ? "Existing user — they can log in and join from the invite link."
+                                              : "Pending signup."}
+                                            {invite.expiresAt ? ` Expires ${formatDateOnly(invite.expiresAt)}.` : ""}
+                                          </p>
+                                        </div>
+                                        <ActionButton
+                                          tone="danger"
+                                          disabled={actionKey === `cancel-inline-invite-${invite.id}`}
+                                          onClick={() => {
+                                            setConfirmation({
+                                              key: `cancel-inline-invite-${invite.id}`,
+                                              title: `Cancel the invite for ${invite.email}?`,
+                                              description: "This only removes this pending group invite.",
+                                              confirmLabel: "Cancel Invite",
+                                              onConfirm: () => {
+                                                void withAction(`cancel-inline-invite-${invite.id}`, async () => {
+                                                  const result = await cancelGroupInviteAction(invite.id);
+                                                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                                  if (result.ok) {
+                                                    setConfirmation(null);
+                                                    await loadGroupDetail(group.id, true);
+                                                  }
+                                                });
+                                              }
+                                            });
+                                          }}
+                                        >
+                                          Cancel
+                                        </ActionButton>
+                                      </div>
+                                    ))}
+                                </div>
+                              ) : (
+                                <p className="mt-3 text-xs font-semibold text-gray-500">No pending email invites yet.</p>
+                              )}
+
+                              {manualInviteLinkByGroup[group.id] ? (
+                                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-3">
+                                  <p className="text-xs font-bold uppercase tracking-wide text-amber-800">
+                                    Copy invite link manually
+                                  </p>
+                                  <p className="mt-1 text-xs font-semibold text-amber-800">
+                                    {manualInviteLinkByGroup[group.id].note}
+                                  </p>
+                                  <div className="mt-2 rounded-md border border-amber-200 bg-white px-3 py-2">
+                                    <p className="break-all text-xs font-semibold text-gray-700">
+                                      {manualInviteLinkByGroup[group.id].url}
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
                         ) : null}
                       </div>

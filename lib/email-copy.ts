@@ -9,6 +9,7 @@ export function buildGroupInviteEmailCopy(input: {
   suggestedDisplayName?: string | null;
   customMessage?: string | null;
   inviterLabel?: string | null;
+  existingAccount?: boolean | null;
   claimUrl: string;
 }) {
   const language = normalizeLanguage(input.language);
@@ -43,7 +44,7 @@ export function buildGroupInviteEmailCopy(input: {
               </div>`
             : ""
         }
-        <p style="margin-bottom: 12px;">${escapeHtml(copy.actionIntro)}</p>
+        <p style="margin-bottom: 12px;">${escapeHtml(copy.actionIntro(Boolean(input.existingAccount), input.invitedEmail))}</p>
         <p style="margin-bottom: 12px;">${escapeHtml(copy.aboutPickIt)}</p>
         <p style="margin-bottom: 12px; font-weight: 600;">${escapeHtml(copy.freeToPlay)}</p>
         <p style="margin: 24px 0;">
@@ -52,7 +53,7 @@ export function buildGroupInviteEmailCopy(input: {
           </a>
         </p>
         <p style="font-size: 14px; color: #6b7280; word-break: break-all;">${escapedClaimUrl}</p>
-        <p style="font-size: 14px; color: #6b7280;">${escapeHtml(copy.accountHelp(input.invitedEmail))}</p>
+        <p style="font-size: 14px; color: #6b7280;">${escapeHtml(copy.accountHelp(Boolean(input.existingAccount), input.invitedEmail))}</p>
       </div>
     `,
     text: [
@@ -66,13 +67,13 @@ export function buildGroupInviteEmailCopy(input: {
       ...(input.customMessage?.trim()
         ? [copy.customMessageLabel, input.customMessage.trim(), ""]
         : []),
-      copy.actionIntro,
+      copy.actionIntro(Boolean(input.existingAccount), input.invitedEmail),
       copy.aboutPickIt,
       copy.freeToPlay,
       "",
       input.claimUrl,
       "",
-      copy.accountHelp(input.invitedEmail)
+      copy.accountHelp(Boolean(input.existingAccount), input.invitedEmail)
     ].join("\n")
   };
 }
@@ -175,12 +176,12 @@ type GroupInviteCopy = {
   invitedByLabel: string;
   intro: (inviterLabel: string, invitedEmail: string, groupName: string) => string;
   introWithSuggestedName: (inviterLabel: string, suggestedName: string, invitedEmail: string, groupName: string) => string;
-  actionIntro: string;
+  actionIntro: (existingAccount: boolean, invitedEmail: string) => string;
   customMessageLabel: string;
   aboutPickIt: string;
   freeToPlay: string;
   actionLabel: string;
-  accountHelp: (invitedEmail: string) => string;
+  accountHelp: (existingAccount: boolean, invitedEmail: string) => string;
 };
 
 const GROUP_INVITE_COPY: Record<SupportedLanguage, GroupInviteCopy> = {
@@ -194,13 +195,18 @@ const GROUP_INVITE_COPY: Record<SupportedLanguage, GroupInviteCopy> = {
     intro: (inviterLabel, invitedEmail, groupName) => `${inviterLabel} invited ${invitedEmail} to join ${groupName}.`,
     introWithSuggestedName: (inviterLabel, suggestedName, invitedEmail, groupName) =>
       `${inviterLabel} invited ${suggestedName} (${invitedEmail}) to join ${groupName}.`,
-    actionIntro: "Use this secure link to sign in or create your account, then join the group.",
+    actionIntro: (existingAccount, invitedEmail) =>
+      existingAccount
+        ? `You've been invited to join this group. Sign in with ${invitedEmail} to continue.`
+        : `You've been invited to join this group. Create your account with ${invitedEmail} to continue.`,
     customMessageLabel: "Message from your group manager",
     aboutPickIt: "PICK-IT! is a free-to-play World Cup prediction game where friends and groups make picks, compare scores, and climb the leaderboard together.",
     freeToPlay: "Free to play. No download required.",
     actionLabel: "Join PICK-IT!",
-    accountHelp: (invitedEmail) =>
-      `If you already have an account, sign in with ${invitedEmail}. Otherwise create one with that email first.`
+    accountHelp: (existingAccount, invitedEmail) =>
+      existingAccount
+        ? `If you already have an account, sign in with ${invitedEmail} and use this invite link to join.`
+        : `Create your account with ${invitedEmail}, confirm your email, then sign in to finish joining.`
   },
   es: {
     subject: (inviterLabel, groupName) => `${inviterLabel} te invitó a unirte a ${groupName}`,
@@ -212,13 +218,18 @@ const GROUP_INVITE_COPY: Record<SupportedLanguage, GroupInviteCopy> = {
     intro: (inviterLabel, invitedEmail, groupName) => `${inviterLabel} invitó a ${invitedEmail} a unirse a ${groupName}.`,
     introWithSuggestedName: (inviterLabel, suggestedName, invitedEmail, groupName) =>
       `${inviterLabel} invitó a ${suggestedName} (${invitedEmail}) a unirse a ${groupName}.`,
-    actionIntro: "Usa este enlace seguro para iniciar sesión o crear tu cuenta y luego unirte al grupo.",
+    actionIntro: (existingAccount, invitedEmail) =>
+      existingAccount
+        ? `Te invitaron a unirte a este grupo. Inicia sesión con ${invitedEmail} para continuar.`
+        : `Te invitaron a unirte a este grupo. Crea tu cuenta con ${invitedEmail} para continuar.`,
     customMessageLabel: "Mensaje de tu administrador del grupo",
     aboutPickIt: "PICK-IT! es un juego gratuito de predicciones del Mundial donde amigos y grupos hacen picks, comparan puntajes y suben en la clasificación juntos.",
     freeToPlay: "Gratis para jugar. No requiere descarga.",
     actionLabel: "Únete a PICK-IT!",
-    accountHelp: (invitedEmail) =>
-      `Si ya tienes una cuenta, inicia sesión con ${invitedEmail}. Si no, crea una cuenta primero con ese correo.`
+    accountHelp: (existingAccount, invitedEmail) =>
+      existingAccount
+        ? `Si ya tienes una cuenta, inicia sesión con ${invitedEmail} y usa este enlace de invitación para unirte.`
+        : `Crea tu cuenta con ${invitedEmail}, confirma tu correo y luego inicia sesión para terminar de unirte.`
   }
 };
 

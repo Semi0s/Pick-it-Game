@@ -760,7 +760,6 @@ export async function rebuildScopedLeaderboardState(
 
   return { ok: true };
 }
-
 async function fetchActiveGroupRulesetsForRebuild(
   adminSupabase: ReturnType<typeof createAdminClient>,
   groupIds?: string[]
@@ -964,7 +963,6 @@ function normalizeBonusValue(value: number | null | undefined, max: number) {
 
   return Math.max(0, Math.min(max, Math.floor(value)));
 }
-
 function assignScopedLeaderboardRanks<T extends { user_id: string; total_points: number }>(totals: T[]) {
   let previousPoints: number | null = null;
   let previousRank = 0;
