@@ -9,6 +9,7 @@ import {
   awardManagedGroupTrophyAction,
   cancelGroupInviteAction,
   createGroupAction,
+  createGroupInviteAction,
   createManagedGroupInviteCodeAction,
   createManagedGroupTrophyAction,
   deactivateManagedGroupInviteCodeAction,
@@ -28,11 +29,10 @@ import { Avatar } from "@/components/Avatar";
 import { ManagedGroupRulesetPanel } from "@/components/ManagedGroupRulesetPanel";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { AdminInvitesSection } from "@/components/admin/AdminInvitesClient";
-import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { formatDate } from "@/components/admin/AdminInvitesClient";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
-import { showAppToast } from "@/lib/app-toast";
+import { showAppToast, type AppToastDetail, type AppToastTone } from "@/lib/app-toast";
 import { getRoleBadgeLabel } from "@/lib/access-levels";
 import {
   appendExplainerLanguageToPath,
@@ -65,7 +65,7 @@ type MyGroupsClientProps = {
   inviteHelperLanguage?: string;
 };
 
-type ToastState = { tone: "success" | "error"; text: string } | null;
+type ToastState = AppToastDetail | null;
 const PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY = "pickit:play-explainer-language";
 const GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-expanded-groups";
 const GROUP_INVITE_CODE_SECTION_STORAGE_KEY = "my-groups-expanded-group-invite-code-sections";
@@ -84,7 +84,6 @@ const TROPHY_PROMPTS = [
 export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLanguage }: MyGroupsClientProps) {
   const router = useRouter();
   const [summary, setSummary] = useState<FetchMyGroupsResult | null>(null);
-  const [message, setMessage] = useState<ToastState>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [groupDetailsById, setGroupDetailsById] = useState<Record<string, ManagedGroupDetails>>({});
   const [loadingGroupDetailIds, setLoadingGroupDetailIds] = useState<Record<string, boolean>>({});
@@ -93,16 +92,22 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [membershipLimit, setMembershipLimit] = useState("");
+  const [createGroupInviteEmails, setCreateGroupInviteEmails] = useState("");
   const [groupLimitForms, setGroupLimitForms] = useState<Record<string, string>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
+  const [newInviteEmailsByGroup, setNewInviteEmailsByGroup] = useState<Record<string, string>>({});
   const [inviteCodeDrafts, setInviteCodeDrafts] = useState<Record<string, string>>({});
   const [inviteCodeActionGroupId, setInviteCodeActionGroupId] = useState<string | null>(null);
   const [inviteCodeActionType, setInviteCodeActionType] = useState<"create" | "replace" | "deactivate" | null>(null);
   const [actionKey, setActionKey] = useState<string | null>(null);
+  const [manualInviteLinkByGroup, setManualInviteLinkByGroup] = useState<
+    Record<string, { url: string; note: string }>
+  >({});
   const [invitePreviewMessage, setInvitePreviewMessage] = useState<ToastState>(null);
   const [invitePreview, setInvitePreview] = useState<{
     groupName: string;
     email: string;
+    existingAccount: boolean;
     customMessage?: string | null;
     language: SupportedLanguage;
     helperLanguage: ExplainerLanguage;
@@ -111,6 +116,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   } | null>(null);
   const [isLoadingInvitePreview, setIsLoadingInvitePreview] = useState(Boolean(inviteToken));
   const [isAcceptingInvite, setIsAcceptingInvite] = useState(false);
+  const [hasAttemptedAutoAccept, setHasAttemptedAutoAccept] = useState(false);
   const [confirmation, setConfirmation] = useState<{
     key: string;
     title: string;
@@ -154,6 +160,15 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     icon: string;
     tier?: "bronze" | "silver" | "gold" | "special" | null;
   } | null>(null);
+  const pushToast = useCallback((detail: AppToastDetail) => {
+    showAppToast(detail);
+  }, []);
+  const pushTextToast = useCallback((tone: AppToastTone, text: string) => {
+    showAppToast({ tone, text });
+  }, []);
+  const pushResultToast = useCallback((result: { ok: boolean; message: string }, successTone: AppToastTone = "success") => {
+    showAppToast({ tone: result.ok ? successTone : "error", text: result.message });
+  }, []);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -166,7 +181,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
     if (!summaryResult.ok) {
       if (!inviteToken) {
-        setMessage({ tone: "error", text: summaryResult.message });
+        pushTextToast("error", summaryResult.message);
       }
       setIsLoading(false);
       return;
@@ -177,7 +192,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       Object.fromEntries(resolvedSummary.groups.map((group) => [group.id, String(group.membershipLimit)]))
     );
     setIsLoading(false);
-  }, [inviteToken]);
+  }, [inviteToken, pushTextToast]);
 
   useEffect(() => {
     void load();
@@ -230,12 +245,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       }
     }
   }, [expandedGroupIds, groupDetailErrors, groupDetailsById, loadGroupDetail, loadingGroupDetailIds, summary]);
-
-  useEffect(() => {
-    if (message) {
-      showAppToast(message);
-    }
-  }, [message]);
 
   useEffect(() => {
     if (invitePreviewMessage) {
@@ -448,6 +457,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         setInvitePreview({
           groupName: result.invite.groupName,
           email: result.invite.email,
+          existingAccount: result.invite.existingAccount,
           customMessage: result.invite.customMessage ?? null,
           language: normalizeLanguage(result.invite.language ?? inviteLanguage),
           helperLanguage: normalizeExplainerLanguage(result.invite.helperLanguage ?? inviteHelperLanguage),
@@ -560,17 +570,18 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleCreateGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsCreatingGroup(true);
-    setMessage(null);
 
     const result = await createGroupAction({
       name: groupName,
-      membershipLimit: membershipLimit ? Number(membershipLimit) : undefined
+      membershipLimit: membershipLimit ? Number(membershipLimit) : undefined,
+      inviteEmailsText: createGroupInviteEmails
     });
 
-    setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+    pushResultToast(result);
     if (result.ok) {
       setGroupName("");
       setMembershipLimit("");
+      setCreateGroupInviteEmails("");
       await load();
     }
 
@@ -580,7 +591,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleCreateInviteCode(group: MyManagedGroup, replaceExisting = false) {
     setInviteCodeActionGroupId(group.id);
     setInviteCodeActionType(replaceExisting ? "replace" : "create");
-    setMessage(null);
 
     try {
       const result = await createManagedGroupInviteCodeAction({
@@ -588,10 +598,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         replaceExisting,
         customCode: inviteCodeDrafts[group.id] ?? ""
       });
-      setMessage({
-        tone: result.ok ? "success" : "error",
-        text: result.message
-      });
+      pushResultToast(result);
 
       if (result.ok) {
         setInviteCodeDrafts((current) => ({
@@ -615,10 +622,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         await loadGroupDetail(group.id, true);
       }
     } catch (error) {
-      setMessage({
-        tone: "error",
-        text: error instanceof Error ? error.message : "Could not update the invite code."
-      });
+      pushTextToast("error", error instanceof Error ? error.message : "Could not update the invite code.");
     } finally {
       setInviteCodeActionGroupId(null);
       setInviteCodeActionType(null);
@@ -628,14 +632,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleDeactivateInviteCode(group: MyManagedGroup) {
     setInviteCodeActionGroupId(group.id);
     setInviteCodeActionType("deactivate");
-    setMessage(null);
 
     try {
       const result = await deactivateManagedGroupInviteCodeAction(group.id);
-      setMessage({
-        tone: result.ok ? "success" : "error",
-        text: result.message
-      });
+      pushResultToast(result);
 
       if (result.ok) {
         setGroupDetailsById((current) => {
@@ -655,14 +655,87 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         await loadGroupDetail(group.id, true);
       }
     } catch (error) {
-      setMessage({
-        tone: "error",
-        text: error instanceof Error ? error.message : "Could not deactivate the invite code."
-      });
+      pushTextToast("error", error instanceof Error ? error.message : "Could not deactivate the invite code.");
     } finally {
       setInviteCodeActionGroupId(null);
       setInviteCodeActionType(null);
     }
+  }
+
+  async function handleCreateEmailInvite(group: MyManagedGroup) {
+    const email = newInviteEmailsByGroup[group.id]?.trim() ?? "";
+    if (!email) {
+      pushTextToast("error", "Enter an email address first.");
+      return;
+    }
+
+    await withAction(`create-email-invite-${group.id}`, async () => {
+      const result = await createGroupInviteAction({
+        groupId: group.id,
+        email
+      });
+
+      if (result.ok) {
+        let copiedToClipboard = false;
+        try {
+          await navigator.clipboard.writeText(result.claimUrl);
+          copiedToClipboard = true;
+        } catch (clipboardError) {
+          console.warn("Could not copy group invite link.", clipboardError);
+          setManualInviteLinkByGroup((current) => ({
+            ...current,
+            [group.id]: {
+              url: result.claimUrl,
+              note:
+                result.deliveryStatus === "queue_failed"
+                  ? "Invite created, but email could not be queued. Copy the link below and share it manually."
+                  : result.deliveryStatus === "sent_inline"
+                    ? "Invite email was sent. The link is shown below if you also want to share it manually."
+                    : "Invite email queued. The link is shown below if you also want to share it manually."
+            }
+          }));
+        }
+
+        setNewInviteEmailsByGroup((current) => ({
+          ...current,
+          [group.id]: ""
+        }));
+
+        if (copiedToClipboard) {
+          setManualInviteLinkByGroup((current) => {
+            if (!current[group.id]) {
+              return current;
+            }
+
+            const next = { ...current };
+            delete next[group.id];
+            return next;
+          });
+        }
+
+        pushToast({
+          tone:
+            result.deliveryStatus === "queue_failed" || !copiedToClipboard
+              ? "tip"
+              : "success",
+          text:
+            result.deliveryStatus === "queue_failed"
+              ? "Invite created, but email could not be queued. Copy the link below and share it manually."
+              : result.deliveryStatus === "sent_inline"
+                ? "Invite email sent. The invite link is also available if you want to share it manually."
+                : copiedToClipboard
+                  ? "Invite email queued. The link is also available below."
+                  : "Copy failed. Copy the link from the field below."
+        });
+      }
+      if (!result.ok) {
+        pushTextToast("error", result.message);
+      }
+
+      if (result.ok) {
+        await loadGroupDetail(group.id, true);
+      }
+    });
   }
 
   async function handleAcceptInvite() {
@@ -692,7 +765,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleAwardTrophyFromSheet(groupId: string, userId: string, trophyId: string) {
     await withAction(`award-trophy-${groupId}:${userId}:${trophyId}`, async () => {
       const result = await awardManagedGroupTrophyAction(groupId, userId, trophyId);
-      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      pushResultToast(result);
       if (result.ok) {
         if (!result.alreadyAwarded && result.trophy) {
           setCelebrationTrophy(result.trophy);
@@ -706,13 +779,13 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleAwardTrophyFromList(groupId: string, trophyId: string) {
     const selectedUserId = groupTrophyAwardSelections[groupId]?.[trophyId]?.trim() ?? "";
     if (!selectedUserId) {
-      setMessage({ tone: "error", text: "Choose a player first." });
+      pushTextToast("error", "Choose a player first.");
       return;
     }
 
     await withAction(`award-trophy-${groupId}:${selectedUserId}:${trophyId}`, async () => {
       const result = await awardManagedGroupTrophyAction(groupId, selectedUserId, trophyId);
-      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      pushResultToast(result);
       if (result.ok) {
         if (!result.alreadyAwarded && result.trophy) {
           setCelebrationTrophy(result.trophy);
@@ -739,7 +812,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         icon: draft.icon,
         description: draft.description
       });
-      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      pushResultToast(result);
       if (result.ok) {
         setGroupTrophyDrafts((current) => ({
           ...current,
@@ -798,7 +871,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       )
     : undefined;
   const inviteLoginPath = inviteToken
-    ? `/login?flow=invite&lang=${resolvedInviteLanguage}&next=${encodeURIComponent(inviteReturnPath ?? "/my-groups")}`
+    ? `/login?mode=login&flow=invite&lang=${resolvedInviteLanguage}&next=${encodeURIComponent(inviteReturnPath ?? "/my-groups")}`
     : "/login";
   const inviteSignupPath = inviteToken
     ? `/login?mode=signup&flow=invite&lang=${resolvedInviteLanguage}&next=${encodeURIComponent(inviteReturnPath ?? "/my-groups")}`
@@ -810,6 +883,39 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       normalizedCurrentUserEmail &&
       normalizedInviteEmail === normalizedCurrentUserEmail
   );
+
+  useEffect(() => {
+    if (!inviteToken || !isSignedIn || !invitePreview || isLoadingInvitePreview || !isInviteEmailMatch || hasAttemptedAutoAccept) {
+      return;
+    }
+
+    if (invitePreview.status !== "pending") {
+      return;
+    }
+
+    setHasAttemptedAutoAccept(true);
+    void (async () => {
+      setIsAcceptingInvite(true);
+      const result = await acceptGroupInviteAction({ token: inviteToken });
+      setInvitePreviewMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      setIsAcceptingInvite(false);
+
+      if (result.ok) {
+        await load();
+        router.replace("/my-groups");
+        router.refresh();
+      }
+    })();
+  }, [
+    hasAttemptedAutoAccept,
+    invitePreview,
+    inviteToken,
+    isInviteEmailMatch,
+    isLoadingInvitePreview,
+    isSignedIn,
+    load,
+    router
+  ]);
 
   return (
     <section className="space-y-5">
@@ -823,8 +929,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             : null
         }
       />
-
-      {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
 
       {confirmation ? (
         <InlineConfirmation
@@ -850,7 +954,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
           onConfirm={() => {
             void withAction(deleteConfirmation.key, async () => {
               const result = await deleteManagedGroupAction(deleteConfirmation.groupId, deleteConfirmationValue);
-              setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+              pushResultToast(result);
               if (result.ok) {
                 setDeleteConfirmation(null);
                 setDeleteConfirmationValue("");
@@ -889,9 +993,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   </p>
                 </div>
               ) : null}
-              {invitePreviewMessage ? (
-                <AdminMessage tone={invitePreviewMessage.tone} message={invitePreviewMessage.text} />
-              ) : null}
               {isSignedIn && invitePreview.status === "pending" && isInviteEmailMatch ? (
                 <ActionButton type="button" onClick={handleAcceptInvite} disabled={isAcceptingInvite} tone="accent" fullWidth>
                   {isAcceptingInvite ? "Joining..." : "Join Group"}
@@ -899,53 +1000,77 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               ) : isSignedIn && invitePreview.status === "pending" ? (
                 <div className="space-y-3">
                   <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-                    This invite is for {invitePreview.email}. You are currently signed in as {currentUser?.email}. Please use the invited account to continue.
+                    This invite is limited to {invitePreview.email}. Please sign in with that email or ask the organizer to invite this account.
                   </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Link
-                      href={inviteSignupPath}
-                      className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
-                    >
-                      Create Account
-                    </Link>
+                  {invitePreview.existingAccount ? (
                     <Link
                       href={inviteLoginPath}
-                      className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                      className="inline-flex w-full items-center justify-center rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
                     >
                       Switch Account
                     </Link>
-                  </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Link
+                        href={inviteSignupPath}
+                        className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
+                      >
+                        Create Account
+                      </Link>
+                      <Link
+                        href={inviteLoginPath}
+                        className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                      >
+                        Switch Account
+                      </Link>
+                    </div>
+                  )}
                 </div>
               ) : isSignedIn ? (
                 <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">
-                  This invite has already been handled for your account.
+                  {invitePreview.status === "accepted"
+                    ? `Invite accepted — welcome to ${invitePreview.groupName}.`
+                    : invitePreview.status === "expired" || invitePreview.status === "revoked"
+                      ? "Invite expired or canceled."
+                      : "This invite has already been handled for your account."}
                 </p>
               ) : (
                 <div className="space-y-3">
                   <p className="text-sm font-semibold text-gray-600">
-                    Sign in or create your account with the invited email first. You can come right back to this invite.
+                    {invitePreview.status !== "pending"
+                      ? "Invite expired or canceled."
+                      : invitePreview.existingAccount
+                      ? "This invited email already has an account. Sign in with that email to join the group."
+                      : "Sign in or create your account with the invited email first. You can come right back to this invite."}
                   </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Link
-                      href={inviteSignupPath}
-                      className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
-                    >
-                      Create Account
-                    </Link>
+                  {invitePreview.status !== "pending" ? null : invitePreview.existingAccount ? (
                     <Link
                       href={inviteLoginPath}
-                      className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                      className="inline-flex w-full items-center justify-center rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
                     >
-                      Sign In
+                      Sign In To Join
                     </Link>
-                  </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Link
+                        href={inviteSignupPath}
+                        className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
+                      >
+                        Create Account
+                      </Link>
+                      <Link
+                        href={inviteLoginPath}
+                        className="rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-center text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                      >
+                        Sign In
+                      </Link>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           ) : invitePreviewMessage ? (
-            <div className="mt-3">
-              <AdminMessage tone={invitePreviewMessage.tone} message={invitePreviewMessage.text} />
-            </div>
+            <p className="mt-3 text-sm font-semibold text-gray-600">{invitePreviewMessage.text}</p>
           ) : null}
         </section>
       ) : null}
@@ -1011,7 +1136,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               onSubmit={handleInviteEntrySubmit}
               submitLabel="Open Invite"
             />
-            {inviteEntryError ? <AdminMessage tone="error" message={inviteEntryError} /> : null}
+            {inviteEntryError ? <p className="mt-2 text-sm font-semibold text-red-700">{inviteEntryError}</p> : null}
           </div>
         </ManagementCard>
       ) : null}
@@ -1062,6 +1187,19 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                     placeholder="Leave blank for the default"
                   />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Invite specific players by email</span>
+                  <textarea
+                    value={createGroupInviteEmails}
+                    onChange={(event) => setCreateGroupInviteEmails(event.target.value)}
+                    rows={3}
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                    placeholder="name@example.com, teammate@example.com"
+                  />
+                  <p className="mt-2 text-xs font-semibold text-gray-500">
+                    Optional. Use commas or new lines. We&apos;ll create pending email invites without changing the invite-code flow.
+                  </p>
                 </label>
                 <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
                   {isCreatingGroup ? "Creating..." : "Create Group"}
@@ -1219,8 +1357,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      void navigator.clipboard.writeText(inviteCode.code);
-                                      setMessage({ tone: "success", text: "Invite code copied." });
+                                      void navigator.clipboard
+                                        .writeText(inviteCode.code)
+                                        .then(() => pushTextToast("success", "Invite code copied."))
+                                        .catch(() => pushTextToast("tip", "Copy failed. Copy the invite code from the field above."));
                                     }}
                                     className="text-[10px] font-bold uppercase tracking-wide text-gray-600 transition hover:text-accent-dark"
                                   >
@@ -1231,8 +1371,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   <ActionButton
                                     type="button"
                                     onClick={() => {
-                                      void navigator.clipboard.writeText(inviteCode.shareMessage);
-                                      setMessage({ tone: "success", text: "Invite message copied." });
+                                      void navigator.clipboard
+                                        .writeText(inviteCode.shareMessage)
+                                        .then(() => pushTextToast("success", "Invite message copied."))
+                                        .catch(() => pushTextToast("tip", "Copy failed. Try again or use WhatsApp below."));
                                     }}
                                     fullWidth
                                   >
@@ -1294,6 +1436,104 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 </div>
                               </>
                             )}
+                            <div className="rounded-md border border-dashed border-gray-300 bg-white px-3 py-3">
+                              <div>
+                                <p className="text-sm font-black text-gray-900">Invite specific player by email</p>
+                                <p className="mt-1 text-xs font-semibold text-gray-500">
+                                  Create a pending email invite and copy the join link for that player.
+                                </p>
+                              </div>
+                              <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-start">
+                                <label className="min-w-0 flex-1">
+                                  <span className="sr-only">Invite player email</span>
+                                  <input
+                                    type="email"
+                                    value={newInviteEmailsByGroup[group.id] ?? ""}
+                                    onChange={(event) =>
+                                      setNewInviteEmailsByGroup((current) => ({
+                                        ...current,
+                                        [group.id]: event.target.value
+                                      }))
+                                    }
+                                    disabled={actionKey === `create-email-invite-${group.id}`}
+                                    placeholder="player@example.com"
+                                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                  />
+                                </label>
+                                <ActionButton
+                                  type="button"
+                                  disabled={actionKey === `create-email-invite-${group.id}`}
+                                  onClick={() => void handleCreateEmailInvite(group)}
+                                >
+                                  {actionKey === `create-email-invite-${group.id}` ? "Creating..." : "Create Invite"}
+                                </ActionButton>
+                              </div>
+
+                              {groupInvites.filter((invite) => invite.status === "pending").length > 0 ? (
+                                <div className="mt-3 space-y-2">
+                                  {groupInvites
+                                    .filter((invite) => invite.status === "pending")
+                                    .map((invite) => (
+                                      <div
+                                        key={`compact-invite-${invite.id}`}
+                                        className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2"
+                                      >
+                                        <div className="min-w-0">
+                                          <p className="truncate text-sm font-black text-gray-950">{invite.email}</p>
+                                          <p className="mt-1 text-xs font-semibold text-gray-500">
+                                            {invite.existingAccount
+                                              ? "Existing user — they can log in and join from the invite link."
+                                              : "Pending signup."}
+                                            {invite.expiresAt ? ` Expires ${formatDate(invite.expiresAt)}.` : ""}
+                                          </p>
+                                        </div>
+                                        <ActionButton
+                                          tone="danger"
+                                          disabled={actionKey === `cancel-inline-invite-${invite.id}`}
+                                          onClick={() => {
+                                            setConfirmation({
+                                              key: `cancel-inline-invite-${invite.id}`,
+                                              title: `Cancel the invite for ${invite.email}?`,
+                                              description: "This only removes this pending group invite.",
+                                              confirmLabel: "Cancel Invite",
+                                              onConfirm: () => {
+                                                void withAction(`cancel-inline-invite-${invite.id}`, async () => {
+                                                  const result = await cancelGroupInviteAction(invite.id);
+                                                  pushResultToast(result);
+                                                  if (result.ok) {
+                                                    setConfirmation(null);
+                                                    await loadGroupDetail(group.id, true);
+                                                  }
+                                                });
+                                              }
+                                            });
+                                          }}
+                                        >
+                                          Cancel
+                                        </ActionButton>
+                                      </div>
+                                    ))}
+                                </div>
+                              ) : (
+                                <p className="mt-3 text-xs font-semibold text-gray-500">No pending email invites yet.</p>
+                              )}
+
+                              {manualInviteLinkByGroup[group.id] ? (
+                                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-3">
+                                  <p className="text-xs font-bold uppercase tracking-wide text-amber-800">
+                                    Copy invite link manually
+                                  </p>
+                                  <p className="mt-1 text-xs font-semibold text-amber-800">
+                                    {manualInviteLinkByGroup[group.id].note}
+                                  </p>
+                                  <div className="mt-2 rounded-md border border-amber-200 bg-white px-3 py-2">
+                                    <p className="break-all text-xs font-semibold text-gray-700">
+                                      {manualInviteLinkByGroup[group.id].url}
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
                         ) : null}
                       </div>
@@ -1508,7 +1748,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                           onConfirm: () => {
                                             void withAction(`remove-member-${member.membershipId}`, async () => {
                                               const result = await removeGroupMemberAction(group.id, member.userId);
-                                              setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                              pushResultToast(result);
                                               if (result.ok) {
                                                 setConfirmation(null);
                                                 await load();
@@ -1542,6 +1782,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     {invite.expiresAt ? ` · Expires ${formatDate(invite.expiresAt)}` : ""}
                                   </p>
                                   <p className="mt-1 text-xs font-semibold text-gray-500">
+                                    {invite.existingAccount
+                                      ? "Existing user — they can log in and join from the invite link."
+                                      : "Pending signup."}
+                                  </p>
+                                  <p className="mt-1 text-xs font-semibold text-gray-500">
                                     {invite.invitedByLabel ? `Invited by ${invite.invitedByLabel}` : "Group invite"}
                                     {invite.lastSentAt ? ` · Last sent ${formatDate(invite.lastSentAt)}` : ""}
                                     {` · Send attempts ${invite.sendAttempts}`}
@@ -1558,7 +1803,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                         onClick={() =>
                                           void withAction(`resend-invite-${invite.id}`, async () => {
                                             const result = await resendGroupInviteAction(invite.id);
-                                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                            pushResultToast(result);
                                             if (result.ok) {
                                               await load();
                                             }
@@ -1584,7 +1829,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                             onConfirm: () => {
                                               void withAction(`cancel-invite-${invite.id}`, async () => {
                                                 const result = await cancelGroupInviteAction(invite.id);
-                                                setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                                pushResultToast(result);
                                                 if (result.ok) {
                                                   setConfirmation(null);
                                                   await load();
@@ -1621,7 +1866,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     onClick={() =>
                                       void withAction(`update-invite-${invite.id}`, async () => {
                                         const result = await updateGroupInviteNameAction(invite.id, editValue);
-                                        setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                        pushResultToast(result);
                                         if (result.ok) {
                                           await load();
                                         }
@@ -1931,7 +2176,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               event.preventDefault();
                               void withAction(`update-group-limit-${group.id}`, async () => {
                                 const result = await updateManagedGroupLimitAction(group.id, Number(groupLimitFormValue));
-                                setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                pushResultToast(result);
                                 if (result.ok) {
                                   await load();
                                 }
