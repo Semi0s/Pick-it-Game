@@ -102,18 +102,15 @@ export async function POST(request: Request) {
         ? requestBody.preferredMatchIds.filter((value): value is string => typeof value === "string" && value.length > 0)
         : []
     );
-    const nextMatch =
-      (preferredMatchIds.size > 0
-        ? unsavedOpenMatches.find((match) => preferredMatchIds.has(match.id)) ?? null
-        : null) ??
-      unsavedOpenMatches[0] ??
-      null;
+    const preferredOpenMatch =
+      preferredMatchIds.size > 0 ? openMatches.find((match) => preferredMatchIds.has(match.id)) ?? null : null;
+    const nextMatch = preferredOpenMatch ?? unsavedOpenMatches[0] ?? null;
 
     if (!nextMatch) {
       const message =
         openMatches.length > 0
-          ? "You have already saved every open match. You can still edit any saved pick until kickoff."
-          : "No open matches available right now.";
+          ? "You have already saved every open match. To change one, use the Auto Pick chip on that match card until kickoff."
+          : "Auto Pick Next Match is no longer available. There are no open matches to fill right now.";
 
       return NextResponse.json({ ok: false, message }, { status: 404 });
     }

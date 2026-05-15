@@ -40,22 +40,25 @@ export default async function KnockoutPage() {
         }))
       : await fetchProjectedKnockoutBracketPreview(user.id).catch(() => null)
     : null;
+  const projectedComparisonView = user && knockoutStatus.isFullySeeded
+    ? await fetchProjectedKnockoutBracketPreview(user.id, { comparisonOnly: true }).catch(() => null)
+    : null;
   const isSeeded = knockoutStatus.isFullySeeded;
   const phaseChip = getKnockoutPhaseChip(knockoutStatus.counts);
   const isProjected = bracketEditorView?.mode === "projected";
-  const introEyebrow = isProjected ? "Knockout Phase" : isSeeded ? "Official knockout bracket" : "Knockout Picks";
+  const introEyebrow = isProjected ? "Projected Bracket" : isSeeded ? "Official knockout bracket" : "Knockout Picks";
   const introTitle = isProjected
-    ? "Fill your bracket and stay in the game until the end"
+    ? "Projected Bracket — built from your group-stage predictions"
     : isSeeded
       ? "Official knockout bracket"
       : "Knockout picks coming soon";
   const introDescription = isProjected
-    ? "Compare your group predictions with actual tournament wins. Swipe through the knockout phases and tap to select the winning teams until you reach the final."
+    ? "Build your projected knockout bracket from your group-stage picks. Official knockout picks open after the real bracket is seeded."
     : isSeeded
       ? "The official knockout bracket is now available."
       : "We will open knockout picks once the full Round of 32 through Final bracket has been seeded.";
   const introSecondaryNote = isProjected
-    ? "PICKS UNLOCK AS TEAMS ARE CONFIRMED."
+    ? "Official knockout picks open after the real bracket is seeded."
     : isSeeded
       ? "Picks unlock as teams are confirmed"
       : null;
@@ -76,8 +79,25 @@ export default async function KnockoutPage() {
         </div>
       ) : user && !isSeeded ? (
         <div className="mt-5 rounded-lg border border-gray-200 bg-white px-4 py-4 text-sm font-semibold text-gray-600">
-          Make more group-stage picks to preview your projected knockout.
+          Make more group-stage picks to build your projected bracket preview.
         </div>
+      ) : null}
+
+      {projectedComparisonView &&
+      (projectedComparisonView.predictions.length > 0 ||
+        Boolean(projectedComparisonView.secondaryNote?.includes("need review"))) ? (
+        <section className="mt-8">
+          <ManagementIntro
+            eyebrow="Projected Bracket"
+            title="Projected Bracket"
+            description="Built from your group-stage picks before the real bracket was seeded. This stays separate from your official knockout picks."
+            secondaryNote="Official knockout picks and scoring remain separate."
+            statusChip="Comparison"
+          />
+          <div className="mt-5">
+            <KnockoutBracketBuilder initialView={projectedComparisonView} />
+          </div>
+        </section>
       ) : null}
     </AppShell>
   );

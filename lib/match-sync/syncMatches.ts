@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchMatchesByDate, type NormalizedExternalMatch } from "@/lib/match-api/client";
 import { appendMatchEvent } from "@/lib/match-events";
 import { rebuildKnockoutAdvancementWithClient } from "@/lib/knockout-advancement";
+import { seedOfficialKnockoutFromFinalGroupResults } from "@/lib/knockout-seeding-runtime";
 import { rebuildScopedLeaderboardState } from "@/lib/scoped-scoring";
 import { scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { scoreFinalizedKnockoutMatchWithClient, resetKnockoutMatchScoring } from "@/lib/bracket-predictions";
@@ -294,6 +295,9 @@ async function finalizeMatchFromSync(
       homeScore: externalMatch.home_score,
       awayScore: externalMatch.away_score,
       winnerTeamId: nextWinnerTeamId
+    });
+    await seedOfficialKnockoutFromFinalGroupResults(adminSupabase, {
+      source: "auto"
     });
   } else {
     if (internalMatch.status === "final") {

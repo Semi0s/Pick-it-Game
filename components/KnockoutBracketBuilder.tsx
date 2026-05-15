@@ -39,6 +39,7 @@ const KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY = "knockout-active-slide";
 const KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY = "knockout-active-country-filter";
 
 export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderProps) {
+  const [baseView, setBaseView] = useState<KnockoutBracketEditorView>(initialView);
   const [predictions, setPredictions] = useState<BracketPrediction[]>(initialView.predictions);
   const [draftWinnerByMatchId, setDraftWinnerByMatchId] = useState<Record<string, string>>({});
   const [draftScoreByMatchId, setDraftScoreByMatchId] = useState<Record<string, { homeScore: number; awayScore: number }>>({});
@@ -54,10 +55,11 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
   const touchStartYRef = useRef<number | null>(null);
   const pointerStartXRef = useRef<number | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasAutoFocusedProjectedSlideRef = useRef(false);
 
   const view = useMemo(
-    () => deriveEditorView(initialView, predictions, draftWinnerByMatchId, draftScoreByMatchId),
-    [draftScoreByMatchId, draftWinnerByMatchId, initialView, predictions]
+    () => deriveEditorView(baseView, predictions, draftWinnerByMatchId, draftScoreByMatchId),
+    [baseView, draftScoreByMatchId, draftWinnerByMatchId, predictions]
   );
   const slides = useMemo(() => buildBracketSlides(view), [view]);
   const activeSlide = slides[activeSlideIndex] ?? null;
@@ -90,7 +92,36 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
     setActiveSlideIndex((current) => Math.max(0, Math.min(current, slides.length - 1)));
   }, [setActiveSlideIndex, slides.length]);
 
-  if (initialView.mode === "official" && !initialView.isSeeded) {
+  useEffect(() => {
+    if (baseView.mode !== "projected") {
+      hasAutoFocusedProjectedSlideRef.current = false;
+      return;
+    }
+
+    if (hasAutoFocusedProjectedSlideRef.current || slides.length === 0) {
+      return;
+    }
+
+    hasAutoFocusedProjectedSlideRef.current = true;
+
+    const firstOpenProjectedSlideIndex = slides.findIndex((slide) =>
+      slide.currentMatches.some((match) => getKnockoutMatchShellState(match) === "open")
+    );
+    if (firstOpenProjectedSlideIndex < 0) {
+      return;
+    }
+
+    const currentSlide = slides[activeSlideIndex] ?? null;
+    const currentSlideHasOpenProjectedMatch = currentSlide
+      ? currentSlide.currentMatches.some((match) => getKnockoutMatchShellState(match) === "open")
+      : false;
+
+    if (!currentSlideHasOpenProjectedMatch && activeSlideIndex !== firstOpenProjectedSlideIndex) {
+      setActiveSlideIndex(firstOpenProjectedSlideIndex);
+    }
+  }, [activeSlideIndex, baseView.mode, setActiveSlideIndex, slides]);
+
+  if (baseView.mode === "official" && !baseView.isSeeded) {
     return (
       <section className="rounded-lg border border-gray-200 bg-white p-5">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Bracket</p>
@@ -167,7 +198,7 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
         >
           <BracketStageViewport
             slide={slides[activeSlideIndex]}
-            mode={initialView.mode}
+            mode={baseView.mode}
             ready={transitionReady}
             pendingMatchId={pendingMatchId}
             onSelect={handleSelectWinner}
@@ -330,7 +361,8 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
       matchId,
       teamId,
       homeScore,
-      awayScore
+      awayScore,
+      mode: baseView.mode
     });
     if (!result.ok) {
       setMessage({ tone: "error", text: result.message });
@@ -338,18 +370,29 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
       return;
     }
 
-    setPredictions(result.predictions);
+    if (result.view) {
+      setBaseView(result.view);
+    }
+    setPredictions(result.view?.predictions ?? result.predictions);
+    const matchesForDescendants = result.view ?? view;
+    const descendantMatchIds = collectDescendantMatchIdsFromView(matchesForDescendants, matchId);
     setDraftWinnerByMatchId((current) => {
       const next = { ...current };
       delete next[matchId];
+      for (const descendantMatchId of descendantMatchIds) {
+        delete next[descendantMatchId];
+      }
       return next;
     });
     setDraftScoreByMatchId((current) => {
       const next = { ...current };
       delete next[matchId];
+      for (const descendantMatchId of descendantMatchIds) {
+        delete next[descendantMatchId];
+      }
       return next;
     });
-    setMessage({ tone: "success", text: "Bracket updated." });
+    setMessage({ tone: "success", text: baseView.mode === "projected" ? "Projected bracket updated." : "Bracket updated." });
     setPendingMatchId(null);
   }
 }
@@ -677,8 +720,12 @@ function CurrentRoundMatchCard({
   const effectiveCurrentAwayScore = currentAwayScore ?? 0;
   const effectiveSavedHomeScore = savedHomeScore ?? 0;
   const effectiveSavedAwayScore = savedAwayScore ?? 0;
-  const homeCode = match.homeTeam ?? match.seededHomeTeam ? getTeamDisplayCode((match.homeTeam ?? match.seededHomeTeam)!) : "TBD";
-  const awayCode = match.awayTeam ?? match.seededAwayTeam ? getTeamDisplayCode((match.awayTeam ?? match.seededAwayTeam)!) : "TBD";
+  const footerHomeTeam =
+    match.viewMode === "projected" && match.seededHomeTeam ? match.seededHomeTeam : match.homeTeam ?? match.seededHomeTeam;
+  const footerAwayTeam =
+    match.viewMode === "projected" && match.seededAwayTeam ? match.seededAwayTeam : match.awayTeam ?? match.seededAwayTeam;
+  const homeCode = footerHomeTeam ? getTeamDisplayCode(footerHomeTeam) : "TBD";
+  const awayCode = footerAwayTeam ? getTeamDisplayCode(footerAwayTeam) : "TBD";
   const hasActualFinalScores =
     match.homeScore !== null &&
     match.homeScore !== undefined &&
@@ -703,31 +750,47 @@ function CurrentRoundMatchCard({
   const hasUnsavedPredictionChange = hasUnsavedScoreChange || hasUnsavedSelectionChange;
   const hasSavedSelection = Boolean(match.savedAt);
   const requiresWinnerSelection = shellState === "open" && effectiveCurrentHomeScore === effectiveCurrentAwayScore;
-  const showSaveButton = shellState === "open" && hasUnsavedPredictionChange;
+  const isProjectedEditable = match.viewMode === "projected" && shellState === "open";
+  const isOfficialEditable = match.viewMode === "official" && shellState === "open";
+  const hasValidProjectedPrediction =
+    Boolean(match.predictedWinnerTeamId) &&
+    currentHomeScore !== null &&
+    currentHomeScore !== undefined &&
+    currentAwayScore !== null &&
+    currentAwayScore !== undefined;
+  const showProjectedSaveButton = isProjectedEditable && hasValidProjectedPrediction && hasUnsavedPredictionChange;
+  const showOfficialSaveButton = isOfficialEditable && hasUnsavedPredictionChange;
+  const showSaveButton = showProjectedSaveButton || showOfficialSaveButton;
   const hasUserPrediction = Boolean(match.savedAt || hasUnsavedPredictionChange);
   const finalStatusMessage = hasActualFinalScores
     ? hasUserPrediction
       ? match.isCorrectWinner == null
-        ? "Scoring update pending."
+        ? match.viewMode === "projected"
+          ? "Projected comparison available after results finalize."
+          : "Scoring update pending."
         : null
       : "No pick saved."
     : null;
   const gradedPointsLabel =
     match.isCorrectWinner == null
       ? null
-      : match.isCorrectWinner === true
-        ? match.awardedPoints == null
-          ? "Winner correct · Points updating"
-          : match.exactScorePoints && match.exactScorePoints > 0
-            ? `Exact score · +${match.awardedPoints} pts`
+      : match.viewMode === "projected"
+        ? match.isCorrectWinner
+          ? "Projected winner matched the real result"
+          : "Projected winner missed the real result"
+        : match.isCorrectWinner === true
+          ? match.awardedPoints == null
+            ? "Winner correct · Points updating"
+            : match.exactScorePoints && match.exactScorePoints > 0
+              ? `Exact score · +${match.awardedPoints} pts`
+              : match.awardedPoints > 0
+                ? `Winner correct · +${match.awardedPoints} pts`
+                : "Winner correct · 0 pts"
+          : match.awardedPoints == null
+            ? "Scoring update pending."
             : match.awardedPoints > 0
-              ? `Winner correct · +${match.awardedPoints} pts`
-              : "Winner correct · 0 pts"
-        : match.awardedPoints == null
-          ? "Scoring update pending."
-          : match.awardedPoints > 0
-            ? `+${match.awardedPoints} pts`
-            : "No points earned · 0 pts";
+              ? `+${match.awardedPoints} pts`
+              : "No points earned · 0 pts";
   const statusBadge =
     shellState === "final" ? (
       <span className="shrink-0 rounded-md bg-gray-200 px-2 py-1 text-[10px] font-black text-gray-700">Final</span>
@@ -754,10 +817,16 @@ function CurrentRoundMatchCard({
               shellState === "final"
                 ? "border-gray-200 bg-gray-100 p-2"
                 : isHero
-                  ? "border-amber-200 bg-white p-2"
+                  ? match.viewMode === "projected"
+                    ? "border-amber-200 bg-[linear-gradient(135deg,#fff7da_0%,#fffdf4_50%,#fff1b8_100%)] p-2"
+                    : "border-amber-200 bg-white p-2"
                   : isCompact
-                    ? "border-gray-200 bg-white p-2"
-                    : "border-gray-200 bg-white p-2"
+                    ? match.viewMode === "projected"
+                      ? "border-amber-200 bg-[linear-gradient(135deg,#fff9e6_0%,#fffef6_50%,#fff5cb_100%)] p-2"
+                      : "border-gray-200 bg-white p-2"
+                    : match.viewMode === "projected"
+                      ? "border-amber-200 bg-[linear-gradient(135deg,#fff9e6_0%,#fffef6_50%,#fff5cb_100%)] p-2"
+                      : "border-gray-200 bg-white p-2"
             }`
       }
     >
@@ -900,7 +969,7 @@ function CurrentRoundMatchCard({
             </div>
           ) : null}
         </div>
-      ) : match.viewMode === "official" ? shellState === "closed" ? (
+      ) : shellState === "closed" && match.viewMode === "official" ? (
         <div className="mt-1.5 border-t border-gray-300 px-1 pt-2 text-center">
           {hasActualLiveScores ? (
             <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
@@ -953,6 +1022,17 @@ function CurrentRoundMatchCard({
         <div className="mt-1.5 border-t border-gray-100 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-400">
           Saved on: {formatSavedTimestamp(match.savedAt)}
         </div>
+      ) : isProjectedEditable ? (
+        <div className="mt-1.5 border-t border-amber-200/70 bg-amber-50/60 px-1 pt-2 text-center">
+          <div className="text-xs font-bold uppercase tracking-wide text-amber-800">
+            {requiresWinnerSelection && !match.predictedWinnerTeamId
+              ? "Pick a winner to unlock Save"
+              : "Adjust the score or winner to save this projected match"}
+          </div>
+          <div className="mt-0.5 text-[10px] font-semibold text-amber-700">
+            Projected picks stay separate from official knockout picks.
+          </div>
+        </div>
       ) : shellState === "open" ? (
         <div className="mt-1.5 border-t border-gray-100 bg-green-50/50 px-1 pt-2 text-center text-xs font-bold uppercase tracking-wide text-green-700">
           Editable until kickoff
@@ -960,13 +1040,6 @@ function CurrentRoundMatchCard({
       ) : (
         <div className="mt-1.5 border-t border-gray-300 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-400">
           {hasOfficialTeams ? "MATCH IN PLAY - Scores will show here when final" : "Teams not set yet"}
-        </div>
-      ) : (
-        <div className="mt-1.5 border-t border-gray-100 px-1 pt-2 text-center text-xs font-bold uppercase tracking-wide text-gray-400">
-          <span className="block">Teams not set yet</span>
-          <span className="mt-0.5 block text-[10px] font-semibold normal-case tracking-normal text-gray-400">
-            This matchup will unlock once the earlier winners are known.
-          </span>
         </div>
       )}
     </div>
@@ -1008,10 +1081,17 @@ function getStageBanner(
     };
   }
 
+  if (mode === "projected" && anyOpen) {
+    return {
+      tone: "open",
+      text: "PROJECTED PICKS ARE EDITABLE UNTIL KICKOFF"
+    };
+  }
+
   if (mode === "projected" || !anyOpen) {
     return {
       tone: "wait",
-      text: "MATCHES UNLOCK WHEN GROUP PHASE IS COMPLETED"
+      text: mode === "projected" ? "COMPLETE MORE GROUP PICKS TO BUILD THIS ROUND" : "MATCHES UNLOCK WHEN GROUP PHASE IS COMPLETED"
     };
   }
 
@@ -1037,6 +1117,13 @@ function getRoundOf32Banner(slide: BracketSlideView): { tone: "wait" | "open" | 
   }
 
   if (!hasOfficialTeams) {
+    if (slide.currentMatches.some((match) => match.viewMode === "projected" && getKnockoutMatchShellState(match) === "open")) {
+      return {
+        tone: "open",
+        text: "PROJECTED ROUND OF 32 PICKS ARE EDITABLE"
+      };
+    }
+
     return {
       tone: "wait",
       text: "MATCHES UNLOCK WHEN GROUP PHASE IS COMPLETED"
@@ -1082,7 +1169,11 @@ function getKnockoutMatchShellState(
     return "closed" as const;
   }
 
-  if (match.viewMode === "projected" && !hasOfficialTeams) {
+  if (match.viewMode === "projected") {
+    if (match.canSelectWinner) {
+      return "open" as const;
+    }
+
     return "wait" as const;
   }
 
@@ -1170,7 +1261,7 @@ function KnockoutTeamPanel({
 }) {
   const isCompact = density === "compact";
   const userTeam = team;
-  const isProjectedReadOnly = viewMode === "projected";
+  const isProjectedReadOnly = viewMode === "projected" && isReadOnly;
   const layers = getKnockoutCardLayers({
     competitorSide: side,
     userTeam,
@@ -1184,9 +1275,7 @@ function KnockoutTeamPanel({
     isCorrectSelection
   });
   const userLayer = layers.userLayer;
-  const displayLabel = isProjectedReadOnly
-    ? officialTeam?.name ?? team?.name ?? formatRoundOf32PlaceholderLabel(placeholderLabel)
-    : team?.name ?? officialTeam?.name ?? formatRoundOf32PlaceholderLabel(placeholderLabel);
+  const displayLabel = team?.name ?? officialTeam?.name ?? formatRoundOf32PlaceholderLabel(placeholderLabel);
   const displayFlag = team?.flagEmoji ?? officialTeam?.flagEmoji ?? null;
   const displayTeam = team ?? officialTeam ?? null;
   const displayCode = displayTeam ? getTeamDisplayCode(displayTeam) : null;
@@ -1391,13 +1480,17 @@ function getKnockoutCardLayers({
     isProjected && projectionSource === "missing" ? "More group results or picks needed" : null;
   const projectedWinnerHelper =
     !isProjected && projectionSource === "prediction" && !officialTeam ? "Based on your projected winners" : null;
+  const projectedActualSeedHelper =
+    isProjected && officialTeam && userTeam && officialTeam.id !== userTeam.id
+      ? `Actual seed: ${officialTeam.shortName}`
+      : null;
 
   const userLayer = isProjected
     ? {
         displayCode: userDisplayCode,
         flagEmoji: userTeam?.flagEmoji ?? null,
         label: "Yours",
-        helperText: unresolvedHelper,
+        helperText: unresolvedHelper ?? projectedActualSeedHelper,
         isSelected: false,
         isCorrect: null as boolean | null
       }
@@ -1719,6 +1812,32 @@ function deriveEditorView(
     thirdPlace: initialView.thirdPlace ? resolvedMatches.get(initialView.thirdPlace.matchId) ?? initialView.thirdPlace : null,
     predictions
   };
+}
+
+function collectDescendantMatchIdsFromView(view: KnockoutBracketEditorView, rootMatchId: string) {
+  const allMatches = [...view.stages.flatMap((stage) => stage.matches), ...(view.thirdPlace ? [view.thirdPlace] : [])];
+  const descendants = new Set<string>();
+  let frontier = [rootMatchId];
+
+  while (frontier.length > 0) {
+    const nextFrontier: string[] = [];
+    for (const sourceMatchId of frontier) {
+      for (const match of allMatches) {
+        if (
+          descendants.has(match.matchId) ||
+          (match.homeSourceMatchId !== sourceMatchId && match.awaySourceMatchId !== sourceMatchId)
+        ) {
+          continue;
+        }
+
+        descendants.add(match.matchId);
+        nextFrontier.push(match.matchId);
+      }
+    }
+    frontier = nextFrontier;
+  }
+
+  return descendants;
 }
 
 function resolveCurrentWinnerTeamId({

@@ -20,6 +20,7 @@ import {
 import { getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-levels";
 import { showAppToast } from "@/lib/app-toast";
 import type { LegalDocument } from "@/lib/legal";
+import { redactEmailAddress } from "@/lib/redact-email";
 import { getStrings } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
 import type { UserTrophy } from "@/lib/types";
@@ -193,7 +194,7 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
                   {getAccessLevelLabel(user)}
                   {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
                 </p>
-                <p className="truncate text-sm text-gray-600">{user.email}</p>
+                <p className="truncate text-sm text-gray-600">{redactEmailAddress(user.email)}</p>
                 <div className="mt-2">
                   {user.homeTeamId ? (
                     <HomeTeamBadge teamId={user.homeTeamId} />

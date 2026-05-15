@@ -42,7 +42,7 @@ import type { DailyWinner } from "@/lib/leaderboard-highlights";
 import { fetchPlayerPredictions } from "@/lib/player-predictions";
 import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
-import { hasManagerAccess } from "@/lib/tier-access";
+import { hasDirectorAccess } from "@/lib/tier-access";
 import type { MatchWithTeams, Prediction } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
@@ -126,8 +126,7 @@ function LeaderboardPlayerRow({
       : "bg-white text-accent-dark"
     : "bg-white text-gray-800";
   const socialTone = isCurrentUser ? "text-gray-600" : "text-gray-500";
-  const standardPoints = profile.standardPoints ?? profile.totalPoints;
-  const groupCustomPoints = profile.groupCustomPoints ?? 0;
+  const showLeaderboardTrophies = scoreMode === "standard" && shouldShowPlayerSocialIndicators;
 
   return (
     <div
@@ -188,7 +187,7 @@ function LeaderboardPlayerRow({
                       🎯 Perfect Pick
                     </span>
                   ) : null}
-                  {shouldShowPlayerSocialIndicators && profile.trophies && profile.trophies.length > 0 ? (
+                  {showLeaderboardTrophies && profile.trophies && profile.trophies.length > 0 ? (
                     <span className="inline-flex items-center gap-1">
                       {profile.trophies.slice(0, 2).map((trophy) => (
                         <TrophyBadge
@@ -209,16 +208,11 @@ function LeaderboardPlayerRow({
                   ) : null}
                 </span>
               </span>
-              <span className="ml-auto flex shrink-0 items-center gap-2">
+                <span className="ml-auto flex shrink-0 items-center gap-2">
                 <span className="flex flex-col items-end gap-1">
                   <span className={`inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-semibold ${pointsTone}`}>
-                    {profile.totalPoints} {scoreMode === "group" ? "group pts" : "standard pts"}
+                    {profile.totalPoints} pts
                   </span>
-                  {scoreMode === "group" ? (
-                    <span className="text-[11px] font-bold text-gray-600">
-                      Std {standardPoints} {groupCustomPoints > 0 ? `+ Local ${groupCustomPoints}` : "+ Local 0"}
-                    </span>
-                  ) : null}
                   {profile.pointsDelta && profile.pointsDelta > 0 ? (
                     <span className="text-xs font-black text-accent-dark">+{profile.pointsDelta} pts</span>
                   ) : null}
@@ -931,7 +925,7 @@ export function LeaderboardClient() {
   const shouldShowPlayerSocialIndicators = !isGlobalView;
   const canAwardManagedTrophies =
     activeView === "managed_groups" &&
-    hasManagerAccess(switcher?.accessLevel ?? "player") &&
+    hasDirectorAccess(switcher?.accessLevel ?? "player") &&
     Boolean(managedAwardGroup);
   const canSelfAwardTrophies = user?.role === "admin";
   const shallowLeaderboardSpacerHeight = useMemo(() => {

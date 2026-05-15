@@ -564,15 +564,15 @@ export function HierarchyPanel({
     },
     {
       key: "director",
-      title: "League Director [L]",
-      badge: "10 groups · 20 seats",
+      title: "League [L]",
+      badge: "10 groups · 100 seats",
       copy: "Can manage a League, use League rules and local custom scoring, enable side-pick packages, and view League standings.",
       tone: "warning"
     },
     {
       key: "managing_director",
-      title: "Branded League [L+]",
-      badge: "30 groups · 100 seats",
+      title: "League Plus [L+]",
+      badge: "25 groups · 100 seats",
       copy: "Can run a larger branded League with branding access and expanded League tooling, while keeping custom scoring local.",
       tone: "warning"
     }

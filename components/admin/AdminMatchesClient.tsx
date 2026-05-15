@@ -6,6 +6,7 @@ import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
 import {
   batchFinalizeMatchResultsAction,
   fullPreLaunchTestResetAction,
+  fetchKnockoutSeedingStatusAction,
   type BatchFinalizeMatchOverwriteMode,
   type BatchFinalizeMatchResultStyle,
   type BatchFinalizeMatchScope,
@@ -79,6 +80,8 @@ export function AdminMatchesClient() {
   const [batchFinalizeConfirmationText, setBatchFinalizeConfirmationText] = useState("");
   const [isBatchFinalizingMatches, setIsBatchFinalizingMatches] = useState(false);
   const [destructiveToolStatus, setDestructiveToolStatus] = useState<DestructiveAdminToolStatusResult | null>(null);
+  const [knockoutSeedingStatusText, setKnockoutSeedingStatusText] = useState<string>("");
+  const [knockoutSeedingStatusTone, setKnockoutSeedingStatusTone] = useState<"neutral" | "amber" | "emerald" | "rose">("neutral");
   const [resetReasonByScope, setResetReasonByScope] = useState<Record<string, string>>({
     knockout: "",
     group_stage: "",
@@ -102,6 +105,19 @@ export function AdminMatchesClient() {
     setIsLoading(true);
     try {
       setMatches(await fetchAdminMatches());
+      const seedingStatusResult = await fetchKnockoutSeedingStatusAction();
+      if (seedingStatusResult.ok) {
+        setKnockoutSeedingStatusText(seedingStatusResult.status.detail);
+        setKnockoutSeedingStatusTone(
+          seedingStatusResult.status.state === "failed"
+            ? "rose"
+            : seedingStatusResult.status.state === "ready"
+              ? "amber"
+              : seedingStatusResult.status.state === "auto_seeded" || seedingStatusResult.status.state === "manual_seeded"
+                ? "emerald"
+                : "neutral"
+        );
+      }
     } catch (error) {
       showAppToast({ tone: "error", text: (error as Error).message });
     } finally {
@@ -837,14 +853,36 @@ export function AdminMatchesClient() {
                 <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Seeding</p>
                 <h3 className="text-lg font-black text-gray-950">Seed knockout from group results</h3>
                 <p className="text-sm font-semibold text-gray-600">
-                  {knockoutSeedStatus.hasKnockoutStarted
-                    ? "Round of 32 matches have already started. Automatic seeding is locked."
-                    : !knockoutSeedStatus.isReady
-                      ? `Finalize all ${knockoutSeedStatus.expectedGroupMatchCount} group-stage matches before seeding the Round of 32.`
-                      : knockoutSeedStatus.hasAnySeeds
-                        ? "Group-stage results are complete and knockout matches already exist. Re-seeding may overwrite current Round of 32 team assignments."
-                        : `All ${knockoutSeedStatus.expectedGroupMatchCount} group-stage matches are final. Round of 32 can now be seeded.`}
+                  {knockoutSeedingStatusText ||
+                    (knockoutSeedStatus.hasKnockoutStarted
+                      ? "Round of 32 matches have already started. Automatic seeding is locked."
+                      : !knockoutSeedStatus.isReady
+                        ? `Finalize all ${knockoutSeedStatus.expectedGroupMatchCount} group-stage matches before seeding the Round of 32.`
+                        : knockoutSeedStatus.hasAnySeeds
+                          ? "Group-stage results are complete and knockout matches already exist. Re-seeding may overwrite current Round of 32 team assignments."
+                          : `All ${knockoutSeedStatus.expectedGroupMatchCount} group-stage matches are final. Round of 32 can now be seeded.`)}
                 </p>
+                {knockoutSeedingStatusText ? (
+                  <p
+                    className={`text-xs font-bold uppercase tracking-wide ${
+                      knockoutSeedingStatusTone === "rose"
+                        ? "text-rose-700"
+                        : knockoutSeedingStatusTone === "amber"
+                          ? "text-amber-700"
+                          : knockoutSeedingStatusTone === "emerald"
+                            ? "text-emerald-700"
+                            : "text-gray-500"
+                    }`}
+                  >
+                    {knockoutSeedingStatusTone === "rose"
+                      ? "Needs admin attention"
+                      : knockoutSeedingStatusTone === "amber"
+                        ? "Ready to seed"
+                        : knockoutSeedingStatusTone === "emerald"
+                          ? "Seed status recorded"
+                          : "Waiting for group completion"}
+                  </p>
+                ) : null}
               </div>
               <div className="shrink-0">
                 <button

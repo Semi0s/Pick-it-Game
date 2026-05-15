@@ -81,32 +81,32 @@ export const COMMERCIAL_TIER_DEFINITIONS: Record<CommercialTier, CommercialTierD
     shortLabel: "C",
     maxGroups: 1,
     maxMembersPerGroup: 20,
-    maxTotalPlayers: null,
-    businessMaxReach: 20
+    maxTotalPlayers: 21,
+    businessMaxReach: 21
   },
   manager: {
     label: "Manager",
     shortLabel: "M",
     maxGroups: 3,
     maxMembersPerGroup: 30,
-    maxTotalPlayers: null,
-    businessMaxReach: 90
+    maxTotalPlayers: 121,
+    businessMaxReach: 121
   },
   director: {
-    label: "League Director",
+    label: "League",
     shortLabel: "L",
     maxGroups: 10,
-    maxMembersPerGroup: 20,
-    maxTotalPlayers: 200,
-    businessMaxReach: 200
+    maxMembersPerGroup: 100,
+    maxTotalPlayers: 1101,
+    businessMaxReach: 1101
   },
   managing_director: {
-    label: "Branded League",
+    label: "League Plus",
     shortLabel: "L+",
-    maxGroups: 30,
+    maxGroups: 25,
     maxMembersPerGroup: 100,
-    maxTotalPlayers: 3000,
-    businessMaxReach: 3000
+    maxTotalPlayers: 3001,
+    businessMaxReach: 3001
   }
 };
 
@@ -199,7 +199,7 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
       accessLevel,
       commercialTier: normalizeCommercialTier(context.planTier),
       label: "Super Admin",
-      shortLabel: "SA",
+      shortLabel: "A",
       limits: {
         maxGroups: null,
         maxMembersPerGroup: null,
@@ -231,15 +231,32 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
     };
   }
 
+  const explicitCommercialTier = normalizeCommercialTier(context.planTier);
   const commercialTier = resolveCommercialTier(context);
   const definition = COMMERCIAL_TIER_DEFINITIONS[commercialTier];
-  const hasLegacyManagerOverride = Boolean(context.managerLimits);
-  const maxGroups = context.managerLimits?.maxGroups ?? definition.maxGroups;
-  const maxMembersPerGroup = context.managerLimits?.maxMembersPerGroup ?? definition.maxMembersPerGroup;
+  const managerTierDefinition = COMMERCIAL_TIER_DEFINITIONS.manager;
+  const looksLikeLegacyManagerCarryover =
+    Boolean(
+      explicitCommercialTier &&
+        explicitCommercialTier !== "manager" &&
+        context.managerLimits &&
+        context.managerLimits.maxGroups <= managerTierDefinition.maxGroups &&
+        context.managerLimits.maxMembersPerGroup <= managerTierDefinition.maxMembersPerGroup
+    );
+  const shouldApplyLegacyManagerOverride = Boolean(
+    context.managerLimits &&
+      (!explicitCommercialTier || explicitCommercialTier === "manager" || !looksLikeLegacyManagerCarryover)
+  );
+  const hasLegacyManagerOverride = shouldApplyLegacyManagerOverride;
+  const maxGroups = shouldApplyLegacyManagerOverride ? context.managerLimits?.maxGroups ?? definition.maxGroups : definition.maxGroups;
+  const maxMembersPerGroup = shouldApplyLegacyManagerOverride
+    ? context.managerLimits?.maxMembersPerGroup ?? definition.maxMembersPerGroup
+    : definition.maxMembersPerGroup;
   const hasOrganizerAccess = commercialTier !== "player";
-  const hasManagerTooling =
-    commercialTier === "manager" || commercialTier === "director" || commercialTier === "managing_director";
   const hasDirectorTooling = commercialTier === "director" || commercialTier === "managing_director";
+  // TODO(league-feature-toggles): if we add persisted per-group trophy/social toggles later,
+  // keep League-level access as the outer gate and layer group-scoped visibility on top.
+  const hasLeagueTrophyTooling = hasDirectorTooling;
 
   return {
     accessLevel,
@@ -260,8 +277,8 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
       canManageMembersAndInvites: hasOrganizerAccess,
       canCreateInviteCode: hasOrganizerAccess,
       canDeactivateInviteCode: hasOrganizerAccess,
-      canManageSocialTrophies: hasManagerTooling,
-      canAwardSocialTrophies: hasManagerTooling,
+      canManageSocialTrophies: hasLeagueTrophyTooling,
+      canAwardSocialTrophies: hasLeagueTrophyTooling,
       canUseDirectorCustomization: hasDirectorTooling,
       canUseManagingDirectorDelegation: false, // TODO(launch): add scoped org delegation once org boundaries exist.
       canPostAnnouncement: false, // TODO(launch): wire this up only when a lightweight pinned message model exists.

@@ -34,6 +34,8 @@ type AppShellProps = {
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TROPHY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_TOAST_DURATION_MS = 4200;
+const TIP_TOAST_DURATION_MS = 6200;
+const ERROR_TOAST_DURATION_MS = 7600;
 const DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-shown:";
 const HELPER_LANGUAGE_CHANGED_EVENT = "pickit:helper-language-changed";
 const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
@@ -165,7 +167,13 @@ export function AppShell({ children }: AppShellProps) {
 
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       setToasts((current) => [...current, { id, tone: detail.tone, text: detail.text }]);
-      dismissToastLater(id, detail.durationMs);
+      const fallbackDuration =
+        detail.tone === "error"
+          ? ERROR_TOAST_DURATION_MS
+          : detail.tone === "tip"
+            ? TIP_TOAST_DURATION_MS
+            : DEFAULT_TOAST_DURATION_MS;
+      dismissToastLater(id, detail.durationMs ?? fallbackDuration);
     };
 
     const handleToast = (event: Event) => {

@@ -83,8 +83,8 @@ const GROUP_PREDICTIONS_MINI_TABLE_GROUP_STORAGE_KEY = "group-predictions-mini-t
 const GROUP_PREDICTIONS_PAGE_SIZE = 10;
 const PREDICTION_SCROLL_STACK_GAP = 20;
 const MATCH_FOCUS_SCROLL_EXTRA_GAP = 16;
-const INTENT_MATCH_SCROLL_EXTRA_GAP = 8;
-const AUTO_PICK_SCROLL_EXTRA_GAP = 8;
+const INTENT_MATCH_SCROLL_EXTRA_GAP = 22;
+const AUTO_PICK_SCROLL_EXTRA_GAP = 24;
 const POST_SAVE_ADVANCE_DELAY_MS = 700;
 const AUTO_PICK_REVEAL_DELAY_MS = 650;
 const DEBUG_GROUPS_ENTRY_SCROLL = process.env.NODE_ENV !== "production";
@@ -167,14 +167,26 @@ const AUTO_PICK_SOURCE_COPY = {
 } as const;
 
 const AUTO_PICK_EMPTY_COPY = {
-  en: "No open matches available right now.",
-  es: "No hay partidos disponibles en este momento."
+  en: "Auto Pick Next Match is no longer available. There are no open matches to fill right now.",
+  es: "Auto Pick Next Match ya no está disponible. No hay partidos abiertos para completar en este momento."
 } as const;
 
 const AUTO_PICK_ALL_SAVED_COPY = {
-  en: "You have already saved every open match. You can still edit any saved pick until kickoff.",
-  es: "Ya guardaste todos los partidos abiertos. Aun puedes editar cualquier pick guardado hasta el inicio del partido."
+  en: "You have already saved every open match. To change one, use the Auto Pick chip on that match card until kickoff.",
+  es: "Ya guardaste todos los partidos abiertos. Para cambiar uno, usa el chip Auto Pick en esa tarjeta hasta el inicio del partido."
 } as const;
+
+function localizeAutoPickMessage(message: string, language: keyof typeof AUTO_PICK_EMPTY_COPY) {
+  if (message === AUTO_PICK_EMPTY_COPY.en) {
+    return AUTO_PICK_EMPTY_COPY[language];
+  }
+
+  if (message === AUTO_PICK_ALL_SAVED_COPY.en) {
+    return AUTO_PICK_ALL_SAVED_COPY[language];
+  }
+
+  return message;
+}
 
 const GROUP_FILTER_ALL_KEY = "all";
 const TEAM_FILTER_ALL_KEY = "all";
@@ -532,7 +544,7 @@ export function GroupPredictions({
     ? "My Next Pick"
     : isKnockoutSeeded
       ? "My Knockout Picks"
-      : "My Results";
+      : "Projected Bracket";
   const selectedTeam = useMemo(
     () => availableTeamsForSelectedGroup.find((team) => team.id === selectedTeamId) ?? null,
     [availableTeamsForSelectedGroup, selectedTeamId]
@@ -1190,12 +1202,7 @@ export function GroupPredictions({
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : AUTO_PICK_EMPTY_COPY[autoPickLanguage];
-      const localizedMessage =
-        message === AUTO_PICK_EMPTY_COPY.en
-          ? AUTO_PICK_EMPTY_COPY[autoPickLanguage]
-          : message === AUTO_PICK_ALL_SAVED_COPY.en
-            ? AUTO_PICK_ALL_SAVED_COPY[autoPickLanguage]
-            : message;
+      const localizedMessage = localizeAutoPickMessage(message, autoPickLanguage);
       showAppToast({
         tone:
           localizedMessage === AUTO_PICK_EMPTY_COPY[autoPickLanguage] ||
@@ -1307,16 +1314,7 @@ export function GroupPredictions({
       return;
     }
 
-    if (isKnockoutSeeded) {
-      router.push("/knockout");
-      return;
-    }
-
-    router.push("/leaderboard");
-    showAppToast({
-      tone: "success",
-      text: "Group picks are complete. Knockout picks will open once the bracket is seeded."
-    });
+    router.push("/knockout");
   }
 
   const handleGroupFilterChange = useCallback(
@@ -1560,7 +1558,7 @@ export function GroupPredictions({
                       className="inline-flex min-h-[88px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-center text-[11px] font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-xs"
                     >
                       <Network aria-hidden className="h-6 w-6 shrink-0 text-accent-dark" />
-                      <span className="leading-tight">My Knockout Picks</span>
+                      <span className="leading-tight">{isKnockoutSeeded ? "My Knockout Picks" : "Projected Bracket"}</span>
                     </Link>
                   ) : null}
                   <Link
@@ -1584,7 +1582,7 @@ export function GroupPredictions({
         ref={stickyControlsRef}
         // Header stays at z-20; this unified cockpit and match-window stack sits beneath it at z-14.
         className="sticky z-[14] -mx-4 bg-white px-4 pb-2 pt-1.5 shadow-[0_12px_22px_-18px_rgba(15,23,42,0.45)] sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
-        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px) + 10px)" }}
+        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px) + 16px)" }}
       >
         <div className="space-y-2">
           <PredictionChoiceRail
@@ -1816,10 +1814,16 @@ export function GroupPredictions({
                           const draft = buildAutoPickDraft(suggestion);
                           triggerAutoPickDraft(draft, { preserveCurrentFilter: true });
                         } catch (error) {
-                          const message =
-                            error instanceof Error ? error.message : AUTO_PICK_EMPTY_COPY[autoPickLanguage];
+                          const message = localizeAutoPickMessage(
+                            error instanceof Error ? error.message : AUTO_PICK_EMPTY_COPY[autoPickLanguage],
+                            autoPickLanguage
+                          );
                           showAppToast({
-                            tone: "error",
+                            tone:
+                              message === AUTO_PICK_EMPTY_COPY[autoPickLanguage] ||
+                              message === AUTO_PICK_ALL_SAVED_COPY[autoPickLanguage]
+                                ? "tip"
+                                : "error",
                             text: message
                           });
                         } finally {

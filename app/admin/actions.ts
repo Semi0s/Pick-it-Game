@@ -40,12 +40,11 @@ import { isKnockoutStage } from "@/lib/match-stage";
 import { appendMatchEvent } from "@/lib/match-events";
 import { syncMatches } from "@/lib/match-sync/syncMatches";
 import {
-  buildGroupStandingsByGroup,
-  buildQualifiedTeamSeeds,
-  parseSeedSource,
-  resolveRoundOf32SeedAssignments,
-  summarizeKnockoutSeedState
-} from "@/lib/knockout-seeding";
+  clearKnockoutSeedingFlags,
+  fetchKnockoutSeedingAdminStatus,
+  seedOfficialKnockoutFromFinalGroupResults,
+  type KnockoutSeedingAdminStatus
+} from "@/lib/knockout-seeding-runtime";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 import {
   ADMIN_RESET_TOOL_DEFINITIONS,
@@ -67,7 +66,7 @@ import {
   rebuildScopedLeaderboardState
 } from "@/lib/scoped-scoring";
 import { DASHBOARD_UI_RESET_EPOCH_SETTING_KEY } from "@/lib/ui-storage-keys";
-import type { MatchNextSlot, MatchStage, Team, UserRole } from "@/lib/types";
+import type { MatchNextSlot, MatchStage, UserRole } from "@/lib/types";
 
 type MatchRow = {
   id: string;
@@ -102,14 +101,6 @@ type PredictionRow = {
   predicted_is_draw: boolean;
   predicted_home_score?: number | null;
   predicted_away_score?: number | null;
-};
-
-type ProjectedBracketPickRow = {
-  user_id: string;
-  match_id: string;
-  predicted_winner_team_id?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
 };
 
 type ScoredPrediction = {
@@ -428,6 +419,7 @@ export type ClearUserTestPredictionsResult =
       ok: true;
       affectedPredictionCount: number;
       affectedBracketPredictionCount: number;
+      affectedProjectedBracketPredictionCount: number;
       affectedLegacyBracketPickCount: number;
       affectedBracketScoreCount: number;
       affectedPredictionScoreCount: number;
@@ -703,6 +695,10 @@ export type SeedKnockoutFromGroupStageResult =
       alreadySeeded?: boolean;
       message: string;
     };
+
+export type KnockoutSeedingStatusResult =
+  | { ok: true; status: KnockoutSeedingAdminStatus }
+  | { ok: false; message: string };
 
 export type AdminGroupSummary = {
   id: string;
@@ -1358,9 +1354,10 @@ export async function deleteUserAndStartOverAction(
   }
 
   if (appUser?.id) {
-    const [predictionsResult, bracketPredictionsResult, legacyBracketPicksResult, sidePicksResult] = await Promise.all([
+    const [predictionsResult, bracketPredictionsResult, projectedBracketPredictionsResult, legacyBracketPicksResult, sidePicksResult] = await Promise.all([
       adminSupabase.from("predictions").select("id", { count: "exact", head: true }).eq("user_id", appUser.id),
       countOptionalGameplayRows(adminSupabase, "bracket_predictions", appUser.id),
+      countOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", appUser.id),
       countOptionalGameplayRows(adminSupabase, "bracket_picks", appUser.id),
       adminSupabase.from("side_picks").select("id", { count: "exact", head: true }).eq("user_id", appUser.id)
     ]);
@@ -1368,15 +1365,17 @@ export async function deleteUserAndStartOverAction(
     const gameplayCount =
       (predictionsResult.count ?? 0) +
       (bracketPredictionsResult.count ?? 0) +
+      (projectedBracketPredictionsResult.count ?? 0) +
       (legacyBracketPicksResult.count ?? 0) +
       (sidePicksResult.count ?? 0);
 
-    if (predictionsResult.error || bracketPredictionsResult.error || legacyBracketPicksResult.error || sidePicksResult.error) {
+    if (predictionsResult.error || bracketPredictionsResult.error || projectedBracketPredictionsResult.error || legacyBracketPicksResult.error || sidePicksResult.error) {
       return {
         ok: false,
         message:
           predictionsResult.error?.message ??
           bracketPredictionsResult.error?.message ??
+          projectedBracketPredictionsResult.error?.message ??
           legacyBracketPicksResult.error?.message ??
           sidePicksResult.error?.message ??
           "Could not inspect the player's gameplay data."
@@ -1467,6 +1466,7 @@ export async function clearUserTestPredictionsAction(
     const [
       predictionsResult,
       bracketPredictionsResult,
+      projectedBracketPredictionsResult,
       legacyBracketPicksResult,
       bracketScoresResult,
       predictionScoresResult,
@@ -1475,6 +1475,7 @@ export async function clearUserTestPredictionsAction(
     ] = await Promise.all([
       adminSupabase.from("predictions").select("id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
       countOptionalGameplayRows(adminSupabase, "bracket_predictions", trimmedUserId),
+      countOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", trimmedUserId),
       countOptionalGameplayRows(adminSupabase, "bracket_picks", trimmedUserId),
       adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
       adminSupabase.from("prediction_scores").select("prediction_id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
@@ -1485,6 +1486,7 @@ export async function clearUserTestPredictionsAction(
     const deletionResults = await Promise.all([
       adminSupabase.from("predictions").delete().eq("user_id", trimmedUserId),
       deleteOptionalGameplayRows(adminSupabase, "bracket_predictions", trimmedUserId),
+      deleteOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", trimmedUserId),
       deleteOptionalGameplayRows(adminSupabase, "bracket_picks", trimmedUserId),
       adminSupabase.from("bracket_scores").delete().eq("user_id", trimmedUserId),
       adminSupabase.from("prediction_scores").delete().eq("user_id", trimmedUserId),
@@ -1514,6 +1516,7 @@ export async function clearUserTestPredictionsAction(
       affectedCounts: {
         predictions: predictionsResult.count ?? 0,
         bracketPredictions: bracketPredictionsResult.count ?? 0,
+        projectedBracketPredictions: projectedBracketPredictionsResult.count ?? 0,
         legacyBracketPicks: legacyBracketPicksResult.count ?? 0,
         bracketScores: bracketScoresResult.count ?? 0,
         predictionScores: predictionScoresResult.count ?? 0,
@@ -1533,6 +1536,7 @@ export async function clearUserTestPredictionsAction(
       ok: true,
       affectedPredictionCount: predictionsResult.count ?? 0,
       affectedBracketPredictionCount: bracketPredictionsResult.count ?? 0,
+      affectedProjectedBracketPredictionCount: projectedBracketPredictionsResult.count ?? 0,
       affectedLegacyBracketPickCount: legacyBracketPicksResult.count ?? 0,
       affectedBracketScoreCount: bracketScoresResult.count ?? 0,
       affectedPredictionScoreCount: predictionScoresResult.count ?? 0,
@@ -2990,6 +2994,7 @@ type KnockoutResetRpcRow = {
   statusBreakdown: Record<string, number>;
   reset_match_count: number;
   deleted_bracket_prediction_count: number;
+  deleted_projected_bracket_prediction_count: number;
   deleted_bracket_score_count: number;
   deleted_legacy_bracket_pick_count: number;
   deleted_prediction_score_count: number;
@@ -3891,6 +3896,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
 
   const [
     bracketPredictionsResult,
+    projectedBracketPredictionsResult,
     legacyBracketPicksResult,
     bracketScoresResult,
     predictionScoresResult,
@@ -3899,6 +3905,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
     userNotificationsResult
   ] = await Promise.all([
     adminSupabase.from("bracket_predictions").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
+    adminSupabase.from("projected_bracket_predictions").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
     countOptionalLegacyBracketPickRows(adminSupabase, knockoutMatchIds),
     adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
     adminSupabase.from("prediction_scores").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
@@ -3911,6 +3918,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
 
   for (const result of [
     bracketPredictionsResult,
+    projectedBracketPredictionsResult,
     legacyBracketPicksResult,
     bracketScoresResult,
     predictionScoresResult,
@@ -3928,6 +3936,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
       ? adminSupabase.from("user_notifications").delete().in("event_id", leaderboardEventIds)
       : Promise.resolve({ error: null }),
     adminSupabase.from("bracket_predictions").delete().in("match_id", knockoutMatchIds),
+    adminSupabase.from("projected_bracket_predictions").delete().in("match_id", knockoutMatchIds),
     deleteOptionalLegacyBracketPickRows(adminSupabase, knockoutMatchIds),
     adminSupabase.from("bracket_scores").delete().in("match_id", knockoutMatchIds),
     adminSupabase.from("prediction_scores").delete().in("match_id", knockoutMatchIds),
@@ -3939,6 +3948,8 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
   if (failedDeletion?.error) {
     throw failedDeletion.error;
   }
+
+  await clearKnockoutSeedingFlags(adminSupabase);
 
   const fullUpdateResult = await adminSupabase
     .from("matches")
@@ -3995,6 +4006,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
     statusBreakdown,
     reset_match_count: (updatedMatches ?? []).length,
     deleted_bracket_prediction_count: bracketPredictionsResult.count ?? 0,
+    deleted_projected_bracket_prediction_count: projectedBracketPredictionsResult.count ?? 0,
     deleted_bracket_score_count: bracketScoresResult.count ?? 0,
     deleted_legacy_bracket_pick_count: legacyBracketPicksResult.count ?? 0,
     deleted_prediction_score_count: predictionScoresResult.count ?? 0,
@@ -4161,6 +4173,7 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
           )
         : Promise.resolve({ error: null }),
       adminSupabase.from("bracket_predictions").delete().in("match_id", knockoutMatchIds),
+      adminSupabase.from("projected_bracket_predictions").delete().in("match_id", knockoutMatchIds),
       deleteOptionalLegacyBracketPickRows(adminSupabase, knockoutMatchIds),
       adminSupabase.from("bracket_scores").delete().in("match_id", knockoutMatchIds),
       adminSupabase.from("prediction_scores").delete().in("match_id", knockoutMatchIds),
@@ -4213,6 +4226,7 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
     }
 
     deletedKnockoutSeedArtifacts = knockoutSeededRowsIfApplicable.length;
+    await clearKnockoutSeedingFlags(adminSupabase);
   }
 
   await updateGroupResetMatches(adminSupabase, groupMatchIds);
@@ -4499,321 +4513,46 @@ function isSchemaColumnMissing(message: string, column: string) {
 export async function seedKnockoutFromGroupStageAction(
   force = false
 ): Promise<SeedKnockoutFromGroupStageResult> {
-  const expectedGroupMatchCount = 72;
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
     return adminCheck;
   }
 
   const adminSupabase = createAdminClient();
-  const [{ data: groupMatches, error: groupMatchesError }, { data: roundOf32Matches, error: roundOf32Error }, { data: teams, error: teamsError }] =
-    await Promise.all([
-      adminSupabase
-        .from("matches")
-        .select("id,stage,group_name,status,home_team_id,away_team_id,home_score,away_score")
-        .eq("stage", "group")
-        .order("kickoff_time", { ascending: true }),
-      adminSupabase
-        .from("matches")
-        .select("id,stage,home_source,away_source,home_team_id,away_team_id,status")
-        .in("stage", ["r32", "round_of_32"])
-        .order("kickoff_time", { ascending: true }),
-      adminSupabase
-        .from("teams")
-        .select("id,name,short_name,group_name,fifa_rank,flag_emoji")
-        .order("group_name", { ascending: true })
-        .order("name", { ascending: true })
-    ]);
+  const result = await seedOfficialKnockoutFromFinalGroupResults(adminSupabase, {
+    force,
+    source: "manual",
+    actorUserId: adminCheck.userId
+  });
 
-  if (groupMatchesError) {
-    return { ok: false, message: groupMatchesError.message };
-  }
-
-  if (roundOf32Error) {
-    return { ok: false, message: roundOf32Error.message };
-  }
-
-  if (teamsError) {
-    return { ok: false, message: teamsError.message };
-  }
-
-  const mappedRoundOf32Matches = ((roundOf32Matches ?? []) as MatchRow[]).map((match) => ({
-    id: match.id,
-    stage: match.stage,
-    homeSource: match.home_source ?? null,
-    awaySource: match.away_source ?? null,
-    homeTeamId: match.home_team_id ?? null,
-    awayTeamId: match.away_team_id ?? null,
-    status: match.status
-  }));
-  const seedState = summarizeKnockoutSeedState(mappedRoundOf32Matches);
-  if (seedState.roundOf32MatchCount === 0) {
-    return { ok: false, message: "Round of 32 placeholder matches are not available yet." };
-  }
-
-  if (seedState.hasKnockoutStarted) {
-    return { ok: false, message: "Knockout seeding is locked because the Round of 32 has already started." };
-  }
-
-  const mappedGroupMatches = ((groupMatches ?? []) as MatchRow[]).map((match) => ({
-    id: match.id,
-    stage: match.stage,
-    groupName: match.group_name ?? null,
-    status: match.status,
-    homeTeamId: match.home_team_id ?? null,
-    awayTeamId: match.away_team_id ?? null,
-    homeScore: match.home_score ?? null,
-    awayScore: match.away_score ?? null
-  }));
-  const finalGroupMatchCount = mappedGroupMatches.filter((match) => match.status === "final").length;
-  if (finalGroupMatchCount < expectedGroupMatchCount) {
-    return {
-      ok: false,
-      message: `Knockout seeding not ready. Finalize all ${expectedGroupMatchCount} group-stage matches before seeding the Round of 32.`
-    };
-  }
-
-  if (seedState.hasAnySeeds && !force) {
-    return {
-      ok: false,
-      alreadySeeded: true,
-      message:
-        "Group-stage results are complete and knockout matches already exist. Re-seeding may overwrite current Round of 32 team assignments."
-    };
-  }
-
-  const mappedTeams: Team[] = ((teams ?? []) as Array<{
-    id: string;
-    name: string;
-    short_name: string;
-    group_name: string;
-    fifa_rank: number | null;
-    flag_emoji: string;
-  }>).map((team) => ({
-    id: team.id,
-    name: team.name,
-    shortName: team.short_name,
-    groupName: team.group_name,
-    fifaRank: team.fifa_rank ?? 0,
-    flagEmoji: team.flag_emoji
-  }));
-
-  console.info("[knockout-seeding:r32-placeholders]", mappedRoundOf32Matches.map((match) => ({
-    id: match.id,
-    stage: match.stage,
-    homeTeamId: match.homeTeamId,
-    awayTeamId: match.awayTeamId,
-    homeSource: match.homeSource,
-    awaySource: match.awaySource
-  })));
-
-  try {
-    const standingsByGroup = buildGroupStandingsByGroup(mappedGroupMatches, mappedTeams);
-    const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(standingsByGroup);
-    console.info("[knockout-seeding:qualifiers]", {
-      groupQualifierKeys: Array.from(automaticQualifiers.keys()),
-      bestThirdPlaceCount: rankedThirdPlaceTeams.length,
-      bestThirdPlaceKeys: rankedThirdPlaceTeams.map((seed) => `Best third-place ${seed.thirdPlaceRank}`)
-    });
-    if (rankedThirdPlaceTeams.length < 8) {
-      return { ok: false, message: "Could not determine all eight best third-place qualifiers." };
-    }
-
-    const slotDiagnostics = mappedRoundOf32Matches.flatMap((match) => [
-      { matchId: match.id, side: "home" as const, rawSource: match.homeSource ?? null, parsedSource: parseSeedSource(match.homeSource) },
-      { matchId: match.id, side: "away" as const, rawSource: match.awaySource ?? null, parsedSource: parseSeedSource(match.awaySource) }
-    ]);
-    console.info("[knockout-seeding:source-parse]", slotDiagnostics.map((slot) => ({
-      matchId: slot.matchId,
-      side: slot.side,
-      rawSource: slot.rawSource,
-      parsedSource: slot.parsedSource
-    })));
-
-    const assignments = resolveRoundOf32SeedAssignments(
-      mappedRoundOf32Matches,
-      automaticQualifiers,
-      rankedThirdPlaceTeams
-    );
-
-    if (assignments.length !== seedState.roundOf32MatchCount) {
-      const totalSourceSlots = mappedRoundOf32Matches.length * 2;
-      const parsedSourceSlots = slotDiagnostics.filter((slot) => slot.parsedSource !== null).length;
-      const unresolvedSourceExamples = slotDiagnostics
-        .filter((slot) => slot.parsedSource === null && slot.rawSource)
-        .slice(0, 6)
-        .map((slot) => slot.rawSource);
-      return {
-        ok: false,
-        message: `Could not seed Round of 32. Found ${seedState.roundOf32MatchCount} matches and ${totalSourceSlots} source slots, parsed ${parsedSourceSlots}, and resolved ${assignments.length} match assignments. Example unresolved sources: ${unresolvedSourceExamples.length > 0 ? unresolvedSourceExamples.join(", ") : "none"}.`
-      };
-    }
-
-    const seededAt = new Date().toISOString();
-    const writeResults = await Promise.all(
-      assignments.map(async (assignment) => {
-        const { error } = await adminSupabase
-          .from("matches")
-          .update({
-            home_team_id: assignment.homeTeamId,
-            away_team_id: assignment.awayTeamId,
-            updated_at: seededAt
-          })
-          .eq("id", assignment.matchId);
-
-        return { matchId: assignment.matchId, error };
-      })
-    );
-
-    const failedWrite = writeResults.find((result) => result.error);
-    if (failedWrite?.error) {
-      return { ok: false, message: failedWrite.error.message };
-    }
-
-    const migratedProjectedPicks = await migrateProjectedRoundOf32Picks(
-      adminSupabase,
-      assignments.map((assignment) => ({
-        matchId: assignment.matchId,
-        homeTeamId: assignment.homeTeamId,
-        awayTeamId: assignment.awayTeamId
-      }))
-    );
-
-    console.info("Knockout seeded from group results", {
-      adminUserId: adminCheck.userId,
-      forced: force,
-      seededAt,
-      projectedPickMigration: migratedProjectedPicks,
-      assignments: assignments.map((assignment) => ({
-        matchId: assignment.matchId,
-        homeSource: assignment.homeSource,
-        awaySource: assignment.awaySource,
-        homeTeamId: assignment.homeTeamId,
-        awayTeamId: assignment.awayTeamId
-      }))
-    });
-
+  if (result.ok) {
     revalidatePath("/");
     revalidatePath("/knockout");
     revalidatePath("/leaderboard");
     revalidatePath("/predictions");
     revalidatePath("/admin");
     revalidatePath("/admin/matches");
-
-    return {
-      ok: true,
-      seededMatches: assignments.length,
-      alreadySeeded: seedState.hasAnySeeds,
-      forced: force,
-      message: force
-        ? `Knockout reseeded from final group results across ${assignments.length} Round of 32 matches${migratedProjectedPicks.migrated > 0 ? ` and migrated ${migratedProjectedPicks.migrated} projected picks` : ""}.`
-        : `Knockout seeded from final group results across ${assignments.length} Round of 32 matches${migratedProjectedPicks.migrated > 0 ? ` and migrated ${migratedProjectedPicks.migrated} projected picks` : ""}.`
-    };
-  } catch (error) {
-    return { ok: false, message: (error as Error).message };
   }
+
+  return result;
 }
 
-async function migrateProjectedRoundOf32Picks(
-  adminSupabase: ReturnType<typeof createAdminClient>,
-  assignments: Array<{
-    matchId: string;
-    homeTeamId: string;
-    awayTeamId: string;
-  }>
-) {
-  const matchIds = assignments.map((assignment) => assignment.matchId);
-  if (matchIds.length === 0) {
-    return { migrated: 0, skippedExisting: 0, skippedUnsafe: 0, sourceRows: 0 };
+export async function fetchKnockoutSeedingStatusAction(): Promise<KnockoutSeedingStatusResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
   }
 
-  const [{ data: existingPredictions, error: existingPredictionsError }, legacyProjectedPicksResult] = await Promise.all([
-    adminSupabase
-      .from("bracket_predictions")
-      .select("user_id,match_id")
-      .in("match_id", matchIds),
-    adminSupabase
-      .from("bracket_picks")
-      .select("user_id,match_id,predicted_winner_team_id,created_at,updated_at")
-      .in("match_id", matchIds)
-  ]);
-
-  if (existingPredictionsError) {
-    throw existingPredictionsError;
+  try {
+    const adminSupabase = createAdminClient();
+    const status = await fetchKnockoutSeedingAdminStatus(adminSupabase);
+    return { ok: true, status };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load knockout seeding status."
+    };
   }
-
-  if (legacyProjectedPicksResult.error) {
-    if (isMissingRelationError(legacyProjectedPicksResult.error.message, "public.bracket_picks")) {
-      return { migrated: 0, skippedExisting: 0, skippedUnsafe: 0, sourceRows: 0 };
-    }
-
-    throw legacyProjectedPicksResult.error;
-  }
-
-  const existingKeys = new Set(
-    ((existingPredictions ?? []) as Array<{ user_id: string; match_id: string }>).map(
-      (prediction) => `${prediction.user_id}:${prediction.match_id}`
-    )
-  );
-  const officialTeamsByMatchId = new Map(
-    assignments.map((assignment) => [
-      assignment.matchId,
-      new Set([assignment.homeTeamId, assignment.awayTeamId])
-    ])
-  );
-  const projectedPickRows = (legacyProjectedPicksResult.data ?? []) as ProjectedBracketPickRow[];
-  const now = new Date().toISOString();
-
-  let skippedExisting = 0;
-  let skippedUnsafe = 0;
-  const rowsToInsert: Array<{
-    user_id: string;
-    match_id: string;
-    predicted_winner_team_id: string;
-    created_at: string;
-    updated_at: string;
-  }> = [];
-
-  for (const projectedPick of projectedPickRows) {
-    const existingKey = `${projectedPick.user_id}:${projectedPick.match_id}`;
-    if (existingKeys.has(existingKey)) {
-      skippedExisting += 1;
-      continue;
-    }
-
-    const officialTeams = officialTeamsByMatchId.get(projectedPick.match_id);
-    const pickedTeamId = projectedPick.predicted_winner_team_id ?? null;
-    if (!officialTeams || !pickedTeamId || !officialTeams.has(pickedTeamId)) {
-      skippedUnsafe += 1;
-      continue;
-    }
-
-    rowsToInsert.push({
-      user_id: projectedPick.user_id,
-      match_id: projectedPick.match_id,
-      predicted_winner_team_id: pickedTeamId,
-      created_at: projectedPick.created_at ?? now,
-      updated_at: projectedPick.updated_at ?? now
-    });
-    existingKeys.add(existingKey);
-  }
-
-  if (rowsToInsert.length > 0) {
-    const { error } = await adminSupabase
-      .from("bracket_predictions")
-      .upsert(rowsToInsert, { onConflict: "user_id,match_id", ignoreDuplicates: true });
-
-    if (error) {
-      throw error;
-    }
-  }
-
-  return {
-    migrated: rowsToInsert.length,
-    skippedExisting,
-    skippedUnsafe,
-    sourceRows: projectedPickRows.length
-  };
 }
 
 export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMatchResult> {
@@ -4881,6 +4620,11 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
   if (!leaderboardEventsResult.ok) {
     return leaderboardEventsResult;
   }
+
+  await seedOfficialKnockoutFromFinalGroupResults(adminSupabase, {
+    source: "auto",
+    actorUserId: adminCheck.userId
+  });
 
   revalidatePath("/");
   revalidatePath("/leaderboard");
@@ -6823,7 +6567,7 @@ async function countOptionalLegacyBracketPickRows(
 
 async function countOptionalGameplayRows(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  tableName: "bracket_predictions" | "bracket_picks",
+  tableName: "bracket_predictions" | "projected_bracket_predictions" | "bracket_picks",
   userId: string
 ) {
   const result = await adminSupabase.from(tableName).select("id", { count: "exact", head: true }).eq("user_id", userId);
@@ -6836,7 +6580,7 @@ async function countOptionalGameplayRows(
 
 async function deleteOptionalGameplayRows(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  tableName: "bracket_predictions" | "bracket_picks",
+  tableName: "bracket_predictions" | "projected_bracket_predictions" | "bracket_picks",
   userId: string
 ) {
   const result = await adminSupabase.from(tableName).delete().eq("user_id", userId);

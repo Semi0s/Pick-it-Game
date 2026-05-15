@@ -27,7 +27,7 @@ export const ADMIN_RESET_TOOL_DEFINITIONS: Record<string, AdminRecoveryToolDefin
   clear_user_test_predictions: {
     actionKey: "clear_user_test_predictions",
     scope: "user",
-    clears: ["predictions", "prediction_scores", "bracket_predictions", "bracket_scores", "user leaderboard rows"],
+    clears: ["predictions", "prediction_scores", "bracket_predictions", "projected_bracket_predictions", "bracket_scores", "user leaderboard rows"],
     preserves: ["account", "profile", "memberships", "groups"],
     shouldAlsoClear: ["legacy bracket picks", "event-backed notifications", "stale leaderboard snapshots"],
     bumpsResetEpoch: true,
@@ -71,7 +71,7 @@ export const ADMIN_RESET_TOOL_DEFINITIONS: Record<string, AdminRecoveryToolDefin
   reset_knockout_test_data: {
     actionKey: "reset_knockout_test_data",
     scope: "knockout",
-    clears: ["seeded knockout teams", "bracket predictions", "bracket scores", "knockout leaderboard rows"],
+    clears: ["seeded knockout teams", "bracket predictions", "projected bracket predictions", "bracket scores", "knockout leaderboard rows"],
     preserves: ["group-stage predictions", "group-stage match schedule"],
     shouldAlsoClear: ["legacy projected picks", "stale downstream winners", "stale seeded/open state"],
     bumpsResetEpoch: true,

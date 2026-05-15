@@ -7,13 +7,10 @@ type DismissibleHelperTextProps = {
   storageKey: string;
   children: ReactNode;
   dismissLabel?: string;
+  onDismissedChange?: (dismissed: boolean) => void;
 };
 
-export function DismissibleHelperText({
-  storageKey,
-  children,
-  dismissLabel = "Hide tip"
-}: DismissibleHelperTextProps) {
+export function useDismissedHelperState(storageKey: string) {
   const [isDismissed, setIsDismissed] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
 
@@ -27,7 +24,24 @@ export function DismissibleHelperText({
     }
   }, [storageKey]);
 
-  if (hasHydrated && isDismissed) {
+  return { isDismissed, hasHydrated, setIsDismissed };
+}
+
+export function DismissibleHelperText({
+  storageKey,
+  children,
+  dismissLabel = "Hide tip",
+  onDismissedChange
+}: DismissibleHelperTextProps) {
+  const { isDismissed, hasHydrated, setIsDismissed } = useDismissedHelperState(storageKey);
+
+  useEffect(() => {
+    if (hasHydrated) {
+      onDismissedChange?.(isDismissed);
+    }
+  }, [hasHydrated, isDismissed, onDismissedChange]);
+
+  if (!hasHydrated || isDismissed) {
     return null;
   }
 

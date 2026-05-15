@@ -39,7 +39,7 @@ export function getRoleBadgeLabel(role: string | null | undefined) {
   const normalizedRole = role.trim().toLowerCase().replace(/[_\s-]+/g, " ");
 
   if (normalizedRole === "super admin" || normalizedRole === "super_admin") {
-    return "SA";
+    return "A";
   }
 
   if (normalizedRole === "manager") {

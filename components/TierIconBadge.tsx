@@ -1,15 +1,14 @@
 "use client";
 
-import Image from "next/image";
 import { getAccessLevelDisplayLabel, type AccessLevel } from "@/lib/tier-access";
 
-const TIER_ICON_MAP: Record<AccessLevel, string> = {
-  player: "/images/tier-icons/PlayerLevel_icon.png",
-  captain: "/images/tier-icons/CaptainLevel_icon.png",
-  manager: "/images/tier-icons/ManagerLevel_icon.png",
-  director: "/images/tier-icons/DirectorLevel_icon.png",
-  managing_director: "/images/tier-icons/ManagingDirectorLevel_icon.png",
-  super_admin: "/images/tier-icons/captain-pass-icon.png"
+const TIER_CODE_MAP: Record<AccessLevel, string> = {
+  player: "P",
+  captain: "C",
+  manager: "M",
+  director: "L",
+  managing_director: "L+",
+  super_admin: "A"
 };
 
 export function getTierBadgeLabel(accessLevel: AccessLevel) {
@@ -18,7 +17,7 @@ export function getTierBadgeLabel(accessLevel: AccessLevel) {
 
 export function TierIconBadge({
   accessLevel,
-  size = 24,
+  size = 18,
   className,
   title
 }: {
@@ -29,20 +28,28 @@ export function TierIconBadge({
 }) {
   const defaultLabel = getTierBadgeLabel(accessLevel);
   const label = title ?? defaultLabel;
+  const code = TIER_CODE_MAP[accessLevel];
+  const toneClass =
+    accessLevel === "super_admin"
+      ? "border-amber-300 bg-amber-50 text-amber-800"
+      : "border-green-200 bg-green-50 text-green-700";
+  const compactWidth = code.length > 1 ? 24 : 18;
+  const compactHeight = 18;
 
   return (
     <span
-      className={className ?? "inline-flex shrink-0 items-center justify-center"}
+      className={
+        className ??
+        `inline-flex shrink-0 items-center justify-center rounded-md border px-1.5 py-0.5 text-[10px] font-black leading-none ${toneClass}`
+      }
       title={label}
       aria-label={label}
+      style={{
+        minWidth: `${Math.max(compactWidth, Math.round(size * 0.75))}px`,
+        minHeight: `${Math.max(compactHeight, Math.round(size * 0.75))}px`
+      }}
     >
-      <Image
-        src={TIER_ICON_MAP[accessLevel]}
-        alt={label}
-        width={size}
-        height={size}
-        className="h-auto w-auto object-contain"
-      />
+      {code}
     </span>
   );
 }

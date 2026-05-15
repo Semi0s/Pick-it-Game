@@ -25,7 +25,6 @@ import {
   getEffectiveManagedGroupLimit,
   getEffectiveMembershipLimitForGroup,
   hasDirectorAccess,
-  hasManagerAccess,
   isAtOrOverManagedGroupLimit,
   normalizeCommercialTier,
   resolveTierAccess,
@@ -1465,8 +1464,8 @@ export async function createManagedGroupTrophyAction(
       isGroupManager: true
     };
 
-    if (!hasManagerAccess(currentUser.accessLevel) || !canAwardSocialTrophy(currentUser, relation)) {
-      return { ok: false, message: "Custom group trophies are manager-only right now." };
+    if (!hasDirectorAccess(currentUser.accessLevel) || !canAwardSocialTrophy(currentUser, relation)) {
+      return { ok: false, message: "Custom group trophies are only available for League organizers right now." };
     }
 
     if (currentUser.role !== "admin" && !managerCustomTrophiesEnabled) {
@@ -1574,8 +1573,8 @@ export async function awardManagedGroupTrophyAction(
       isGroupManager: true
     };
 
-    if (!canAwardSocialTrophy(currentUser, relation)) {
-      return { ok: false, message: "Awarding trophies is manager-only right now." };
+    if (!hasDirectorAccess(currentUser.accessLevel) || !canAwardSocialTrophy(currentUser, relation)) {
+      return { ok: false, message: "Awarding custom group trophies is only available for League organizers right now." };
     }
 
     if (trimmedUserId === currentUser.userId && currentUser.role !== "admin") {

@@ -108,7 +108,7 @@ create table public.matches (
 create table public.match_events (
   id uuid primary key default gen_random_uuid(),
   match_id text not null references public.matches(id) on delete cascade,
-  event_type text not null check (event_type in ('sync', 'finalize', 'override', 'reopen', 'lock')),
+  event_type text not null check (event_type in ('sync', 'finalize', 'override', 'reopen', 'lock', 'batch_test_finalize', 'seed')),
   payload jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
@@ -145,6 +145,24 @@ create table public.bracket_predictions (
     predicted_home_score is null or predicted_home_score >= 0
   ),
   constraint bracket_predictions_away_score_nonnegative check (
+    predicted_away_score is null or predicted_away_score >= 0
+  )
+);
+
+create table public.projected_bracket_predictions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  match_id text not null references public.matches(id) on delete cascade,
+  predicted_home_score integer,
+  predicted_away_score integer,
+  predicted_winner_team_id text not null references public.teams(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, match_id),
+  constraint projected_bracket_predictions_home_score_nonnegative check (
+    predicted_home_score is null or predicted_home_score >= 0
+  ),
+  constraint projected_bracket_predictions_away_score_nonnegative check (
     predicted_away_score is null or predicted_away_score >= 0
   )
 );
@@ -599,6 +617,12 @@ create index bracket_predictions_user_updated_idx
 
 create index bracket_predictions_match_id_idx
   on public.bracket_predictions (match_id);
+
+create index projected_bracket_predictions_user_updated_idx
+  on public.projected_bracket_predictions (user_id, updated_at desc);
+
+create index projected_bracket_predictions_match_id_idx
+  on public.projected_bracket_predictions (match_id);
 
 create index bracket_scores_user_scored_idx
   on public.bracket_scores (user_id, scored_at desc);
@@ -1570,7 +1594,10 @@ values
   ('daily_winner_enabled', false, null),
   ('perfect_pick_enabled', false, null),
   ('leaderboard_activity_enabled', false, null),
-  ('max_joined_groups_per_player', false, 10)
+  ('max_joined_groups_per_player', false, 10),
+  ('knockout_auto_seed_attempted', false, null),
+  ('knockout_auto_seeded', false, null),
+  ('knockout_manual_seeded', false, null)
 on conflict (key) do nothing;
 
 alter table public.invites enable row level security;
@@ -1579,6 +1606,7 @@ alter table public.teams enable row level security;
 alter table public.matches enable row level security;
 alter table public.predictions enable row level security;
 alter table public.bracket_predictions enable row level security;
+alter table public.projected_bracket_predictions enable row level security;
 alter table public.bracket_scores enable row level security;
 alter table public.side_picks enable row level security;
 alter table public.side_pick_packages enable row level security;
@@ -1685,6 +1713,11 @@ on public.bracket_predictions for select
 to authenticated
 using (public.is_admin());
 
+create policy "Admins can read all projected bracket predictions"
+on public.projected_bracket_predictions for select
+to authenticated
+using (public.is_admin());
+
 create policy "Admins can read all bracket scores"
 on public.bracket_scores for select
 to authenticated
@@ -1783,6 +1816,12 @@ with check (public.is_admin());
 
 create policy "Users manage own bracket predictions"
 on public.bracket_predictions for all
+to authenticated
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
+
+create policy "Users manage own projected bracket predictions"
+on public.projected_bracket_predictions for all
 to authenticated
 using (user_id = auth.uid())
 with check (user_id = auth.uid());
@@ -2593,6 +2632,7 @@ revoke all on public.manager_limits from anon, authenticated, public;
 revoke all on public.group_members from anon, authenticated, public;
 revoke all on public.group_invites from anon, authenticated, public;
 revoke all on public.bracket_predictions from anon, authenticated, public;
+revoke all on public.projected_bracket_predictions from anon, authenticated, public;
 revoke all on public.bracket_scores from anon, authenticated, public;
 revoke all on public.match_probability_snapshots from anon, authenticated, public;
 revoke all on public.app_updates from anon, authenticated, public;
@@ -2626,6 +2666,7 @@ grant select on public.manager_limits to authenticated;
 grant select, insert, update, delete on public.group_members to authenticated;
 grant select, insert, update, delete on public.group_invites to authenticated;
 grant select, insert, update, delete on public.bracket_predictions to authenticated;
+grant select, insert, update, delete on public.projected_bracket_predictions to authenticated;
 grant select on public.bracket_scores to authenticated;
 grant select on public.match_probability_snapshots to authenticated;
 grant select on public.app_updates to authenticated;
@@ -2659,6 +2700,7 @@ grant select, insert, update, delete on public.manager_limits to service_role;
 grant select, insert, update, delete on public.group_members to service_role;
 grant select, insert, update, delete on public.group_invites to service_role;
 grant select, insert, update, delete on public.bracket_predictions to service_role;
+grant select, insert, update, delete on public.projected_bracket_predictions to service_role;
 grant select, insert, update, delete on public.bracket_scores to service_role;
 grant select, insert, update, delete on public.match_probability_snapshots to service_role;
 grant select, insert, update, delete on public.app_updates to service_role;
