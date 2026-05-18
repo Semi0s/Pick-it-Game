@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   createAccessCodeAction,
   fetchAccessCodeGroupsAction,
@@ -13,9 +14,13 @@ import { formatDateTimeWithZone } from "@/lib/date-time";
 import { showAppToast } from "@/lib/app-toast";
 import {
   ActionButton,
+  InlineDisclosureButton,
   ManagementBadge,
   ManagementCard,
-  ManagementEmptyState
+  ManagementEmptyState,
+  ManagementSection,
+  ManagementToolbar,
+  useSessionDisclosureState
 } from "@/components/player-management/Shared";
 
 export function AdminAccessCodesSection() {
@@ -32,6 +37,7 @@ export function AdminAccessCodesSection() {
   const [expiresAt, setExpiresAt] = useState("");
   const [groupId, setGroupId] = useState("");
   const [language, setLanguage] = useState<"en" | "es">("en");
+  const [searchValue, setSearchValue] = useState("");
 
   useEffect(() => {
     void load();
@@ -120,6 +126,22 @@ export function AdminAccessCodesSection() {
       showAppToast({ tone: "error", text: "Could not copy that code right now." });
     }
   }
+
+  const normalizedQuery = searchValue.trim().toLowerCase();
+  const filteredCodes = codes.filter((accessCode) => {
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    return (
+      accessCode.code.toLowerCase().includes(normalizedQuery) ||
+      accessCode.label.toLowerCase().includes(normalizedQuery) ||
+      (accessCode.groupName ?? "").toLowerCase().includes(normalizedQuery) ||
+      accessCode.redemptions.some((redemption) => redemption.email.toLowerCase().includes(normalizedQuery))
+    );
+  });
+  const activeCodes = filteredCodes.filter((accessCode) => accessCode.active);
+  const recentCodes = filteredCodes.filter((accessCode) => !accessCode.active);
 
   return (
     <div className="space-y-5">
@@ -231,81 +253,178 @@ export function AdminAccessCodesSection() {
         </form>
       </ManagementCard>
 
-      <section className="space-y-3">
-        <h3 className="text-xl font-black">Active and recent access codes</h3>
+      <ManagementToolbar
+        searchValue={searchValue}
+        onSearchChange={setSearchValue}
+        filterValue="all"
+        onFilterChange={() => {}}
+        filters={[{ value: "all", label: "All access codes" }]}
+        className="sticky top-20 z-10 shadow-sm"
+      />
+
+      <ManagementSection
+        title="Active Access Codes"
+        description="Compact live codes for quick copy, review, and deactivation."
+        storageKey="admin-access-codes:active-section"
+        defaultOpen
+        badge={<ManagementBadge label={`${activeCodes.length} active`} tone="accent" />}
+      >
         {isLoading ? <ManagementEmptyState message="Loading access codes..." /> : null}
-        {!isLoading && codes.length === 0 ? <ManagementEmptyState message="No access codes yet." /> : null}
+        {!isLoading && activeCodes.length === 0 ? <ManagementEmptyState message="No active access codes match the current search." /> : null}
         {!isLoading
-          ? codes.map((accessCode) => (
-              <ManagementCard
+          ? activeCodes.map((accessCode) => (
+              <AccessCodeSummaryCard
                 key={accessCode.id}
-                title={accessCode.label}
-                subtitle={accessCode.code}
-                badges={
-                  <>
-                    <ManagementBadge label={accessCode.active ? "active" : "inactive"} tone={accessCode.active ? "success" : "neutral"} />
-                    <ManagementBadge
-                      label={
-                        accessCode.maxUses != null
-                          ? `${accessCode.usedCount}/${accessCode.maxUses} uses`
-                          : `${accessCode.usedCount} uses`
-                      }
-                      tone="warning"
-                    />
-                    {accessCode.groupName ? <ManagementBadge label={accessCode.groupName} tone="accent" /> : null}
-                  </>
-                }
-              >
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleCopy(accessCode.code)}
-                    className="inline-flex rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-                  >
-                    Copy code
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleToggle(accessCode.id, !accessCode.active)}
-                    disabled={activeKey === accessCode.id}
-                    className="inline-flex rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:opacity-60"
-                  >
-                    {activeKey === accessCode.id
-                      ? "Saving..."
-                      : accessCode.active
-                        ? "Deactivate"
-                        : "Activate"}
-                  </button>
-                </div>
-
-                <div className="mt-3 space-y-1 text-sm font-semibold text-gray-600">
-                  {accessCode.notes ? <p>{accessCode.notes}</p> : null}
-                  <p>Role: Player</p>
-                  <p>Language: {accessCode.defaultLanguage.toUpperCase()}</p>
-                  <p>
-                    Expires:{" "}
-                    {accessCode.expiresAt ? formatDateTimeWithZone(accessCode.expiresAt) : "No expiration"}
-                  </p>
-                  <p>Updated: {formatDateTimeWithZone(accessCode.updatedAt)}</p>
-                </div>
-
-                {accessCode.redemptions.length > 0 ? (
-                  <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
-                    <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Redeemed by</p>
-                    <div className="mt-2 space-y-2">
-                      {accessCode.redemptions.map((redemption) => (
-                        <div key={redemption.id} className="flex flex-wrap items-center justify-between gap-2 text-sm font-semibold text-gray-700">
-                          <span>{redemption.email}</span>
-                          <span className="text-xs text-gray-500">{formatDateTimeWithZone(redemption.redeemedAt)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </ManagementCard>
+                accessCode={accessCode}
+                isPending={activeKey === accessCode.id}
+                onCopy={() => void handleCopy(accessCode.code)}
+                onToggle={() => void handleToggle(accessCode.id, !accessCode.active)}
+              />
             ))
           : null}
-      </section>
+      </ManagementSection>
+
+      <ManagementSection
+        title="Recent Access Codes"
+        description="Inactive or older codes stay compact until you need the full context."
+        storageKey="admin-access-codes:recent-section"
+        defaultOpen={false}
+        badge={<ManagementBadge label={`${recentCodes.length} recent`} tone="neutral" />}
+      >
+        {isLoading ? <ManagementEmptyState message="Loading access codes..." /> : null}
+        {!isLoading && recentCodes.length === 0 ? <ManagementEmptyState message="No recent inactive codes match the current search." /> : null}
+        {!isLoading
+          ? recentCodes.map((accessCode) => (
+              <AccessCodeSummaryCard
+                key={accessCode.id}
+                accessCode={accessCode}
+                isPending={activeKey === accessCode.id}
+                onCopy={() => void handleCopy(accessCode.code)}
+                onToggle={() => void handleToggle(accessCode.id, !accessCode.active)}
+              />
+            ))
+          : null}
+      </ManagementSection>
+    </div>
+  );
+}
+
+function AccessCodeSummaryCard({
+  accessCode,
+  isPending,
+  onCopy,
+  onToggle
+}: {
+  accessCode: AdminAccessCode;
+  isPending: boolean;
+  onCopy: () => void;
+  onToggle: () => void;
+}) {
+  const [isOpen, setIsOpen] = useSessionDisclosureState(`admin-access-code:${accessCode.id}`, false);
+  const recentActivity = accessCode.redemptions[0]?.redeemedAt ?? accessCode.updatedAt;
+
+  return (
+    <ManagementCard
+      title={
+        <div className="min-w-0">
+          <p className="truncate text-base font-black text-gray-950">{accessCode.label}</p>
+          <p className="truncate text-xs font-semibold uppercase tracking-wide text-gray-500">{maskCode(accessCode.code)}</p>
+        </div>
+      }
+      subtitle={`${accessCode.groupName ?? "No group"} · ${accessCode.redemptions.length} redeemed`}
+      badges={
+        <>
+          <ManagementBadge label={accessCode.active ? "active" : "inactive"} tone={accessCode.active ? "success" : "neutral"} />
+          <ManagementBadge
+            label={accessCode.maxUses != null ? `${accessCode.usedCount}/${accessCode.maxUses} uses` : `${accessCode.usedCount} uses`}
+            tone="warning"
+          />
+          {accessCode.expiresAt ? <ManagementBadge label={`Expires ${formatDateTimeWithZone(accessCode.expiresAt)}`} tone="neutral" /> : null}
+        </>
+      }
+      headerActions={
+        <InlineDisclosureButton
+          isOpen={isOpen}
+          variant="subtle"
+          onClick={() => setIsOpen((current) => !current)}
+        />
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <SummaryDatum label="Code" value={maskCode(accessCode.code)} />
+        <SummaryDatum label="Group" value={accessCode.groupName ?? "Unassigned"} />
+        <SummaryDatum label="Owner" value={accessCode.ownerName ?? accessCode.ownerEmail ?? "Unknown"} />
+        <SummaryDatum label="Recent activity" value={formatDateTimeWithZone(recentActivity)} />
+      </div>
+
+      {isOpen ? (
+        <>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onCopy}
+              className="inline-flex rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+            >
+              Copy code
+            </button>
+            <button
+              type="button"
+              onClick={onToggle}
+              disabled={isPending}
+              className="inline-flex rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:opacity-60"
+            >
+              {isPending ? "Saving..." : accessCode.active ? "Deactivate" : "Activate"}
+            </button>
+            {accessCode.groupId ? (
+              <Link
+                href="/admin/groups"
+                className="inline-flex rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+              >
+                View group
+              </Link>
+            ) : null}
+          </div>
+
+          <div className="mt-3 space-y-1 text-sm font-semibold text-gray-600">
+            {accessCode.notes ? <p>{accessCode.notes}</p> : null}
+            <p>Owner: {accessCode.ownerName ?? accessCode.ownerEmail ?? "Unknown"}</p>
+            <p>Language: {accessCode.defaultLanguage.toUpperCase()}</p>
+            <p>Created: {formatDateTimeWithZone(accessCode.createdAt)}</p>
+            <p>Updated: {formatDateTimeWithZone(accessCode.updatedAt)}</p>
+          </div>
+
+          {accessCode.redemptions.length > 0 ? (
+            <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Redeemed by</p>
+              <div className="mt-2 space-y-2">
+                {accessCode.redemptions.map((redemption) => (
+                  <div key={redemption.id} className="flex flex-wrap items-center justify-between gap-2 text-sm font-semibold text-gray-700">
+                    <span>{redemption.email}</span>
+                    <span className="text-xs text-gray-500">{formatDateTimeWithZone(redemption.redeemedAt)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </ManagementCard>
+  );
+}
+
+function maskCode(code: string) {
+  if (code.length <= 6) {
+    return code;
+  }
+
+  return `${code.slice(0, 4)}••${code.slice(-2)}`;
+}
+
+function SummaryDatum({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-gray-50 px-3 py-2">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-gray-900">{value}</p>
     </div>
   );
 }

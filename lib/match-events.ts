@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 type AdminSupabaseClient = ReturnType<typeof createAdminClient>;
 
-export type MatchEventType = "sync" | "finalize" | "override" | "reopen" | "lock" | "batch_test_finalize";
+export type MatchEventType = "sync" | "finalize" | "override" | "reopen" | "lock" | "batch_test_finalize" | "seed";
 
 export async function appendMatchEvent(
   adminSupabase: AdminSupabaseClient,

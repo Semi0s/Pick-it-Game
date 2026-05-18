@@ -1,4 +1,3 @@
-import { getAccessLevel, type AccessLevel } from "@/lib/access-levels";
 import { fetchLeaderboardFeatureSettings, type LeaderboardFeatureSettings } from "@/lib/app-settings";
 import {
   fetchGroupLeaderboardActivity,
@@ -16,7 +15,8 @@ import {
   fetchPerfectPickUserIdsForLatestFinalizedMatch,
   type DailyWinner
 } from "@/lib/leaderboard-highlights";
-import { isMissingAnyRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
+import { isMissingAnyRelationError, isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
+import { hasOrganizerAccess, normalizeCommercialTier, resolveAccessLevel, type AccessLevel } from "@/lib/tier-access";
 import type { UserProfile, UserTrophy } from "@/lib/types";
 
 type UserRow = {
@@ -26,6 +26,7 @@ type UserRow = {
   avatar_url?: string | null;
   home_team_id?: string | null;
   role: UserProfile["role"];
+  plan_tier?: string | null;
   total_points: number;
 };
 
@@ -63,6 +64,8 @@ type GroupMemberRow = {
 
 type ManagerLimitRow = {
   user_id: string;
+  max_groups?: number | null;
+  max_members_per_group?: number | null;
 };
 
 type UserTrophyRow = {
@@ -566,18 +569,24 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
   }
 
   const adminSupabase = createAdminClient();
-  const [{ data: profile, error: profileError }, { data: managerLimit }] = await Promise.all([
-    adminSupabase.from("users").select("id,role").eq("id", user.id).maybeSingle(),
-    adminSupabase.from("manager_limits").select("user_id").eq("user_id", user.id).maybeSingle()
+  const [{ profile, profileError }, managerLimit] = await Promise.all([
+    fetchLeaderboardViewerProfile(adminSupabase, user.id),
+    fetchLeaderboardManagerLimit(adminSupabase, user.id)
   ]);
 
   if (profileError) {
     throw new Error(profileError.message);
   }
 
-  const accessLevel = getAccessLevel({
+  const accessLevel = resolveAccessLevel({
     role: (profile?.role as UserProfile["role"] | undefined) ?? "player",
-    accessLevel: managerLimit ? "manager" : profile?.role === "admin" ? "super_admin" : "player"
+    planTier: (profile as { plan_tier?: string | null } | null)?.plan_tier ?? null,
+    managerLimits: managerLimit
+      ? {
+          maxGroups: (managerLimit as ManagerLimitRow).max_groups ?? 3,
+          maxMembersPerGroup: (managerLimit as ManagerLimitRow).max_members_per_group ?? 30
+        }
+      : null
   });
 
   const { groups: groupOptions, joinedGroups, managedGroups } = await fetchAccessibleGroupOptions(
@@ -594,7 +603,7 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
           { value: "managers", label: "Managers" },
           { value: "groups", label: "Group Standings" }
         ]
-      : accessLevel === "manager"
+      : hasOrganizerAccess(accessLevel)
         ? [
             { value: "managed_groups", label: "My Managed Groups" },
             { value: "my_groups", label: "Invited / Joined Groups" },
@@ -615,6 +624,117 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
     managedGroups,
     managers: managerOptions
   };
+}
+
+async function fetchLeaderboardViewerProfile(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string
+): Promise<{
+  profile: Pick<UserRow, "id" | "role" | "plan_tier"> | null;
+  profileError: { message: string } | null;
+}> {
+  const fullQuery = await adminSupabase
+    .from("users")
+    .select("id,role,plan_tier")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!fullQuery.error) {
+    return {
+      profile: (fullQuery.data as Pick<UserRow, "id" | "role" | "plan_tier"> | null) ?? null,
+      profileError: null
+    };
+  }
+
+  if (!isMissingColumnError(fullQuery.error.message, "users", "plan_tier")) {
+    return { profile: null, profileError: { message: fullQuery.error.message } };
+  }
+
+  warnOptionalFeatureOnce(
+    "leaderboard-switcher-plan-tier-missing",
+    "Leaderboard switcher is loading without users.plan_tier because the live public.users schema is behind the app.",
+    fullQuery.error.message
+  );
+
+  const fallbackQuery = await adminSupabase
+    .from("users")
+    .select("id,role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (fallbackQuery.error) {
+    return { profile: null, profileError: { message: fallbackQuery.error.message } };
+  }
+
+  const fallbackProfile = (fallbackQuery.data as Pick<UserRow, "id" | "role"> | null) ?? null;
+  return {
+    profile: fallbackProfile ? { ...fallbackProfile, plan_tier: null } : null,
+    profileError: null
+  };
+}
+
+async function fetchLeaderboardManagerLimit(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string
+): Promise<ManagerLimitRow | null> {
+  const fullQuery = await adminSupabase
+    .from("manager_limits")
+    .select("user_id,max_groups,max_members_per_group")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (!fullQuery.error) {
+    return (fullQuery.data as ManagerLimitRow | null) ?? null;
+  }
+
+  if (isMissingAnyRelationError(fullQuery.error.message, ["manager_limits"])) {
+    warnOptionalFeatureOnce(
+      "leaderboard-switcher-manager-limits-missing",
+      "Leaderboard switcher is loading without manager_limits because the live schema is behind the app.",
+      fullQuery.error.message
+    );
+    return null;
+  }
+
+  const missingMaxGroups = isMissingColumnError(fullQuery.error.message, "manager_limits", "max_groups");
+  const missingMaxMembersPerGroup = isMissingColumnError(
+    fullQuery.error.message,
+    "manager_limits",
+    "max_members_per_group"
+  );
+
+  if (!missingMaxGroups && !missingMaxMembersPerGroup) {
+    throw new Error(fullQuery.error.message);
+  }
+
+  warnOptionalFeatureOnce(
+    "leaderboard-switcher-manager-limits-columns-missing",
+    "Leaderboard switcher is loading without expanded manager_limits columns because the live schema is behind the app.",
+    fullQuery.error.message
+  );
+
+  const fallbackQuery = await adminSupabase
+    .from("manager_limits")
+    .select("user_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (fallbackQuery.error) {
+    if (isMissingAnyRelationError(fallbackQuery.error.message, ["manager_limits"])) {
+      return null;
+    }
+
+    throw new Error(fallbackQuery.error.message);
+  }
+
+  const fallbackRow = (fallbackQuery.data as Pick<ManagerLimitRow, "user_id"> | null) ?? null;
+  return fallbackRow
+    ? {
+        user_id: fallbackRow.user_id,
+        max_groups: 3,
+        max_members_per_group: 30
+      }
+    : null;
 }
 
 async function fetchAccessibleGroupOptions(
@@ -652,14 +772,21 @@ async function fetchAccessibleGroupOptions(
   }
 
   const memberships = (groupMemberships as GroupMemberRow[] | null) ?? [];
+  const ownedGroupIds =
+    hasOrganizerAccess(accessLevel)
+      ? await fetchOwnedGroupIds(adminSupabase, userId)
+      : [];
   const joinedGroupIds = Array.from(
     new Set(memberships.filter((membership) => membership.role === "member").map((membership) => membership.group_id))
   );
   const managedGroupIds = Array.from(
-    new Set(memberships.filter((membership) => membership.role === "manager").map((membership) => membership.group_id))
+    new Set([
+      ...memberships.filter((membership) => membership.role === "manager").map((membership) => membership.group_id),
+      ...ownedGroupIds
+    ])
   );
   const relevantGroupIds = Array.from(
-    new Set(accessLevel === "manager" ? [...joinedGroupIds, ...managedGroupIds] : joinedGroupIds)
+    new Set(hasOrganizerAccess(accessLevel) ? [...joinedGroupIds, ...managedGroupIds] : joinedGroupIds)
   );
 
   if (relevantGroupIds.length === 0) {
@@ -677,7 +804,7 @@ async function fetchAccessibleGroupOptions(
       .in("id", relevantGroupIds)
       .order("name", { ascending: true }),
     fetchGroupNavigationItems(adminSupabase, userId, joinedGroupIds, "joined"),
-    accessLevel === "manager"
+    hasOrganizerAccess(accessLevel)
       ? fetchGroupNavigationItems(adminSupabase, userId, managedGroupIds, "managed")
       : Promise.resolve([])
   ]);
@@ -694,6 +821,22 @@ async function fetchAccessibleGroupOptions(
     joinedGroups,
     managedGroups
   };
+}
+
+async function fetchOwnedGroupIds(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string
+) {
+  const { data, error } = await adminSupabase
+    .from("groups")
+    .select("id")
+    .eq("owner_user_id", userId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return ((data as Array<{ id: string }> | null) ?? []).map((group) => group.id);
 }
 
 async function fetchGroupNavigationItems(
@@ -742,6 +885,8 @@ async function fetchGroupNavigationItems(
     membersByGroupId.set(membership.group_id, list);
   }
 
+  const groupCustomTotals = await fetchGroupCustomScoreTotals(adminSupabase, groups.map((group) => group.id));
+
   const latestMatchIdsByGroup = new Map(
     await Promise.all(
       groups.map(async (group) => [
@@ -768,7 +913,13 @@ async function fetchGroupNavigationItems(
   return groups
     .map((group) => {
       const memberUserIds = membersByGroupId.get(group.id) ?? [];
-      const rankedEntries = assignRanks(
+      const rankedEntries: Array<{
+        user_id: string;
+        standard_points: number;
+        group_custom_points: number;
+        total_points: number;
+        rank: number;
+      }> = assignRanks(
         memberUserIds
           .map((memberUserId) => {
             const member = usersById.get(memberUserId);
@@ -778,14 +929,25 @@ async function fetchGroupNavigationItems(
 
             return {
               user_id: memberUserId,
-              total_points: member.total_points
+              standard_points: member.total_points,
+              group_custom_points: groupCustomTotals.get(group.id)?.get(memberUserId) ?? 0,
+              total_points: member.total_points + (groupCustomTotals.get(group.id)?.get(memberUserId) ?? 0)
             };
           })
-          .filter(Boolean)
+          .filter(
+            (
+              entry
+            ): entry is {
+              user_id: string;
+              standard_points: number;
+              group_custom_points: number;
+              total_points: number;
+            } => Boolean(entry)
+          )
           .sort((left, right) =>
             (right?.total_points ?? 0) - (left?.total_points ?? 0) ||
             (left?.user_id ?? "").localeCompare(right?.user_id ?? "")
-          ) as Array<{ user_id: string; total_points: number }>
+          )
       );
       const currentUserEntry = rankedEntries.find((entry) => entry.user_id === userId) ?? null;
       const currentUser = usersById.get(userId);
@@ -795,7 +957,10 @@ async function fetchGroupNavigationItems(
         label: group.status === "archived" ? `${group.name} (Archived)` : group.name,
         rank: currentUserEntry?.rank ?? null,
         totalPlayers: rankedEntries.length,
-        points: currentUser?.total_points ?? null,
+        points:
+          currentUser && currentUserEntry
+            ? currentUser.total_points + (groupCustomTotals.get(group.id)?.get(userId) ?? 0)
+            : null,
         rankDelta: movementByGroupId.get(group.id)?.rankDelta ?? null,
         context
       } satisfies LeaderboardGroupNavItem;
@@ -874,7 +1039,7 @@ async function fetchUsersByIds(
 
   const { data, error } = await adminSupabase
     .from("users")
-    .select("id,name,email,avatar_url,home_team_id,role,total_points")
+    .select("id,name,email,avatar_url,home_team_id,role,plan_tier,total_points")
     .in("id", uniqueIds);
 
   if (error) {
@@ -936,6 +1101,8 @@ async function fetchTrophiesByUserIds(
 }
 
 function mapUserRow(row: UserRow): UserProfile {
+  const planTier = normalizeCommercialTier(row.plan_tier ?? null);
+
   return {
     id: row.id,
     name: row.name,
@@ -943,6 +1110,11 @@ function mapUserRow(row: UserRow): UserProfile {
     avatarUrl: row.avatar_url ?? undefined,
     homeTeamId: row.home_team_id ?? null,
     role: row.role,
+    planTier,
+    accessLevel: resolveAccessLevel({
+      role: row.role,
+      planTier
+    }),
     totalPoints: row.total_points
   };
 }

@@ -10,7 +10,11 @@ import { getRoleBadgeLabel } from "@/lib/access-levels";
 import { formatDateOnly, formatDateTimeWithZone } from "@/lib/date-time";
 import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { showAppToast } from "@/lib/app-toast";
-import type { UserRole } from "@/lib/types";
+import {
+  ADMIN_ASSIGNABLE_ACCESS_LEVELS,
+  getAccessLevelDisplayLabel,
+  type AccessLevel
+} from "@/lib/tier-access";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import {
   ActionButton,
@@ -19,8 +23,6 @@ import {
   ManagementEmptyState
 } from "@/components/player-management/Shared";
 import { useCurrentUser } from "@/lib/use-current-user";
-
-type InviteAccessLevel = "player" | "manager" | "super_admin";
 
 export function AdminInvitesClient() {
   return <AdminInvitesSection />;
@@ -36,19 +38,23 @@ export function AdminInvitesSection({
   const { user } = useCurrentUser();
   const [invites, setInvites] = useState<AdminInvite[]>([]);
   const [email, setEmail] = useState("");
-  const [accessLevel, setAccessLevel] = useState<InviteAccessLevel>("player");
+  const [accessLevel, setAccessLevel] = useState<AccessLevel>("player");
   const [inviteLanguage, setInviteLanguage] = useState<SupportedLanguage>("en");
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [emailSuggestions, setEmailSuggestions] = useState<InviteAutocompleteOption[]>([]);
-  const canInviteSuperAdmin = user?.role === "admin";
-  const canInviteManager = user?.role === "admin";
-  const accessLevelOptions: Array<{ value: InviteAccessLevel; label: string }> = [
-    { value: "player", label: "Player" },
-    ...(canInviteManager ? [{ value: "manager" as const, label: "Manager" }] : []),
-    ...(canInviteSuperAdmin ? [{ value: "super_admin" as const, label: "Super Admin" }] : [])
-  ];
+  const normalizedEmail = email.trim().toLowerCase();
+  const selectedSuggestion = normalizedEmail
+    ? emailSuggestions.find((suggestion) => suggestion.email === normalizedEmail) ?? null
+    : null;
+  const accessLevelOptions = user?.accessLevel === "super_admin"
+    ? ADMIN_ASSIGNABLE_ACCESS_LEVELS.map((value) => ({
+        value,
+        label: getAccessLevelDisplayLabel(value)
+      }))
+    : [{ value: "player" as const, label: "Player" }];
+  const accessHierarchyLabel = accessLevelOptions.map((option) => option.label).join(" -> ");
 
   useEffect(() => {
     loadInvites();
@@ -108,20 +114,13 @@ export function AdminInvitesSection({
     setMessage(null);
 
     try {
-      const inviteRole: UserRole = accessLevel === "super_admin" ? "admin" : "player";
-      const result = await createAdminInviteAction({ email, role: inviteRole, language: inviteLanguage });
+      const result = await createAdminInviteAction({ email, accessLevel, language: inviteLanguage });
       setMessage({ tone: result.ok ? "success" : "error", text: result.message });
       if (result.ok) {
         setEmail("");
         setAccessLevel("player");
         setInviteLanguage(normalizeLanguage(user?.preferredLanguage));
         await loadInvites();
-        if (accessLevel === "manager") {
-          setMessage({
-            tone: "success",
-            text: "Invite sent. This user will join as a player first, then you can appoint manager access after activation."
-          });
-        }
       }
     } catch (error) {
       setMessage({ tone: "error", text: (error as Error).message });
@@ -141,18 +140,25 @@ export function AdminInvitesSection({
         subtitle="Use the same role hierarchy the rest of the management system uses."
         badges={
           <>
-            <ManagementBadge label="Player" tone="neutral" />
-            <ManagementBadge label="Manager" tone="warning" />
-            <ManagementBadge label="Super Admin" tone="accent" />
+            {accessLevelOptions.map((option) => (
+              <ManagementBadge
+                key={option.value}
+                label={option.label}
+                tone={option.value === "super_admin" ? "accent" : option.value === "player" ? "neutral" : "warning"}
+              />
+            ))}
           </>
         }
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-700">
             <p>Hierarchy:</p>
-            <p className="mt-1">Player {"->"} Manager {"->"} Super Admin</p>
+            <p className="mt-1">{accessHierarchyLabel}</p>
             <p className="mt-2 text-gray-600">
-              Invite as <span className="font-black text-gray-900">Player</span> for normal access or as <span className="font-black text-gray-900">Super Admin</span> for unlimited access. <span className="font-black text-gray-900">Managers</span> are appointed after activation by setting manager limits.
+              This card can still send invites and reminders, but when the email already belongs to an active player it can also update that player&apos;s access level from the trusted tier model and email them the change.
+            </p>
+            <p className="mt-2 text-gray-600">
+              Promotions and setup stay here. Demotions and organizer removals now run through the guarded Super Admin player-card workflow with impact checks.
             </p>
           </div>
           <label className="block">
@@ -186,7 +192,7 @@ export function AdminInvitesSection({
             <span className="text-sm font-bold text-gray-800">Access level</span>
             <select
               value={accessLevel}
-              onChange={(event) => setAccessLevel(event.target.value as InviteAccessLevel)}
+              onChange={(event) => setAccessLevel(event.target.value as AccessLevel)}
               className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
             >
               {accessLevelOptions.map((option) => (
@@ -210,19 +216,30 @@ export function AdminInvitesSection({
               Choose the language your invitee will see during signup.
             </p>
           </label>
+          {selectedSuggestion ? (
+            <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
+              Existing match found for this email. Submitting here can invite, remind, or promote. Downward access changes are handled from the player tools card.
+            </p>
+          ) : null}
           <p className="text-sm font-semibold text-gray-500">
             {accessLevel === "player"
               ? "Player keeps the standard gameplay experience."
-              : accessLevel === "manager"
-                ? "Manager starts as a player, then gains manager access when a super admin assigns manager limits."
-                : "Super Admin gives this user unlimited administrative access."}
+              : accessLevel === "captain"
+                ? "Captain can run one group with the free organizer limits."
+                : accessLevel === "manager"
+                  ? "Manager gets organizer access with the manager tier limits."
+                  : accessLevel === "director"
+                    ? "League Director gets League organizer limits, League rules, and local custom scoring without platform-wide admin access."
+                    : accessLevel === "managing_director"
+                      ? "Branded League gets larger branded League limits and branding access without platform-wide admin access."
+                      : "Super Admin gives this user unlimited administrative access."}
           </p>
           <p className="text-xs font-semibold text-gray-500">
             This language will be used for the invitation email and first signup experience.
           </p>
-          {accessLevel === "manager" ? (
+          {accessLevel !== "player" && accessLevel !== "super_admin" ? (
             <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-              Managers are invited in as players first, then promoted by assigning manager limits after they activate.
+              This access level comes from the shared tier model and will be saved on the invite so the user lands in the right organizer tier after activation.
             </p>
           ) : null}
           {accessLevel === "super_admin" ? (
@@ -231,7 +248,7 @@ export function AdminInvitesSection({
             </p>
           ) : null}
           <ActionButton type="submit" disabled={isSubmitting} tone="accent" fullWidth>
-            {isSubmitting ? "Sending..." : "Send Access Email"}
+            {isSubmitting ? "Working..." : selectedSuggestion ? "Send or Update Access Email" : "Send Access Email"}
           </ActionButton>
         </form>
       </ManagementCard>

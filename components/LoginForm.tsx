@@ -149,44 +149,6 @@ export function LoginForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {!isDemoFallback ? (
-        <div className="rounded-md border border-accent-light bg-white px-3 py-3 text-accent-dark">
-          <div className="flex flex-col items-center text-center">
-            <div>
-              <p className="text-base font-black uppercase tracking-wide">Invite-only access</p>
-              <p className="text-base font-black uppercase tracking-wide">Limited membership</p>
-            </div>
-            <div className="mt-3">
-            <InlineDisclosureButton
-              isOpen={isInviteInfoOpen}
-              variant="subtle"
-              onClick={() => setIsInviteInfoOpen((current) => !current)}
-            />
-            </div>
-          </div>
-          {isInviteInfoOpen ? (
-            <>
-              <p className="mt-3 border-t border-accent-light pt-3 text-sm font-medium">
-                Sign up with the email you were invited to the pool.
-              </p>
-              <p className="mt-3 text-sm font-medium text-gray-700">
-                If you would like to be placed on the waiting list please visit:
-              </p>
-              <div className="mt-2 flex justify-center">
-                <a
-                  href="https://www.semiosdesign.com/pick-it-game"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
-                >
-                  Add Me To The List
-                </a>
-              </div>
-            </>
-          ) : null}
-        </div>
-      ) : null}
-
       <div className="grid grid-cols-2 gap-2 rounded-lg bg-white p-1">
         <ModeButton label="Sign in" isActive={mode === "login"} onClick={() => setMode("login")} />
         <ModeButton label="Sign up" isActive={mode === "signup"} onClick={() => setMode("signup")} />
@@ -303,7 +265,9 @@ export function LoginForm({
       <button
         type="submit"
         disabled={isSubmitting}
-        className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white shadow-soft"
+        className={`w-full rounded-md px-4 py-3 text-base font-bold text-white shadow-soft ${
+          mode === "signup" ? "bg-orange-500 hover:bg-orange-500/95" : "bg-accent hover:bg-accent/95"
+        }`}
       >
         {isSubmitting
           ? "Working..."
@@ -317,6 +281,44 @@ export function LoginForm({
               ? "Sign in"
               : "Create account"}
       </button>
+      {!isDemoFallback ? (
+        <div className="rounded-md border border-accent-light bg-white/95 px-2.5 py-2 text-accent-dark">
+          <div className="flex flex-col items-center text-center">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-wide">
+                Invite-only access • Limited membership
+              </p>
+            </div>
+            <div className="mt-1.5">
+              <InlineDisclosureButton
+                isOpen={isInviteInfoOpen}
+                variant="subtle"
+                onClick={() => setIsInviteInfoOpen((current) => !current)}
+              />
+            </div>
+          </div>
+          {isInviteInfoOpen ? (
+            <>
+              <p className="mt-2 border-t border-accent-light pt-2 text-[11px] font-medium">
+                Sign up with the email you were invited to the pool.
+              </p>
+              <p className="mt-2 text-[11px] font-medium text-gray-700">
+                If you would like to be placed on the waiting list please visit:
+              </p>
+              <div className="mt-1.5 flex justify-center">
+                <a
+                  href="https://www.semiosdesign.com/pick-it-game"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-gray-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                >
+                  Add Me To The List
+                </a>
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {isDemoFallback ? (
         <p className="text-sm leading-6 text-gray-600">
           Supabase env vars are missing, so demo auth is active. Try alex@example.com, jamie@example.com,
@@ -334,12 +336,14 @@ type ModeButtonProps = {
 };
 
 function ModeButton({ label, isActive, onClick }: ModeButtonProps) {
+  const isSignupButton = label.toLowerCase() === "sign up";
+
   return (
     <button
       type="button"
       onClick={onClick}
       className={`rounded-md px-3 py-2 text-sm font-bold ${
-        isActive ? "bg-accent text-white" : "text-gray-600"
+        isActive ? (isSignupButton ? "bg-orange-500 text-white" : "bg-accent text-white") : "text-gray-600"
       }`}
     >
       {label}

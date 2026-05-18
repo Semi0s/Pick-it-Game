@@ -4,8 +4,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ChevronDown, CircleUserRound, Globe, ListOrdered, SquareCheckBig, UsersRound } from "lucide-react";
+import { ChevronDown, CircleUserRound, GitBranch, Globe, ListOrdered, SquareCheckBig } from "lucide-react";
 import { NotificationsBell } from "@/components/NotificationsBell";
+import { TierIconBadge } from "@/components/TierIconBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { APP_TOAST_EVENT, markAppToastsReady, type AppToastDetail } from "@/lib/app-toast";
 import { getStrings } from "@/lib/strings";
@@ -14,11 +15,11 @@ import {
   fetchCurrentUserTrophies,
   fetchPendingTrophyCelebrations,
   markTrophyCelebrationRead,
-  signOutCurrentUser,
   type PendingTrophyCelebration
 } from "@/lib/auth-client";
-import { getAccessLevelLabel, shouldShowAccessBadge } from "@/lib/access-levels";
+import { getAccessLevel, shouldShowAccessBadge } from "@/lib/access-levels";
 import { getStartupReadinessSummary, type SystemReadinessReport } from "@/lib/system-readiness";
+import { parseJsonResponse } from "@/lib/fetch-json";
 import { createClient } from "@/lib/supabase/client";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -32,7 +33,8 @@ type AppShellProps = {
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TROPHY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_TOAST_DURATION_MS = 4200;
-const DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-shown:";
+const TIP_TOAST_DURATION_MS = 6200;
+const ERROR_TOAST_DURATION_MS = 7600;
 const HELPER_LANGUAGE_CHANGED_EVENT = "pickit:helper-language-changed";
 const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
   en: "English",
@@ -64,10 +66,10 @@ export function AppShell({ children }: AppShellProps) {
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const copy = getStrings(dockLanguage);
   const navItems = [
+    { href: "/bracket-builder", label: copy.myBracket, ariaLabel: copy.myBracket, icon: GitBranch },
     { href: "/groups", label: copy.myPicks, ariaLabel: copy.myPicks, icon: SquareCheckBig },
-    { href: "/my-groups", label: copy.myGroups, ariaLabel: copy.myGroups, icon: UsersRound },
-    { href: "/leaderboard", label: copy.results, ariaLabel: copy.results, icon: ListOrdered },
-    { href: "/profile", label: copy.myProfile, ariaLabel: copy.myProfile, icon: CircleUserRound }
+    { href: "/knockout", label: copy.knockoutPicks, ariaLabel: copy.knockoutPicks, icon: GitBranch },
+    { href: "/leaderboard", label: copy.results, ariaLabel: copy.results, icon: ListOrdered }
   ];
   const [pendingCelebrationQueue, setPendingCelebrationQueue] = useState<PendingTrophyCelebration[]>([]);
   const [activeCelebration, setActiveCelebration] = useState<PendingTrophyCelebration | null>(null);
@@ -163,7 +165,13 @@ export function AppShell({ children }: AppShellProps) {
 
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       setToasts((current) => [...current, { id, tone: detail.tone, text: detail.text }]);
-      dismissToastLater(id, detail.durationMs);
+      const fallbackDuration =
+        detail.tone === "error"
+          ? ERROR_TOAST_DURATION_MS
+          : detail.tone === "tip"
+            ? TIP_TOAST_DURATION_MS
+            : DEFAULT_TOAST_DURATION_MS;
+      dismissToastLater(id, detail.durationMs ?? fallbackDuration);
     };
 
     const handleToast = (event: Event) => {
@@ -410,9 +418,10 @@ export function AppShell({ children }: AppShellProps) {
     const loadReadiness = async () => {
       try {
         const response = await fetch("/api/admin/system-readiness", { cache: "no-store" });
-        const result = (await response.json()) as
+        const result = await parseJsonResponse<
           | { ok: true; report: SystemReadinessReport }
-          | { ok: false; message?: string };
+          | { ok: false; message?: string }
+        >(response, "Could not load the system readiness report.", "system readiness");
 
         if (!isMounted || !response.ok || !result.ok) {
           return;
@@ -448,7 +457,7 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div
-      className="min-h-screen bg-white text-gray-950"
+      className="min-h-screen overflow-x-clip bg-white text-gray-950"
       style={
         {
           paddingBottom: "calc(4.85rem + env(safe-area-inset-bottom, 0px))",
@@ -457,7 +466,7 @@ export function AppShell({ children }: AppShellProps) {
       }
     >
       <header ref={headerRef} className="sticky top-0 z-20 bg-white">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-2">
+        <div className="mx-auto flex max-w-4xl items-center justify-between gap-2.5 px-3 py-2 sm:px-4">
           <Link href="/dashboard" className="min-w-0" aria-label="PICK-IT! World Cup 2026 home">
             <Image
               src="/images/pickit-header-logo.png"
@@ -465,28 +474,26 @@ export function AppShell({ children }: AppShellProps) {
               width={648}
               height={220}
               priority
-              className="h-[4.25rem] w-auto sm:h-[5.1rem]"
+              className="h-[4.25rem] w-auto max-[399px]:h-[3.6rem] sm:h-[5.1rem]"
             />
           </Link>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 max-[399px]:gap-2.5">
             <NotificationsBell />
             {shouldShowAccessBadge(user) ? (
-              <span className="rounded-md bg-accent-light px-2 py-1 text-xs font-bold uppercase text-accent-dark">
-                {getAccessLevelLabel(user)}
-              </span>
+              <TierIconBadge accessLevel={getAccessLevel(user)} size={24} />
             ) : null}
             <div ref={languageMenuRef} className="relative">
               <button
                 type="button"
                 onClick={() => setIsLanguageMenuOpen((current) => !current)}
-                className="inline-flex h-8 items-center gap-1 rounded-md border border-gray-300 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light sm:h-9 sm:px-2"
+                className="inline-flex h-8 items-center gap-1 rounded-md border border-gray-300 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light max-[399px]:h-8 max-[399px]:gap-1.5 max-[399px]:px-2.5 max-[399px]:text-[10px] sm:h-9 sm:px-2"
                 aria-haspopup="menu"
                 aria-expanded={isLanguageMenuOpen}
                 aria-label={`Translate helper copy. Current language: ${EXPLAINER_LANGUAGE_LABELS[displayLanguage]}`}
               >
-                <Globe aria-hidden className="h-3 w-3 text-accent-dark" />
+                <Globe aria-hidden className="h-[18px] w-[18px] text-accent-dark max-[399px]:h-[15px] max-[399px]:w-[15px]" />
                 <span>{displayLanguage.toUpperCase()}</span>
-                <ChevronDown aria-hidden className="h-3 w-3 text-gray-500" />
+                <ChevronDown aria-hidden className="h-3 w-3 text-gray-500 max-[399px]:h-2.5 max-[399px]:w-2.5" />
               </button>
               {isLanguageMenuOpen ? (
                 <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
@@ -516,34 +523,18 @@ export function AppShell({ children }: AppShellProps) {
                 </div>
               ) : null}
             </div>
-            <button
-              type="button"
-              onClick={async () => {
-                if (typeof window !== "undefined") {
-                  try {
-                    for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
-                      const key = window.sessionStorage.key(index);
-                      if (key?.startsWith(DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX)) {
-                        window.sessionStorage.removeItem(key);
-                      }
-                    }
-                  } catch (error) {
-                    console.warn("Could not clear dashboard hint session state.", error);
-                  }
-                }
-                await signOutCurrentUser();
-                router.replace("/login");
-                router.refresh();
-              }}
-              className="rounded-md border border-gray-300 px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 sm:px-3"
+            <Link
+              href="/profile"
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1.5 text-[11px] font-semibold text-gray-700 max-[399px]:h-8 max-[399px]:gap-1 max-[399px]:px-2.25 max-[399px]:py-0 max-[399px]:text-[10px] sm:px-2.5"
             >
-              Sign out
-            </button>
+              <CircleUserRound aria-hidden className="h-[17.5px] w-[17.5px] max-[399px]:h-[15px] max-[399px]:w-[15px]" />
+              <span className="max-[399px]:hidden">Account</span>
+            </Link>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-4 pb-5 pt-6">
+      <main className="mx-auto w-full max-w-4xl px-4 pb-5 pt-6">
         {readinessBanner ? (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
             {readinessBanner}
@@ -583,7 +574,7 @@ export function AppShell({ children }: AppShellProps) {
         className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-700 bg-neutral-900"
         style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
       >
-        <div className="relative grid w-full grid-cols-4 gap-0.5 px-2 pb-0.5 pt-1 md:mx-auto md:max-w-4xl">
+        <div className="relative mx-auto grid w-full max-w-4xl grid-cols-4 gap-0.5 px-2 pb-0.5 pt-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;

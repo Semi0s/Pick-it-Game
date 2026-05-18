@@ -20,16 +20,10 @@ export function HomeTeamBadge({
 
   return (
     <span
-      className={`inline-flex items-center rounded-md border border-gray-200 bg-white/85 text-xs font-bold text-gray-700 ${
-        compact ? "gap-1.5 px-2 py-1" : "gap-2 px-2.5 py-1"
+      className={`ui-chip-sm items-center border border-gray-200 bg-white/85 font-bold text-gray-700 ${
+        compact ? "gap-1.5" : "gap-2"
       } ${className}`.trim()}
     >
-      <span
-        aria-hidden
-        className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 text-[11px]"
-      >
-        {team.flagEmoji}
-      </span>
       {compact ? (
         <span className="text-gray-900">{team.shortName}</span>
       ) : (

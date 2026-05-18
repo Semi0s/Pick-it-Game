@@ -7,13 +7,10 @@ type DismissibleHelperTextProps = {
   storageKey: string;
   children: ReactNode;
   dismissLabel?: string;
+  onDismissedChange?: (dismissed: boolean) => void;
 };
 
-export function DismissibleHelperText({
-  storageKey,
-  children,
-  dismissLabel = "Hide tip"
-}: DismissibleHelperTextProps) {
+export function useDismissedHelperState(storageKey: string) {
   const [isDismissed, setIsDismissed] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
 
@@ -27,7 +24,24 @@ export function DismissibleHelperText({
     }
   }, [storageKey]);
 
-  if (hasHydrated && isDismissed) {
+  return { isDismissed, hasHydrated, setIsDismissed };
+}
+
+export function DismissibleHelperText({
+  storageKey,
+  children,
+  dismissLabel = "Hide tip",
+  onDismissedChange
+}: DismissibleHelperTextProps) {
+  const { isDismissed, hasHydrated, setIsDismissed } = useDismissedHelperState(storageKey);
+
+  useEffect(() => {
+    if (hasHydrated) {
+      onDismissedChange?.(isDismissed);
+    }
+  }, [hasHydrated, isDismissed, onDismissedChange]);
+
+  if (!hasHydrated || isDismissed) {
     return null;
   }
 
@@ -45,7 +59,7 @@ export function DismissibleHelperText({
         }}
         aria-label={dismissLabel}
         title={dismissLabel}
-        className="absolute right-0 top-0 inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white/80 text-gray-400 transition hover:border-gray-300 hover:text-gray-600"
+        className="absolute right-0 top-[-2px] inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white/80 text-gray-400 transition hover:border-gray-300 hover:text-gray-600"
       >
         <X aria-hidden className="h-3.5 w-3.5" />
       </button>

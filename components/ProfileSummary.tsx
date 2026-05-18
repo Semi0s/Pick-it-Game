@@ -365,6 +365,14 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
             <option value="es">{copy.spanish}</option>
           </select>
         </label>
+        <div className="mt-4">
+          <Link
+            href="/my-groups"
+            className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Create and Manage Groups
+          </Link>
+        </div>
       </div>
 
       <div className="rounded-lg border border-gray-200 p-4">

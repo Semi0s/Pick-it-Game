@@ -1,10 +1,13 @@
 import { AppShell } from "@/components/AppShell";
 import { GroupPageClient } from "@/components/GroupPageClient";
 import { fetchKnockoutStructureStatus, safeFetchKnockoutStructureStatusFallback } from "@/lib/bracket-predictions";
+import {
+  fetchUnconfiguredMemberScoringGroupNotice,
+  redirectIfLegacyScoringSetupRequired
+} from "@/lib/group-scoring-setup-gate";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { normalizeLanguage } from "@/lib/i18n";
 import { getSafeSupabaseErrorInfo, isLikelySchemaDriftError, logSafeSupabaseError } from "@/lib/supabase-errors";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import type { MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
 
@@ -51,9 +54,10 @@ export default async function GroupsPage() {
   let initialMatches: MatchWithTeams[] | undefined;
   let initialPredictions: Prediction[] | undefined;
   let initialKnockoutSeeded: boolean | undefined;
+  let scoringSetupNotice: string | null = null;
 
   if (authUser) {
-    const adminSupabase = createAdminClient();
+    await redirectIfLegacyScoringSetupRequired({ userId: authUser.id, pathname: "/groups" });
     const localMatches = getGroupMatches().map((match) => ({
       ...match,
       homeTeam: getTeam(match.homeTeamId),
@@ -78,6 +82,12 @@ export default async function GroupsPage() {
       logSafeSupabaseError("groups-page-user-load", fullUserResult.error, { userId: authUser.id });
     }
 
+    try {
+      scoringSetupNotice = await fetchUnconfiguredMemberScoringGroupNotice(authUser.id);
+    } catch (error) {
+      logSafeSupabaseError("groups-page-scoring-notice", error, { userId: authUser.id, recoverable: true });
+    }
+
     let matchesResult;
     let predictionsResult;
 
@@ -87,7 +97,7 @@ export default async function GroupsPage() {
           .from("matches")
           .select("id,status,home_score,away_score,winner_team_id")
           .eq("stage", "group"),
-        adminSupabase
+        supabase
           .from("predictions")
           .select(
             "id,user_id,match_id,predicted_winner_team_id,predicted_is_draw,predicted_home_score,predicted_away_score,points_awarded,updated_at"
@@ -176,6 +186,7 @@ export default async function GroupsPage() {
 
       initialKnockoutSeeded = knockoutStatusResult.isFullySeeded;
     }
+
   }
 
   return (
@@ -185,6 +196,7 @@ export default async function GroupsPage() {
         initialMatches={initialMatches}
         initialPredictions={initialPredictions}
         initialKnockoutSeeded={initialKnockoutSeeded}
+        scoringSetupNotice={scoringSetupNotice}
       />
     </AppShell>
   );

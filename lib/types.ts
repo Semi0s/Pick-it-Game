@@ -1,8 +1,8 @@
 import type { SupportedLanguage } from "@/lib/i18n";
+import type { AccessLevel, CommercialTier } from "@/lib/tier-access";
 
 export type UserRole = "player" | "admin";
 export type UserStatus = "active" | "inactive" | "suspended";
-export type AccessLevel = "player" | "manager" | "super_admin";
 
 export type MatchNextSlot = "home" | "away";
 export type KnockoutMatchStage =
@@ -30,6 +30,7 @@ export type UserProfile = {
   trophies?: UserTrophy[];
   role: UserRole;
   accessLevel?: AccessLevel;
+  planTier?: CommercialTier | null;
   username?: string | null;
   usernameSetAt?: string | null;
   needsProfileSetup?: boolean;

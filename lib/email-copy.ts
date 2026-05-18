@@ -1,5 +1,6 @@
 import { escapeHtml } from "@/lib/email-sender";
 import { defaultLanguage, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
+import { getAccessLevelDisplayLabel, type AccessLevel } from "@/lib/tier-access";
 
 export function buildGroupInviteEmailCopy(input: {
   language?: string | null;
@@ -43,16 +44,16 @@ export function buildGroupInviteEmailCopy(input: {
               </div>`
             : ""
         }
-        <p style="margin-bottom: 12px;">${escapeHtml(copy.actionIntro(Boolean(input.existingAccount)))}</p>
+        <p style="margin-bottom: 12px;">${escapeHtml(copy.actionIntro(Boolean(input.existingAccount), input.invitedEmail))}</p>
         <p style="margin-bottom: 12px;">${escapeHtml(copy.aboutPickIt)}</p>
         <p style="margin-bottom: 12px; font-weight: 600;">${escapeHtml(copy.freeToPlay)}</p>
         <p style="margin: 24px 0;">
           <a href="${escapedClaimUrl}" style="display: inline-block; background: #1f8b4c; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-weight: 700;">
-            ${escapeHtml(copy.actionLabel(Boolean(input.existingAccount)))}
+            ${escapeHtml(copy.actionLabel)}
           </a>
         </p>
         <p style="font-size: 14px; color: #6b7280; word-break: break-all;">${escapedClaimUrl}</p>
-        <p style="font-size: 14px; color: #6b7280;">${escapeHtml(copy.accountHelp(input.invitedEmail, Boolean(input.existingAccount)))}</p>
+        <p style="font-size: 14px; color: #6b7280;">${escapeHtml(copy.accountHelp(Boolean(input.existingAccount), input.invitedEmail))}</p>
       </div>
     `,
     text: [
@@ -66,13 +67,13 @@ export function buildGroupInviteEmailCopy(input: {
       ...(input.customMessage?.trim()
         ? [copy.customMessageLabel, input.customMessage.trim(), ""]
         : []),
-      copy.actionIntro(Boolean(input.existingAccount)),
+      copy.actionIntro(Boolean(input.existingAccount), input.invitedEmail),
       copy.aboutPickIt,
       copy.freeToPlay,
       "",
       input.claimUrl,
       "",
-      copy.accountHelp(input.invitedEmail, Boolean(input.existingAccount))
+      copy.accountHelp(Boolean(input.existingAccount), input.invitedEmail)
     ].join("\n")
   };
 }
@@ -117,6 +118,55 @@ export function buildAdminRecoveryEmailCopy(input: {
   };
 }
 
+export function buildAdminAccessLevelChangeEmailCopy(input: {
+  language?: string | null;
+  recipientLabel: string;
+  accessLevel: AccessLevel;
+  loginUrl: string;
+}) {
+  const language = normalizeLanguage(input.language);
+  const copy = language === "es" ? ADMIN_ACCESS_LEVEL_CHANGE_COPY.es : ADMIN_ACCESS_LEVEL_CHANGE_COPY.en;
+  const accessLevelLabel = getAccessLevelDisplayLabel(input.accessLevel);
+  const intro = copy.intro(input.recipientLabel, accessLevelLabel);
+  const escapedLoginUrl = escapeHtml(input.loginUrl);
+
+  return {
+    subject: copy.subject(accessLevelLabel),
+    html: `
+      <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+        <h1 style="font-size: 24px; margin-bottom: 16px;">${escapeHtml(copy.heading(accessLevelLabel))}</h1>
+        <p style="margin-bottom: 16px;">${escapeHtml(intro)}</p>
+        <div style="margin-bottom: 16px; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px 14px; background: #f9fafb;">
+          <p style="margin: 0 0 6px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; font-weight: 700;">${escapeHtml(copy.levelLabel)}</p>
+          <p style="margin: 0; font-weight: 700;">${escapeHtml(accessLevelLabel)}</p>
+        </div>
+        <p style="margin: 24px 0;">
+          <a href="${escapedLoginUrl}" style="display: inline-block; background: #1f8b4c; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-weight: 700;">
+            ${escapeHtml(copy.actionLabel)}
+          </a>
+        </p>
+        <p style="margin-bottom: 12px; font-size: 14px; color: #4b5563;">
+          ${escapeHtml(copy.fallbackLabel)}<br />
+          <span style="word-break: break-all;">${escapedLoginUrl}</span>
+        </p>
+        <p style="font-size: 14px; color: #6b7280;">${escapeHtml(copy.note)}</p>
+      </div>
+    `,
+    text: [
+      copy.subject(accessLevelLabel),
+      "",
+      intro,
+      "",
+      `${copy.levelLabel}: ${accessLevelLabel}`,
+      "",
+      `${copy.actionLabel}:`,
+      input.loginUrl,
+      "",
+      copy.note
+    ].join("\n")
+  };
+}
+
 type GroupInviteCopy = {
   subject: (inviterLabel: string, groupName: string) => string;
   heading: (inviterLabel: string, groupName: string) => string;
@@ -126,12 +176,12 @@ type GroupInviteCopy = {
   invitedByLabel: string;
   intro: (inviterLabel: string, invitedEmail: string, groupName: string) => string;
   introWithSuggestedName: (inviterLabel: string, suggestedName: string, invitedEmail: string, groupName: string) => string;
-  actionIntro: (existingAccount: boolean) => string;
+  actionIntro: (existingAccount: boolean, invitedEmail: string) => string;
   customMessageLabel: string;
   aboutPickIt: string;
   freeToPlay: string;
-  actionLabel: (existingAccount: boolean) => string;
-  accountHelp: (invitedEmail: string, existingAccount: boolean) => string;
+  actionLabel: string;
+  accountHelp: (existingAccount: boolean, invitedEmail: string) => string;
 };
 
 const GROUP_INVITE_COPY: Record<SupportedLanguage, GroupInviteCopy> = {
@@ -145,18 +195,18 @@ const GROUP_INVITE_COPY: Record<SupportedLanguage, GroupInviteCopy> = {
     intro: (inviterLabel, invitedEmail, groupName) => `${inviterLabel} invited ${invitedEmail} to join ${groupName}.`,
     introWithSuggestedName: (inviterLabel, suggestedName, invitedEmail, groupName) =>
       `${inviterLabel} invited ${suggestedName} (${invitedEmail}) to join ${groupName}.`,
-    actionIntro: (existingAccount) =>
+    actionIntro: (existingAccount, invitedEmail) =>
       existingAccount
-        ? "Use this secure link to sign in with this email and join the group."
-        : "Use this secure link to create your account with this email, then join the group.",
+        ? `You've been invited to join this group. Sign in with ${invitedEmail} to continue.`
+        : `You've been invited to join this group. Create your account with ${invitedEmail} to continue.`,
     customMessageLabel: "Message from your group manager",
     aboutPickIt: "PICK-IT! is a free-to-play World Cup prediction game where friends and groups make picks, compare scores, and climb the leaderboard together.",
     freeToPlay: "Free to play. No download required.",
-    actionLabel: (existingAccount) => (existingAccount ? "Sign In to Join" : "Create Account to Join"),
-    accountHelp: (invitedEmail, existingAccount) =>
+    actionLabel: "Join PICK-IT!",
+    accountHelp: (existingAccount, invitedEmail) =>
       existingAccount
-        ? `If you already have an account, sign in with ${invitedEmail} to join this group.`
-        : `Create your account with ${invitedEmail}, then sign in to finish joining this group.`
+        ? `If you already have an account, sign in with ${invitedEmail} and use this invite link to join.`
+        : `Create your account with ${invitedEmail}, confirm your email, then sign in to finish joining.`
   },
   es: {
     subject: (inviterLabel, groupName) => `${inviterLabel} te invitó a unirte a ${groupName}`,
@@ -168,18 +218,18 @@ const GROUP_INVITE_COPY: Record<SupportedLanguage, GroupInviteCopy> = {
     intro: (inviterLabel, invitedEmail, groupName) => `${inviterLabel} invitó a ${invitedEmail} a unirse a ${groupName}.`,
     introWithSuggestedName: (inviterLabel, suggestedName, invitedEmail, groupName) =>
       `${inviterLabel} invitó a ${suggestedName} (${invitedEmail}) a unirse a ${groupName}.`,
-    actionIntro: (existingAccount) =>
+    actionIntro: (existingAccount, invitedEmail) =>
       existingAccount
-        ? "Usa este enlace seguro para iniciar sesión con este correo y unirte al grupo."
-        : "Usa este enlace seguro para crear tu cuenta con este correo y luego unirte al grupo.",
+        ? `Te invitaron a unirte a este grupo. Inicia sesión con ${invitedEmail} para continuar.`
+        : `Te invitaron a unirte a este grupo. Crea tu cuenta con ${invitedEmail} para continuar.`,
     customMessageLabel: "Mensaje de tu administrador del grupo",
     aboutPickIt: "PICK-IT! es un juego gratuito de predicciones del Mundial donde amigos y grupos hacen picks, comparan puntajes y suben en la clasificación juntos.",
     freeToPlay: "Gratis para jugar. No requiere descarga.",
-    actionLabel: (existingAccount) => (existingAccount ? "Inicia Sesión para Unirte" : "Crea Tu Cuenta para Unirte"),
-    accountHelp: (invitedEmail, existingAccount) =>
+    actionLabel: "Únete a PICK-IT!",
+    accountHelp: (existingAccount, invitedEmail) =>
       existingAccount
-        ? `Si ya tienes una cuenta, inicia sesión con ${invitedEmail} para unirte a este grupo.`
-        : `Crea tu cuenta con ${invitedEmail} y luego inicia sesión para terminar de unirte a este grupo.`
+        ? `Si ya tienes una cuenta, inicia sesión con ${invitedEmail} y usa este enlace de invitación para unirte.`
+        : `Crea tu cuenta con ${invitedEmail}, confirma tu correo y luego inicia sesión para terminar de unirte.`
   }
 };
 
@@ -212,6 +262,29 @@ const ADMIN_RECOVERY_COPY = {
     setupAction: "Abrir Configuración de Perfil",
     setupNote: "Este enlace inicia sesión al jugador y lo lleva directamente a la configuración de perfil.",
     fallbackLabel: "Si el botón no funciona, pega este enlace en tu navegador:"
+  }
+} as const;
+
+const ADMIN_ACCESS_LEVEL_CHANGE_COPY = {
+  en: {
+    subject: (accessLevelLabel: string) => `Your PICK-IT! access level is now ${accessLevelLabel}`,
+    heading: (accessLevelLabel: string) => `Your access level is now ${accessLevelLabel}`,
+    intro: (recipientLabel: string, accessLevelLabel: string) =>
+      `${recipientLabel}, your PICK-IT! access level has been updated to ${accessLevelLabel}.`,
+    levelLabel: "Access level",
+    actionLabel: "Open PICK-IT!",
+    fallbackLabel: "If the button does not work, paste this link into your browser:",
+    note: "Use this link to sign in with your existing account."
+  },
+  es: {
+    subject: (accessLevelLabel: string) => `Tu nivel de acceso de PICK-IT! ahora es ${accessLevelLabel}`,
+    heading: (accessLevelLabel: string) => `Tu nivel de acceso ahora es ${accessLevelLabel}`,
+    intro: (recipientLabel: string, accessLevelLabel: string) =>
+      `${recipientLabel}, tu nivel de acceso de PICK-IT! se actualizó a ${accessLevelLabel}.`,
+    levelLabel: "Nivel de acceso",
+    actionLabel: "Abrir PICK-IT!",
+    fallbackLabel: "Si el botón no funciona, pega este enlace en tu navegador:",
+    note: "Usa este enlace para iniciar sesión con tu cuenta actual."
   }
 } as const;
 

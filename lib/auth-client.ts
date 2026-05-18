@@ -5,6 +5,7 @@ import { getAccessCodeBlockedMessage, getAccessCodeFailureReasonFromMessage } fr
 import { appendLanguageToPath, defaultLanguage, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { teams } from "@/lib/mock-data";
 import { getPublicWebPushVapidKey } from "@/lib/push-config";
+import { normalizeCommercialTier, resolveAccessLevel } from "@/lib/tier-access";
 import {
   isMissingColumnError,
   isMissingAnyRelationError,
@@ -16,6 +17,7 @@ import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { getSafeSupabaseErrorInfo } from "@/lib/supabase-errors";
 import { getPublicSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/client";
+import { parseJsonResponse } from "@/lib/fetch-json";
 import { demoSignIn, demoSignOut, demoSignUp, getDemoCurrentUser } from "@/lib/demo-auth-fallback";
 import type { UserProfile, UserTrophy } from "@/lib/types";
 
@@ -47,6 +49,7 @@ type UserRow = {
   home_team_id?: string | null;
   preferred_language?: string | null;
   role: UserProfile["role"];
+  plan_tier?: string | null;
   username?: string | null;
   username_set_at?: string | null;
   needs_profile_setup?: boolean | null;
@@ -209,7 +212,11 @@ export async function authenticateWithEmail(
           "Content-Type": "application/json"
         }
       });
-      const reconcileResult = await reconcileResponse.json();
+      const reconcileResult = await parseJsonResponse<unknown>(
+        reconcileResponse,
+        "Could not reconcile post-login invites.",
+        "auth reconcile"
+      );
       console.info("Post-login invite reconciliation completed.", reconcileResult);
     } catch (reconcileError) {
       console.error("Post-login invite reconciliation failed.", reconcileError);
@@ -770,7 +777,17 @@ function mapUserRow(
     homeTeamId: row.home_team_id ?? null,
     preferredLanguage: normalizeLanguage(row.preferred_language),
     role: row.role,
-    accessLevel: row.role === "admin" ? "super_admin" : managerLimits ? "manager" : "player",
+    accessLevel: resolveAccessLevel({
+      role: row.role,
+      planTier: row.plan_tier ?? null,
+      managerLimits: managerLimits
+        ? {
+            maxGroups: managerLimits.max_groups,
+            maxMembersPerGroup: managerLimits.max_members_per_group
+          }
+        : null
+    }),
+    planTier: normalizeCommercialTier(row.plan_tier ?? null),
     username: row.username ?? null,
     usernameSetAt: row.username_set_at ?? null,
     needsProfileSetup: row.needs_profile_setup ?? false,
@@ -854,6 +871,28 @@ export async function updateCurrentUserNotificationPreferences(enabled: boolean)
   };
 }
 
+export async function deleteCurrentUserAccount(confirmationText: string): Promise<AuthResult> {
+  const response = await fetch("/api/profile/delete-account", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ confirmationText })
+  });
+
+  const result = await parseJsonResponse<{ ok: boolean; message?: string }>(
+    response,
+    "Could not delete your account.",
+    "delete account"
+  );
+
+  if (!result.ok) {
+    return { ok: false, message: result.message ?? "Could not delete your account." };
+  }
+
+  return { ok: true, message: result.message ?? "Your account was deleted." };
+}
+
 export async function registerCurrentBrowserPushNotifications(): Promise<PushRegistrationResult> {
   if (!hasSupabaseConfig()) {
     return { ok: false, message: "Push notifications need a configured Supabase project." };
@@ -903,7 +942,11 @@ export async function registerCurrentBrowserPushNotifications(): Promise<PushReg
       })
     });
 
-    const result = (await response.json()) as { ok: true; message?: string } | { ok: false; message?: string };
+    const result = await parseJsonResponse<{ ok: true; message?: string } | { ok: false; message?: string }>(
+      response,
+      "Could not register this browser for push notifications.",
+      "push registration"
+    );
     if (!response.ok || !result.ok) {
       throw new Error(result.ok ? "Could not register this browser for push notifications." : result.message);
     }
@@ -1044,9 +1087,10 @@ async function signUpWithInviteContext(
       body: JSON.stringify({ code: trimmedAccessCode })
     });
 
-    const validationResult = (await validationResponse.json()) as
+    const validationResult = await parseJsonResponse<
       | { ok: true }
-      | { ok: false; message?: string };
+      | { ok: false; message?: string }
+    >(validationResponse, "Could not validate that code right now.", "access-code validation");
 
     if (!validationResponse.ok) {
       console.error("[access-code:signup] Access-code prevalidation failed.", {
@@ -1116,7 +1160,7 @@ async function fetchCurrentUserProfileRow(
 ): Promise<{ data: UserRow | null; error: { message: string } | null }> {
   const fullProfileQuery = await supabase
     .from("users")
-    .select("id,name,email,avatar_url,home_team_id,preferred_language,role,username,username_set_at,needs_profile_setup,total_points")
+    .select("id,name,email,avatar_url,home_team_id,preferred_language,role,plan_tier,username,username_set_at,needs_profile_setup,total_points")
     .eq("id", userId)
     .maybeSingle();
 
@@ -1127,19 +1171,37 @@ async function fetchCurrentUserProfileRow(
     };
   }
 
-  if (!isMissingPreferredLanguageColumnError(fullProfileQuery.error.message)) {
+  const missingPreferredLanguage = isMissingPreferredLanguageColumnError(fullProfileQuery.error.message);
+  const missingPlanTier = isMissingPlanTierColumnError(fullProfileQuery.error.message);
+
+  if (!missingPreferredLanguage && !missingPlanTier) {
     return { data: null, error: { message: fullProfileQuery.error.message } };
   }
 
-  warnOptionalFeatureOnce(
-    "current-user-profile-preferred-language-missing",
-    "Current-user profile is loading without preferred_language because the live public.users schema is behind the app.",
-    fullProfileQuery.error.message
-  );
+  if (missingPreferredLanguage) {
+    warnOptionalFeatureOnce(
+      "current-user-profile-preferred-language-missing",
+      "Current-user profile is loading without preferred_language because the live public.users schema is behind the app.",
+      fullProfileQuery.error.message
+    );
+  }
 
+  if (missingPlanTier) {
+    warnOptionalFeatureOnce(
+      "current-user-profile-plan-tier-missing",
+      "Current-user profile is loading without plan_tier because the live public.users schema is behind the app.",
+      fullProfileQuery.error.message
+    );
+  }
+
+  const fallbackSelect = missingPreferredLanguage && missingPlanTier
+    ? "id,name,email,avatar_url,home_team_id,role,username,username_set_at,needs_profile_setup,total_points"
+    : missingPreferredLanguage
+      ? "id,name,email,avatar_url,home_team_id,role,plan_tier,username,username_set_at,needs_profile_setup,total_points"
+      : "id,name,email,avatar_url,home_team_id,preferred_language,role,username,username_set_at,needs_profile_setup,total_points";
   const fallbackProfileQuery = await supabase
     .from("users")
-    .select("id,name,email,avatar_url,home_team_id,role,username,username_set_at,needs_profile_setup,total_points")
+    .select(fallbackSelect)
     .eq("id", userId)
     .maybeSingle();
 
@@ -1147,9 +1209,15 @@ async function fetchCurrentUserProfileRow(
     return { data: null, error: { message: fallbackProfileQuery.error.message } };
   }
 
-  const fallbackRow = fallbackProfileQuery.data as Omit<UserRow, "preferred_language"> | null;
+  const fallbackRow = fallbackProfileQuery.data as Partial<UserRow> | null;
   return {
-    data: fallbackRow ? { ...fallbackRow, preferred_language: defaultLanguage } : null,
+    data: fallbackRow
+      ? {
+          ...fallbackRow,
+          preferred_language: fallbackRow.preferred_language ?? defaultLanguage,
+          plan_tier: fallbackRow.plan_tier ?? null
+        } as UserRow
+      : null,
     error: null
   };
 }
@@ -1161,6 +1229,10 @@ function isInvalidRefreshTokenError(message: string) {
 
 function isMissingUserSettingsTableError(message?: string) {
   return isMissingRelationError(message, "user_settings");
+}
+
+function isMissingPlanTierColumnError(message: string) {
+  return isMissingColumnError(message, "users", "plan_tier");
 }
 
 function isMissingPushTokensTableError(message?: string) {

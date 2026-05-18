@@ -19,6 +19,8 @@ export type AdminAccessCode = {
   expiresAt?: string | null;
   groupId?: string | null;
   groupName?: string | null;
+  ownerName?: string | null;
+  ownerEmail?: string | null;
   defaultRole: UserRole;
   defaultLanguage: SupportedLanguage;
   createdAt: string;
@@ -59,7 +61,7 @@ export async function fetchAdminAccessCodesAction(): Promise<
   const { data, error } = await adminSupabase
     .from("access_codes")
     .select(
-      "id,code,label,notes,active,max_uses,used_count,expires_at,group_id,default_role,default_language,created_at,updated_at,group:groups(id,name,status),redemptions:access_code_redemptions(id,email,redeemed_at,user_id)"
+      "id,code,label,notes,active,max_uses,used_count,expires_at,group_id,default_role,default_language,created_at,updated_at,created_by,group:groups(id,name,status),owner:users!access_codes_created_by_fkey(id,name,email),redemptions:access_code_redemptions(id,email,redeemed_at,user_id)"
     )
     .order("created_at", { ascending: false });
 
@@ -81,10 +83,13 @@ export async function fetchAdminAccessCodesAction(): Promise<
     default_language: string;
     created_at: string;
     updated_at: string;
+    created_by?: string | null;
     group?: { id: string; name: string; status: "active" | "archived" } | Array<{ id: string; name: string; status: "active" | "archived" }> | null;
+    owner?: { id: string; name: string; email: string } | Array<{ id: string; name: string; email: string }> | null;
     redemptions?: Array<{ id: string; email: string; redeemed_at: string; user_id: string }> | null;
   }>).map((row) => {
     const group = unwrapRelation(row.group);
+    const owner = unwrapRelation(row.owner);
     return {
       id: row.id,
       code: row.code,
@@ -96,6 +101,8 @@ export async function fetchAdminAccessCodesAction(): Promise<
       expiresAt: row.expires_at ?? null,
       groupId: row.group_id ?? null,
       groupName: group?.name ?? null,
+      ownerName: owner?.name ?? null,
+      ownerEmail: owner?.email ?? null,
       defaultRole: row.default_role,
       defaultLanguage: normalizeLanguage(row.default_language),
       createdAt: row.created_at,

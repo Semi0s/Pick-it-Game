@@ -20,6 +20,7 @@ export type TierAccessContext = {
 export type TierLimitSnapshot = {
   maxGroups: number | null;
   maxMembersPerGroup: number | null;
+  maxTotalPlayers: number | null;
   businessMaxReach: number | null;
   isUnlimited: boolean;
   source: "super_admin" | "plan" | "legacy_override";
@@ -60,6 +61,9 @@ export type CommercialTierDefinition = {
   shortLabel: string;
   maxGroups: number;
   maxMembersPerGroup: number;
+  // Helper-level total player cap for League-style organizer tiers.
+  // We keep this in app logic for now instead of adding a new DB column.
+  maxTotalPlayers: number | null;
   businessMaxReach: number;
 };
 
@@ -69,13 +73,15 @@ export const COMMERCIAL_TIER_DEFINITIONS: Record<CommercialTier, CommercialTierD
     shortLabel: "P",
     maxGroups: 0,
     maxMembersPerGroup: 0,
-    businessMaxReach: 1
+    maxTotalPlayers: null,
+    businessMaxReach: 0
   },
   captain: {
     label: "Captain",
     shortLabel: "C",
     maxGroups: 1,
     maxMembersPerGroup: 20,
+    maxTotalPlayers: 21,
     businessMaxReach: 21
   },
   manager: {
@@ -83,21 +89,24 @@ export const COMMERCIAL_TIER_DEFINITIONS: Record<CommercialTier, CommercialTierD
     shortLabel: "M",
     maxGroups: 3,
     maxMembersPerGroup: 30,
-    businessMaxReach: 91
+    maxTotalPlayers: 121,
+    businessMaxReach: 121
   },
   director: {
-    label: "Director",
-    shortLabel: "D",
+    label: "League",
+    shortLabel: "L",
     maxGroups: 10,
     maxMembersPerGroup: 100,
-    businessMaxReach: 1001
+    maxTotalPlayers: 1101,
+    businessMaxReach: 1101
   },
   managing_director: {
-    label: "Managing Director",
-    shortLabel: "MD",
+    label: "League Plus",
+    shortLabel: "L+",
     maxGroups: 25,
     maxMembersPerGroup: 100,
-    businessMaxReach: 2501
+    maxTotalPlayers: 3001,
+    businessMaxReach: 3001
   }
 };
 
@@ -190,10 +199,11 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
       accessLevel,
       commercialTier: normalizeCommercialTier(context.planTier),
       label: "Super Admin",
-      shortLabel: "SA",
+      shortLabel: "A",
       limits: {
         maxGroups: null,
         maxMembersPerGroup: null,
+        maxTotalPlayers: null,
         businessMaxReach: null,
         isUnlimited: true,
         source: "super_admin"
@@ -221,15 +231,32 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
     };
   }
 
+  const explicitCommercialTier = normalizeCommercialTier(context.planTier);
   const commercialTier = resolveCommercialTier(context);
   const definition = COMMERCIAL_TIER_DEFINITIONS[commercialTier];
-  const hasLegacyManagerOverride = Boolean(context.managerLimits);
-  const maxGroups = context.managerLimits?.maxGroups ?? definition.maxGroups;
-  const maxMembersPerGroup = context.managerLimits?.maxMembersPerGroup ?? definition.maxMembersPerGroup;
+  const managerTierDefinition = COMMERCIAL_TIER_DEFINITIONS.manager;
+  const looksLikeLegacyManagerCarryover =
+    Boolean(
+      explicitCommercialTier &&
+        explicitCommercialTier !== "manager" &&
+        context.managerLimits &&
+        context.managerLimits.maxGroups <= managerTierDefinition.maxGroups &&
+        context.managerLimits.maxMembersPerGroup <= managerTierDefinition.maxMembersPerGroup
+    );
+  const shouldApplyLegacyManagerOverride = Boolean(
+    context.managerLimits &&
+      (!explicitCommercialTier || explicitCommercialTier === "manager" || !looksLikeLegacyManagerCarryover)
+  );
+  const hasLegacyManagerOverride = shouldApplyLegacyManagerOverride;
+  const maxGroups = shouldApplyLegacyManagerOverride ? context.managerLimits?.maxGroups ?? definition.maxGroups : definition.maxGroups;
+  const maxMembersPerGroup = shouldApplyLegacyManagerOverride
+    ? context.managerLimits?.maxMembersPerGroup ?? definition.maxMembersPerGroup
+    : definition.maxMembersPerGroup;
   const hasOrganizerAccess = commercialTier !== "player";
-  const hasManagerTooling =
-    commercialTier === "manager" || commercialTier === "director" || commercialTier === "managing_director";
   const hasDirectorTooling = commercialTier === "director" || commercialTier === "managing_director";
+  // TODO(league-feature-toggles): if we add persisted per-group trophy/social toggles later,
+  // keep League-level access as the outer gate and layer group-scoped visibility on top.
+  const hasLeagueTrophyTooling = hasDirectorTooling;
 
   return {
     accessLevel,
@@ -239,6 +266,7 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
     limits: {
       maxGroups,
       maxMembersPerGroup,
+      maxTotalPlayers: definition.maxTotalPlayers,
       businessMaxReach: definition.businessMaxReach,
       isUnlimited: false,
       source: hasLegacyManagerOverride ? "legacy_override" : "plan"
@@ -249,8 +277,8 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
       canManageMembersAndInvites: hasOrganizerAccess,
       canCreateInviteCode: hasOrganizerAccess,
       canDeactivateInviteCode: hasOrganizerAccess,
-      canManageSocialTrophies: hasManagerTooling,
-      canAwardSocialTrophies: hasManagerTooling,
+      canManageSocialTrophies: hasLeagueTrophyTooling,
+      canAwardSocialTrophies: hasLeagueTrophyTooling,
       canUseDirectorCustomization: hasDirectorTooling,
       canUseManagingDirectorDelegation: false, // TODO(launch): add scoped org delegation once org boundaries exist.
       canPostAnnouncement: false, // TODO(launch): wire this up only when a lightweight pinned message model exists.

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Bell, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { formatDateTimeWithZone } from "@/lib/date-time";
+import { parseJsonResponse } from "@/lib/fetch-json";
 import type { UserNotification } from "@/lib/notifications";
 
 type NotificationResponse =
@@ -55,12 +56,12 @@ export function NotificationsBell() {
         onClick={() => {
           setIsOpen((current) => !current);
         }}
-        className="relative rounded-full border border-gray-300 bg-white p-2 text-gray-700 transition hover:border-accent hover:bg-accent-light"
+        className="relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-gray-300 bg-white p-2 text-gray-700 transition hover:border-accent hover:bg-accent-light max-[399px]:h-8 max-[399px]:w-8 max-[399px]:p-0"
         aria-label="Notifications"
       >
-        <Bell className="h-4 w-4" />
+        <Bell className="h-4 w-4 max-[399px]:h-3.5 max-[399px]:w-3.5" />
         {unreadCount > 0 ? (
-          <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-black text-white">
+          <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-black text-white max-[399px]:min-h-4 max-[399px]:min-w-4 max-[399px]:text-[9px]">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         ) : null}
@@ -150,7 +151,7 @@ export function NotificationsBell() {
 
     try {
       const response = await fetch("/api/notifications", { cache: "no-store" });
-      const result = (await response.json()) as NotificationResponse;
+      const result = await parseNotificationsResponse(response);
 
       if (!response.ok || !result.ok) {
         console.warn("Notifications are temporarily unavailable.", {
@@ -165,7 +166,7 @@ export function NotificationsBell() {
       setNotifications(result.notifications);
       setUnreadCount(result.unreadCount);
     } catch (error) {
-      console.error("Failed to load notifications.", error);
+      console.warn("Notifications are temporarily unavailable.", error);
       setNotifications([]);
       setUnreadCount(0);
     } finally {
@@ -198,7 +199,11 @@ export function NotificationsBell() {
         }
       });
 
-      const result = (await response.json()) as { ok: true } | { ok: false; message?: string };
+      const result = await parseJsonResponse<{ ok: true } | { ok: false; message?: string }>(
+        response,
+        "Could not mark notifications as read.",
+        "notifications"
+      );
       if (!response.ok || !result.ok) {
         console.warn("Notifications mark-read is temporarily unavailable.", {
           status: response.status,
@@ -212,6 +217,39 @@ export function NotificationsBell() {
     } catch (error) {
       console.error("Failed to mark notifications as read.", error);
     }
+  }
+}
+
+async function parseNotificationsResponse(response: Response): Promise<NotificationResponse> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const isJsonResponse = contentType.toLowerCase().includes("application/json");
+
+  if (!isJsonResponse) {
+    console.warn("Notifications endpoint returned a non-JSON response.", {
+      status: response.status,
+      contentType
+    });
+    return {
+      ok: false,
+      message: "Notifications are temporarily unavailable."
+    };
+  }
+
+  try {
+    return await parseJsonResponse<NotificationResponse>(
+      response,
+      "Could not load notifications.",
+      "notifications"
+    );
+  } catch (error) {
+    console.warn("Notifications endpoint returned an unreadable JSON response.", {
+      status: response.status,
+      error
+    });
+    return {
+      ok: false,
+      message: "Notifications are temporarily unavailable."
+    };
   }
 }
 

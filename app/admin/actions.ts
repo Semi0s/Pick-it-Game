@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import {
+  fetchIntegerAppSetting,
   fetchLeaderboardFeatureSettings,
+  updateIntegerAppSetting,
   updateLeaderboardFeatureSetting,
   type LeaderboardFeatureSettingKey,
   type LeaderboardFeatureSettings
@@ -17,7 +19,11 @@ import {
 } from "@/lib/legal";
 import { fetchAdminPlayerHealthRows, type AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import { sendTransactionalEmail } from "@/lib/email-sender";
-import { buildAdminRecoveryEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
+import {
+  buildAdminAccessLevelChangeEmailCopy,
+  buildAdminRecoveryEmailCopy,
+  getSafeEmailLanguage
+} from "@/lib/email-copy";
 import { ensureUserCanJoinAnotherGroup } from "@/lib/group-membership-limits";
 import { appendLanguageToPath, normalizeLanguage } from "@/lib/i18n";
 import { fetchGlobalLeaderboardRankMovement, fetchGroupLeaderboardRankMovement } from "@/lib/leaderboard-movement";
@@ -34,19 +40,34 @@ import { isKnockoutStage } from "@/lib/match-stage";
 import { appendMatchEvent } from "@/lib/match-events";
 import { syncMatches } from "@/lib/match-sync/syncMatches";
 import {
-  buildGroupStandingsByGroup,
-  buildQualifiedTeamSeeds,
-  parseSeedSource,
-  resolveRoundOf32SeedAssignments,
-  summarizeKnockoutSeedState
-} from "@/lib/knockout-seeding";
+  clearKnockoutSeedingFlags,
+  fetchKnockoutSeedingAdminStatus,
+  seedOfficialKnockoutFromFinalGroupResults,
+  type KnockoutSeedingAdminStatus
+} from "@/lib/knockout-seeding-runtime";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 import {
+  ADMIN_RESET_TOOL_DEFINITIONS,
+  type AdminRecoveryScope,
   getResetDiagnostics,
+  isSelfServiceTestResetEnabled,
   getTestingResetAvailability,
   logTestingResetEnvDiagnostics
 } from "@/lib/admin/destructive-tools";
-import type { MatchNextSlot, MatchStage, Team, UserRole } from "@/lib/types";
+import {
+  compareAccessLevels,
+  getAccessLevelDisplayLabel,
+  normalizeAccessLevel,
+  normalizeCommercialTier,
+  resolveTierAccess,
+  type AccessLevel,
+  type CommercialTier
+} from "@/lib/tier-access";
+import {
+  rebuildScopedLeaderboardState
+} from "@/lib/scoped-scoring";
+import { DASHBOARD_UI_RESET_EPOCH_SETTING_KEY } from "@/lib/ui-storage-keys";
+import type { MatchNextSlot, MatchStage, UserRole } from "@/lib/types";
 
 type MatchRow = {
   id: string;
@@ -81,19 +102,6 @@ type PredictionRow = {
   predicted_is_draw: boolean;
   predicted_home_score?: number | null;
   predicted_away_score?: number | null;
-};
-
-type ProjectedBracketPickRow = {
-  user_id: string;
-  match_id: string;
-  predicted_winner_team_id?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-};
-
-type LeaderboardTotal = {
-  user_id: string;
-  total_points: number;
 };
 
 type ScoredPrediction = {
@@ -131,6 +139,7 @@ type InviteLookupRow = {
   display_name: string;
   language?: string | null;
   role: UserRole;
+  plan_tier?: CommercialTier | null;
   accepted_at?: string | null;
   status?: "pending" | "accepted" | "revoked" | "expired" | "failed" | null;
   last_sent_at?: string | null;
@@ -146,6 +155,7 @@ type EmailJobPayload = {
   displayName?: string;
   language?: string;
   role?: UserRole;
+  planTier?: CommercialTier;
   source?: "admin_invites" | "admin_players";
 };
 
@@ -252,6 +262,27 @@ export type BatchFinalizeMatchResultsResult =
       message: string;
     };
 
+export type BatchClearMatchResultsInput = {
+  fromDate: string;
+  toDate: string;
+  scope: BatchFinalizeMatchScope;
+  confirmationText: string;
+};
+
+export type BatchClearMatchResultsResult =
+  | {
+      ok: true;
+      processed: number;
+      cleared: number;
+      skipped: number;
+      repairedKnockoutMatches: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export type RepairKnockoutAdvancementResult =
   | {
       ok: true;
@@ -286,14 +317,15 @@ export type SyncMatchesNowResult =
 export type ResetTestingDataInput = {
   confirmationText: string;
   scope: string;
+  reason?: string;
 };
 
 export type DestructiveAdminToolStatusResult =
   | {
       ok: true;
-      knockout: ReturnType<typeof getTestingResetAvailability>;
-      group: ReturnType<typeof getTestingResetAvailability>;
+      scopes: Record<AdminRecoveryScope, ReturnType<typeof getTestingResetAvailability>>;
       diagnostics: ReturnType<typeof getResetDiagnostics>;
+      toolDefinitions: typeof ADMIN_RESET_TOOL_DEFINITIONS;
     }
   | {
       ok: false;
@@ -398,11 +430,114 @@ type ResetOperationSummary = {
   lingeringScoredMatchCount?: number;
 };
 
+export type ClearUserTestPredictionsInput = {
+  userId: string;
+  expectedEmail: string;
+  reason: string;
+};
+
+export type ClearUserTestPredictionsResult =
+  | {
+      ok: true;
+      affectedPredictionCount: number;
+      affectedBracketPredictionCount: number;
+      affectedProjectedBracketPredictionCount: number;
+      affectedLegacyBracketPickCount: number;
+      affectedBracketScoreCount: number;
+      affectedPredictionScoreCount: number;
+      affectedLeaderboardEventCount: number;
+      affectedLeaderboardSnapshotCount: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type SelfServiceClearCurrentUserTestPredictionsInput = {
+  confirmationText: string;
+  acknowledged: boolean;
+  reason: string;
+};
+
+export type ResetGroupLocalStateInput = {
+  groupId: string;
+  expectedGroupName: string;
+  reason: string;
+};
+
+export type ResetGroupLocalStateResult =
+  | {
+      ok: true;
+      clearedLeaderboardEvents: number;
+      clearedLeaderboardSnapshots: number;
+      clearedGroupBonusScores: number;
+      clearedSidePickScores: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type ResetMatchToOpenInput = {
+  matchId: string;
+  expectedMatchId: string;
+  reason: string;
+};
+
+export type ResetMatchToOpenResult =
+  | {
+      ok: true;
+      clearedPredictionScores: number;
+      clearedBracketScores: number;
+      clearedLeaderboardEvents: number;
+      clearedLeaderboardSnapshots: number;
+      clearedDownstreamPredictions: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type RepairLeaderboardStateInput = {
+  reason: string;
+};
+
+export type RepairLeaderboardStateResult =
+  | {
+      ok: true;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type FullPreLaunchTestResetInput = {
+  confirmationText: string;
+  reason: string;
+};
+
+export type FullPreLaunchTestResetResult =
+  | {
+      ok: true;
+      groupResetMatchCount: number;
+      knockoutResetMatchCount: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export type CreateInviteInput = {
   email: string;
   displayName?: string;
   language?: string;
-  role: UserRole;
+  role?: UserRole;
+  accessLevel?: AccessLevel | string;
 };
 
 export type CreateInviteResult =
@@ -430,6 +565,90 @@ export type ResetUserAccessResult =
       ok: false;
       message: string;
     };
+
+export type DemotionImpactOwnedGroup = {
+  id: string;
+  name: string;
+  status: GroupStatus;
+  membershipLimit: number;
+  memberCount: number;
+  activeInviteCodeCount: number;
+  pendingInviteCount: number;
+  exceedsTargetMemberLimit: boolean;
+  blockerReason: string | null;
+};
+
+export type DemotionCleanupOption =
+  | "remove_manager_limits"
+  | "downgrade_legacy_manager_memberships"
+  | "deactivate_created_access_codes";
+
+export type DemotionCleanupOptionDetail = {
+  key: DemotionCleanupOption;
+  label: string;
+  description: string;
+  selectedByDefault: boolean;
+};
+
+export type DemotionImpactSummary = {
+  userId: string;
+  email: string;
+  displayName: string;
+  currentRole: UserRole;
+  currentPlanTier: CommercialTier | null;
+  currentAccessLevel: AccessLevel;
+  targetRole: UserRole;
+  targetPlanTier: CommercialTier;
+  targetAccessLevel: AccessLevel;
+  ownedGroupCount: number;
+  managedGroupCount: number;
+  groupsThatWouldExceedTarget: DemotionImpactOwnedGroup[];
+  ownedGroups: DemotionImpactOwnedGroup[];
+  activeInviteCodeCount: number;
+  pendingInviteCount: number;
+  hasManagerLimits: boolean;
+  managerLimits: { maxGroups: number; maxMembersPerGroup: number } | null;
+  legacyManagedGroupCount: number;
+  activeCreatedAccessCodeCount: number;
+  organizationOwnershipCount: number;
+  organizationBrandingCount: number;
+  customTrophyOwnershipCount: number;
+  sidePickOwnershipCount: number;
+  isSuperAdmin: boolean;
+  status: "safe" | "blocked" | "cleanup_required";
+  blockers: string[];
+  cleanupActions: string[];
+  cleanupOptions: DemotionCleanupOptionDetail[];
+};
+
+export type FetchUserDemotionImpactResult =
+  | {
+      ok: true;
+      impact: DemotionImpactSummary;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type DemoteUserWithImpactResolutionInput = {
+  userId: string;
+  targetAccessLevel: AccessLevel;
+  expectedEmail: string;
+  reason: string;
+  resolutionPlan?: Partial<Record<DemotionCleanupOption, boolean>>;
+};
+
+export type DemoteUserWithImpactResolutionResult = ResetUserAccessResult;
+
+export type DeactivateOrganizerAccessInput = {
+  userId: string;
+  expectedEmail: string;
+  reason: string;
+  resolutionPlan?: Partial<Record<DemotionCleanupOption, boolean>>;
+};
+
+export type DeactivateOrganizerAccessResult = ResetUserAccessResult;
 
 export type FetchAdminPlayerHealthResult =
   | {
@@ -505,6 +724,10 @@ export type SeedKnockoutFromGroupStageResult =
       message: string;
     };
 
+export type KnockoutSeedingStatusResult =
+  | { ok: true; status: KnockoutSeedingAdminStatus }
+  | { ok: false; message: string };
+
 export type AdminGroupSummary = {
   id: string;
   name: string;
@@ -514,6 +737,9 @@ export type AdminGroupSummary = {
   ownerEmail: string | null;
   membershipLimit: number;
   memberCount: number;
+  activeAccessCodeCount: number;
+  pendingInviteCount: number;
+  staleInviteCount: number;
   members: Array<{
     membershipId: string;
     userId: string;
@@ -582,10 +808,19 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
     return { ok: false, message: "Email is required." };
   }
 
-  const [{ data: existingInvite, error: inviteLookupError }, { data: existingUser, error: userLookupError }, authUser] =
+  const normalizedAccessLevel =
+    normalizeAccessLevel(input.accessLevel ?? (input.role === "admin" ? "super_admin" : "player")) ?? "player";
+  const inviteRole: UserRole = normalizedAccessLevel === "super_admin" ? "admin" : "player";
+  const invitePlanTier: CommercialTier = normalizedAccessLevel === "super_admin" ? "player" : normalizedAccessLevel;
+
+  const [
+    { data: existingInvite, error: inviteLookupError },
+    { data: existingUser, error: userLookupError },
+    authUser
+  ] =
     await Promise.all([
       fetchInviteLookup(adminSupabase, normalizedEmail),
-      adminSupabase.from("users").select("id").eq("email", normalizedEmail).maybeSingle(),
+      adminSupabase.from("users").select("id,email,name,preferred_language,role,plan_tier").eq("email", normalizedEmail).maybeSingle(),
       findAuthUserByEmail(adminSupabase, normalizedEmail)
     ]);
 
@@ -602,13 +837,116 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
     return { ok: false, message: rateLimitResult.message };
   }
 
+  if (authUser && existingUser) {
+    const existingUserRow = existingUser as {
+      id: string;
+      email?: string | null;
+      name?: string | null;
+      preferred_language?: string | null;
+      role?: UserRole | null;
+      plan_tier?: string | null;
+    };
+    const currentAccessLevel =
+      normalizeAccessLevel(existingUserRow.role === "admin" ? "super_admin" : existingUserRow.plan_tier ?? "player") ?? "player";
+
+    if (existingUserRow.id === adminCheck.userId && currentAccessLevel !== normalizedAccessLevel) {
+      return { ok: false, message: "Use a different super admin account before changing your own access level here." };
+    }
+
+    if (compareAccessLevels(normalizedAccessLevel, currentAccessLevel) < 0) {
+      return {
+        ok: false,
+        message: `Direct demotion from ${getAccessLevelDisplayLabel(currentAccessLevel)} to ${getAccessLevelDisplayLabel(normalizedAccessLevel)} is handled in the Super Admin Demote / Remove Access workflow on the player card.`
+      };
+    }
+
+    const { error: updateUserError } = await adminSupabase
+      .from("users")
+      .update({
+        role: inviteRole,
+        plan_tier: invitePlanTier,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", existingUserRow.id);
+
+    if (updateUserError) {
+      return { ok: false, message: updateUserError.message };
+    }
+
+    const inviteUpsertResult = await upsertInviteRow(adminSupabase, {
+      email: normalizedEmail,
+      displayName: trimmedDisplayName,
+      language: inviteLanguage,
+      role: inviteRole,
+      planTier: invitePlanTier,
+      status: "accepted",
+      lastError: null,
+      preserveAcceptedAt:
+        (existingInvite as InviteLookupRow | null)?.accepted_at ?? new Date().toISOString()
+    });
+
+    if (!inviteUpsertResult.ok) {
+      return { ok: false, message: inviteUpsertResult.message };
+    }
+
+    const loginUrl = buildAccessLevelLoginUrl(inviteLanguage, normalizedAccessLevel);
+    try {
+      const emailCopy = buildAdminAccessLevelChangeEmailCopy({
+        language:
+          inviteLanguage ??
+          ((existingUserRow.preferred_language ?? null) as string | null),
+        recipientLabel: existingUserRow.name?.trim() || normalizedEmail,
+        accessLevel: normalizedAccessLevel,
+        loginUrl
+      });
+
+      await sendTransactionalEmail({
+        to: normalizedEmail,
+        subject: emailCopy.subject,
+        html: emailCopy.html,
+        text: emailCopy.text
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : `Could not send the ${getAccessLevelDisplayLabel(normalizedAccessLevel)} access update email.`
+      };
+    }
+
+    console.info("[admin-player-access-level-updated]", {
+      adminUserId: adminCheck.userId,
+      targetUserId: existingUserRow.id,
+      email: normalizedEmail,
+      previousAccessLevel: currentAccessLevel,
+      nextAccessLevel: normalizedAccessLevel
+    });
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/invites");
+    revalidatePath("/admin/players");
+    revalidatePath("/my-groups");
+
+    return {
+      ok: true,
+      created: true,
+      message:
+        currentAccessLevel === normalizedAccessLevel
+          ? `${normalizedEmail} already has ${getAccessLevelDisplayLabel(normalizedAccessLevel)} access. A fresh sign-in email was sent.`
+          : `${normalizedEmail} is now ${getAccessLevelDisplayLabel(normalizedAccessLevel)}. An access update email was sent.`
+    };
+  }
+
   const sendKind: EmailJobKind = authUser && existingUser ? "password_recovery" : "access_email";
   const supportsEmailJobs = await hasEmailJobsTable(adminSupabase);
   const inviteUpsertResult = await upsertInviteRow(adminSupabase, {
     email: normalizedEmail,
     displayName: trimmedDisplayName,
     language: inviteLanguage,
-    role: input.role,
+    role: inviteRole,
+    planTier: invitePlanTier,
     status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
     lastError: null,
     preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
@@ -630,7 +968,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
         email: normalizedEmail,
         displayName: trimmedDisplayName,
         language: inviteLanguage,
-        role: input.role,
+        role: inviteRole,
+        planTier: invitePlanTier,
         status: "failed",
         lastError: sendResult.message,
         preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
@@ -643,7 +982,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
         email: normalizedEmail,
         displayName: trimmedDisplayName,
         language: inviteLanguage,
-        role: input.role,
+        role: inviteRole,
+        planTier: invitePlanTier,
         status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
         lastError: null,
         preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at,
@@ -674,7 +1014,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
     payload: {
       displayName: trimmedDisplayName,
       language: inviteLanguage,
-      role: input.role,
+      role: inviteRole,
+      planTier: invitePlanTier,
       source: "admin_invites"
     }
   });
@@ -691,7 +1032,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
         email: normalizedEmail,
         displayName: trimmedDisplayName,
         language: inviteLanguage,
-        role: input.role,
+        role: inviteRole,
+        planTier: invitePlanTier,
         status: "failed",
         lastError: sendResult.message,
         preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
@@ -704,7 +1046,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
         email: normalizedEmail,
         displayName: trimmedDisplayName,
         language: inviteLanguage,
-        role: input.role,
+        role: inviteRole,
+        planTier: invitePlanTier,
         status: (existingInvite as InviteLookupRow | null)?.accepted_at ? "accepted" : "pending",
         lastError: null,
         preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at,
@@ -733,7 +1076,8 @@ export async function createAdminInviteAction(input: CreateInviteInput): Promise
       email: normalizedEmail,
       displayName: trimmedDisplayName,
       language: inviteLanguage,
-      role: input.role,
+      role: inviteRole,
+      planTier: invitePlanTier,
       status: "failed",
       lastError: enqueueResult.message,
       preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at
@@ -847,7 +1191,10 @@ export async function repairPendingInviteAction(email: string): Promise<RepairPe
 
   const repairResult = await createAdminInviteAction({
     email: normalizedEmail,
-    role: inviteLookup.data.role ?? "player",
+    accessLevel:
+      inviteLookup.data.role === "admin"
+        ? "super_admin"
+        : inviteLookup.data.plan_tier ?? "player",
     displayName: inviteLookup.data.display_name ?? normalizedEmail.split("@")[0]
   });
 
@@ -1009,13 +1356,13 @@ export async function deleteUserAndStartOverAction(
     return adminCheck;
   }
 
-  if (confirmationText.trim() !== "DELETE") {
-    return { ok: false, message: "Type DELETE to confirm this destructive reset." };
-  }
-
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) {
     return { ok: false, message: "A valid email is required." };
+  }
+
+  if (confirmationText.trim().toLowerCase() !== normalizedEmail) {
+    return { ok: false, message: `Type ${normalizedEmail} to confirm this destructive reset.` };
   }
 
   const adminSupabase = createAdminClient();
@@ -1035,9 +1382,10 @@ export async function deleteUserAndStartOverAction(
   }
 
   if (appUser?.id) {
-    const [predictionsResult, bracketPredictionsResult, legacyBracketPicksResult, sidePicksResult] = await Promise.all([
+    const [predictionsResult, bracketPredictionsResult, projectedBracketPredictionsResult, legacyBracketPicksResult, sidePicksResult] = await Promise.all([
       adminSupabase.from("predictions").select("id", { count: "exact", head: true }).eq("user_id", appUser.id),
       countOptionalGameplayRows(adminSupabase, "bracket_predictions", appUser.id),
+      countOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", appUser.id),
       countOptionalGameplayRows(adminSupabase, "bracket_picks", appUser.id),
       adminSupabase.from("side_picks").select("id", { count: "exact", head: true }).eq("user_id", appUser.id)
     ]);
@@ -1045,15 +1393,17 @@ export async function deleteUserAndStartOverAction(
     const gameplayCount =
       (predictionsResult.count ?? 0) +
       (bracketPredictionsResult.count ?? 0) +
+      (projectedBracketPredictionsResult.count ?? 0) +
       (legacyBracketPicksResult.count ?? 0) +
       (sidePicksResult.count ?? 0);
 
-    if (predictionsResult.error || bracketPredictionsResult.error || legacyBracketPicksResult.error || sidePicksResult.error) {
+    if (predictionsResult.error || bracketPredictionsResult.error || projectedBracketPredictionsResult.error || legacyBracketPicksResult.error || sidePicksResult.error) {
       return {
         ok: false,
         message:
           predictionsResult.error?.message ??
           bracketPredictionsResult.error?.message ??
+          projectedBracketPredictionsResult.error?.message ??
           legacyBracketPicksResult.error?.message ??
           sidePicksResult.error?.message ??
           "Could not inspect the player's gameplay data."
@@ -1101,6 +1451,460 @@ export async function deleteUserAndStartOverAction(
   };
 }
 
+export async function clearUserTestPredictionsAction(
+  input: ClearUserTestPredictionsInput
+): Promise<ClearUserTestPredictionsResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  const trimmedUserId = input.userId.trim();
+  if (!trimmedUserId) {
+    return { ok: false, message: "A valid user is required." };
+  }
+
+  try {
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    ensureRecoveryActionAllowed("user", "clearUserTestPredictionsAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+
+    const adminSupabase = createAdminClient();
+    const resetResult = await performClearUserPredictionReset(adminSupabase, {
+      targetUserId: trimmedUserId,
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actorTier: "super_admin",
+      reason: trimmedReason,
+      actionKey: "clear_user_test_predictions",
+      expectedEmail: input.expectedEmail
+    });
+    if (!resetResult.ok) {
+      return resetResult;
+    }
+
+    revalidatePath("/admin/players");
+    revalidatePath("/dashboard");
+    revalidatePath("/leaderboard");
+    revalidatePath("/groups");
+    revalidatePath("/knockout");
+    revalidatePath("/profile");
+
+    return {
+      ok: true,
+      affectedPredictionCount: resetResult.affectedCounts.predictions,
+      affectedBracketPredictionCount: resetResult.affectedCounts.bracketPredictions,
+      affectedProjectedBracketPredictionCount: resetResult.affectedCounts.projectedBracketPredictions,
+      affectedLegacyBracketPickCount: resetResult.affectedCounts.legacyBracketPicks,
+      affectedBracketScoreCount: resetResult.affectedCounts.bracketScores,
+      affectedPredictionScoreCount: resetResult.affectedCounts.predictionScores,
+      affectedLeaderboardEventCount: resetResult.affectedCounts.leaderboardEvents,
+      affectedLeaderboardSnapshotCount: resetResult.affectedCounts.leaderboardSnapshots,
+      message: resetResult.message
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not clear that user's test data.") };
+  }
+}
+
+export async function clearCurrentUserTestPredictionsAction(
+  input: SelfServiceClearCurrentUserTestPredictionsInput
+): Promise<ClearUserTestPredictionsResult> {
+  if (!isSelfServiceTestResetEnabled()) {
+    return { ok: false, message: "Testing reset tools are not enabled right now." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to clear your test predictions." };
+  }
+
+  if (!input.acknowledged) {
+    return { ok: false, message: "Confirm that you understand this will clear your saved test predictions." };
+  }
+
+  if (input.confirmationText.trim().toUpperCase() !== "RESET MY PICKS") {
+    return { ok: false, message: "Type RESET MY PICKS to confirm." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const { data: profile, error: profileError } = await adminSupabase
+      .from("users")
+      .select("id,email,role,plan_tier")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      return { ok: false, message: profileError.message };
+    }
+
+    if (!profile) {
+      return { ok: false, message: "Your player profile could not be found." };
+    }
+
+    const tierAccess = resolveTierAccess({
+      role: profile.role,
+      planTier: profile.plan_tier ?? null,
+      managerLimits: null
+    });
+    if (tierAccess.accessLevel === "player") {
+      return { ok: false, message: "Only Captain tier and above can use this testing reset." };
+    }
+
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    const resetResult = await performClearUserPredictionReset(adminSupabase, {
+      targetUserId: profile.id,
+      actorUserId: profile.id,
+      actorEmail: profile.email ?? user.email ?? null,
+      actorTier: tierAccess.accessLevel,
+      reason: trimmedReason,
+      actionKey: "self_service_prediction_reset"
+    });
+    if (!resetResult.ok) {
+      return resetResult;
+    }
+
+    revalidatePath("/dashboard");
+    revalidatePath("/leaderboard");
+    revalidatePath("/groups");
+    revalidatePath("/knockout");
+    revalidatePath("/profile");
+
+    return {
+      ok: true,
+      affectedPredictionCount: resetResult.affectedCounts.predictions,
+      affectedBracketPredictionCount: resetResult.affectedCounts.bracketPredictions,
+      affectedProjectedBracketPredictionCount: resetResult.affectedCounts.projectedBracketPredictions,
+      affectedLegacyBracketPickCount: resetResult.affectedCounts.legacyBracketPicks,
+      affectedBracketScoreCount: resetResult.affectedCounts.bracketScores,
+      affectedPredictionScoreCount: resetResult.affectedCounts.predictionScores,
+      affectedLeaderboardEventCount: resetResult.affectedCounts.leaderboardEvents,
+      affectedLeaderboardSnapshotCount: resetResult.affectedCounts.leaderboardSnapshots,
+      message: "Your test predictions were cleared."
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not clear your test predictions. Please try again.") };
+  }
+}
+
+export async function resetGroupLocalDerivedStateAction(
+  input: ResetGroupLocalStateInput
+): Promise<ResetGroupLocalStateResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  const trimmedGroupId = input.groupId.trim();
+  if (!trimmedGroupId) {
+    return { ok: false, message: "A valid group is required." };
+  }
+
+  try {
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    ensureRecoveryActionAllowed("group", "resetGroupLocalDerivedStateAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+
+    const adminSupabase = createAdminClient();
+    const { data: groupRow, error: groupError } = await adminSupabase
+      .from("groups")
+      .select("id,name")
+      .eq("id", trimmedGroupId)
+      .maybeSingle();
+
+    if (groupError) {
+      return { ok: false, message: groupError.message };
+    }
+
+    if (!groupRow) {
+      return { ok: false, message: "That group was not found." };
+    }
+
+    if (groupRow.name.trim().toLowerCase() !== input.expectedGroupName.trim().toLowerCase()) {
+      return { ok: false, message: `Type ${groupRow.name} to confirm this group reset.` };
+    }
+
+    const [
+      leaderboardEventsResult,
+      leaderboardSnapshotsResult,
+      groupBonusScoresResult,
+      sidePickScoresResult
+    ] = await Promise.all([
+      adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).eq("group_id", trimmedGroupId),
+      adminSupabase.from("leaderboard_snapshots").select("id", { count: "exact", head: true }).eq("group_id", trimmedGroupId),
+      adminSupabase.from("group_bonus_scores").select("group_id", { count: "exact", head: true }).eq("group_id", trimmedGroupId),
+      adminSupabase.from("side_pick_scores").select("group_id", { count: "exact", head: true }).eq("group_id", trimmedGroupId)
+    ]);
+
+    const deletionResults = await Promise.all([
+      adminSupabase.from("leaderboard_events").delete().eq("group_id", trimmedGroupId),
+      adminSupabase.from("leaderboard_snapshots").delete().eq("group_id", trimmedGroupId),
+      adminSupabase.from("group_bonus_scores").delete().eq("group_id", trimmedGroupId),
+      adminSupabase.from("side_pick_scores").delete().eq("group_id", trimmedGroupId)
+    ]);
+
+    const failedDeletion = deletionResults.find((result) => result.error && !isMissingRelationError(result.error.message, "public.side_pick_scores"));
+    if (failedDeletion?.error) {
+      return { ok: false, message: failedDeletion.error.message };
+    }
+
+    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+    if (!leaderboardResult.ok) {
+      return leaderboardResult;
+    }
+
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("group-local reset");
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "reset_group_local_state",
+      scope: "group",
+      reason: trimmedReason,
+      success: true,
+      targetIds: [trimmedGroupId],
+      affectedCounts: {
+        leaderboardEvents: leaderboardEventsResult.count ?? 0,
+        leaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0,
+        groupBonusScores: groupBonusScoresResult.count ?? 0,
+        sidePickScores: sidePickScoresResult.count ?? 0
+      }
+    });
+
+    revalidatePath("/admin/groups");
+    revalidatePath("/my-groups");
+    revalidatePath("/leaderboard");
+    revalidatePath("/groups");
+
+    return {
+      ok: true,
+      clearedLeaderboardEvents: leaderboardEventsResult.count ?? 0,
+      clearedLeaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0,
+      clearedGroupBonusScores: groupBonusScoresResult.count ?? 0,
+      clearedSidePickScores: sidePickScoresResult.count ?? 0,
+      message: resetMarkerWarning
+        ? `Cleared ${groupRow.name}'s local derived state and rebuilt leaderboard data. ${resetMarkerWarning}`
+        : `Cleared ${groupRow.name}'s local derived state and rebuilt leaderboard data.`
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not reset that group's local state.") };
+  }
+}
+
+export async function resetMatchToOpenAction(
+  input: ResetMatchToOpenInput
+): Promise<ResetMatchToOpenResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  const trimmedMatchId = input.matchId.trim();
+  if (!trimmedMatchId) {
+    return { ok: false, message: "A valid match is required." };
+  }
+
+  try {
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    ensureRecoveryActionAllowed("match", "resetMatchToOpenAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+
+    if (input.expectedMatchId.trim() !== trimmedMatchId) {
+      return { ok: false, message: `Type ${trimmedMatchId} to confirm this match reset.` };
+    }
+
+    const adminSupabase = createAdminClient();
+    const { data: matchRow, error: matchError } = await adminSupabase
+      .from("matches")
+      .select("id,stage,status,home_team_id,away_team_id,home_score,away_score,winner_team_id,finalized_at,is_manual_override")
+      .eq("id", trimmedMatchId)
+      .maybeSingle();
+
+    if (matchError) {
+      return { ok: false, message: matchError.message };
+    }
+
+    if (!matchRow) {
+      return { ok: false, message: "That match was not found." };
+    }
+
+    const [
+      predictionScoresResult,
+      bracketScoresResult,
+      leaderboardEventsResult,
+      leaderboardSnapshotsResult
+    ] = await Promise.all([
+      adminSupabase.from("prediction_scores").select("prediction_id", { count: "exact", head: true }).eq("match_id", trimmedMatchId),
+      adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).eq("match_id", trimmedMatchId),
+      adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).eq("match_id", trimmedMatchId),
+      adminSupabase.from("leaderboard_snapshots").select("id", { count: "exact", head: true }).eq("match_id", trimmedMatchId)
+    ]);
+
+    const updateResult = await adminSupabase
+      .from("matches")
+      .update({
+        status: "scheduled",
+        home_score: null,
+        away_score: null,
+        winner_team_id: null,
+        finalized_at: null,
+        last_synced_at: null,
+        is_manual_override: false,
+        sync_status: null,
+        sync_error: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", trimmedMatchId);
+
+    if (updateResult.error && !isOptionalResetColumnError(updateResult.error.message)) {
+      return { ok: false, message: updateResult.error.message };
+    }
+
+    if (updateResult.error) {
+      const fallbackUpdate = await adminSupabase
+        .from("matches")
+        .update({
+          status: "scheduled",
+          home_score: null,
+          away_score: null,
+          winner_team_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", trimmedMatchId);
+      if (fallbackUpdate.error) {
+        return { ok: false, message: fallbackUpdate.error.message };
+      }
+    }
+
+    let clearedDownstreamPredictions = 0;
+    if ((matchRow as MatchRow).stage === "group") {
+      const resetResult = await clearDerivedGroupMatchScoringState(adminSupabase, trimmedMatchId);
+      if (!resetResult.ok) {
+        return resetResult;
+      }
+    } else {
+      await resetKnockoutMatchScoring(trimmedMatchId);
+      const advancementSummary = await rebuildKnockoutAdvancementSharedWithClient(adminSupabase);
+      clearedDownstreamPredictions = advancementSummary.clearedPredictions;
+      const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+      if (!leaderboardResult.ok) {
+        return leaderboardResult;
+      }
+    }
+
+    await appendMatchEvent(adminSupabase, {
+      matchId: trimmedMatchId,
+      eventType: "reopen",
+      payload: {
+        source: "admin-reset-to-open",
+        actorUserId: superAdminCheck.userId,
+        previousStatus: (matchRow as MatchRow).status,
+        nextStatus: "scheduled"
+      }
+    });
+
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("match reset");
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "reset_match_to_open",
+      scope: "match",
+      reason: trimmedReason,
+      success: true,
+      targetIds: [trimmedMatchId],
+      affectedCounts: {
+        predictionScores: predictionScoresResult.count ?? 0,
+        bracketScores: bracketScoresResult.count ?? 0,
+        leaderboardEvents: leaderboardEventsResult.count ?? 0,
+        leaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0,
+        clearedDownstreamPredictions
+      }
+    });
+
+    revalidatePath("/admin/matches");
+    revalidatePath("/dashboard");
+    revalidatePath("/groups");
+    revalidatePath("/knockout");
+    revalidatePath("/leaderboard");
+    revalidatePath("/profile");
+
+    return {
+      ok: true,
+      clearedPredictionScores: predictionScoresResult.count ?? 0,
+      clearedBracketScores: bracketScoresResult.count ?? 0,
+      clearedLeaderboardEvents: leaderboardEventsResult.count ?? 0,
+      clearedLeaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0,
+      clearedDownstreamPredictions,
+      message: resetMarkerWarning
+        ? `Reset match ${trimmedMatchId} to open and repaired derived state. ${resetMarkerWarning}`
+        : `Reset match ${trimmedMatchId} to open and repaired derived state.`
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not reset that match to open.") };
+  }
+}
+
+export async function repairLeaderboardStateAction(
+  input: RepairLeaderboardStateInput
+): Promise<RepairLeaderboardStateResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  try {
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    ensureRecoveryActionAllowed("leaderboard", "repairLeaderboardStateAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+
+    const adminSupabase = createAdminClient();
+    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+    if (!leaderboardResult.ok) {
+      return leaderboardResult;
+    }
+
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("leaderboard repair");
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "repair_leaderboards",
+      scope: "leaderboard",
+      reason: trimmedReason,
+      success: true,
+      targetIds: [],
+      affectedCounts: {}
+    });
+
+    revalidatePath("/dashboard");
+    revalidatePath("/leaderboard");
+    revalidatePath("/groups");
+    revalidatePath("/knockout");
+    revalidatePath("/my-groups");
+
+    return {
+      ok: true,
+      message: resetMarkerWarning
+        ? `Rebuilt leaderboard snapshots from persisted scores. ${resetMarkerWarning}`
+        : "Rebuilt leaderboard snapshots from persisted scores."
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not repair leaderboard state.") };
+  }
+}
+
 export async function fetchAdminPlayerHealthAction(): Promise<FetchAdminPlayerHealthResult> {
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
@@ -1116,6 +1920,198 @@ export async function fetchAdminPlayerHealthAction(): Promise<FetchAdminPlayerHe
       message: error instanceof Error ? error.message : "Could not load admin player health right now."
     };
   }
+}
+
+export async function getUserDemotionImpactAction(
+  userId: string,
+  targetAccessLevel: AccessLevel
+): Promise<FetchUserDemotionImpactResult> {
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const impact = await buildUserDemotionImpact(adminSupabase, userId, targetAccessLevel);
+    return { ok: true, impact };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not inspect the impact of that demotion."
+    };
+  }
+}
+
+export async function demoteUserWithImpactResolutionAction(
+  input: DemoteUserWithImpactResolutionInput
+): Promise<DemoteUserWithImpactResolutionResult> {
+  return applyAccessChangeWithImpactResolution(input, "demote_access");
+}
+
+async function applyAccessChangeWithImpactResolution(
+  input: DemoteUserWithImpactResolutionInput,
+  action: "demote_access" | "deactivate_organizer_access"
+): Promise<DemoteUserWithImpactResolutionResult> {
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const trimmedUserId = input.userId.trim();
+  const normalizedExpectedEmail = input.expectedEmail.trim().toLowerCase();
+  const trimmedReason = input.reason.trim();
+
+  if (!trimmedUserId) {
+    return { ok: false, message: "A valid user is required." };
+  }
+
+  if (!trimmedReason) {
+    return { ok: false, message: "A reason is required before changing organizer access." };
+  }
+
+  if (input.targetAccessLevel === "super_admin") {
+    return { ok: false, message: "Use promotion/access setup to grant Super Admin. Demotion flow cannot target Super Admin." };
+  }
+
+  const adminSupabase = createAdminClient();
+
+  try {
+    const impact = await buildUserDemotionImpact(adminSupabase, trimmedUserId, input.targetAccessLevel);
+
+    if (impact.userId === adminCheck.userId) {
+      return { ok: false, message: "Use a different super admin account before changing your own access level here." };
+    }
+
+    if (compareAccessLevels(impact.targetAccessLevel, impact.currentAccessLevel) >= 0) {
+      return {
+        ok: false,
+        message: `This workflow is for demotions only. ${getAccessLevelDisplayLabel(impact.targetAccessLevel)} is not lower than ${getAccessLevelDisplayLabel(impact.currentAccessLevel)}.`
+      };
+    }
+
+    if (impact.status === "blocked") {
+      return {
+        ok: false,
+        message: impact.blockers[0] ?? "Resolve the listed blockers before changing this user's organizer access."
+      };
+    }
+
+    if (normalizedExpectedEmail !== impact.email.trim().toLowerCase()) {
+      return { ok: false, message: `Type ${impact.email} to confirm this access change.` };
+    }
+
+    const resolutionPlan = input.resolutionPlan ?? {};
+    const resolutionPlanError = validateDemotionResolutionPlan(impact, resolutionPlan);
+    if (resolutionPlanError) {
+      return { ok: false, message: resolutionPlanError };
+    }
+
+    // Standard player participation should survive organizer access changes whenever possible.
+    const cleanupSummary = await applyOrganizerAccessCleanup(adminSupabase, impact, resolutionPlan);
+
+    const { error: updateUserError } = await adminSupabase
+      .from("users")
+      .update({
+        role: impact.targetRole,
+        plan_tier: impact.targetPlanTier,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", impact.userId);
+
+    if (updateUserError) {
+      return { ok: false, message: updateUserError.message };
+    }
+
+    const inviteUpsertResult = await upsertInviteRow(adminSupabase, {
+      email: impact.email,
+      displayName: impact.displayName,
+      language: "en",
+      role: impact.targetRole,
+      planTier: impact.targetPlanTier,
+      status: "accepted",
+      lastError: null,
+      preserveAcceptedAt: new Date().toISOString()
+    });
+
+    if (!inviteUpsertResult.ok) {
+      return { ok: false, message: inviteUpsertResult.message };
+    }
+
+    await sendAccessLevelChangeEmail(adminSupabase, impact, impact.targetAccessLevel);
+    await writeAdminAccessChangeAuditLog(adminSupabase, {
+      actorUserId: adminCheck.userId,
+      targetUserId: impact.userId,
+      targetEmail: impact.email,
+      action,
+      previousRole: impact.currentRole,
+      previousPlanTier: impact.currentPlanTier,
+      previousAccessLevel: impact.currentAccessLevel,
+      newRole: impact.targetRole,
+      newPlanTier: impact.targetPlanTier,
+      newAccessLevel: impact.targetAccessLevel,
+      impact,
+      cleanupActionsTaken: cleanupSummary.actionsTaken,
+      cleanupCounts: cleanupSummary.counts,
+      reason: trimmedReason
+    });
+
+    console.info("[admin-player-access-demoted]", {
+      actorUserId: adminCheck.userId,
+      targetUserId: impact.userId,
+      email: impact.email,
+      previousRole: impact.currentRole,
+      previousPlanTier: impact.currentPlanTier,
+      previousAccessLevel: impact.currentAccessLevel,
+      newRole: impact.targetRole,
+      newPlanTier: impact.targetPlanTier,
+      newAccessLevel: impact.targetAccessLevel,
+      impactStatus: impact.status,
+      impactSummary: {
+        ownedGroupCount: impact.ownedGroupCount,
+        managedGroupCount: impact.managedGroupCount,
+        activeInviteCodeCount: impact.activeInviteCodeCount,
+        pendingInviteCount: impact.pendingInviteCount,
+        organizationOwnershipCount: impact.organizationOwnershipCount,
+        organizationBrandingCount: impact.organizationBrandingCount,
+        hasManagerLimits: impact.hasManagerLimits
+      },
+      cleanupActionsTaken: cleanupSummary.actionsTaken,
+      cleanupCounts: cleanupSummary.counts,
+      reason: trimmedReason
+    });
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/invites");
+    revalidatePath("/admin/players");
+    revalidatePath("/my-groups");
+    revalidatePath("/dashboard");
+
+    return {
+      ok: true,
+      message:
+        action === "deactivate_organizer_access"
+          ? `Organizer access was removed for ${impact.displayName} while preserving player access where possible.`
+          : `${impact.displayName}'s access was changed from ${getAccessLevelDisplayLabel(impact.currentAccessLevel)} to ${getAccessLevelDisplayLabel(impact.targetAccessLevel)}.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not apply that demotion safely."
+    };
+  }
+}
+
+export async function deactivateOrganizerAccessAction(
+  input: DeactivateOrganizerAccessInput
+): Promise<DeactivateOrganizerAccessResult> {
+  return applyAccessChangeWithImpactResolution({
+    userId: input.userId,
+    expectedEmail: input.expectedEmail,
+    reason: input.reason,
+    targetAccessLevel: "player",
+    resolutionPlan: input.resolutionPlan
+  }, "deactivate_organizer_access");
 }
 
 export async function fetchLeaderboardFeatureSettingsAction(): Promise<FetchLeaderboardFeatureSettingsResult> {
@@ -1317,60 +2313,21 @@ export async function resetTestingSocialStateAction(): Promise<ResetTestingSocia
   }
 
   const adminSupabase = createAdminClient();
-
-  const deleteCommentsResult = await adminSupabase
-    .from("leaderboard_event_comments")
-    .delete()
-    .not("id", "is", null);
-  if (deleteCommentsResult.error && !isMissingSocialResetTableError(deleteCommentsResult.error.message)) {
-    return { ok: false, message: deleteCommentsResult.error.message };
-  }
-
-  const deleteReactionsResult = await adminSupabase
-    .from("leaderboard_event_reactions")
-    .delete()
-    .not("id", "is", null);
-  if (deleteReactionsResult.error && !isMissingSocialResetTableError(deleteReactionsResult.error.message)) {
-    return { ok: false, message: deleteReactionsResult.error.message };
-  }
-
-  const deleteNotificationsResult = await adminSupabase
-    .from("user_notifications")
-    .delete()
-    .not("id", "is", null);
-  if (deleteNotificationsResult.error && !isMissingSocialResetTableError(deleteNotificationsResult.error.message)) {
-    return { ok: false, message: deleteNotificationsResult.error.message };
-  }
-
-  const deleteLeaderboardEventsResult = await adminSupabase
-    .from("leaderboard_events")
-    .delete()
-    .not("id", "is", null);
-  if (
-    deleteLeaderboardEventsResult.error &&
-    !isMissingSocialResetTableError(deleteLeaderboardEventsResult.error.message)
-  ) {
-    return { ok: false, message: deleteLeaderboardEventsResult.error.message };
-  }
-
-  const deleteUserTrophiesResult = await adminSupabase
-    .from("user_trophies")
-    .delete()
-    .not("id", "is", null);
-  if (deleteUserTrophiesResult.error && !isMissingSocialResetTableError(deleteUserTrophiesResult.error.message)) {
-    return { ok: false, message: deleteUserTrophiesResult.error.message };
-  }
-
-  const deleteLeaderboardSnapshotsResult = await adminSupabase
-    .from("leaderboard_snapshots")
-    .delete()
-    .not("id", "is", null);
-  if (
-    deleteLeaderboardSnapshotsResult.error &&
-    !isMissingSocialResetTableError(deleteLeaderboardSnapshotsResult.error.message)
-  ) {
-    return { ok: false, message: deleteLeaderboardSnapshotsResult.error.message };
-  }
+  const clearedCounts = await clearTestingSocialStateWithClient(adminSupabase);
+  const resetMarkerWarning = await bumpDashboardUiResetEpoch("testing social reset");
+  await writeAdminResetAuditLog(adminSupabase, {
+    actorUserId: adminCheck.userId,
+    actorEmail: null,
+    actionKey: "reset_testing_social_state",
+    scope: "social",
+    reason: "Clear testing social state",
+    success: true,
+    targetIds: [],
+    affectedCounts: clearedCounts,
+    details: {
+      preserves: ADMIN_RESET_TOOL_DEFINITIONS.reset_testing_social_state.preserves
+    }
+  });
 
   revalidatePath("/dashboard");
   revalidatePath("/leaderboard");
@@ -1381,8 +2338,289 @@ export async function resetTestingSocialStateAction(): Promise<ResetTestingSocia
 
   return {
     ok: true,
-    message: "Testing notifications, leaderboard events, trophies, and movement history were cleared."
+    message: resetMarkerWarning
+      ? `Testing notifications, leaderboard events, trophies, and movement history were cleared. ${resetMarkerWarning}`
+      : "Testing notifications, leaderboard events, trophies, and movement history were cleared."
   };
+}
+
+async function clearTestingSocialStateWithClient(
+  adminSupabase: ReturnType<typeof createAdminClient>
+) {
+  const [
+    commentsCountResult,
+    reactionsCountResult,
+    notificationsCountResult,
+    leaderboardEventsCountResult,
+    userTrophiesCountResult,
+    leaderboardSnapshotsCountResult
+  ] = await Promise.all([
+    countWholeTableRows(adminSupabase, "leaderboard_event_comments"),
+    countWholeTableRows(adminSupabase, "leaderboard_event_reactions"),
+    countWholeTableRows(adminSupabase, "user_notifications"),
+    countWholeTableRows(adminSupabase, "leaderboard_events"),
+    countWholeTableRows(adminSupabase, "user_trophies"),
+    countWholeTableRows(adminSupabase, "leaderboard_snapshots")
+  ]);
+
+  const deleteCommentsResult = await adminSupabase
+    .from("leaderboard_event_comments")
+    .delete()
+    .not("id", "is", null);
+  if (deleteCommentsResult.error && !isMissingSocialResetTableError(deleteCommentsResult.error.message)) {
+    throw new Error(deleteCommentsResult.error.message);
+  }
+
+  const deleteReactionsResult = await adminSupabase
+    .from("leaderboard_event_reactions")
+    .delete()
+    .not("id", "is", null);
+  if (deleteReactionsResult.error && !isMissingSocialResetTableError(deleteReactionsResult.error.message)) {
+    throw new Error(deleteReactionsResult.error.message);
+  }
+
+  const deleteNotificationsResult = await adminSupabase
+    .from("user_notifications")
+    .delete()
+    .not("id", "is", null);
+  if (deleteNotificationsResult.error && !isMissingSocialResetTableError(deleteNotificationsResult.error.message)) {
+    throw new Error(deleteNotificationsResult.error.message);
+  }
+
+  const deleteLeaderboardEventsResult = await adminSupabase
+    .from("leaderboard_events")
+    .delete()
+    .not("id", "is", null);
+  if (
+    deleteLeaderboardEventsResult.error &&
+    !isMissingSocialResetTableError(deleteLeaderboardEventsResult.error.message)
+  ) {
+    throw new Error(deleteLeaderboardEventsResult.error.message);
+  }
+
+  const deleteUserTrophiesResult = await adminSupabase
+    .from("user_trophies")
+    .delete()
+    .not("id", "is", null);
+  if (deleteUserTrophiesResult.error && !isMissingSocialResetTableError(deleteUserTrophiesResult.error.message)) {
+    throw new Error(deleteUserTrophiesResult.error.message);
+  }
+
+  const deleteLeaderboardSnapshotsResult = await adminSupabase
+    .from("leaderboard_snapshots")
+    .delete()
+    .not("id", "is", null);
+  if (
+    deleteLeaderboardSnapshotsResult.error &&
+    !isMissingSocialResetTableError(deleteLeaderboardSnapshotsResult.error.message)
+  ) {
+    throw new Error(deleteLeaderboardSnapshotsResult.error.message);
+  }
+
+  return {
+    deletedComments: commentsCountResult.count ?? 0,
+    deletedReactions: reactionsCountResult.count ?? 0,
+    deletedNotifications: notificationsCountResult.count ?? 0,
+    deletedLeaderboardEvents: leaderboardEventsCountResult.count ?? 0,
+    deletedUserTrophies: userTrophiesCountResult.count ?? 0,
+    deletedLeaderboardSnapshots: leaderboardSnapshotsCountResult.count ?? 0
+  };
+}
+
+async function performClearUserPredictionReset(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    targetUserId: string;
+    actorUserId: string;
+    actorEmail: string | null;
+    actorTier: AccessLevel;
+    reason: string;
+    actionKey: "clear_user_test_predictions" | "self_service_prediction_reset";
+    expectedEmail?: string;
+  }
+):
+  Promise<
+    | {
+        ok: true;
+        message: string;
+        affectedCounts: {
+          predictions: number;
+          bracketPredictions: number;
+          projectedBracketPredictions: number;
+          legacyBracketPicks: number;
+          bracketScores: number;
+          predictionScores: number;
+          leaderboardEvents: number;
+          leaderboardSnapshots: number;
+        };
+      }
+    | { ok: false; message: string }
+  > {
+  const { data: userProfile, error: userProfileError } = await adminSupabase
+    .from("users")
+    .select("id,email")
+    .eq("id", input.targetUserId)
+    .maybeSingle();
+
+  if (userProfileError) {
+    return { ok: false, message: userProfileError.message };
+  }
+
+  if (!userProfile) {
+    return { ok: false, message: "That user was not found." };
+  }
+
+  const normalizedEmail = (userProfile.email ?? "").trim().toLowerCase();
+  if (typeof input.expectedEmail === "string" && normalizedEmail !== input.expectedEmail.trim().toLowerCase()) {
+    return { ok: false, message: `Type ${normalizedEmail} to confirm this user reset.` };
+  }
+
+  const [
+    predictionsResult,
+    bracketPredictionsResult,
+    projectedBracketPredictionsResult,
+    legacyBracketPicksResult,
+    bracketScoresResult,
+    predictionScoresResult,
+    leaderboardEventsResult,
+    leaderboardSnapshotsResult
+  ] = await Promise.all([
+    adminSupabase.from("predictions").select("id", { count: "exact", head: true }).eq("user_id", input.targetUserId),
+    countOptionalGameplayRows(adminSupabase, "bracket_predictions", input.targetUserId),
+    countOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", input.targetUserId),
+    countOptionalGameplayRows(adminSupabase, "bracket_picks", input.targetUserId),
+    adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).eq("user_id", input.targetUserId),
+    adminSupabase.from("prediction_scores").select("prediction_id", { count: "exact", head: true }).eq("user_id", input.targetUserId),
+    adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).eq("user_id", input.targetUserId),
+    adminSupabase.from("leaderboard_snapshots").select("id", { count: "exact", head: true }).eq("user_id", input.targetUserId)
+  ]);
+
+  const deletionResults = await Promise.all([
+    adminSupabase.from("predictions").delete().eq("user_id", input.targetUserId),
+    deleteOptionalGameplayRows(adminSupabase, "bracket_predictions", input.targetUserId),
+    deleteOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", input.targetUserId),
+    deleteOptionalGameplayRows(adminSupabase, "bracket_picks", input.targetUserId),
+    adminSupabase.from("bracket_scores").delete().eq("user_id", input.targetUserId),
+    adminSupabase.from("prediction_scores").delete().eq("user_id", input.targetUserId),
+    adminSupabase.from("leaderboard_events").delete().eq("user_id", input.targetUserId),
+    adminSupabase.from("leaderboard_snapshots").delete().eq("user_id", input.targetUserId)
+  ]);
+
+  const failedDeletion = deletionResults.find((result) => result.error);
+  if (failedDeletion?.error) {
+    return { ok: false, message: failedDeletion.error.message };
+  }
+
+  const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+  if (!leaderboardResult.ok) {
+    return leaderboardResult;
+  }
+
+  const resetMarkerWarning = await bumpDashboardUiResetEpoch(input.actionKey);
+  const affectedCounts = {
+    predictions: predictionsResult.count ?? 0,
+    bracketPredictions: bracketPredictionsResult.count ?? 0,
+    projectedBracketPredictions: projectedBracketPredictionsResult.count ?? 0,
+    legacyBracketPicks: legacyBracketPicksResult.count ?? 0,
+    bracketScores: bracketScoresResult.count ?? 0,
+    predictionScores: predictionScoresResult.count ?? 0,
+    leaderboardEvents: leaderboardEventsResult.count ?? 0,
+    leaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0
+  };
+
+  await writeAdminResetAuditLog(adminSupabase, {
+    actorUserId: input.actorUserId,
+    actorEmail: input.actorEmail,
+    actionKey: input.actionKey,
+    scope: "user",
+    reason: input.reason,
+    success: true,
+    targetIds: [input.targetUserId],
+    affectedCounts,
+    details: {
+      actorTier: input.actorTier,
+      selfService: input.actionKey === "self_service_prediction_reset"
+    }
+  });
+
+  return {
+    ok: true,
+    affectedCounts,
+    message: resetMarkerWarning
+      ? `Cleared ${userProfile.email}'s test predictions and rebuilt leaderboard state. ${resetMarkerWarning}`
+      : `Cleared ${userProfile.email}'s test predictions and rebuilt leaderboard state.`
+  };
+}
+
+async function bumpDashboardUiResetEpoch(reason: string) {
+  try {
+    const currentResetEpoch = await fetchIntegerAppSetting(DASHBOARD_UI_RESET_EPOCH_SETTING_KEY, 0);
+    await updateIntegerAppSetting(DASHBOARD_UI_RESET_EPOCH_SETTING_KEY, currentResetEpoch + 1);
+    return null;
+  } catch (error) {
+    console.warn(`Could not update dashboard reset epoch during ${reason}.`, error);
+    return error instanceof Error ? error.message : "Dashboard reset marker could not be updated.";
+  }
+}
+
+async function writeAdminResetAuditLog(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    actorUserId: string;
+    actorEmail: string | null;
+    actionKey: string;
+    scope: AdminRecoveryScope;
+    reason: string;
+    success: boolean;
+    targetIds: string[];
+    affectedCounts: Record<string, number>;
+    details?: Record<string, unknown>;
+  }
+) {
+  const { error } = await adminSupabase.from("admin_reset_audit_log").insert({
+    actor_user_id: input.actorUserId,
+    actor_email: input.actorEmail,
+    action_key: input.actionKey,
+    scope: input.scope,
+    target_ids: input.targetIds,
+    affected_counts: input.affectedCounts,
+    reason: input.reason,
+    success: input.success,
+    details: input.details ?? {}
+  });
+
+  if (isMissingRelationError(error?.message ?? "", "public.admin_reset_audit_log")) {
+    console.warn("Could not write admin reset audit log because the table is missing.", {
+      actionKey: input.actionKey,
+      scope: input.scope
+    });
+    return;
+  }
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+function buildRequiredResetReason(reason: string) {
+  const trimmedReason = reason.trim();
+  if (!trimmedReason) {
+    throw new Error("A reason is required before running this recovery action.");
+  }
+
+  return trimmedReason;
+}
+
+function ensureRecoveryActionAllowed(
+  scope: AdminRecoveryScope,
+  actionName: Parameters<typeof logTestingResetEnvDiagnostics>[0],
+  actor: { adminUserId: string; adminEmail: string | null }
+) {
+  const availability = getTestingResetAvailability(scope);
+  logTestingResetEnvDiagnostics(actionName, actor);
+  if (!availability.canRun) {
+    throw new Error(availability.disabledReason ?? "This recovery tool is disabled in the current environment.");
+  }
 }
 
 export async function upsertManagerLimitsAction(
@@ -1408,7 +2646,7 @@ export async function upsertManagerLimitsAction(
   const adminSupabase = createAdminClient();
   const { data: existingUser, error: userError } = await adminSupabase
     .from("users")
-    .select("id")
+    .select("id,role,plan_tier")
     .eq("id", userId)
     .maybeSingle();
 
@@ -1420,21 +2658,50 @@ export async function upsertManagerLimitsAction(
     return { ok: false, message: "That user was not found." };
   }
 
-  const { data, error } = await adminSupabase
-    .from("manager_limits")
-    .upsert(
-      {
-        user_id: userId,
-        max_groups: maxGroups,
-        max_members_per_group: maxMembersPerGroup
-      },
-      { onConflict: "user_id" }
-    )
-    .select("user_id,max_groups,max_members_per_group")
-    .single();
+  const existingPlanTier = normalizeCommercialTier(
+    (existingUser as { plan_tier?: string | null }).plan_tier ?? null
+  );
+  const shouldPromotePlanTier =
+    (existingUser as { role: UserRole }).role !== "admin" &&
+    existingPlanTier !== "director" &&
+    existingPlanTier !== "managing_director";
+
+  console.info("[tier-access:manager-limits-upsert]", {
+    adminUserId: adminCheck.userId,
+    targetUserId: userId,
+    maxGroups,
+    maxMembersPerGroup,
+    existingPlanTier,
+    shouldPromotePlanTier
+  });
+
+  const [{ data, error }, planTierUpdateResult] = await Promise.all([
+    adminSupabase
+      .from("manager_limits")
+      .upsert(
+        {
+          user_id: userId,
+          max_groups: maxGroups,
+          max_members_per_group: maxMembersPerGroup
+        },
+        { onConflict: "user_id" }
+      )
+      .select("user_id,max_groups,max_members_per_group")
+      .single(),
+    shouldPromotePlanTier
+      ? adminSupabase
+          .from("users")
+          .update({ plan_tier: "manager", updated_at: new Date().toISOString() })
+          .eq("id", userId)
+      : Promise.resolve({ error: null })
+  ]);
 
   if (error) {
     return { ok: false, message: error.message };
+  }
+
+  if (planTierUpdateResult.error) {
+    return { ok: false, message: planTierUpdateResult.error.message };
   }
 
   revalidatePath("/dashboard");
@@ -1474,7 +2741,7 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
     adminSupabase
       .from("groups")
       .select(
-        "id,name,status,owner_user_id,membership_limit,owner:users!groups_owner_user_id_fkey(id,name,email),members:group_members(id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email,avatar_url,home_team_id))"
+        "id,name,status,owner_user_id,membership_limit,owner:users!groups_owner_user_id_fkey(id,name,email),members:group_members(id,user_id,role,joined_at,user:users!group_members_user_id_fkey(id,name,email,avatar_url,home_team_id)),access_codes(id,active,expires_at,max_uses,used_count),group_invites(id,status,expires_at)"
       )
       .order("created_at", { ascending: false }),
     adminSupabase
@@ -1508,6 +2775,18 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
         | Array<{ id: string; name: string; email: string; avatar_url?: string | null; home_team_id?: string | null }>
         | null;
     }> | null;
+    access_codes?: Array<{
+      id: string;
+      active: boolean;
+      expires_at?: string | null;
+      max_uses?: number | null;
+      used_count?: number | null;
+    }> | null;
+    group_invites?: Array<{
+      id: string;
+      status: "pending" | "accepted" | "revoked" | "expired";
+      expires_at?: string | null;
+    }> | null;
   }>).map((group) => {
     const owner = unwrapRelation(group.owner);
     const members = (group.members ?? []).map((member) => {
@@ -1523,6 +2802,26 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
         joinedAt: member.joined_at
       };
     });
+    const now = Date.now();
+    const activeAccessCodeCount = (group.access_codes ?? []).filter((code) => {
+      if (!code.active) {
+        return false;
+      }
+
+      if (code.expires_at && new Date(code.expires_at).getTime() <= now) {
+        return false;
+      }
+
+      if (code.max_uses != null && (code.used_count ?? 0) >= code.max_uses) {
+        return false;
+      }
+
+      return true;
+    }).length;
+    const pendingInviteCount = (group.group_invites ?? []).filter((invite) => invite.status === "pending").length;
+    const staleInviteCount = (group.group_invites ?? []).filter(
+      (invite) => invite.status === "pending" && Boolean(invite.expires_at) && new Date(invite.expires_at as string).getTime() <= now
+    ).length;
 
     return {
       id: group.id,
@@ -1533,6 +2832,9 @@ export async function fetchAdminGroupsAction(): Promise<FetchAdminGroupsResult> 
       ownerEmail: owner?.email ?? null,
       membershipLimit: group.membership_limit,
       memberCount: members.length,
+      activeAccessCodeCount,
+      pendingInviteCount,
+      staleInviteCount,
       members
     } satisfies AdminGroupSummary;
   });
@@ -1580,6 +2882,10 @@ export async function addUserToGroupAction(input: AddUserToGroupInput): Promise<
 
   if (!groupId || !userIdentifier) {
     return { ok: false, message: "A valid group and user are required." };
+  }
+
+  if (role === "manager") {
+    return { ok: false, message: "Each group has one manager. Use Change owner to transfer management." };
   }
 
   const targetUser = await findUserByIdOrEmail(adminSupabase, userIdentifier);
@@ -1701,22 +3007,6 @@ export async function removeUserFromGroupAction(userId: string, groupId: string)
     return { ok: false, message: "Change the group owner first before removing this user from the group." };
   }
 
-  if (membership.role === "manager") {
-    const { count: managerCount, error: managerCountError } = await adminSupabase
-      .from("group_members")
-      .select("id", { count: "exact", head: true })
-      .eq("group_id", trimmedGroupId)
-      .eq("role", "manager");
-
-    if (managerCountError) {
-      return { ok: false, message: managerCountError.message };
-    }
-
-    if ((managerCount ?? 0) <= 1) {
-      return { ok: false, message: "This is the only manager in the group. Add or assign another manager first." };
-    }
-  }
-
   const { error: deleteError } = await adminSupabase
     .from("group_members")
     .delete()
@@ -1802,39 +3092,6 @@ export async function changeGroupOwnerAction(groupId: string, newOwnerUserId: st
     return { ok: false, message: "That group was not found." };
   }
 
-  const { data: existingMembership, error: membershipLookupError } = await adminSupabase
-    .from("group_members")
-    .select("id,role")
-    .eq("group_id", trimmedGroupId)
-    .eq("user_id", nextOwner.id)
-    .maybeSingle();
-
-  if (membershipLookupError) {
-    return { ok: false, message: membershipLookupError.message };
-  }
-
-  if (!existingMembership) {
-    const { error: insertError } = await adminSupabase.from("group_members").insert({
-      group_id: trimmedGroupId,
-      user_id: nextOwner.id,
-      role: "manager"
-    });
-
-    if (insertError) {
-      return { ok: false, message: insertError.message };
-    }
-  } else if (existingMembership.role !== "manager") {
-    const { error: updateMembershipError } = await adminSupabase
-      .from("group_members")
-      .update({ role: "manager" })
-      .eq("group_id", trimmedGroupId)
-      .eq("user_id", nextOwner.id);
-
-    if (updateMembershipError) {
-      return { ok: false, message: updateMembershipError.message };
-    }
-  }
-
   const { error: updateGroupError } = await adminSupabase
     .from("groups")
     .update({
@@ -1856,33 +3113,11 @@ export async function changeGroupOwnerAction(groupId: string, newOwnerUserId: st
   };
 }
 
-export async function removeManagerAccessAction(userId: string): Promise<RemoveManagerAccessResult> {
-  const adminCheck = await assertCurrentUserIsAdmin();
-  if (!adminCheck.ok) {
-    return adminCheck;
-  }
-
-  const trimmedUserId = userId.trim();
-  if (!trimmedUserId) {
-    return { ok: false, message: "A valid user is required." };
-  }
-
-  const adminSupabase = createAdminClient();
-  const { error } = await adminSupabase
-    .from("manager_limits")
-    .delete()
-    .eq("user_id", trimmedUserId);
-
-  if (error) {
-    return { ok: false, message: error.message };
-  }
-
-  revalidatePath("/dashboard");
-  revalidatePath("/admin/players");
-
+export async function removeManagerAccessAction(_userId: string): Promise<RemoveManagerAccessResult> {
+  void _userId;
   return {
-    ok: true,
-    message: "Manager access removed."
+    ok: false,
+    message: "Direct manager removal is disabled. Use the Super Admin Demote / Remove Access workflow on the player card instead."
   };
 }
 
@@ -1928,7 +3163,9 @@ type KnockoutResetRpcRow = {
   statusBreakdown: Record<string, number>;
   reset_match_count: number;
   deleted_bracket_prediction_count: number;
+  deleted_projected_bracket_prediction_count: number;
   deleted_bracket_score_count: number;
+  deleted_legacy_bracket_pick_count: number;
   deleted_prediction_score_count: number;
   deleted_leaderboard_event_count: number;
   deleted_leaderboard_snapshot_count: number;
@@ -1952,15 +3189,18 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
     return { ok: false, message: previousMatchError.message };
   }
 
+  const isResettingToOpen = input.status === "scheduled";
   const { data, error } = await adminSupabase
     .from("matches")
     .update({
       status: input.status,
-      home_score: input.homeScore ?? null,
-      away_score: input.awayScore ?? null,
-      winner_team_id: input.winnerTeamId ?? null,
+      home_score: isResettingToOpen ? null : input.homeScore ?? null,
+      away_score: isResettingToOpen ? null : input.awayScore ?? null,
+      winner_team_id: isResettingToOpen ? null : input.winnerTeamId ?? null,
       finalized_at: input.status === "final" ? new Date().toISOString() : null,
-      is_manual_override: true,
+      last_synced_at: isResettingToOpen ? null : undefined,
+      is_manual_override: !isResettingToOpen,
+      sync_status: isResettingToOpen ? null : undefined,
       sync_error: null,
       updated_at: new Date().toISOString()
     })
@@ -1976,7 +3216,7 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
 
   if ((previousMatch as MatchRow).status === "final" && input.status !== "final") {
     if ((previousMatch as MatchRow).stage === "group") {
-      const resetResult = await resetGroupMatchScoring(adminSupabase, input.id);
+      const resetResult = await clearDerivedGroupMatchScoringState(adminSupabase, input.id);
       if (!resetResult.ok) {
         return resetResult;
       }
@@ -2109,16 +3349,13 @@ export async function batchFinalizeMatchResultsAction(
     return { ok: false, message: "Batch finalization confirmation did not match. No matches were changed." };
   }
 
-  const availability = getTestingResetAvailability("knockout");
-  logTestingResetEnvDiagnostics("batchFinalizeMatchResultsAction", {
-    adminUserId: superAdminCheck.userId,
-    adminEmail: superAdminCheck.email
-  });
-  if (!availability.canRun) {
-    return {
-      ok: false,
-      message: availability.disabledReason ?? "Testing tools are disabled in this environment."
-    };
+  try {
+    ensureRecoveryActionAllowed("batch_finalize", "batchFinalizeMatchResultsAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Testing tools are disabled in this environment.") };
   }
 
   if (!input.fromDate || !input.toDate) {
@@ -2153,7 +3390,7 @@ export async function batchFinalizeMatchResultsAction(
     }
   >).filter((match) => isBatchFinalizeScopeMatch(match, input.scope));
 
-  const maxBatchSize = 50;
+  const maxBatchSize = 72;
   if (candidateMatches.length > maxBatchSize) {
     return {
       ok: false,
@@ -2267,6 +3504,28 @@ export async function batchFinalizeMatchResultsAction(
     scoringJobsTriggered,
     errorCount: errors.length
   });
+  await writeAdminResetAuditLog(adminSupabase, {
+    actorUserId: superAdminCheck.userId,
+    actorEmail: superAdminCheck.email,
+    actionKey: "batch_finalize_test_matches",
+    scope: "batch_finalize",
+    reason: `Batch finalize ${input.scope} matches from ${input.fromDate} to ${input.toDate}`,
+    success: true,
+    targetIds: candidateMatches.map((match) => match.id),
+    affectedCounts: {
+      processed,
+      finalized,
+      skipped,
+      overwritten,
+      scoringJobsTriggered,
+      errors: errors.length
+    },
+    details: {
+      scope: input.scope,
+      resultStyle: input.resultStyle,
+      overwriteMode: input.overwriteMode
+    }
+  });
 
   return {
     ok: true,
@@ -2277,6 +3536,217 @@ export async function batchFinalizeMatchResultsAction(
     scoringJobsTriggered,
     errors,
     message: `Processed ${processed} matches. Finalized ${finalized}, skipped ${skipped}, overwrote ${overwritten}, triggered scoring for ${scoringJobsTriggered}.`
+  };
+}
+
+export async function batchClearMatchResultsAction(
+  input: BatchClearMatchResultsInput
+): Promise<BatchClearMatchResultsResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  if (input.confirmationText !== "CLEAR TEST MATCH RESULTS") {
+    return { ok: false, message: "Batch clear confirmation did not match. No matches were changed." };
+  }
+
+  try {
+    ensureRecoveryActionAllowed("batch_finalize", "batchClearMatchResultsAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Testing tools are disabled in this environment.") };
+  }
+
+  if (!input.fromDate || !input.toDate) {
+    return { ok: false, message: "Choose both a from date and a to date." };
+  }
+
+  if (input.fromDate > input.toDate) {
+    return { ok: false, message: "From date must be before or equal to the to date." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const fromIso = `${input.fromDate}T00:00:00.000Z`;
+  const toIso = `${input.toDate}T23:59:59.999Z`;
+
+  const { data: matches, error } = await adminSupabase
+    .from("matches")
+    .select("id,stage,status,home_score,away_score,winner_team_id,finalized_at,last_synced_at,is_manual_override,kickoff_time")
+    .gte("kickoff_time", fromIso)
+    .lte("kickoff_time", toIso)
+    .order("kickoff_time", { ascending: true });
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  const candidateMatches = ((matches ?? []) as MatchRow[]).filter(
+    (match) => isBatchFinalizeScopeMatch(match, input.scope) && match.is_manual_override === true
+  );
+  const maxBatchSize = 72;
+  if (candidateMatches.length > maxBatchSize) {
+    return {
+      ok: false,
+      message: `Batch result clearing is limited to ${maxBatchSize} matches at a time. Narrow the date range or scope.`
+    };
+  }
+
+  let processed = 0;
+  let cleared = 0;
+  let skipped = 0;
+  const knockoutMatchIds: string[] = [];
+
+  for (const match of candidateMatches) {
+    processed += 1;
+    const hasExistingResult =
+      match.home_score != null ||
+      match.away_score != null ||
+      match.winner_team_id != null ||
+      match.finalized_at != null ||
+      match.last_synced_at != null ||
+      match.status !== "scheduled";
+
+    if (!hasExistingResult) {
+      skipped += 1;
+      continue;
+    }
+
+    const updateResult = await adminSupabase
+      .from("matches")
+      .update({
+        status: "scheduled",
+        home_score: null,
+        away_score: null,
+        winner_team_id: null,
+        finalized_at: null,
+        last_synced_at: null,
+        is_manual_override: false,
+        sync_status: null,
+        sync_error: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", match.id);
+
+    if (updateResult.error && !isOptionalResetColumnError(updateResult.error.message)) {
+      return { ok: false, message: updateResult.error.message };
+    }
+
+    if (updateResult.error) {
+      const fallbackUpdate = await adminSupabase
+        .from("matches")
+        .update({
+          status: "scheduled",
+          home_score: null,
+          away_score: null,
+          winner_team_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", match.id);
+      if (fallbackUpdate.error) {
+        return { ok: false, message: fallbackUpdate.error.message };
+      }
+    }
+
+    if (match.stage === "group") {
+      const resetResult = await clearDerivedGroupMatchScoringState(adminSupabase, match.id);
+      if (!resetResult.ok) {
+        return resetResult;
+      }
+    } else {
+      await resetKnockoutMatchScoring(match.id);
+      knockoutMatchIds.push(match.id);
+    }
+
+    await appendMatchEvent(adminSupabase, {
+      matchId: match.id,
+      eventType: "reopen",
+      payload: {
+        source: "admin-batch-clear",
+        actorUserId: superAdminCheck.userId,
+        previousStatus: match.status,
+        nextStatus: "scheduled"
+      }
+    });
+
+    cleared += 1;
+  }
+
+  if (cleared > 0) {
+    if (knockoutMatchIds.length > 0) {
+      const advancementSummary = await rebuildKnockoutAdvancementSharedWithClient(adminSupabase);
+      const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+      if (!leaderboardResult.ok) {
+        return leaderboardResult;
+      }
+
+      await writeAdminResetAuditLog(adminSupabase, {
+        actorUserId: superAdminCheck.userId,
+        actorEmail: superAdminCheck.email,
+        actionKey: "batch_clear_test_matches",
+        scope: "batch_finalize",
+        reason: `Batch clear ${input.scope} matches from ${input.fromDate} to ${input.toDate}`,
+        success: true,
+        targetIds: candidateMatches.map((match) => match.id),
+        affectedCounts: {
+          processed,
+          cleared,
+          skipped,
+          repairedKnockoutMatches: advancementSummary.touchedMatches
+        },
+        details: {
+          scope: input.scope
+        }
+      });
+    } else {
+      const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+      if (!leaderboardResult.ok) {
+        return leaderboardResult;
+      }
+
+      await writeAdminResetAuditLog(adminSupabase, {
+        actorUserId: superAdminCheck.userId,
+        actorEmail: superAdminCheck.email,
+        actionKey: "batch_clear_test_matches",
+        scope: "batch_finalize",
+        reason: `Batch clear ${input.scope} matches from ${input.fromDate} to ${input.toDate}`,
+        success: true,
+        targetIds: candidateMatches.map((match) => match.id),
+        affectedCounts: {
+          processed,
+          cleared,
+          skipped,
+          repairedKnockoutMatches: 0
+        },
+        details: {
+          scope: input.scope
+        }
+      });
+    }
+  }
+
+  const resetMarkerWarning = await bumpDashboardUiResetEpoch("batch clear match results");
+  revalidatePath("/");
+  revalidatePath("/dashboard");
+  revalidatePath("/groups");
+  revalidatePath("/leaderboard");
+  revalidatePath("/knockout");
+  revalidatePath("/predictions");
+  revalidatePath("/profile");
+  revalidatePath("/admin/matches");
+  revalidatePath("/my-groups");
+
+  return {
+    ok: true,
+    processed,
+    cleared,
+    skipped,
+    repairedKnockoutMatches: knockoutMatchIds.length,
+      message: resetMarkerWarning
+      ? `Processed ${processed} pretend-result matches. Cleared ${cleared}, skipped ${skipped}. ${resetMarkerWarning}`
+      : `Processed ${processed} pretend-result matches. Cleared ${cleared}, skipped ${skipped}.`
   };
 }
 
@@ -2376,18 +3846,14 @@ export async function resetKnockoutTestingDataAction(
     return { ok: false, message: "Reset confirmation did not match. No data was changed." };
   }
 
-  const destructiveToolStatus = getTestingResetAvailability("knockout");
-  logTestingResetEnvDiagnostics("resetKnockoutTestingDataAction", {
-    adminUserId: superAdminCheck.userId,
-    adminEmail: superAdminCheck.email
-  });
-  if (!destructiveToolStatus.canRun) {
-    return {
-      ok: false,
-      message:
-        destructiveToolStatus.disabledReason ??
-        "Production knockout reset is disabled. Set ALLOW_PRODUCTION_KNOCKOUT_RESET=true and redeploy."
-    };
+  try {
+    buildRequiredResetReason(input.reason ?? "Reset knockout test data");
+    ensureRecoveryActionAllowed("knockout", "resetKnockoutTestingDataAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Knockout reset is disabled in this environment.") };
   }
 
   const adminSupabase = createAdminClient();
@@ -2407,6 +3873,7 @@ export async function resetKnockoutTestingDataAction(
       });
     }
 
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("knockout reset");
     console.info("[knockout-reset]", {
       adminUserId: superAdminCheck.userId,
       adminEmail: superAdminCheck.email,
@@ -2426,7 +3893,30 @@ export async function resetKnockoutTestingDataAction(
       deletedUserNotifications: summary.deleted_user_notification_count,
       leaderboardRecalculation: leaderboardWarning ? "failed" : "ok"
     });
-    // TODO: write a dedicated admin audit record here if/when the app adds an admin audit table.
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "reset_knockout_test_data",
+      scope: "knockout",
+      reason: input.reason?.trim() || "Reset knockout test data",
+      success: true,
+      targetIds: [],
+      affectedCounts: {
+        targetMatchCount: summary.targetMatchCount,
+        resetMatchCount: summary.reset_match_count,
+        bracketPredictions: summary.deleted_bracket_prediction_count,
+        bracketScores: summary.deleted_bracket_score_count,
+        legacyBracketPicks: summary.deleted_legacy_bracket_pick_count ?? 0,
+        predictionScores: summary.deleted_prediction_score_count,
+        leaderboardEvents: summary.deleted_leaderboard_event_count,
+        leaderboardSnapshots: summary.deleted_leaderboard_snapshot_count,
+        userNotifications: summary.deleted_user_notification_count
+      },
+      details: {
+        statusBreakdownBeforeReset: summary.statusBreakdown,
+        leaderboardRecalculation: leaderboardWarning ? "failed" : "ok"
+      }
+    });
 
     revalidatePath("/admin/matches");
     revalidatePath("/knockout");
@@ -2447,7 +3937,7 @@ export async function resetKnockoutTestingDataAction(
         deletedLeaderboardSnapshots: summary.deleted_leaderboard_snapshot_count,
         deletedUserNotifications: summary.deleted_user_notification_count,
         message:
-          "Knockout testing data was reset across all statuses, including locked/live/final matches, but leaderboard recalculation failed. Run leaderboard repair manually."
+          `Knockout testing data was reset across all statuses, including locked/live/final matches, but leaderboard recalculation failed. Run leaderboard repair manually.${resetMarkerWarning ? ` ${resetMarkerWarning}` : ""}`
       };
     }
 
@@ -2462,7 +3952,7 @@ export async function resetKnockoutTestingDataAction(
       deletedLeaderboardEvents: summary.deleted_leaderboard_event_count,
       deletedLeaderboardSnapshots: summary.deleted_leaderboard_snapshot_count,
       deletedUserNotifications: summary.deleted_user_notification_count,
-      message: "Knockout testing data was reset across all statuses, including locked/live/final matches. Group-stage data was not changed."
+      message: `Knockout testing data was reset across all statuses, including locked/live/final matches. Group-stage data was not changed.${resetMarkerWarning ? ` ${resetMarkerWarning}` : ""}`
     };
   } catch (error) {
     return { ok: false, message: (error as Error).message };
@@ -2481,18 +3971,14 @@ export async function resetGroupStageTestingDataAction(
     return { ok: false, message: "Reset confirmation did not match. No data was changed." };
   }
 
-  const destructiveToolStatus = getTestingResetAvailability("group");
-  logTestingResetEnvDiagnostics("resetGroupStageTestingDataAction", {
-    adminUserId: superAdminCheck.userId,
-    adminEmail: superAdminCheck.email
-  });
-  if (!destructiveToolStatus.canRun) {
-    return {
-      ok: false,
-      message:
-        destructiveToolStatus.disabledReason ??
-        "Production group-stage reset is disabled. Set ALLOW_PRODUCTION_GROUP_RESET=true and redeploy."
-    };
+  try {
+    buildRequiredResetReason(input.reason ?? "Reset group-stage test data");
+    ensureRecoveryActionAllowed("group_stage", "resetGroupStageTestingDataAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Group-stage reset is disabled in this environment.") };
   }
 
   const adminSupabase = createAdminClient();
@@ -2519,6 +4005,7 @@ export async function resetGroupStageTestingDataAction(
       });
     }
 
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("group-stage reset");
     console.info("[group-reset]", {
       resetType: "group",
       adminUserId: superAdminCheck.userId,
@@ -2539,6 +4026,33 @@ export async function resetGroupStageTestingDataAction(
       deletedLeaderboardSnapshots: summary.deletedLeaderboardSnapshots,
       deletedUserNotifications: summary.deletedUserNotifications,
       leaderboardRecalculation: leaderboardWarning ? "failed" : "ok"
+    });
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "reset_group_stage_test_data",
+      scope: "group_stage",
+      reason: input.reason?.trim() || "Reset group-stage test data",
+      success: true,
+      targetIds: [],
+      affectedCounts: {
+        targetMatchCount: summary.targetMatchCount,
+        resetMatchCount: summary.resetMatchCount,
+        predictions: summary.deletedPredictions,
+        predictionScores: summary.deletedPredictionScores,
+        leaderboardEvents: summary.deletedLeaderboardEvents,
+        leaderboardSnapshots: summary.deletedLeaderboardSnapshots,
+        generatedArtifacts: summary.deletedGeneratedArtifacts ?? 0,
+        knockoutSeedArtifacts: summary.deletedKnockoutSeedArtifacts ?? 0,
+        userNotifications: summary.deletedUserNotifications
+      },
+      details: {
+        statusBreakdownBeforeReset: summary.statusBreakdown,
+        statusBreakdownAfterReset: summary.postResetStatusBreakdown ?? {},
+        lingeringNonOpenMatchCount: summary.lingeringNonOpenMatchCount ?? 0,
+        lingeringScoredMatchCount: summary.lingeringScoredMatchCount ?? 0,
+        leaderboardRecalculation: leaderboardWarning ? "failed" : "ok"
+      }
     });
 
     revalidatePath("/");
@@ -2577,8 +4091,8 @@ export async function resetGroupStageTestingDataAction(
         deletedCounts,
         message:
           leaderboardWarning
-            ? "Group-stage testing data was reset, but leaderboard recalculation failed. Run leaderboard repair manually."
-            : "Group-stage testing data was reset, but some matches or generated artifacts may still remain. Check logs."
+            ? `Group-stage testing data was reset, but leaderboard recalculation failed. Run leaderboard repair manually.${resetMarkerWarning ? ` ${resetMarkerWarning}` : ""}`
+            : `Group-stage testing data was reset, but some matches or generated artifacts may still remain. Check logs.${resetMarkerWarning ? ` ${resetMarkerWarning}` : ""}`
       } satisfies ResetGroupStageTestingDataResult;
       console.info("[group-reset] reset completed", {
         ok: result.ok,
@@ -2600,7 +4114,7 @@ export async function resetGroupStageTestingDataAction(
       deletedUserNotifications: summary.deletedUserNotifications,
       deletedCounts,
       message:
-        "Group-stage testing data was reset. Group matches were returned to open, player predictions were cleared, and generated group standings/seed artifacts were removed."
+        `Group-stage testing data was reset. Group matches were returned to open, player predictions were cleared, and generated group standings/seed artifacts were removed.${resetMarkerWarning ? ` ${resetMarkerWarning}` : ""}`
     } satisfies ResetGroupStageTestingDataResult;
     console.info("[group-reset] reset completed", {
       ok: result.ok,
@@ -2620,6 +4134,81 @@ export async function resetGroupStageTestingDataAction(
   }
 }
 
+export async function fullPreLaunchTestResetAction(
+  input: FullPreLaunchTestResetInput
+): Promise<FullPreLaunchTestResetResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  if (input.confirmationText !== "FULL PRE-LAUNCH TEST RESET") {
+    return { ok: false, message: "Full reset confirmation did not match. No data was changed." };
+  }
+
+  try {
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    ensureRecoveryActionAllowed("full_test", "fullPreLaunchTestResetAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+
+    const adminSupabase = createAdminClient();
+    const groupSummary = await resetGroupStageTestingDataWithClient(adminSupabase);
+    const knockoutSummary = await resetKnockoutTestingDataWithClient(adminSupabase);
+    await clearTestingSocialStateWithClient(adminSupabase);
+    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+    if (!leaderboardResult.ok) {
+      return leaderboardResult;
+    }
+
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("full pre-launch reset");
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "full_prelaunch_test_reset",
+      scope: "full_test",
+      reason: trimmedReason,
+      success: true,
+      targetIds: [],
+      affectedCounts: {
+        groupResetMatchCount: groupSummary.resetMatchCount,
+        knockoutResetMatchCount: knockoutSummary.reset_match_count,
+        groupPredictions: groupSummary.deletedPredictions,
+        groupPredictionScores: groupSummary.deletedPredictionScores,
+        knockoutBracketPredictions: knockoutSummary.deleted_bracket_prediction_count,
+        knockoutBracketScores: knockoutSummary.deleted_bracket_score_count,
+        knockoutLegacyBracketPicks: knockoutSummary.deleted_legacy_bracket_pick_count ?? 0
+      },
+      details: {
+        groupStatusBreakdownBeforeReset: groupSummary.statusBreakdown,
+        knockoutStatusBreakdownBeforeReset: knockoutSummary.statusBreakdown
+      }
+    });
+
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/groups");
+    revalidatePath("/knockout");
+    revalidatePath("/leaderboard");
+    revalidatePath("/my-groups");
+    revalidatePath("/profile");
+    revalidatePath("/trophies");
+    revalidatePath("/admin/matches");
+
+    return {
+      ok: true,
+      groupResetMatchCount: groupSummary.resetMatchCount,
+      knockoutResetMatchCount: knockoutSummary.reset_match_count,
+      message: resetMarkerWarning
+        ? `Full pre-launch test reset completed. Group-stage, knockout, social, and derived leaderboard state were cleared. ${resetMarkerWarning}`
+        : "Full pre-launch test reset completed. Group-stage, knockout, social, and derived leaderboard state were cleared."
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not complete the full pre-launch test reset.") };
+  }
+}
+
 export async function getDestructiveAdminToolStatusAction(): Promise<DestructiveAdminToolStatusResult> {
   const superAdminCheck = await assertCurrentUserIsSuperAdmin();
   if (!superAdminCheck.ok) {
@@ -2633,9 +4222,19 @@ export async function getDestructiveAdminToolStatusAction(): Promise<Destructive
   const diagnostics = getResetDiagnostics();
   return {
     ok: true,
-    knockout: getTestingResetAvailability("knockout"),
-    group: getTestingResetAvailability("group"),
-    diagnostics
+    scopes: {
+      user: getTestingResetAvailability("user"),
+      group: getTestingResetAvailability("group"),
+      match: getTestingResetAvailability("match"),
+      group_stage: getTestingResetAvailability("group_stage"),
+      knockout: getTestingResetAvailability("knockout"),
+      leaderboard: getTestingResetAvailability("leaderboard"),
+      social: getTestingResetAvailability("social"),
+      full_test: getTestingResetAvailability("full_test"),
+      batch_finalize: getTestingResetAvailability("batch_finalize")
+    },
+    diagnostics,
+    toolDefinitions: ADMIN_RESET_TOOL_DEFINITIONS
   };
 }
 
@@ -2677,6 +4276,8 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
 
   const [
     bracketPredictionsResult,
+    projectedBracketPredictionsResult,
+    legacyBracketPicksResult,
     bracketScoresResult,
     predictionScoresResult,
     leaderboardEventsResult,
@@ -2684,6 +4285,8 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
     userNotificationsResult
   ] = await Promise.all([
     adminSupabase.from("bracket_predictions").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
+    adminSupabase.from("projected_bracket_predictions").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
+    countOptionalLegacyBracketPickRows(adminSupabase, knockoutMatchIds),
     adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
     adminSupabase.from("prediction_scores").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
     adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).in("match_id", knockoutMatchIds),
@@ -2695,6 +4298,8 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
 
   for (const result of [
     bracketPredictionsResult,
+    projectedBracketPredictionsResult,
+    legacyBracketPicksResult,
     bracketScoresResult,
     predictionScoresResult,
     leaderboardEventsResult,
@@ -2707,7 +4312,12 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
   }
 
   const deletionResults = await Promise.all([
+    leaderboardEventIds.length > 0
+      ? adminSupabase.from("user_notifications").delete().in("event_id", leaderboardEventIds)
+      : Promise.resolve({ error: null }),
     adminSupabase.from("bracket_predictions").delete().in("match_id", knockoutMatchIds),
+    adminSupabase.from("projected_bracket_predictions").delete().in("match_id", knockoutMatchIds),
+    deleteOptionalLegacyBracketPickRows(adminSupabase, knockoutMatchIds),
     adminSupabase.from("bracket_scores").delete().in("match_id", knockoutMatchIds),
     adminSupabase.from("prediction_scores").delete().in("match_id", knockoutMatchIds),
     adminSupabase.from("leaderboard_snapshots").delete().in("match_id", knockoutMatchIds),
@@ -2719,7 +4329,9 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
     throw failedDeletion.error;
   }
 
-  const { data: updatedMatches, error: updateMatchesError } = await adminSupabase
+  await clearKnockoutSeedingFlags(adminSupabase);
+
+  const fullUpdateResult = await adminSupabase
     .from("matches")
     .update({
       home_team_id: null,
@@ -2728,12 +4340,45 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
       away_score: null,
       status: "scheduled",
       winner_team_id: null,
+      finalized_at: null,
+      last_synced_at: null,
+      is_manual_override: false,
+      sync_status: null,
+      sync_error: null,
       updated_at: new Date().toISOString()
     })
-    .in("id", knockoutMatchIds)
-    .select("id");
-  if (updateMatchesError) {
-    throw updateMatchesError;
+    .in("id", knockoutMatchIds);
+  if (fullUpdateResult.error && !isOptionalResetColumnError(fullUpdateResult.error.message)) {
+    throw fullUpdateResult.error;
+  }
+
+  let updatedMatches: Array<{ id: string }> | null = null;
+  if (fullUpdateResult.error) {
+    const fallbackUpdateResult = await adminSupabase
+      .from("matches")
+      .update({
+        home_team_id: null,
+        away_team_id: null,
+        home_score: null,
+        away_score: null,
+        status: "scheduled",
+        winner_team_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .in("id", knockoutMatchIds)
+      .select("id");
+    if (fallbackUpdateResult.error) {
+      throw fallbackUpdateResult.error;
+    }
+
+    updatedMatches = fallbackUpdateResult.data ?? [];
+  } else {
+    const verificationResult = await adminSupabase.from("matches").select("id").in("id", knockoutMatchIds);
+    if (verificationResult.error) {
+      throw verificationResult.error;
+    }
+
+    updatedMatches = verificationResult.data ?? [];
   }
 
   return {
@@ -2741,7 +4386,9 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
     statusBreakdown,
     reset_match_count: (updatedMatches ?? []).length,
     deleted_bracket_prediction_count: bracketPredictionsResult.count ?? 0,
+    deleted_projected_bracket_prediction_count: projectedBracketPredictionsResult.count ?? 0,
     deleted_bracket_score_count: bracketScoresResult.count ?? 0,
+    deleted_legacy_bracket_pick_count: legacyBracketPicksResult.count ?? 0,
     deleted_prediction_score_count: predictionScoresResult.count ?? 0,
     deleted_leaderboard_event_count: leaderboardEventsResult.count ?? 0,
     deleted_leaderboard_snapshot_count: leaderboardSnapshotsResult.count ?? 0,
@@ -2814,6 +4461,21 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
   }
 
   const leaderboardEventIds = (leaderboardEventRows ?? []).map((row) => row.id);
+  const { data: knockoutLeaderboardEventRows, error: knockoutLeaderboardEventRowsError } = knockoutMatchIds.length
+    ? await adminSupabase.from("leaderboard_events").select("id").in("match_id", knockoutMatchIds)
+    : { data: [], error: null };
+  if (knockoutLeaderboardEventRowsError) {
+    throw new Error(
+      buildAdminActionErrorMessage(
+        knockoutLeaderboardEventRowsError,
+        "Could not load knockout leaderboard events for derived artifact reset."
+      )
+    );
+  }
+  const allAffectedEventIds = [
+    ...leaderboardEventIds,
+    ...((knockoutLeaderboardEventRows ?? []).map((row) => row.id))
+  ];
 
   const [
     predictionsResult,
@@ -2827,8 +4489,8 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
     countOptionalMatchRows(adminSupabase, "prediction_scores", groupMatchIds),
     countOptionalMatchRows(adminSupabase, "leaderboard_events", groupMatchIds),
     countOptionalMatchRows(adminSupabase, "leaderboard_snapshots", groupMatchIds),
-    leaderboardEventIds.length > 0
-      ? countOptionalEventNotificationRows(adminSupabase, leaderboardEventIds)
+    allAffectedEventIds.length > 0
+      ? countOptionalEventNotificationRows(adminSupabase, allAffectedEventIds)
       : Promise.resolve({ count: 0, error: null } as { count: number; error: null }),
     Promise.resolve({ count: 0, error: null } as { count: number; error: null })
   ]);
@@ -2868,6 +4530,9 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
   });
 
   const deletionResults = await Promise.all([
+    leaderboardEventIds.length > 0
+      ? adminSupabase.from("user_notifications").delete().in("event_id", leaderboardEventIds)
+      : Promise.resolve({ error: null }),
     adminSupabase.from("predictions").delete().in("match_id", groupMatchIds),
     deleteOptionalMatchRows(adminSupabase, "prediction_scores", groupMatchIds),
     deleteOptionalMatchRows(adminSupabase, "leaderboard_snapshots", groupMatchIds),
@@ -2881,7 +4546,15 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
   let deletedKnockoutSeedArtifacts = 0;
   if (knockoutMatchIds.length > 0) {
     const knockoutDeletionResults = await Promise.all([
+      knockoutLeaderboardEventRows.length > 0
+        ? adminSupabase.from("user_notifications").delete().in(
+            "event_id",
+            knockoutLeaderboardEventRows.map((row) => row.id)
+          )
+        : Promise.resolve({ error: null }),
       adminSupabase.from("bracket_predictions").delete().in("match_id", knockoutMatchIds),
+      adminSupabase.from("projected_bracket_predictions").delete().in("match_id", knockoutMatchIds),
+      deleteOptionalLegacyBracketPickRows(adminSupabase, knockoutMatchIds),
       adminSupabase.from("bracket_scores").delete().in("match_id", knockoutMatchIds),
       adminSupabase.from("prediction_scores").delete().in("match_id", knockoutMatchIds),
       adminSupabase.from("leaderboard_snapshots").delete().in("match_id", knockoutMatchIds),
@@ -2933,6 +4606,7 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
     }
 
     deletedKnockoutSeedArtifacts = knockoutSeededRowsIfApplicable.length;
+    await clearKnockoutSeedingFlags(adminSupabase);
   }
 
   await updateGroupResetMatches(adminSupabase, groupMatchIds);
@@ -3070,6 +4744,24 @@ async function countOptionalEventNotificationRows(
   return result;
 }
 
+async function countWholeTableRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  tableName:
+    | "leaderboard_event_comments"
+    | "leaderboard_event_reactions"
+    | "user_notifications"
+    | "leaderboard_events"
+    | "user_trophies"
+    | "leaderboard_snapshots"
+) {
+  const result = await adminSupabase.from(tableName).select("id", { count: "exact", head: true });
+  if (result.error && isMissingSocialResetTableError(result.error.message)) {
+    return { count: 0, error: null };
+  }
+
+  return result;
+}
+
 function buildResetStatusBreakdown(statuses: string[]) {
   return statuses.reduce<Record<string, number>>((accumulator, status) => {
     accumulator[status] = (accumulator[status] ?? 0) + 1;
@@ -3201,321 +4893,46 @@ function isSchemaColumnMissing(message: string, column: string) {
 export async function seedKnockoutFromGroupStageAction(
   force = false
 ): Promise<SeedKnockoutFromGroupStageResult> {
-  const expectedGroupMatchCount = 72;
   const adminCheck = await assertCurrentUserIsAdmin();
   if (!adminCheck.ok) {
     return adminCheck;
   }
 
   const adminSupabase = createAdminClient();
-  const [{ data: groupMatches, error: groupMatchesError }, { data: roundOf32Matches, error: roundOf32Error }, { data: teams, error: teamsError }] =
-    await Promise.all([
-      adminSupabase
-        .from("matches")
-        .select("id,stage,group_name,status,home_team_id,away_team_id,home_score,away_score")
-        .eq("stage", "group")
-        .order("kickoff_time", { ascending: true }),
-      adminSupabase
-        .from("matches")
-        .select("id,stage,home_source,away_source,home_team_id,away_team_id,status")
-        .in("stage", ["r32", "round_of_32"])
-        .order("kickoff_time", { ascending: true }),
-      adminSupabase
-        .from("teams")
-        .select("id,name,short_name,group_name,fifa_rank,flag_emoji")
-        .order("group_name", { ascending: true })
-        .order("name", { ascending: true })
-    ]);
+  const result = await seedOfficialKnockoutFromFinalGroupResults(adminSupabase, {
+    force,
+    source: "manual",
+    actorUserId: adminCheck.userId
+  });
 
-  if (groupMatchesError) {
-    return { ok: false, message: groupMatchesError.message };
-  }
-
-  if (roundOf32Error) {
-    return { ok: false, message: roundOf32Error.message };
-  }
-
-  if (teamsError) {
-    return { ok: false, message: teamsError.message };
-  }
-
-  const mappedRoundOf32Matches = ((roundOf32Matches ?? []) as MatchRow[]).map((match) => ({
-    id: match.id,
-    stage: match.stage,
-    homeSource: match.home_source ?? null,
-    awaySource: match.away_source ?? null,
-    homeTeamId: match.home_team_id ?? null,
-    awayTeamId: match.away_team_id ?? null,
-    status: match.status
-  }));
-  const seedState = summarizeKnockoutSeedState(mappedRoundOf32Matches);
-  if (seedState.roundOf32MatchCount === 0) {
-    return { ok: false, message: "Round of 32 placeholder matches are not available yet." };
-  }
-
-  if (seedState.hasKnockoutStarted) {
-    return { ok: false, message: "Knockout seeding is locked because the Round of 32 has already started." };
-  }
-
-  const mappedGroupMatches = ((groupMatches ?? []) as MatchRow[]).map((match) => ({
-    id: match.id,
-    stage: match.stage,
-    groupName: match.group_name ?? null,
-    status: match.status,
-    homeTeamId: match.home_team_id ?? null,
-    awayTeamId: match.away_team_id ?? null,
-    homeScore: match.home_score ?? null,
-    awayScore: match.away_score ?? null
-  }));
-  const finalGroupMatchCount = mappedGroupMatches.filter((match) => match.status === "final").length;
-  if (finalGroupMatchCount < expectedGroupMatchCount) {
-    return {
-      ok: false,
-      message: `Knockout seeding not ready. Finalize all ${expectedGroupMatchCount} group-stage matches before seeding the Round of 32.`
-    };
-  }
-
-  if (seedState.hasAnySeeds && !force) {
-    return {
-      ok: false,
-      alreadySeeded: true,
-      message:
-        "Group-stage results are complete and knockout matches already exist. Re-seeding may overwrite current Round of 32 team assignments."
-    };
-  }
-
-  const mappedTeams: Team[] = ((teams ?? []) as Array<{
-    id: string;
-    name: string;
-    short_name: string;
-    group_name: string;
-    fifa_rank: number | null;
-    flag_emoji: string;
-  }>).map((team) => ({
-    id: team.id,
-    name: team.name,
-    shortName: team.short_name,
-    groupName: team.group_name,
-    fifaRank: team.fifa_rank ?? 0,
-    flagEmoji: team.flag_emoji
-  }));
-
-  console.info("[knockout-seeding:r32-placeholders]", mappedRoundOf32Matches.map((match) => ({
-    id: match.id,
-    stage: match.stage,
-    homeTeamId: match.homeTeamId,
-    awayTeamId: match.awayTeamId,
-    homeSource: match.homeSource,
-    awaySource: match.awaySource
-  })));
-
-  try {
-    const standingsByGroup = buildGroupStandingsByGroup(mappedGroupMatches, mappedTeams);
-    const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(standingsByGroup);
-    console.info("[knockout-seeding:qualifiers]", {
-      groupQualifierKeys: Array.from(automaticQualifiers.keys()),
-      bestThirdPlaceCount: rankedThirdPlaceTeams.length,
-      bestThirdPlaceKeys: rankedThirdPlaceTeams.map((seed) => `Best third-place ${seed.thirdPlaceRank}`)
-    });
-    if (rankedThirdPlaceTeams.length < 8) {
-      return { ok: false, message: "Could not determine all eight best third-place qualifiers." };
-    }
-
-    const slotDiagnostics = mappedRoundOf32Matches.flatMap((match) => [
-      { matchId: match.id, side: "home" as const, rawSource: match.homeSource ?? null, parsedSource: parseSeedSource(match.homeSource) },
-      { matchId: match.id, side: "away" as const, rawSource: match.awaySource ?? null, parsedSource: parseSeedSource(match.awaySource) }
-    ]);
-    console.info("[knockout-seeding:source-parse]", slotDiagnostics.map((slot) => ({
-      matchId: slot.matchId,
-      side: slot.side,
-      rawSource: slot.rawSource,
-      parsedSource: slot.parsedSource
-    })));
-
-    const assignments = resolveRoundOf32SeedAssignments(
-      mappedRoundOf32Matches,
-      automaticQualifiers,
-      rankedThirdPlaceTeams
-    );
-
-    if (assignments.length !== seedState.roundOf32MatchCount) {
-      const totalSourceSlots = mappedRoundOf32Matches.length * 2;
-      const parsedSourceSlots = slotDiagnostics.filter((slot) => slot.parsedSource !== null).length;
-      const unresolvedSourceExamples = slotDiagnostics
-        .filter((slot) => slot.parsedSource === null && slot.rawSource)
-        .slice(0, 6)
-        .map((slot) => slot.rawSource);
-      return {
-        ok: false,
-        message: `Could not seed Round of 32. Found ${seedState.roundOf32MatchCount} matches and ${totalSourceSlots} source slots, parsed ${parsedSourceSlots}, and resolved ${assignments.length} match assignments. Example unresolved sources: ${unresolvedSourceExamples.length > 0 ? unresolvedSourceExamples.join(", ") : "none"}.`
-      };
-    }
-
-    const seededAt = new Date().toISOString();
-    const writeResults = await Promise.all(
-      assignments.map(async (assignment) => {
-        const { error } = await adminSupabase
-          .from("matches")
-          .update({
-            home_team_id: assignment.homeTeamId,
-            away_team_id: assignment.awayTeamId,
-            updated_at: seededAt
-          })
-          .eq("id", assignment.matchId);
-
-        return { matchId: assignment.matchId, error };
-      })
-    );
-
-    const failedWrite = writeResults.find((result) => result.error);
-    if (failedWrite?.error) {
-      return { ok: false, message: failedWrite.error.message };
-    }
-
-    const migratedProjectedPicks = await migrateProjectedRoundOf32Picks(
-      adminSupabase,
-      assignments.map((assignment) => ({
-        matchId: assignment.matchId,
-        homeTeamId: assignment.homeTeamId,
-        awayTeamId: assignment.awayTeamId
-      }))
-    );
-
-    console.info("Knockout seeded from group results", {
-      adminUserId: adminCheck.userId,
-      forced: force,
-      seededAt,
-      projectedPickMigration: migratedProjectedPicks,
-      assignments: assignments.map((assignment) => ({
-        matchId: assignment.matchId,
-        homeSource: assignment.homeSource,
-        awaySource: assignment.awaySource,
-        homeTeamId: assignment.homeTeamId,
-        awayTeamId: assignment.awayTeamId
-      }))
-    });
-
+  if (result.ok) {
     revalidatePath("/");
     revalidatePath("/knockout");
     revalidatePath("/leaderboard");
     revalidatePath("/predictions");
     revalidatePath("/admin");
     revalidatePath("/admin/matches");
-
-    return {
-      ok: true,
-      seededMatches: assignments.length,
-      alreadySeeded: seedState.hasAnySeeds,
-      forced: force,
-      message: force
-        ? `Knockout reseeded from final group results across ${assignments.length} Round of 32 matches${migratedProjectedPicks.migrated > 0 ? ` and migrated ${migratedProjectedPicks.migrated} projected picks` : ""}.`
-        : `Knockout seeded from final group results across ${assignments.length} Round of 32 matches${migratedProjectedPicks.migrated > 0 ? ` and migrated ${migratedProjectedPicks.migrated} projected picks` : ""}.`
-    };
-  } catch (error) {
-    return { ok: false, message: (error as Error).message };
   }
+
+  return result;
 }
 
-async function migrateProjectedRoundOf32Picks(
-  adminSupabase: ReturnType<typeof createAdminClient>,
-  assignments: Array<{
-    matchId: string;
-    homeTeamId: string;
-    awayTeamId: string;
-  }>
-) {
-  const matchIds = assignments.map((assignment) => assignment.matchId);
-  if (matchIds.length === 0) {
-    return { migrated: 0, skippedExisting: 0, skippedUnsafe: 0, sourceRows: 0 };
+export async function fetchKnockoutSeedingStatusAction(): Promise<KnockoutSeedingStatusResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
   }
 
-  const [{ data: existingPredictions, error: existingPredictionsError }, legacyProjectedPicksResult] = await Promise.all([
-    adminSupabase
-      .from("bracket_predictions")
-      .select("user_id,match_id")
-      .in("match_id", matchIds),
-    adminSupabase
-      .from("bracket_picks")
-      .select("user_id,match_id,predicted_winner_team_id,created_at,updated_at")
-      .in("match_id", matchIds)
-  ]);
-
-  if (existingPredictionsError) {
-    throw existingPredictionsError;
+  try {
+    const adminSupabase = createAdminClient();
+    const status = await fetchKnockoutSeedingAdminStatus(adminSupabase);
+    return { ok: true, status };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load knockout seeding status."
+    };
   }
-
-  if (legacyProjectedPicksResult.error) {
-    if (isMissingRelationError(legacyProjectedPicksResult.error.message, "public.bracket_picks")) {
-      return { migrated: 0, skippedExisting: 0, skippedUnsafe: 0, sourceRows: 0 };
-    }
-
-    throw legacyProjectedPicksResult.error;
-  }
-
-  const existingKeys = new Set(
-    ((existingPredictions ?? []) as Array<{ user_id: string; match_id: string }>).map(
-      (prediction) => `${prediction.user_id}:${prediction.match_id}`
-    )
-  );
-  const officialTeamsByMatchId = new Map(
-    assignments.map((assignment) => [
-      assignment.matchId,
-      new Set([assignment.homeTeamId, assignment.awayTeamId])
-    ])
-  );
-  const projectedPickRows = (legacyProjectedPicksResult.data ?? []) as ProjectedBracketPickRow[];
-  const now = new Date().toISOString();
-
-  let skippedExisting = 0;
-  let skippedUnsafe = 0;
-  const rowsToInsert: Array<{
-    user_id: string;
-    match_id: string;
-    predicted_winner_team_id: string;
-    created_at: string;
-    updated_at: string;
-  }> = [];
-
-  for (const projectedPick of projectedPickRows) {
-    const existingKey = `${projectedPick.user_id}:${projectedPick.match_id}`;
-    if (existingKeys.has(existingKey)) {
-      skippedExisting += 1;
-      continue;
-    }
-
-    const officialTeams = officialTeamsByMatchId.get(projectedPick.match_id);
-    const pickedTeamId = projectedPick.predicted_winner_team_id ?? null;
-    if (!officialTeams || !pickedTeamId || !officialTeams.has(pickedTeamId)) {
-      skippedUnsafe += 1;
-      continue;
-    }
-
-    rowsToInsert.push({
-      user_id: projectedPick.user_id,
-      match_id: projectedPick.match_id,
-      predicted_winner_team_id: pickedTeamId,
-      created_at: projectedPick.created_at ?? now,
-      updated_at: projectedPick.updated_at ?? now
-    });
-    existingKeys.add(existingKey);
-  }
-
-  if (rowsToInsert.length > 0) {
-    const { error } = await adminSupabase
-      .from("bracket_predictions")
-      .upsert(rowsToInsert, { onConflict: "user_id,match_id", ignoreDuplicates: true });
-
-    if (error) {
-      throw error;
-    }
-  }
-
-  return {
-    migrated: rowsToInsert.length,
-    skippedExisting,
-    skippedUnsafe,
-    sourceRows: projectedPickRows.length
-  };
 }
 
 export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMatchResult> {
@@ -3583,6 +5000,11 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
   if (!leaderboardEventsResult.ok) {
     return leaderboardEventsResult;
   }
+
+  await seedOfficialKnockoutFromFinalGroupResults(adminSupabase, {
+    source: "auto",
+    actorUserId: adminCheck.userId
+  });
 
   revalidatePath("/");
   revalidatePath("/leaderboard");
@@ -4072,148 +5494,10 @@ async function recalculateLeaderboard(
   adminSupabase: ReturnType<typeof createAdminClient>,
   triggeringMatchId?: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const [{ data: predictionPoints, error: predictionPointsError }, { data: bracketPoints, error: bracketPointsError }] =
-    await Promise.all([
-      adminSupabase.from("predictions").select("user_id,points_awarded"),
-      adminSupabase.from("bracket_scores").select("user_id,points")
-    ]);
-
-  if (predictionPointsError) {
-    return { ok: false, message: predictionPointsError.message };
-  }
-  if (bracketPointsError) {
-    return { ok: false, message: bracketPointsError.message };
-  }
-
-  const totalsByUser = new Map<string, number>();
-  for (const row of predictionPoints as { user_id: string; points_awarded: number | null }[]) {
-    totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points_awarded ?? 0));
-  }
-  for (const row of bracketPoints as { user_id: string; points: number | null }[]) {
-    totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points ?? 0));
-  }
-
-  const { data: users, error: usersError } = await adminSupabase.from("users").select("id");
-  if (usersError) {
-    return { ok: false, message: usersError.message };
-  }
-
-  const totals = (users as { id: string }[])
-    .map((user) => ({ user_id: user.id, total_points: totalsByUser.get(user.id) ?? 0 }))
-    .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id));
-
-  const rankedEntries = assignRanks(totals).map((entry) => ({
-    ...entry,
-    updated_at: new Date().toISOString()
-  }));
-
-  if (rankedEntries.length > 0) {
-    const { error: leaderboardError } = await adminSupabase
-      .from("leaderboard_entries")
-      .upsert(rankedEntries, { onConflict: "user_id" });
-
-    if (leaderboardError) {
-      return { ok: false, message: leaderboardError.message };
-    }
-
-    if (triggeringMatchId) {
-      const { error: snapshotDeleteError } = await adminSupabase
-        .from("leaderboard_snapshots")
-        .delete()
-        .eq("scope_type", "global")
-        .eq("match_id", triggeringMatchId)
-        .is("group_id", null);
-
-      if (snapshotDeleteError) {
-        return { ok: false, message: snapshotDeleteError.message };
-      }
-
-      const { error: snapshotError } = await adminSupabase.from("leaderboard_snapshots").insert(
-        rankedEntries.map((entry) => ({
-          scope_type: "global",
-          group_id: null,
-          match_id: triggeringMatchId,
-          user_id: entry.user_id,
-          rank: entry.rank,
-          total_points: entry.total_points
-        }))
-      );
-
-      if (snapshotError) {
-        return { ok: false, message: snapshotError.message };
-      }
-
-      const { data: groupMembers, error: groupMembersError } = await adminSupabase
-        .from("group_members")
-        .select("group_id,user_id");
-
-      if (groupMembersError) {
-        return { ok: false, message: groupMembersError.message };
-      }
-
-      const membersByGroupId = new Map<string, string[]>();
-      for (const membership of (groupMembers as { group_id: string; user_id: string }[] | null) ?? []) {
-        const existing = membersByGroupId.get(membership.group_id) ?? [];
-        existing.push(membership.user_id);
-        membersByGroupId.set(membership.group_id, existing);
-      }
-
-      const groupSnapshotRows = Array.from(membersByGroupId.entries()).flatMap(([groupId, memberUserIds]) => {
-        const rankedGroupEntries = assignRanks(
-          Array.from(new Set(memberUserIds))
-            .map((userId) => ({
-              user_id: userId,
-              total_points: totalsByUser.get(userId) ?? 0
-            }))
-            .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id))
-        );
-
-        return rankedGroupEntries.map((entry) => ({
-          scope_type: "group",
-          group_id: groupId,
-          match_id: triggeringMatchId,
-          user_id: entry.user_id,
-          rank: entry.rank,
-          total_points: entry.total_points
-        }));
-      });
-
-      const { error: groupSnapshotDeleteError } = await adminSupabase
-        .from("leaderboard_snapshots")
-        .delete()
-        .eq("scope_type", "group")
-        .eq("match_id", triggeringMatchId);
-
-      if (groupSnapshotDeleteError) {
-        return { ok: false, message: groupSnapshotDeleteError.message };
-      }
-
-      if (groupSnapshotRows.length > 0) {
-        const { error: groupSnapshotInsertError } = await adminSupabase
-          .from("leaderboard_snapshots")
-          .insert(groupSnapshotRows);
-
-        if (groupSnapshotInsertError) {
-          return { ok: false, message: groupSnapshotInsertError.message };
-        }
-      }
-    }
-  }
-
-  const userTotalUpdates = (users as { id: string }[]).map((user) =>
-    adminSupabase
-      .from("users")
-      .update({ total_points: totalsByUser.get(user.id) ?? 0 })
-      .eq("id", user.id)
-  );
-
-  const userUpdateResults = await Promise.all(userTotalUpdates);
-  const failedUserUpdate = userUpdateResults.find((result) => result.error);
-  if (failedUserUpdate?.error) {
-    return { ok: false, message: failedUserUpdate.error.message };
-  }
-
-  return { ok: true };
+  // Admin finalization and automated match sync must share the same rebuild path.
+  return rebuildScopedLeaderboardState(adminSupabase, {
+    triggeringMatchId
+  });
 }
 
 async function recreateGlobalLeaderboardEventsForMatch(
@@ -4547,10 +5831,11 @@ function buildPointsAwardedMessage(points: number) {
   return `earned +${points} ${points === 1 ? "point" : "points"}`;
 }
 
-async function resetGroupMatchScoring(
+async function clearDerivedGroupMatchScoringState(
   adminSupabase: ReturnType<typeof createAdminClient>,
   matchId: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  // Preserve the pick inputs themselves. Only derived scoring state is cleared here.
   const [{ data: affectedPredictions, error: affectedPredictionsError }, { data: groupMemberships, error: groupMembershipsError }] =
     await Promise.all([
       adminSupabase.from("predictions").select("user_id").eq("match_id", matchId),
@@ -4616,18 +5901,6 @@ async function resetGroupMatchScoring(
   await Promise.all(affectedGroupIds.map((groupId) => fetchDailyWinners(groupId)));
 
   return { ok: true };
-}
-
-function assignRanks(totals: LeaderboardTotal[]) {
-  let previousPoints: number | null = null;
-  let previousRank = 0;
-
-  return totals.map((entry, index) => {
-    const rank = previousPoints === entry.total_points ? previousRank : index + 1;
-    previousPoints = entry.total_points;
-    previousRank = rank;
-    return { ...entry, rank };
-  });
 }
 
 function mapMatchRow(row: MatchRow) {
@@ -4774,6 +6047,7 @@ async function upsertInviteRow(
     displayName: string;
     language: string;
     role: UserRole;
+    planTier: CommercialTier;
     status: "pending" | "accepted" | "revoked" | "expired" | "failed";
     lastError: string | null;
     preserveAcceptedAt?: string | null;
@@ -4802,6 +6076,7 @@ async function upsertInviteRow(
     display_name: input.displayName,
     language: normalizeLanguage(input.language),
     role: input.role,
+    plan_tier: input.planTier,
     accepted_at: input.preserveAcceptedAt ?? null,
     status: input.status,
     last_error: input.lastError,
@@ -4860,6 +6135,630 @@ async function enqueueEmailJob(
   return { ok: true, alreadyQueued: false };
 }
 
+async function buildUserDemotionImpact(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  targetAccessLevel: AccessLevel
+): Promise<DemotionImpactSummary> {
+  if (targetAccessLevel === "super_admin") {
+    throw new Error("Use promotion/access setup to grant Super Admin. Demotion flow cannot target Super Admin.");
+  }
+
+  const trimmedUserId = userId.trim();
+  if (!trimmedUserId) {
+    throw new Error("A valid user is required.");
+  }
+
+  const [
+    { data: existingUser, error: existingUserError },
+    managerLimitsResult,
+    ownedGroupsResult,
+    managedMembershipsResult,
+    organizationsResult,
+    customTrophiesResult,
+    createdAccessCodesResult,
+    sidePickPackagesResult,
+    sidePickDefinitionsResult,
+    groupRulesetsResult
+  ] = await Promise.all([
+    adminSupabase
+      .from("users")
+      .select("id,email,name,preferred_language,role,plan_tier")
+      .eq("id", trimmedUserId)
+      .maybeSingle(),
+    adminSupabase.from("manager_limits").select("user_id,max_groups,max_members_per_group").eq("user_id", trimmedUserId).maybeSingle(),
+    adminSupabase
+      .from("groups")
+      .select("id,name,status,membership_limit,group_members(count)")
+      .eq("owner_user_id", trimmedUserId),
+    adminSupabase
+      .from("group_members")
+      .select("id,group_id")
+      .eq("user_id", trimmedUserId)
+      .eq("role", "manager"),
+    adminSupabase.from("organizations").select("id").eq("owner_user_id", trimmedUserId),
+    adminSupabase
+      .from("trophies")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by", trimmedUserId)
+      .not("group_id", "is", null),
+    adminSupabase
+      .from("access_codes")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by", trimmedUserId)
+      .eq("active", true),
+    adminSupabase
+      .from("side_pick_packages")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by_user_id", trimmedUserId),
+    adminSupabase
+      .from("side_pick_definitions")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by_user_id", trimmedUserId),
+    adminSupabase
+      .from("group_rulesets")
+      .select("id", { count: "exact", head: true })
+      .eq("created_by_user_id", trimmedUserId)
+  ]);
+
+  if (existingUserError) {
+    throw new Error(existingUserError.message);
+  }
+
+  if (!existingUser) {
+    throw new Error("That user was not found.");
+  }
+
+  if (managerLimitsResult.error) {
+    throw new Error(managerLimitsResult.error.message);
+  }
+
+  if (ownedGroupsResult.error) {
+    throw new Error(ownedGroupsResult.error.message);
+  }
+
+  if (managedMembershipsResult.error) {
+    throw new Error(managedMembershipsResult.error.message);
+  }
+
+  let organizationOwnershipRows: Array<{ id: string }> = [];
+  if (organizationsResult.error) {
+    if (!isMissingRelationError(organizationsResult.error.message, "public.organizations")) {
+      throw new Error(organizationsResult.error.message);
+    }
+  } else {
+    organizationOwnershipRows = ((organizationsResult.data as Array<{ id: string }> | null) ?? []);
+  }
+
+  let customTrophyOwnershipCount = 0;
+  if (customTrophiesResult.error) {
+    if (!isMissingRelationError(customTrophiesResult.error.message, "public.trophies")) {
+      throw new Error(customTrophiesResult.error.message);
+    }
+  } else {
+    customTrophyOwnershipCount = customTrophiesResult.count ?? 0;
+  }
+
+  const activeCreatedAccessCodeCount = readOptionalExactCount(createdAccessCodesResult, "public.access_codes");
+  const sidePickOwnershipCount =
+    readOptionalExactCount(sidePickPackagesResult, "public.side_pick_packages") +
+    readOptionalExactCount(sidePickDefinitionsResult, "public.side_pick_definitions") +
+    readOptionalExactCount(groupRulesetsResult, "public.group_rulesets");
+
+  const organizationIds = organizationOwnershipRows.map((organization) => organization.id);
+  const organizationBrandingCount = organizationIds.length
+    ? await countOrganizationBrandingRows(adminSupabase, organizationIds)
+    : 0;
+
+  const ownedGroups = ((ownedGroupsResult.data as Array<{
+    id: string;
+    name: string;
+    status: GroupStatus;
+    membership_limit: number;
+    group_members?: Array<{ count: number | null }> | { count: number | null } | null;
+  }> | null) ?? []).map((group) => ({
+    id: group.id,
+    name: group.name,
+    status: group.status,
+    membershipLimit: group.membership_limit,
+    memberCount: Array.isArray(group.group_members)
+      ? (group.group_members[0]?.count ?? 0)
+      : (group.group_members?.count ?? 0)
+  }));
+
+  const ownedGroupIds = ownedGroups.map((group) => group.id);
+  const [accessCodeCountsByGroupId, pendingInviteCountsByGroupId] = await Promise.all([
+    countActiveGroupAccessCodes(adminSupabase, ownedGroupIds),
+    countPendingGroupInvites(adminSupabase, ownedGroupIds)
+  ]);
+
+  const currentPlanTier = normalizeCommercialTier(
+    (existingUser as { plan_tier?: string | null }).plan_tier ?? null
+  );
+  const currentRole = ((existingUser as { role?: UserRole | null }).role ?? "player") as UserRole;
+  const currentAccessLevel =
+    normalizeAccessLevel(currentRole === "admin" ? "super_admin" : currentPlanTier ?? "player") ?? "player";
+  const targetPlanTier: CommercialTier = targetAccessLevel;
+  const targetRole: UserRole = "player";
+  const targetTierAccess = resolveTierAccess({ role: targetRole, planTier: targetPlanTier });
+  const targetMemberLimit = targetTierAccess.limits.maxMembersPerGroup;
+  const targetGroupLimit = targetTierAccess.limits.maxGroups;
+  const managerLimitsRow = managerLimitsResult.data as
+    | { user_id: string; max_groups?: number | null; max_members_per_group?: number | null }
+    | null;
+  const managedMembershipGroupIds = new Set(
+    (((managedMembershipsResult.data as Array<{ id: string; group_id: string }> | null) ?? []).map((row) => row.group_id))
+  );
+  const ownedGroupIdSet = new Set(ownedGroupIds);
+  for (const groupId of ownedGroupIds) {
+    managedMembershipGroupIds.add(groupId);
+  }
+  const managedGroupCount = managedMembershipGroupIds.size;
+  const legacyManagedGroupCount = Array.from(managedMembershipGroupIds).filter((groupId) => !ownedGroupIdSet.has(groupId)).length;
+
+  const ownedGroupsWithImpact: DemotionImpactOwnedGroup[] = ownedGroups.map((group) => {
+    const exceedsTargetMemberLimit =
+      typeof targetMemberLimit === "number" ? group.memberCount > targetMemberLimit : false;
+    const blockerReason =
+      targetAccessLevel === "player"
+        ? "Transfer, archive, or remove this owned group before demoting to Player."
+        : exceedsTargetMemberLimit
+          ? `${group.name} has ${group.memberCount} members, which exceeds the ${targetMemberLimit ?? 0}-member limit for ${getAccessLevelDisplayLabel(targetAccessLevel)}.`
+          : null;
+
+    return {
+      ...group,
+      activeInviteCodeCount: accessCodeCountsByGroupId.get(group.id) ?? 0,
+      pendingInviteCount: pendingInviteCountsByGroupId.get(group.id) ?? 0,
+      exceedsTargetMemberLimit,
+      blockerReason
+    };
+  });
+
+  const groupsThatWouldExceedTarget =
+    targetAccessLevel === "player"
+      ? ownedGroupsWithImpact
+      : ownedGroupsWithImpact.filter((group) => group.exceedsTargetMemberLimit);
+
+  const blockers: string[] = [];
+  const cleanupActions: string[] = [];
+
+  if (currentAccessLevel === "super_admin") {
+    blockers.push("Super Admin demotion is not available through this workflow.");
+  }
+
+  if (compareAccessLevels(targetAccessLevel, currentAccessLevel) >= 0) {
+    blockers.push(
+      `${getAccessLevelDisplayLabel(targetAccessLevel)} is not lower than ${getAccessLevelDisplayLabel(currentAccessLevel)}. Use the invite/access setup flow for promotions or lateral changes.`
+    );
+  }
+
+  if (targetAccessLevel !== "managing_director" && organizationOwnershipRows.length > 0) {
+    blockers.push("Transfer or archive the user's organization before lowering Managing Director access.");
+  }
+
+  if (targetAccessLevel === "player" && ownedGroupsWithImpact.length > 0) {
+    blockers.push("Transfer, archive, or remove owned groups before demoting this organizer to Player.");
+  }
+
+  if (typeof targetGroupLimit === "number" && targetGroupLimit > 0 && ownedGroupsWithImpact.length > targetGroupLimit) {
+    blockers.push(
+      `${getAccessLevelDisplayLabel(targetAccessLevel)} supports ${targetGroupLimit} group${targetGroupLimit === 1 ? "" : "s"}, but this user owns ${ownedGroupsWithImpact.length}.`
+    );
+  }
+
+  if (groupsThatWouldExceedTarget.length > 0 && targetAccessLevel !== "player") {
+    blockers.push(
+      `${groupsThatWouldExceedTarget.length} owned group${groupsThatWouldExceedTarget.length === 1 ? "" : "s"} exceed the member cap for ${getAccessLevelDisplayLabel(targetAccessLevel)}.`
+    );
+  }
+
+  if (managerLimitsRow && targetAccessLevel !== "manager") {
+    cleanupActions.push("Remove stale manager limit overrides.");
+  }
+
+  if (legacyManagedGroupCount > 0) {
+    cleanupActions.push("Downgrade legacy manager memberships to member while preserving player access.");
+  }
+
+  if (targetAccessLevel === "player" && activeCreatedAccessCodeCount > 0) {
+    cleanupActions.push("Deactivate active access codes created by this organizer.");
+  }
+
+  const cleanupOptions: DemotionCleanupOptionDetail[] = [];
+  if (managerLimitsRow && targetAccessLevel !== "manager") {
+    cleanupOptions.push({
+      key: "remove_manager_limits",
+      label: "Remove stale manager limits",
+      description: "Delete the legacy manager_limits override so the user falls back to the lower tier cleanly.",
+      selectedByDefault: true
+    });
+  }
+
+  if (legacyManagedGroupCount > 0) {
+    cleanupOptions.push({
+      key: "downgrade_legacy_manager_memberships",
+      label: "Downgrade organizer memberships",
+      description: "Convert legacy manager memberships to member while keeping player membership intact.",
+      selectedByDefault: true
+    });
+  }
+
+  if (targetAccessLevel === "player" && activeCreatedAccessCodeCount > 0) {
+    cleanupOptions.push({
+      key: "deactivate_created_access_codes",
+      label: "Deactivate created access codes",
+      description: "Turn off any still-active access codes created by this organizer before removing organizer powers.",
+      selectedByDefault: true
+    });
+  }
+
+  const status =
+    blockers.length > 0 ? "blocked" : cleanupActions.length > 0 ? "cleanup_required" : "safe";
+
+  return {
+    userId: trimmedUserId,
+    email: (existingUser as { email?: string | null }).email?.trim() || "",
+    displayName: (existingUser as { name?: string | null }).name?.trim() || (existingUser as { email?: string | null }).email?.trim() || "Unknown user",
+    currentRole,
+    currentPlanTier,
+    currentAccessLevel,
+    targetRole,
+    targetPlanTier,
+    targetAccessLevel,
+    ownedGroupCount: ownedGroupsWithImpact.length,
+    managedGroupCount,
+    groupsThatWouldExceedTarget,
+    ownedGroups: ownedGroupsWithImpact,
+    activeInviteCodeCount: ownedGroupsWithImpact.reduce((sum, group) => sum + group.activeInviteCodeCount, 0),
+    pendingInviteCount: ownedGroupsWithImpact.reduce((sum, group) => sum + group.pendingInviteCount, 0),
+    hasManagerLimits: Boolean(managerLimitsRow),
+    managerLimits: managerLimitsRow
+      ? {
+          maxGroups: managerLimitsRow.max_groups ?? 0,
+          maxMembersPerGroup: managerLimitsRow.max_members_per_group ?? 0
+        }
+      : null,
+    legacyManagedGroupCount,
+    activeCreatedAccessCodeCount,
+    organizationOwnershipCount: organizationOwnershipRows.length,
+    organizationBrandingCount,
+    customTrophyOwnershipCount,
+    sidePickOwnershipCount,
+    isSuperAdmin: currentAccessLevel === "super_admin",
+    status,
+    blockers,
+    cleanupActions,
+    cleanupOptions
+  };
+}
+
+async function countActiveGroupAccessCodes(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupIds: string[]
+) {
+  const counts = new Map<string, number>();
+  if (groupIds.length === 0) {
+    return counts;
+  }
+
+  const { data, error } = await adminSupabase
+    .from("access_codes")
+    .select("group_id")
+    .in("group_id", groupIds)
+    .eq("active", true);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  for (const row of ((data as Array<{ group_id?: string | null }> | null) ?? [])) {
+    if (!row.group_id) {
+      continue;
+    }
+
+    counts.set(row.group_id, (counts.get(row.group_id) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
+function readOptionalExactCount(
+  result: { count: number | null; error: { message?: string | null } | null },
+  relationName: string
+) {
+  if (isMissingRelationError(result.error?.message ?? "", relationName)) {
+    return 0;
+  }
+
+  if (result.error) {
+    throw new Error(result.error.message ?? `Could not load ${relationName}.`);
+  }
+
+  return result.count ?? 0;
+}
+
+async function countPendingGroupInvites(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupIds: string[]
+) {
+  const counts = new Map<string, number>();
+  if (groupIds.length === 0) {
+    return counts;
+  }
+
+  const { data, error } = await adminSupabase
+    .from("group_invites")
+    .select("group_id,status")
+    .in("group_id", groupIds)
+    .eq("status", "pending");
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  for (const row of ((data as Array<{ group_id?: string | null }> | null) ?? [])) {
+    if (!row.group_id) {
+      continue;
+    }
+
+    counts.set(row.group_id, (counts.get(row.group_id) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
+async function countOrganizationBrandingRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  organizationIds: string[]
+) {
+  if (organizationIds.length === 0) {
+    return 0;
+  }
+
+  const result = await adminSupabase
+    .from("organization_branding")
+    .select("organization_id", { count: "exact", head: true })
+    .in("organization_id", organizationIds);
+
+  if (isMissingRelationError(result.error?.message ?? "", "public.organization_branding")) {
+    return 0;
+  }
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return result.count ?? 0;
+}
+
+async function applyOrganizerAccessCleanup(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  impact: DemotionImpactSummary,
+  resolutionPlan: Partial<Record<DemotionCleanupOption, boolean>>
+) {
+  const actionsTaken: string[] = [];
+  const counts = {
+    removedManagerLimits: 0,
+    downgradedLegacyManagerMemberships: 0,
+    deactivatedCreatedAccessCodes: 0
+  };
+
+  if (impact.targetAccessLevel !== "manager" && impact.hasManagerLimits && resolutionPlan.remove_manager_limits) {
+    const { error } = await adminSupabase.from("manager_limits").delete().eq("user_id", impact.userId);
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    actionsTaken.push("removed_manager_limits");
+    counts.removedManagerLimits = 1;
+  }
+
+  if (resolutionPlan.downgrade_legacy_manager_memberships) {
+    const { data: legacyManagerMemberships, error: legacyManagerMembershipsError } = await adminSupabase
+      .from("group_members")
+      .select("id,group_id,group:groups!group_members_group_id_fkey(owner_user_id)")
+      .eq("user_id", impact.userId)
+      .eq("role", "manager");
+
+    if (legacyManagerMembershipsError) {
+      throw new Error(legacyManagerMembershipsError.message);
+    }
+
+    const legacyMembershipIds = (((legacyManagerMemberships as Array<{
+      id: string;
+      group_id: string;
+      group?: { owner_user_id?: string | null } | Array<{ owner_user_id?: string | null }> | null;
+    }> | null) ?? []).filter((membership) => {
+      const group = Array.isArray(membership.group) ? (membership.group[0] ?? null) : membership.group;
+      return group?.owner_user_id !== impact.userId;
+    })).map((membership) => membership.id);
+
+    if (legacyMembershipIds.length > 0) {
+      const { error } = await adminSupabase
+        .from("group_members")
+        .update({ role: "member" })
+        .in("id", legacyMembershipIds);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      actionsTaken.push("downgraded_legacy_manager_memberships");
+      counts.downgradedLegacyManagerMemberships = legacyMembershipIds.length;
+    }
+  }
+
+  if (resolutionPlan.deactivate_created_access_codes) {
+    const { data: createdAccessCodes, error: createdAccessCodesError } = await adminSupabase
+      .from("access_codes")
+      .select("id")
+      .eq("created_by", impact.userId)
+      .eq("active", true);
+
+    if (createdAccessCodesError) {
+      throw new Error(createdAccessCodesError.message);
+    }
+
+    const activeCodeIds = (((createdAccessCodes as Array<{ id: string }> | null) ?? [])).map((row) => row.id);
+    if (activeCodeIds.length > 0) {
+      const { error } = await adminSupabase
+        .from("access_codes")
+        .update({ active: false, updated_at: new Date().toISOString() })
+        .in("id", activeCodeIds);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      actionsTaken.push("deactivated_created_access_codes");
+      counts.deactivatedCreatedAccessCodes = activeCodeIds.length;
+    }
+  }
+
+  return { actionsTaken, counts };
+}
+
+function buildRequiredDemotionCleanupPlan(
+  impact: DemotionImpactSummary
+): Partial<Record<DemotionCleanupOption, boolean>> {
+  return {
+    remove_manager_limits: impact.cleanupOptions.some((option) => option.key === "remove_manager_limits"),
+    downgrade_legacy_manager_memberships: impact.cleanupOptions.some(
+      (option) => option.key === "downgrade_legacy_manager_memberships"
+    ),
+    deactivate_created_access_codes: impact.cleanupOptions.some(
+      (option) => option.key === "deactivate_created_access_codes"
+    )
+  };
+}
+
+function validateDemotionResolutionPlan(
+  impact: DemotionImpactSummary,
+  resolutionPlan: Partial<Record<DemotionCleanupOption, boolean>>
+) {
+  const requiredPlan = buildRequiredDemotionCleanupPlan(impact);
+  const missingOption = (Object.entries(requiredPlan) as Array<[DemotionCleanupOption, boolean | undefined]>).find(
+    ([key, isRequired]) => isRequired && !resolutionPlan[key]
+  );
+
+  if (!missingOption) {
+    return null;
+  }
+
+  const option = impact.cleanupOptions.find((item) => item.key === missingOption[0]);
+  return option
+    ? `Select the cleanup step "${option.label}" before applying this access change.`
+    : "Select every required cleanup step before applying this access change.";
+}
+
+async function writeAdminAccessChangeAuditLog(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    actorUserId: string;
+    targetUserId: string;
+    targetEmail: string;
+    action: "demote_access" | "deactivate_organizer_access";
+    previousRole: UserRole;
+    previousPlanTier: CommercialTier | null;
+    previousAccessLevel: AccessLevel;
+    newRole: UserRole;
+    newPlanTier: CommercialTier;
+    newAccessLevel: AccessLevel;
+    impact: DemotionImpactSummary;
+    cleanupActionsTaken: string[];
+    cleanupCounts: Record<string, number>;
+    reason: string;
+  }
+) {
+  const { error } = await adminSupabase.from("admin_access_change_audit_log").insert({
+    actor_user_id: input.actorUserId,
+    target_user_id: input.targetUserId,
+    target_email: input.targetEmail,
+    action: input.action,
+    previous_role: input.previousRole,
+    previous_plan_tier: input.previousPlanTier,
+    previous_access_level: input.previousAccessLevel,
+    new_role: input.newRole,
+    new_plan_tier: input.newPlanTier,
+    new_access_level: input.newAccessLevel,
+    impact_summary: {
+      ownedGroupCount: input.impact.ownedGroupCount,
+      managedGroupCount: input.impact.managedGroupCount,
+      legacyManagedGroupCount: input.impact.legacyManagedGroupCount,
+      activeInviteCodeCount: input.impact.activeInviteCodeCount,
+      pendingInviteCount: input.impact.pendingInviteCount,
+      activeCreatedAccessCodeCount: input.impact.activeCreatedAccessCodeCount,
+      organizationOwnershipCount: input.impact.organizationOwnershipCount,
+      organizationBrandingCount: input.impact.organizationBrandingCount,
+      customTrophyOwnershipCount: input.impact.customTrophyOwnershipCount,
+      sidePickOwnershipCount: input.impact.sidePickOwnershipCount,
+      hasManagerLimits: input.impact.hasManagerLimits,
+      blockers: input.impact.blockers,
+      cleanupActions: input.impact.cleanupActions
+    },
+    cleanup_actions_taken: input.cleanupActionsTaken,
+    cleanup_counts: input.cleanupCounts,
+    reason: input.reason
+  });
+
+  if (isMissingRelationError(error?.message ?? "", "public.admin_access_change_audit_log")) {
+    console.warn("Could not write admin access change audit log because the table is missing.", {
+      targetUserId: input.targetUserId,
+      action: input.action
+    });
+    return;
+  }
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function sendAccessLevelChangeEmail(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  impact: DemotionImpactSummary,
+  targetAccessLevel: AccessLevel
+) {
+  const { data: userProfile, error } = await adminSupabase
+    .from("users")
+    .select("preferred_language")
+    .eq("id", impact.userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const preferredLanguage = normalizeLanguage(
+    ((userProfile as { preferred_language?: string | null } | null)?.preferred_language ?? null)
+  );
+  const loginUrl = buildAccessLevelLoginUrl(preferredLanguage, targetAccessLevel);
+  const emailCopy = buildAdminAccessLevelChangeEmailCopy({
+    language: preferredLanguage,
+    recipientLabel: impact.displayName,
+    accessLevel: targetAccessLevel,
+    loginUrl
+  });
+
+  await sendTransactionalEmail({
+    to: impact.email,
+    subject: emailCopy.subject,
+    html: emailCopy.html,
+    text: emailCopy.text
+  });
+}
+
+function buildAccessLevelLoginUrl(language: string | null | undefined, accessLevel: AccessLevel) {
+  const normalizedLanguage = normalizeLanguage(language);
+  const loginPath =
+    accessLevel === "director" || accessLevel === "managing_director"
+      ? "/login" // TODO(launch): switch organizer tiers to /organizer/login when that route exists.
+      : "/login";
+
+  return new URL(appendLanguageToPath(loginPath, normalizedLanguage), getPublicSiteUrl()).toString();
+}
+
 type TriggerEmailWorkerResult =
   | { ok: true; status: number }
   | { ok: false; message: string };
@@ -4903,7 +6802,7 @@ async function fetchInviteLookup(
 ) {
   const fullResult = await adminSupabase
     .from("invites")
-    .select("email,display_name,language,role,accepted_at,status,last_sent_at,send_attempts,last_error")
+    .select("email,display_name,language,role,plan_tier,accepted_at,status,last_sent_at,send_attempts,last_error")
     .eq("email", normalizedEmail)
     .maybeSingle();
 
@@ -4922,6 +6821,7 @@ async function fetchInviteLookup(
       data: {
         ...fallbackResult.data,
         language: "en",
+        plan_tier: "player",
           last_sent_at: null,
           send_attempts: 0,
           last_error: null
@@ -4945,6 +6845,7 @@ async function fetchInviteLookup(
       ? {
           ...minimalResult.data,
           language: "en",
+          plan_tier: "player",
           status: minimalResult.data.accepted_at ? "accepted" : "pending",
           last_sent_at: null,
           send_attempts: 0,
@@ -5009,6 +6910,7 @@ async function sendAdminEmailInline(
 function isMissingInviteLifecycleColumnError(message: string) {
   return (
     isMissingColumnError(message, "language") ||
+    isMissingColumnError(message, "plan_tier") ||
     isMissingColumnError(message, "status") ||
     isMissingColumnError(message, "last_sent_at") ||
     isMissingColumnError(message, "send_attempts") ||
@@ -5032,14 +6934,51 @@ function isMissingRelationError(message: string, relation: string) {
   return normalized.includes(relation.toLowerCase()) && (normalized.includes("schema cache") || normalized.includes("does not exist"));
 }
 
+async function countOptionalLegacyBracketPickRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchIds: string[]
+) {
+  const result = await adminSupabase.from("bracket_picks").select("match_id", { count: "exact", head: true }).in("match_id", matchIds);
+  if (result.error && isMissingRelationError(result.error.message, "public.bracket_picks")) {
+    return { count: 0, error: null };
+  }
+
+  return result;
+}
+
 async function countOptionalGameplayRows(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  tableName: "bracket_predictions" | "bracket_picks",
+  tableName: "bracket_predictions" | "projected_bracket_predictions" | "bracket_picks",
   userId: string
 ) {
   const result = await adminSupabase.from(tableName).select("id", { count: "exact", head: true }).eq("user_id", userId);
   if (result.error && isMissingRelationError(result.error.message, `public.${tableName}`)) {
     return { count: 0, error: null };
+  }
+
+  return result;
+}
+
+async function deleteOptionalGameplayRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  tableName: "bracket_predictions" | "projected_bracket_predictions" | "bracket_picks",
+  userId: string
+) {
+  const result = await adminSupabase.from(tableName).delete().eq("user_id", userId);
+  if (result.error && isMissingRelationError(result.error.message, `public.${tableName}`)) {
+    return { error: null };
+  }
+
+  return result;
+}
+
+async function deleteOptionalLegacyBracketPickRows(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchIds: string[]
+) {
+  const result = await adminSupabase.from("bracket_picks").delete().in("match_id", matchIds);
+  if (result.error && isMissingRelationError(result.error.message, "public.bracket_picks")) {
+    return { error: null };
   }
 
   return result;

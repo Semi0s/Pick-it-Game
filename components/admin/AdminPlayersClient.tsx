@@ -1,36 +1,45 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  deactivateOrganizerAccessAction,
+  demoteUserWithImpactResolutionAction,
   deleteUserAndStartOverAction,
   fetchAdminPlayerHealthAction,
   fetchLeaderboardFeatureSettingsAction,
+  getUserDemotionImpactAction,
   fetchRequiredLegalDocumentAction,
   forceLegalReacceptanceAction,
   repairPendingInviteAction,
   resetTestingSocialStateAction,
   resendConfirmationOrOnboardingNudgeAction,
-  removeManagerAccessAction,
   resetOnboardingStateAction,
   resetUserAccess,
   updateLeaderboardFeatureSettingAction,
   updateUserDisplayNameAction,
-  upsertManagerLimitsAction
+  upsertManagerLimitsAction,
+  type DemotionCleanupOption,
+  type DemotionImpactSummary
 } from "@/app/admin/actions";
 import type { AdminPlayerHealthRow } from "@/lib/admin-player-health";
 import type { LeaderboardFeatureSettingKey, LeaderboardFeatureSettings } from "@/lib/app-settings";
 import { getRoleBadgeLabel } from "@/lib/access-levels";
+import { parseJsonResponse } from "@/lib/fetch-json";
 import type { LegalDocument } from "@/lib/legal";
 import type { SystemReadinessReport } from "@/lib/system-readiness";
+import { DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import { showAppToast } from "@/lib/app-toast";
+import { ADMIN_ASSIGNABLE_ACCESS_LEVELS, compareAccessLevels, getAccessLevelDisplayLabel, type AccessLevel } from "@/lib/tier-access";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { AdminGroupsSection } from "@/components/admin/AdminGroupsClient";
 import { AdminInvitesSection, formatDate } from "@/components/admin/AdminInvitesClient";
 import { Avatar } from "@/components/Avatar";
+import { TierIconBadge } from "@/components/TierIconBadge";
 import {
   ActionButton,
   HierarchyPanel,
   InlineConfirmation,
+  InlineDisclosureButton,
   InlineTextConfirmation,
   ManagementBadge,
   ManagementCard,
@@ -38,7 +47,9 @@ import {
   ManagementEmptyState,
   ManagementGrid,
   ManagementIntro,
-  ManagementToolbar
+  ManagementSection,
+  ManagementToolbar,
+  useSessionDisclosureState
 } from "@/components/player-management/Shared";
 
 const FILTERS = [
@@ -133,9 +144,10 @@ export function AdminPlayersClient() {
 
   async function loadSystemReadiness() {
     const response = await fetch("/api/admin/system-readiness", { cache: "no-store" });
-    const result = (await response.json()) as
+    const result = await parseJsonResponse<
       | { ok: true; report: SystemReadinessReport }
-      | { ok: false; message?: string };
+      | { ok: false; message?: string }
+    >(response, "Could not load the system readiness report.", "system readiness");
 
     if (!response.ok || !result.ok) {
       setMessage({
@@ -462,6 +474,9 @@ export function AdminPlayersClient() {
                     const result = await resetTestingSocialStateAction();
                     setMessage({ tone: result.ok ? "success" : "error", text: result.message });
                     if (result.ok) {
+                      if (typeof window !== "undefined") {
+                        window.localStorage.removeItem(DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY);
+                      }
                       setConfirmation(null);
                     }
                   });
@@ -491,9 +506,9 @@ export function AdminPlayersClient() {
           title={`Delete ${deleteConfirmation.displayName} and start over?`}
           description="This removes invite state, email jobs, group memberships, the app profile, and the auth user only when the account has no gameplay data. Predictions, scores, and leaderboard data are never deleted by this action."
           confirmLabel="Delete and Start Over"
-          expectedValue="DELETE"
-          inputLabel="Type DELETE to confirm"
-          inputPlaceholder="DELETE"
+          expectedValue={deleteConfirmation.email}
+          inputLabel={`Type ${deleteConfirmation.email} to confirm`}
+          inputPlaceholder={deleteConfirmation.email}
           value={deleteConfirmationValue}
           onValueChange={setDeleteConfirmationValue}
           onConfirm={() => {
@@ -521,6 +536,7 @@ export function AdminPlayersClient() {
         filterValue={filterValue}
         onFilterChange={(value) => setFilterValue(value as (typeof FILTERS)[number]["value"])}
         filters={FILTERS.map((filter) => ({ ...filter }))}
+        className="sticky top-20 z-10 shadow-sm"
         trailing={
           !isLoading ? (
             <ActionButton onClick={() => void refreshPlayers()}>Refresh Auth Status</ActionButton>
@@ -528,14 +544,13 @@ export function AdminPlayersClient() {
         }
       />
 
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-xl font-black">Player management</h3>
-          <p className="mt-1 text-sm font-semibold text-gray-600">
-            Same management system, with super-admin controls layered on top.
-          </p>
-        </div>
-
+      <ManagementSection
+        title="Users / Members"
+        description="Collapsed-by-default player cards that keep role, tier, counts, and warning chips visible while moving the heavier controls into the expanded state."
+        storageKey="admin-players:users-section"
+        defaultOpen
+        badge={<ManagementBadge label={`${filteredPlayers.length} shown`} tone="neutral" />}
+      >
         {isLoading ? <ManagementEmptyState message="Loading players..." /> : null}
         {!isLoading && filteredPlayers.length === 0 ? (
           <ManagementEmptyState message="No players match the current search or filter." />
@@ -546,299 +561,92 @@ export function AdminPlayersClient() {
               const activeManagerEditor = managerEditor?.userId === player.appUserId ? managerEditor : null;
 
               return (
-              <ManagementCard
-                key={player.key}
-                title={
-                  <div className="flex items-center gap-3">
-                    <Avatar name={player.displayName} avatarUrl={player.avatarUrl} size="md" />
-                    <p className="truncate text-base font-black text-gray-950">{player.displayName}</p>
-                  </div>
-                }
-                subtitle={player.email}
-                badges={
-                  <>
-                    <ManagementBadge label={getRoleBadgeLabel(player.roleLabel === "admin" ? "super admin" : "player")} tone={player.roleLabel === "admin" ? "accent" : "neutral"} />
-                    <ManagementBadge
-                      label={
-                        player.roleLabel === "admin"
-                          ? "manager access via super admin"
-                          : player.isManager
-                            ? "manager"
-                            : "participant"
-                      }
-                      tone={player.roleLabel === "admin" || player.isManager ? "accent" : "neutral"}
-                    />
-                    <ManagementBadge label={formatStateLabel(player.healthBadge)} tone={getHealthTone(player.healthBadge)} />
-                  </>
-                }
-                actions={
-                  <>
-                    {player.appUserId ? (
-                      <ActionButton
-                        onClick={() => {
-                          const currentName = player.displayName;
-                          const nextName = window.prompt(`Update display name for ${currentName}`, currentName);
-                          if (!nextName || nextName.trim() === currentName) {
-                            return;
-                          }
+                <PlayerSummaryCard
+                  key={player.key}
+                  player={player}
+                  activeManagerEditor={activeManagerEditor}
+                  activeActionKey={activeActionKey}
+                  sendingResetForUserId={sendingResetForUserId}
+                  onRename={() => {
+                    const currentName = player.displayName;
+                    const nextName = window.prompt(`Update display name for ${currentName}`, currentName);
+                    if (!nextName || nextName.trim() === currentName || !player.appUserId) {
+                      return;
+                    }
 
-                          void withAction(`rename-${player.appUserId}`, async () => {
-                            const result = await updateUserDisplayNameAction(player.appUserId!, nextName);
-                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                            if (result.ok) {
-                              await loadPlayers();
-                            }
-                          });
-                        }}
-                        disabled={activeActionKey === `rename-${player.appUserId}`}
-                      >
-                        {activeActionKey === `rename-${player.appUserId}` ? "Saving..." : "Edit Display Name"}
-                      </ActionButton>
-                    ) : null}
-                    {player.appUserId ? (
-                      <ActionButton
-                        onClick={() => handleManagerAccess(player)}
-                        disabled={activeActionKey === `manager-${player.appUserId}`}
-                      >
-                        {player.roleLabel === "admin"
-                          ? "Super Admin"
-                          : activeActionKey === `manager-${player.appUserId}`
-                            ? "Saving..."
-                            : player.isManager
-                              ? "Edit Manager Limits"
-                              : "Make Manager"}
-                      </ActionButton>
-                    ) : null}
-                    {player.appUserId && player.isManager && player.roleLabel !== "admin" ? (
-                      <ActionButton
-                        tone="danger"
-                        onClick={() => {
-                          setConfirmation({
-                            key: `remove-manager-${player.appUserId}`,
-                            title: `Remove manager access for ${player.displayName}?`,
-                            description: "Their groups, players, account, and predictions will stay intact. This only removes their manager entitlement.",
-                            confirmLabel: "Remove Manager Access",
-                            onConfirm: () => {
-                              void withAction(`remove-manager-${player.appUserId}`, async () => {
-                                const result = await removeManagerAccessAction(player.appUserId!);
-                                setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                                if (result.ok) {
-                                  setConfirmation(null);
-                                  await loadPlayers();
-                                }
-                              });
-                            }
-                          });
-                        }}
-                        disabled={activeActionKey === `remove-manager-${player.appUserId}`}
-                      >
-                        {activeActionKey === `remove-manager-${player.appUserId}` ? "Removing..." : "Remove Manager Access"}
-                      </ActionButton>
-                    ) : null}
-                    <ActionButton
-                      onClick={() => void handleResetUserAccess(player)}
-                      disabled={sendingResetForUserId === player.appUserId || !player.appUserId}
-                    >
-                      {sendingResetForUserId === player.appUserId ? "Sending..." : "Send Password Reset"}
-                    </ActionButton>
-                    {player.authUserId ? (
-                      <ActionButton
-                        onClick={() => {
-                          void withAction(`nudge-${player.email}`, async () => {
-                            const result = await resendConfirmationOrOnboardingNudgeAction(player.email);
-                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                            if (result.ok) {
-                              await loadPlayers();
-                            }
-                          });
-                        }}
-                        disabled={activeActionKey === `nudge-${player.email}`}
-                      >
-                        {activeActionKey === `nudge-${player.email}`
-                          ? "Sending..."
-                          : player.emailConfirmedAt
-                            ? "Send Onboarding Reminder"
-                            : "Resend Confirmation"}
-                      </ActionButton>
-                    ) : null}
-                    {player.appUserId ? (
-                      <ActionButton
-                        onClick={() => {
-                          void withAction(`reset-onboarding-${player.appUserId}`, async () => {
-                            const result = await resetOnboardingStateAction(player.appUserId!);
-                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                            if (result.ok) {
-                              await loadPlayers();
-                            }
-                          });
-                        }}
-                        disabled={activeActionKey === `reset-onboarding-${player.appUserId}`}
-                      >
-                        {activeActionKey === `reset-onboarding-${player.appUserId}` ? "Resetting..." : "Reset Profile Setup"}
-                      </ActionButton>
-                    ) : null}
-                    {canRepairInvite(player) ? (
-                      <ActionButton
-                        onClick={() => {
-                          void withAction(`repair-invite-${player.email}`, async () => {
-                            const result = await repairPendingInviteAction(player.email);
-                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                            if (result.ok) {
-                              await loadPlayers();
-                            }
-                          });
-                        }}
-                        disabled={activeActionKey === `repair-invite-${player.email}`}
-                      >
-                        {activeActionKey === `repair-invite-${player.email}`
-                          ? "Repairing..."
-                          : player.inviteDeliveryState === "not_sent"
-                            ? "Repair Invite"
-                            : "Resend Invite"}
-                      </ActionButton>
-                    ) : null}
-                    <ActionButton
-                      tone="danger"
-                      onClick={() => {
-                        setDeleteConfirmation({
-                          key: `delete-start-over-${player.email}`,
-                          email: player.email,
-                          displayName: player.displayName
-                        });
-                        setDeleteConfirmationValue("");
-                      }}
-                      disabled={activeActionKey === `delete-start-over-${player.email}`}
-                    >
-                      {activeActionKey === `delete-start-over-${player.email}` ? "Deleting..." : "Delete and Start Over"}
-                    </ActionButton>
-                  </>
-                }
-              >
-                <ManagementGrid>
-                  <ManagementDatum label="Auth confirmed?" value={player.emailConfirmedAt ? "Yes" : "No"} />
-                  <ManagementDatum label="Profile exists?" value={player.hasProfile ? "Yes" : "No"} />
-                  <ManagementDatum label="Username set?" value={player.usernameSet ? "Yes" : "No"} />
-                  <ManagementDatum label="App" value={`${formatStateLabel(player.appState)}${player.userStatus ? ` (${player.userStatus})` : ""}`} />
-                  <ManagementDatum label="Auth" value={formatStateLabel(player.authState)} />
-                  <ManagementDatum label="App invite status" value={formatStateLabel(player.inviteState)} />
-                  <ManagementDatum label="Group invite status" value={player.groupInviteStatus} />
-                  <ManagementDatum label="Delivery" value={formatDeliveryState(player)} />
-                  <ManagementDatum label="Onboarding" value={player.onboardingIncomplete ? "Incomplete" : player.appUserId ? "Complete" : "Waiting for auth"} />
-                  <ManagementDatum label="Group memberships" value={player.groupMembershipCount} />
-                  <ManagementDatum
-                    label="Manager status"
-                    value={
-                      player.roleLabel === "admin"
-                        ? "Super Admin · Unlimited"
-                        : player.isManager
-                          ? `Manager · ${player.currentGroupsUsed} / ${player.maxGroups ?? 0} groups · ${player.currentMembersUsed} / ${player.maxMembersPerGroup ?? 0} members`
-                          : "Player · Participant"
+                    void withAction(`rename-${player.appUserId}`, async () => {
+                      const result = await updateUserDisplayNameAction(player.appUserId!, nextName);
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadPlayers();
+                      }
+                    });
+                  }}
+                  onManageManager={() => handleManagerAccess(player)}
+                  onPasswordReset={() => void handleResetUserAccess(player)}
+                  onSendNudge={() => {
+                    void withAction(`nudge-${player.email}`, async () => {
+                      const result = await resendConfirmationOrOnboardingNudgeAction(player.email);
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadPlayers();
+                      }
+                    });
+                  }}
+                  onResetOnboarding={() => {
+                    if (!player.appUserId) {
+                      return;
                     }
-                  />
-                  <ManagementDatum label="Limits" value={formatLimitSummary(player)} />
-                  <ManagementDatum label="Points" value={player.totalPoints} />
-                  <ManagementDatum label="Created" value={player.createdAt ? formatDate(player.createdAt) : "—"} />
-                  <ManagementDatum label="Last sign in" value={player.lastSignInAt ? formatDate(player.lastSignInAt) : "Never"} />
-                  <ManagementDatum label="Email confirmed" value={player.emailConfirmedAt ? formatDate(player.emailConfirmedAt) : "Not yet"} />
-                  <ManagementDatum label="Last confirmation sent" value={player.confirmationSentAt ? formatDate(player.confirmationSentAt) : "Not sent"} />
-                  <ManagementDatum label="Username" value={player.username ?? "Not set"} />
-                  <ManagementDatum label="Invite accepted" value={player.acceptedAt ? formatDate(player.acceptedAt) : "No"} />
-                  <ManagementDatum label="Send attempts" value={player.inviteSendAttempts} />
-                  <ManagementDatum label="Last invite send" value={player.inviteLastSentAt ? formatDate(player.inviteLastSentAt) : "Not sent"} />
-                  <ManagementDatum
-                    label="Ids"
-                    fullWidth
-                    value={
-                      <div className="space-y-1 text-xs font-semibold text-gray-700">
-                        <p>App: {player.appUserId ? truncateId(player.appUserId) : "—"}</p>
-                        <p>Auth: {player.authUserId ? truncateId(player.authUserId) : "—"}</p>
-                      </div>
+                    void withAction(`reset-onboarding-${player.appUserId}`, async () => {
+                      const result = await resetOnboardingStateAction(player.appUserId!);
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadPlayers();
+                      }
+                    });
+                  }}
+                  onRepairInvite={() => {
+                    void withAction(`repair-invite-${player.email}`, async () => {
+                      const result = await repairPendingInviteAction(player.email);
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadPlayers();
+                      }
+                    });
+                  }}
+                  onOpenDelete={() => {
+                    setDeleteConfirmation({
+                      key: `delete-start-over-${player.email}`,
+                      email: player.email,
+                      displayName: player.displayName
+                    });
+                    setDeleteConfirmationValue("");
+                  }}
+                  onNotify={(tone, text) => setMessage({ tone, text })}
+                  onReload={loadPlayers}
+                  setManagerEditor={setManagerEditor}
+                  onSaveManagerLimits={() => {
+                    if (!activeManagerEditor) {
+                      return;
                     }
-                  />
-                  <ManagementDatum
-                    label="Notes"
-                    fullWidth
-                    value={
-                      <div className="space-y-1 text-sm font-semibold text-gray-900">
-                        {player.troubleshootingNotes.length > 0 ? (
-                          player.troubleshootingNotes.map((note) => <p key={note}>{note}</p>)
-                        ) : (
-                          <p>No obvious auth or invite mismatch detected.</p>
-                        )}
-                        {player.inviteLastError ? <p>{player.inviteLastError}</p> : null}
-                      </div>
-                    }
-                  />
-                </ManagementGrid>
-                {activeManagerEditor ? (
-                  <div className="mt-4 rounded-lg border border-accent-light bg-accent-light/40 p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-base font-black text-gray-950">Manager access for {activeManagerEditor.displayName}</p>
-                        <p className="mt-1 text-sm font-semibold text-gray-700">
-                          Update the limits below, then save to promote or edit this manager.
-                        </p>
-                      </div>
-                      <ManagementBadge label="editing manager access" tone="accent" />
-                    </div>
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      <label className="block">
-                        <span className="text-sm font-bold text-gray-800">Max groups</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={activeManagerEditor.maxGroups}
-                          onChange={(event) =>
-                            setManagerEditor((current) => current ? { ...current, maxGroups: event.target.value } : current)
-                          }
-                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="text-sm font-bold text-gray-800">Max members per group</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={activeManagerEditor.maxMembersPerGroup}
-                          onChange={(event) =>
-                            setManagerEditor((current) => current ? { ...current, maxMembersPerGroup: event.target.value } : current)
-                          }
-                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                        />
-                      </label>
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <ActionButton
-                        onClick={() => {
-                          void withAction(`manager-${activeManagerEditor.userId}`, async () => {
-                            const result = await upsertManagerLimitsAction({
-                              userId: activeManagerEditor.userId,
-                              maxGroups: Number(activeManagerEditor.maxGroups),
-                              maxMembersPerGroup: Number(activeManagerEditor.maxMembersPerGroup)
-                            });
-                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                            if (result.ok) {
-                              setManagerEditor(null);
-                              await loadPlayers();
-                            }
-                          });
-                        }}
-                        disabled={activeActionKey === `manager-${activeManagerEditor.userId}`}
-                        tone="accent"
-                      >
-                        {activeActionKey === `manager-${activeManagerEditor.userId}` ? "Saving..." : "Save Manager Limits"}
-                      </ActionButton>
-                      <ActionButton onClick={() => setManagerEditor(null)} disabled={activeActionKey === `manager-${activeManagerEditor.userId}`}>
-                        Cancel
-                      </ActionButton>
-                    </div>
-                  </div>
-                ) : null}
-              </ManagementCard>
-            );
+                    void withAction(`manager-${activeManagerEditor.userId}`, async () => {
+                      const result = await upsertManagerLimitsAction({
+                        userId: activeManagerEditor.userId,
+                        maxGroups: Number(activeManagerEditor.maxGroups),
+                        maxMembersPerGroup: Number(activeManagerEditor.maxMembersPerGroup)
+                      });
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        setManagerEditor(null);
+                        await loadPlayers();
+                      }
+                    });
+                  }}
+                />
+              );
             })
           : null}
-      </section>
+      </ManagementSection>
 
       <section className="space-y-3">
         <div>
@@ -861,9 +669,580 @@ export function AdminPlayersClient() {
       userId: player.appUserId,
       displayName: player.displayName,
       maxGroups: String(player.maxGroups ?? 3),
-      maxMembersPerGroup: String(player.maxMembersPerGroup ?? 4)
+      maxMembersPerGroup: String(player.maxMembersPerGroup ?? 30)
     });
   }
+}
+
+function PlayerSummaryCard({
+  player,
+  activeManagerEditor,
+  activeActionKey,
+  sendingResetForUserId,
+  onRename,
+  onManageManager,
+  onPasswordReset,
+  onSendNudge,
+  onResetOnboarding,
+  onRepairInvite,
+  onOpenDelete,
+  onNotify,
+  onReload,
+  setManagerEditor,
+  onSaveManagerLimits
+}: {
+  player: AdminPlayerHealthRow;
+  activeManagerEditor: {
+    userId: string;
+    displayName: string;
+    maxGroups: string;
+    maxMembersPerGroup: string;
+  } | null;
+  activeActionKey: string | null;
+  sendingResetForUserId: string | null;
+  onRename: () => void;
+  onManageManager: () => void;
+  onPasswordReset: () => void;
+  onSendNudge: () => void;
+  onResetOnboarding: () => void;
+  onRepairInvite: () => void;
+  onOpenDelete: () => void;
+  onNotify: (tone: "success" | "error", text: string) => void;
+  onReload: () => Promise<void>;
+  setManagerEditor: Dispatch<
+    SetStateAction<{
+      userId: string;
+      displayName: string;
+      maxGroups: string;
+      maxMembersPerGroup: string;
+    } | null>
+  >;
+  onSaveManagerLimits: () => void;
+}) {
+  const [isOpen, setIsOpen] = useSessionDisclosureState(`admin-players:card:${player.key}`, false);
+  const [isDemotionPanelOpen, setIsDemotionPanelOpen] = useState(false);
+  const demotionOptions = useMemo(
+    () =>
+      ADMIN_ASSIGNABLE_ACCESS_LEVELS.filter(
+        (accessLevel) =>
+          accessLevel !== "super_admin" &&
+          compareAccessLevels(accessLevel, player.accessLevel) < 0
+      ),
+    [player.accessLevel]
+  );
+  const [demotionTargetAccessLevel, setDemotionTargetAccessLevel] = useState<AccessLevel>(demotionOptions[0] ?? "player");
+  const [demotionImpact, setDemotionImpact] = useState<DemotionImpactSummary | null>(null);
+  const [demotionImpactError, setDemotionImpactError] = useState<string | null>(null);
+  const [isLoadingDemotionImpact, setIsLoadingDemotionImpact] = useState(false);
+  const [isApplyingDemotion, setIsApplyingDemotion] = useState(false);
+  const [isApplyingDeactivateOrganizer, setIsApplyingDeactivateOrganizer] = useState(false);
+  const [demotionReason, setDemotionReason] = useState("");
+  const [demotionConfirmationValue, setDemotionConfirmationValue] = useState("");
+  const [cleanupSelections, setCleanupSelections] = useState<Partial<Record<DemotionCleanupOption, boolean>>>({});
+  const showDemotionTools = player.roleLabel !== "admin" && player.accessLevel !== "player" && Boolean(player.appUserId);
+
+  useEffect(() => {
+    if (!demotionOptions.length) {
+      return;
+    }
+
+    setDemotionTargetAccessLevel((current) =>
+      demotionOptions.includes(current) ? current : demotionOptions[0]
+    );
+  }, [demotionOptions]);
+
+  useEffect(() => {
+    if (!isDemotionPanelOpen || !player.appUserId || !demotionTargetAccessLevel) {
+      return;
+    }
+
+    let isActive = true;
+    setIsLoadingDemotionImpact(true);
+    setDemotionImpactError(null);
+
+    getUserDemotionImpactAction(player.appUserId, demotionTargetAccessLevel)
+      .then((result) => {
+        if (!isActive) {
+          return;
+        }
+
+        if (!result.ok) {
+          setDemotionImpact(null);
+          setDemotionImpactError(result.message);
+          return;
+        }
+
+        setDemotionImpact(result.impact);
+        setCleanupSelections(
+          result.impact.cleanupOptions.reduce<Partial<Record<DemotionCleanupOption, boolean>>>((next, option) => {
+            next[option.key] = option.selectedByDefault;
+            return next;
+          }, {})
+        );
+      })
+      .catch((error) => {
+        if (!isActive) {
+          return;
+        }
+
+        setDemotionImpact(null);
+        setDemotionImpactError(error instanceof Error ? error.message : "Could not inspect that demotion right now.");
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsLoadingDemotionImpact(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [demotionTargetAccessLevel, isDemotionPanelOpen, player.appUserId]);
+
+  return (
+    <ManagementCard
+      title={
+        <div className="flex items-center gap-3">
+          <Avatar name={player.displayName} avatarUrl={player.avatarUrl} size="md" />
+          <div className="min-w-0">
+            <p className="truncate text-base font-black text-gray-950">{player.displayName}</p>
+            <p className="truncate text-sm font-semibold text-gray-600">{player.email}</p>
+          </div>
+        </div>
+      }
+      badges={
+        <>
+          <ManagementBadge label={getRoleBadgeLabel(player.roleLabel === "admin" ? "super admin" : "player")} tone={player.roleLabel === "admin" ? "accent" : "neutral"} />
+          <TierIconBadge accessLevel={player.accessLevel} size={22} />
+          <ManagementBadge label={formatStateLabel(player.healthBadge)} tone={getHealthTone(player.healthBadge)} />
+          {player.groupMembershipCount > 0 ? <ManagementBadge label={`${player.groupMembershipCount} groups`} tone="neutral" /> : null}
+          {player.isManager ? <ManagementBadge label={`${player.currentGroupsUsed}/${player.maxGroups ?? 0} managed`} tone="warning" /> : null}
+        </>
+      }
+      headerActions={<InlineDisclosureButton isOpen={isOpen} variant="subtle" onClick={() => setIsOpen((current) => !current)} />}
+    >
+      <ManagementGrid>
+        <ManagementDatum label="Role" value={player.roleLabel === "admin" ? "Super Admin" : "Player"} />
+        <ManagementDatum label="Plan tier" value={player.planTier ?? "player"} />
+        <ManagementDatum label="Groups count" value={player.groupMembershipCount} />
+        <ManagementDatum label="Managed groups" value={player.isManager ? player.currentGroupsUsed : "—"} />
+        <ManagementDatum label="Seat usage" value={player.isManager ? `${player.currentMembersUsed} / ${player.maxMembersPerGroup ?? 0}` : "—"} />
+        <ManagementDatum label="Invite state" value={formatStateLabel(player.inviteState)} />
+        <ManagementDatum label="Delivery" value={formatDeliveryState(player)} />
+        <ManagementDatum label="Warnings" value={player.troubleshootingNotes.length > 0 ? `${player.troubleshootingNotes.length} notes` : "Clear"} />
+      </ManagementGrid>
+
+      {isOpen ? (
+        <>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {player.appUserId ? (
+              <ActionButton onClick={onRename} disabled={activeActionKey === `rename-${player.appUserId}`}>
+                {activeActionKey === `rename-${player.appUserId}` ? "Saving..." : "Edit Display Name"}
+              </ActionButton>
+            ) : null}
+            {player.appUserId ? (
+              <ActionButton onClick={onManageManager} disabled={activeActionKey === `manager-${player.appUserId}`}>
+                {player.roleLabel === "admin"
+                  ? "Super Admin"
+                  : activeActionKey === `manager-${player.appUserId}`
+                    ? "Saving..."
+                    : player.isManager
+                      ? "Edit Manager Limits"
+                      : "Make Manager"}
+              </ActionButton>
+            ) : null}
+            <ActionButton onClick={onPasswordReset} disabled={sendingResetForUserId === player.appUserId || !player.appUserId}>
+              {sendingResetForUserId === player.appUserId ? "Sending..." : "Send Password Reset"}
+            </ActionButton>
+            {player.authUserId ? (
+              <ActionButton onClick={onSendNudge} disabled={activeActionKey === `nudge-${player.email}`}>
+                {activeActionKey === `nudge-${player.email}`
+                  ? "Sending..."
+                  : player.emailConfirmedAt
+                    ? "Send Onboarding Reminder"
+                    : "Resend Confirmation"}
+              </ActionButton>
+            ) : null}
+            {player.appUserId ? (
+              <ActionButton onClick={onResetOnboarding} disabled={activeActionKey === `reset-onboarding-${player.appUserId}`}>
+                {activeActionKey === `reset-onboarding-${player.appUserId}` ? "Resetting..." : "Reset Profile Setup"}
+              </ActionButton>
+            ) : null}
+            {canRepairInvite(player) ? (
+              <ActionButton onClick={onRepairInvite} disabled={activeActionKey === `repair-invite-${player.email}`}>
+                {activeActionKey === `repair-invite-${player.email}`
+                  ? "Repairing..."
+                  : player.inviteDeliveryState === "not_sent"
+                    ? "Repair Invite"
+                    : "Resend Invite"}
+              </ActionButton>
+            ) : null}
+            {showDemotionTools ? (
+              <ActionButton tone="danger" onClick={() => setIsDemotionPanelOpen((current) => !current)}>
+                {isDemotionPanelOpen ? "Hide Demote / Remove Access" : "Demote / Remove Access"}
+              </ActionButton>
+            ) : null}
+          </div>
+
+          <ManagementGrid>
+            <ManagementDatum label="Auth confirmed?" value={player.emailConfirmedAt ? "Yes" : "No"} />
+            <ManagementDatum label="Profile exists?" value={player.hasProfile ? "Yes" : "No"} />
+            <ManagementDatum label="Username set?" value={player.usernameSet ? "Yes" : "No"} />
+            <ManagementDatum label="App" value={`${formatStateLabel(player.appState)}${player.userStatus ? ` (${player.userStatus})` : ""}`} />
+            <ManagementDatum label="Auth" value={formatStateLabel(player.authState)} />
+            <ManagementDatum label="App invite status" value={formatStateLabel(player.inviteState)} />
+            <ManagementDatum label="Group invite status" value={player.groupInviteStatus} />
+            <ManagementDatum label="Onboarding" value={player.onboardingIncomplete ? "Incomplete" : player.appUserId ? "Complete" : "Waiting for auth"} />
+            <ManagementDatum label="Limits" value={formatLimitSummary(player)} />
+            <ManagementDatum label="Points" value={player.totalPoints} />
+            <ManagementDatum label="Created" value={player.createdAt ? formatDate(player.createdAt) : "—"} />
+            <ManagementDatum label="Last sign in" value={player.lastSignInAt ? formatDate(player.lastSignInAt) : "Never"} />
+            <ManagementDatum label="Email confirmed" value={player.emailConfirmedAt ? formatDate(player.emailConfirmedAt) : "Not yet"} />
+            <ManagementDatum label="Last confirmation sent" value={player.confirmationSentAt ? formatDate(player.confirmationSentAt) : "Not sent"} />
+            <ManagementDatum label="Username" value={player.username ?? "Not set"} />
+            <ManagementDatum label="Invite accepted" value={player.acceptedAt ? formatDate(player.acceptedAt) : "No"} />
+            <ManagementDatum label="Send attempts" value={player.inviteSendAttempts} />
+            <ManagementDatum label="Last invite send" value={player.inviteLastSentAt ? formatDate(player.inviteLastSentAt) : "Not sent"} />
+            <ManagementDatum
+              label="Ids"
+              fullWidth
+              value={
+                <div className="space-y-1 text-xs font-semibold text-gray-700">
+                  <p>App: {player.appUserId ? truncateId(player.appUserId) : "—"}</p>
+                  <p>Auth: {player.authUserId ? truncateId(player.authUserId) : "—"}</p>
+                </div>
+              }
+            />
+            <ManagementDatum
+              label="Notes"
+              fullWidth
+              value={
+                <div className="space-y-1 text-sm font-semibold text-gray-900">
+                  {player.troubleshootingNotes.length > 0 ? (
+                    player.troubleshootingNotes.map((note) => <p key={note}>{note}</p>)
+                  ) : (
+                    <p>No obvious auth or invite mismatch detected.</p>
+                  )}
+                  {player.inviteLastError ? <p>{player.inviteLastError}</p> : null}
+                </div>
+              }
+            />
+          </ManagementGrid>
+
+          {activeManagerEditor ? (
+            <div className="mt-4 rounded-lg border border-accent-light bg-accent-light/40 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-base font-black text-gray-950">Manager access for {activeManagerEditor.displayName}</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-700">
+                    Update the limits below, then save to promote or edit this manager.
+                  </p>
+                </div>
+                <ManagementBadge label="editing manager access" tone="accent" />
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Max groups</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={activeManagerEditor.maxGroups}
+                    onChange={(event) =>
+                      setManagerEditor((current) => current ? { ...current, maxGroups: event.target.value } : current)
+                    }
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Max members per group</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={activeManagerEditor.maxMembersPerGroup}
+                    onChange={(event) =>
+                      setManagerEditor((current) => current ? { ...current, maxMembersPerGroup: event.target.value } : current)
+                    }
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  />
+                </label>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <ActionButton onClick={onSaveManagerLimits} disabled={activeActionKey === `manager-${activeManagerEditor.userId}`} tone="accent">
+                  {activeActionKey === `manager-${activeManagerEditor.userId}` ? "Saving..." : "Save Manager Limits"}
+                </ActionButton>
+                <ActionButton onClick={() => setManagerEditor(null)} disabled={activeActionKey === `manager-${activeManagerEditor.userId}`}>
+                  Cancel
+                </ActionButton>
+              </div>
+            </div>
+          ) : null}
+
+          {showDemotionTools && isDemotionPanelOpen ? (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/70 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-base font-black text-gray-950">Demote / Remove Access</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-700">
+                    Promotions stay in the invite/access card. Downward changes run through impact checks, blocking rules,
+                    cleanup, and audit logging here.
+                  </p>
+                </div>
+                <ManagementBadge label="Super Admin only" tone="warning" />
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Target access level</span>
+                  <select
+                    value={demotionTargetAccessLevel}
+                    onChange={(event) => setDemotionTargetAccessLevel(event.target.value as AccessLevel)}
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  >
+                    {demotionOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {getAccessLevelDisplayLabel(option)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Reason</span>
+                  <input
+                    value={demotionReason}
+                    onChange={(event) => setDemotionReason(event.target.value)}
+                    placeholder="Explain why this access change is needed"
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  />
+                </label>
+              </div>
+
+              {isLoadingDemotionImpact ? (
+                <p className="mt-4 rounded-md border border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-600">
+                  Checking ownership, limits, invite codes, and organization blockers...
+                </p>
+              ) : null}
+
+              {demotionImpactError ? (
+                <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-3 text-sm font-semibold text-red-700">
+                  {demotionImpactError}
+                </p>
+              ) : null}
+
+              {demotionImpact ? (
+                <>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <ManagementDatum label="Current access" value={getAccessLevelDisplayLabel(demotionImpact.currentAccessLevel)} />
+                    <ManagementDatum label="Target access" value={getAccessLevelDisplayLabel(demotionImpact.targetAccessLevel)} />
+                    <ManagementDatum label="Owned groups" value={demotionImpact.ownedGroupCount} />
+                    <ManagementDatum label="Managed groups" value={demotionImpact.managedGroupCount} />
+                    <ManagementDatum label="Legacy manager groups" value={demotionImpact.legacyManagedGroupCount} />
+                    <ManagementDatum label="Active invite codes" value={demotionImpact.activeInviteCodeCount} />
+                    <ManagementDatum label="Codes created by user" value={demotionImpact.activeCreatedAccessCodeCount} />
+                    <ManagementDatum label="Pending invites" value={demotionImpact.pendingInviteCount} />
+                    <ManagementDatum label="Manager limits" value={demotionImpact.hasManagerLimits ? "Present" : "None"} />
+                    <ManagementDatum label="Organizations" value={demotionImpact.organizationOwnershipCount} />
+                    <ManagementDatum label="Branding" value={demotionImpact.organizationBrandingCount} />
+                    <ManagementDatum label="Custom trophies" value={demotionImpact.customTrophyOwnershipCount} />
+                    <ManagementDatum label="Side-pick ownership" value={demotionImpact.sidePickOwnershipCount} />
+                    <ManagementDatum label="Impact status" value={demotionImpact.status.replace(/_/g, " ")} />
+                  </div>
+
+                  {demotionImpact.blockers.length > 0 ? (
+                    <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-3">
+                      <p className="text-sm font-black text-red-900">Blocking issues</p>
+                      <div className="mt-2 space-y-1 text-sm font-semibold text-red-800">
+                        {demotionImpact.blockers.map((blocker) => (
+                          <p key={blocker}>{blocker}</p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {demotionImpact.cleanupActions.length > 0 ? (
+                    <div className="mt-4 rounded-md border border-amber-200 bg-white px-3 py-3">
+                      <p className="text-sm font-black text-gray-900">Cleanup required before applying</p>
+                      <div className="mt-2 space-y-1 text-sm font-semibold text-gray-700">
+                        {demotionImpact.cleanupActions.map((action) => (
+                          <p key={action}>{action}</p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {demotionImpact.cleanupOptions.length > 0 ? (
+                    <div className="mt-4 rounded-md border border-amber-200 bg-white px-3 py-3">
+                      <p className="text-sm font-black text-gray-900">Select cleanup steps</p>
+                      <div className="mt-3 space-y-3">
+                        {demotionImpact.cleanupOptions.map((option) => (
+                          <label key={option.key} className="flex items-start gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(cleanupSelections[option.key])}
+                              onChange={(event) =>
+                                setCleanupSelections((current) => ({
+                                  ...current,
+                                  [option.key]: event.target.checked
+                                }))
+                              }
+                              className="mt-1 h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent"
+                            />
+                            <div>
+                              <p className="text-sm font-black text-gray-950">{option.label}</p>
+                              <p className="mt-1 text-sm font-semibold text-gray-600">{option.description}</p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {demotionImpact.ownedGroups.length > 0 ? (
+                    <div className="mt-4 rounded-md border border-gray-200 bg-white px-3 py-3">
+                      <p className="text-sm font-black text-gray-900">Owned groups</p>
+                      <div className="mt-2 space-y-2">
+                        {demotionImpact.ownedGroups.map((group) => (
+                          <div key={group.id} className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm font-black text-gray-950">{group.name}</p>
+                              <ManagementBadge
+                                label={`${group.memberCount} / ${group.membershipLimit} members`}
+                                tone={group.exceedsTargetMemberLimit ? "warning" : "neutral"}
+                              />
+                            </div>
+                            <p className="mt-1 text-xs font-semibold text-gray-600">
+                              {group.activeInviteCodeCount} active code{group.activeInviteCodeCount === 1 ? "" : "s"} ·{" "}
+                              {group.pendingInviteCount} pending invite{group.pendingInviteCount === 1 ? "" : "s"}
+                            </p>
+                            {group.blockerReason ? (
+                              <p className="mt-1 text-xs font-semibold text-red-700">{group.blockerReason}</p>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-800">Type {player.email} to confirm</span>
+                    <input
+                      value={demotionConfirmationValue}
+                      onChange={(event) => setDemotionConfirmationValue(event.target.value)}
+                      placeholder={player.email}
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                    />
+                  </label>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <ActionButton
+                      tone="neutral"
+                      disabled={
+                        demotionImpact.status === "blocked" ||
+                        isApplyingDemotion ||
+                        !demotionReason.trim() ||
+                        demotionConfirmationValue.trim().toLowerCase() !== player.email.toLowerCase()
+                      }
+                      onClick={async () => {
+                        if (!player.appUserId) {
+                          return;
+                        }
+
+                        setIsApplyingDemotion(true);
+                        try {
+                          const result = await demoteUserWithImpactResolutionAction({
+                            userId: player.appUserId,
+                            targetAccessLevel: demotionTargetAccessLevel,
+                            expectedEmail: demotionConfirmationValue,
+                            reason: demotionReason,
+                            resolutionPlan: cleanupSelections
+                          });
+                          onNotify(result.ok ? "success" : "error", result.message);
+                          if (result.ok) {
+                            setIsDemotionPanelOpen(false);
+                            setDemotionReason("");
+                            setDemotionConfirmationValue("");
+                            setCleanupSelections({});
+                            await onReload();
+                          }
+                        } finally {
+                          setIsApplyingDemotion(false);
+                        }
+                      }}
+                    >
+                      {isApplyingDemotion
+                        ? "Applying..."
+                        : `Demote to ${getAccessLevelDisplayLabel(demotionTargetAccessLevel)}`}
+                    </ActionButton>
+                    <ActionButton
+                      tone="danger"
+                      disabled={
+                        demotionTargetAccessLevel !== "player" ||
+                        demotionImpact.status === "blocked" ||
+                        isApplyingDeactivateOrganizer ||
+                        !demotionReason.trim() ||
+                        demotionConfirmationValue.trim().toLowerCase() !== player.email.toLowerCase()
+                      }
+                      onClick={async () => {
+                        if (!player.appUserId) {
+                          return;
+                        }
+
+                        setIsApplyingDeactivateOrganizer(true);
+                        try {
+                          const result = await deactivateOrganizerAccessAction({
+                            userId: player.appUserId,
+                            expectedEmail: demotionConfirmationValue,
+                            reason: demotionReason,
+                            resolutionPlan: cleanupSelections
+                          });
+                          onNotify(result.ok ? "success" : "error", result.message);
+                          if (result.ok) {
+                            setIsDemotionPanelOpen(false);
+                            setDemotionReason("");
+                            setDemotionConfirmationValue("");
+                            setCleanupSelections({});
+                            await onReload();
+                          }
+                        } finally {
+                          setIsApplyingDeactivateOrganizer(false);
+                        }
+                      }}
+                    >
+                      {isApplyingDeactivateOrganizer ? "Deactivating..." : "Deactivate Organizer Access"}
+                    </ActionButton>
+                  </div>
+                  {demotionTargetAccessLevel !== "player" ? (
+                    <p className="mt-2 text-xs font-semibold text-gray-600">
+                      Select <span className="font-black">Player</span> above to preview and apply organizer deactivation.
+                    </p>
+                  ) : null}
+                  <p className="mt-2 text-xs font-semibold text-gray-600">
+                    Use the admin group tools below to transfer ownership or archive groups before retrying a blocked demotion.
+                  </p>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50/70 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-black text-red-900">Danger Zone</p>
+                <p className="mt-1 text-sm font-semibold text-red-800">
+                  Destructive reset stays hidden here and requires typing the user email to continue.
+                </p>
+              </div>
+              <ManagementBadge label="Super Admin only" tone="danger" />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <ActionButton tone="danger" onClick={onOpenDelete} disabled={activeActionKey === `delete-start-over-${player.email}`}>
+                {activeActionKey === `delete-start-over-${player.email}` ? "Deleting..." : "Delete and Start Over"}
+              </ActionButton>
+            </div>
+          </div>
+        </>
+      ) : null}
+    </ManagementCard>
+  );
 }
 
 function getHealthTone(status: AdminPlayerHealthRow["healthBadge"]) {

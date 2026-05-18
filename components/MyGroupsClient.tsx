@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Info } from "lucide-react";
 import {
   acceptGroupInviteAction,
@@ -26,14 +26,15 @@ import {
   type MyManagedGroup
 } from "@/app/my-groups/actions";
 import { Avatar } from "@/components/Avatar";
+import { DismissibleHelperText, useDismissedHelperState } from "@/components/DismissibleHelperText";
 import { ManagedGroupRulesetPanel } from "@/components/ManagedGroupRulesetPanel";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
-import { AdminInvitesSection } from "@/components/admin/AdminInvitesClient";
-import { formatDate } from "@/components/admin/AdminInvitesClient";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { OrganizationBrandingPanel } from "@/components/OrganizationBrandingPanel";
+import { TierIconBadge } from "@/components/TierIconBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
-import { showAppToast, type AppToastDetail, type AppToastTone } from "@/lib/app-toast";
-import { getRoleBadgeLabel } from "@/lib/access-levels";
+import { showAppToast } from "@/lib/app-toast";
+import { formatDateOnly } from "@/lib/date-time";
 import {
   appendExplainerLanguageToPath,
   appendLanguageToPath,
@@ -58,6 +59,8 @@ import {
   normalizeInviteTokenInput,
   useSessionDisclosureState
 } from "@/components/player-management/Shared";
+import { redactEmailAddress } from "@/lib/redact-email";
+import type { AccessLevel } from "@/lib/tier-access";
 
 type MyGroupsClientProps = {
   inviteToken?: string;
@@ -65,7 +68,7 @@ type MyGroupsClientProps = {
   inviteHelperLanguage?: string;
 };
 
-type ToastState = AppToastDetail | null;
+type ToastState = { tone: "success" | "error" | "tip"; text: string } | null;
 const PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY = "pickit:play-explainer-language";
 const GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-expanded-groups";
 const GROUP_INVITE_CODE_SECTION_STORAGE_KEY = "my-groups-expanded-group-invite-code-sections";
@@ -74,6 +77,7 @@ const GROUP_PEOPLE_SECTION_STORAGE_KEY = "my-groups-expanded-group-people-sectio
 const GROUP_TROPHY_SECTION_STORAGE_KEY = "my-groups-expanded-group-trophy-sections";
 const GROUP_INFO_SECTION_STORAGE_KEY = "my-groups-expanded-group-info-sections";
 const CREATE_GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-create-group";
+const GROUP_LIMIT_WARNING_DISMISS_PREFIX = "pickit:tip:my-groups-group-limit-warning";
 const TROPHY_PROMPTS = [
   { name: "Office Oracle", icon: "🧠", description: "Sees the result before the rest of the room does." },
   { name: "The Messi of Marketing", icon: "🐐", description: "Turns bold calls into highlight reels." },
@@ -81,9 +85,22 @@ const TROPHY_PROMPTS = [
   { name: "Drama King", icon: "🎭", description: "Never met a chaotic scoreline they didn't love." }
 ] as const;
 
+function getGroupCardTierAccessLevel(group: MyManagedGroup): AccessLevel {
+  if (group.userRole === "super_admin") {
+    return "super_admin";
+  }
+
+  if (group.canManage || group.userRole === "manager") {
+    return "manager";
+  }
+
+  return "player";
+}
+
 export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLanguage }: MyGroupsClientProps) {
   const router = useRouter();
   const [summary, setSummary] = useState<FetchMyGroupsResult | null>(null);
+  const [message, setMessage] = useState<ToastState>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [groupDetailsById, setGroupDetailsById] = useState<Record<string, ManagedGroupDetails>>({});
   const [loadingGroupDetailIds, setLoadingGroupDetailIds] = useState<Record<string, boolean>>({});
@@ -91,6 +108,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [managerCustomTrophiesEnabled, setManagerCustomTrophiesEnabled] = useState(false);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [groupName, setGroupName] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
   const [membershipLimit, setMembershipLimit] = useState("");
   const [createGroupInviteEmails, setCreateGroupInviteEmails] = useState("");
   const [groupLimitForms, setGroupLimitForms] = useState<Record<string, string>>({});
@@ -100,9 +118,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [inviteCodeActionGroupId, setInviteCodeActionGroupId] = useState<string | null>(null);
   const [inviteCodeActionType, setInviteCodeActionType] = useState<"create" | "replace" | "deactivate" | null>(null);
   const [actionKey, setActionKey] = useState<string | null>(null);
-  const [manualInviteLinkByGroup, setManualInviteLinkByGroup] = useState<
-    Record<string, { url: string; note: string }>
-  >({});
+  const [manualInviteLinkByGroup, setManualInviteLinkByGroup] = useState<Record<string, { url: string; note: string }>>({});
   const [invitePreviewMessage, setInvitePreviewMessage] = useState<ToastState>(null);
   const [invitePreview, setInvitePreview] = useState<{
     groupName: string;
@@ -116,7 +132,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   } | null>(null);
   const [isLoadingInvitePreview, setIsLoadingInvitePreview] = useState(Boolean(inviteToken));
   const [isAcceptingInvite, setIsAcceptingInvite] = useState(false);
-  const [hasAttemptedAutoAccept, setHasAttemptedAutoAccept] = useState(false);
   const [confirmation, setConfirmation] = useState<{
     key: string;
     title: string;
@@ -144,6 +159,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [expandedTrophyIds, setExpandedTrophyIds] = useState<string[]>([]);
   const [expandedGroupInfoIds, setExpandedGroupInfoIds] = useState<string[]>([]);
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useSessionDisclosureState(CREATE_GROUP_DISCLOSURE_STORAGE_KEY, false);
+  const confirmationRef = useRef<HTMLDivElement | null>(null);
   const [hasRestoredGroupDisclosureState, setHasRestoredGroupDisclosureState] = useState(false);
   const [hasRestoredGroupLimitState, setHasRestoredGroupLimitState] = useState(false);
   const [hasRestoredInviteCodeState, setHasRestoredInviteCodeState] = useState(false);
@@ -160,15 +176,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     icon: string;
     tier?: "bronze" | "silver" | "gold" | "special" | null;
   } | null>(null);
-  const pushToast = useCallback((detail: AppToastDetail) => {
-    showAppToast(detail);
-  }, []);
-  const pushTextToast = useCallback((tone: AppToastTone, text: string) => {
-    showAppToast({ tone, text });
-  }, []);
-  const pushResultToast = useCallback((result: { ok: boolean; message: string }, successTone: AppToastTone = "success") => {
-    showAppToast({ tone: result.ok ? successTone : "error", text: result.message });
-  }, []);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -181,7 +188,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
     if (!summaryResult.ok) {
       if (!inviteToken) {
-        pushTextToast("error", summaryResult.message);
+        setMessage({ tone: "error", text: summaryResult.message });
       }
       setIsLoading(false);
       return;
@@ -192,7 +199,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       Object.fromEntries(resolvedSummary.groups.map((group) => [group.id, String(group.membershipLimit)]))
     );
     setIsLoading(false);
-  }, [inviteToken, pushTextToast]);
+  }, [inviteToken]);
 
   useEffect(() => {
     void load();
@@ -247,6 +254,12 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   }, [expandedGroupIds, groupDetailErrors, groupDetailsById, loadGroupDetail, loadingGroupDetailIds, summary]);
 
   useEffect(() => {
+    if (message) {
+      showAppToast(message);
+    }
+  }, [message]);
+
+  useEffect(() => {
     if (invitePreviewMessage) {
       showAppToast(invitePreviewMessage);
     }
@@ -257,6 +270,21 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       showAppToast({ tone: "error", text: inviteEntryError });
     }
   }, [inviteEntryError]);
+
+  useEffect(() => {
+    if ((!confirmation && !deleteConfirmation) || typeof window === "undefined") {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      confirmationRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [confirmation, deleteConfirmation]);
 
   useEffect(() => {
     try {
@@ -489,13 +517,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const currentUser = summary?.ok ? summary.currentUser : null;
   const isSignedIn = Boolean(currentUser);
   const hasAnyGroups = summary?.ok ? summary.groupAccess.hasAnyGroups : false;
+  const tierAccess = summary?.ok ? summary.tierAccess : null;
   const activeHierarchyLevel =
     summary?.ok
-      ? summary.currentUser.role === "admin"
-        ? "super_admin"
-        : summary.managerAccess.enabled
-          ? "manager"
-          : "player"
+      ? summary.currentUser.accessLevel
       : undefined;
   const hierarchyActiveDetails = useMemo(() => {
     if (isLoading) {
@@ -506,7 +531,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       return [summary?.message ?? "Sign in to manage groups."];
     }
 
-    if (summary.currentUser.role === "admin") {
+    if (summary.currentUser.accessLevel === "super_admin") {
       return [
         `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
         "Managed groups: Unlimited",
@@ -515,11 +540,15 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       ];
     }
 
-    if (summary.managerAccess.enabled) {
+    if (summary.tierAccess.capabilities.canSeeOrganizerControls) {
       return [
+        `Tier: ${summary.tierAccess.label}`,
         `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
-        `Managed groups: ${summary.groupAccess.managedGroupCount} / ${summary.managerAccess.maxGroups}`,
-        `New group limit: ${summary.managerAccess.maxMembersPerGroup} members`,
+        `Managed groups: ${summary.groupAccess.managedGroupCount} / ${summary.tierAccess.limits.maxGroups}`,
+        `Group member cap: ${summary.tierAccess.limits.maxMembersPerGroup} members`,
+        summary.tierAccess.limits.maxTotalPlayers
+          ? `League player cap: ${summary.tierAccess.limits.maxTotalPlayers} total players`
+          : "League player cap: Not applied at this tier",
         "Scope: Assigned groups only"
       ];
     }
@@ -535,13 +564,13 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const managerGroupLimitReached = Boolean(
     summary?.ok &&
       summary.currentUser.role !== "admin" &&
-      summary.managerAccess.enabled &&
-      summary.managerAccess.maxGroups !== undefined &&
-      summary.groupAccess.managedGroupCount >= summary.managerAccess.maxGroups
+      summary.tierAccess.limits.maxGroups !== null &&
+      summary.groupAccess.managedGroupCount >= summary.tierAccess.limits.maxGroups
   );
-  const canCreateGroups = summary?.ok && summary.currentUser.role === "admin"
-    ? true
-    : Boolean(summary?.ok && summary.managerAccess.enabled);
+  const canCreateGroups = Boolean(summary?.ok && summary.tierAccess.capabilities.canCreateGroup);
+  const canManageSocialTrophies = Boolean(summary?.ok && summary.tierAccess.capabilities.canManageSocialTrophies);
+  const groupLimitWarningStorageKey = `${GROUP_LIMIT_WARNING_DISMISS_PREFIX}:${currentUserId ?? "guest"}`;
+  const groupLimitWarningState = useDismissedHelperState(groupLimitWarningStorageKey);
   const filteredGroups = useMemo(() => {
     const orderedGroups = [...summaryGroups].sort((left, right) => {
       if (left.canManage !== right.canManage) {
@@ -570,16 +599,19 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleCreateGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsCreatingGroup(true);
+    setMessage(null);
 
     const result = await createGroupAction({
       name: groupName,
+      description: groupDescription,
       membershipLimit: membershipLimit ? Number(membershipLimit) : undefined,
       inviteEmailsText: createGroupInviteEmails
     });
 
-    pushResultToast(result);
+    setMessage({ tone: result.ok ? "success" : "error", text: result.message });
     if (result.ok) {
       setGroupName("");
+      setGroupDescription("");
       setMembershipLimit("");
       setCreateGroupInviteEmails("");
       await load();
@@ -591,6 +623,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleCreateInviteCode(group: MyManagedGroup, replaceExisting = false) {
     setInviteCodeActionGroupId(group.id);
     setInviteCodeActionType(replaceExisting ? "replace" : "create");
+    setMessage(null);
 
     try {
       const result = await createManagedGroupInviteCodeAction({
@@ -598,7 +631,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         replaceExisting,
         customCode: inviteCodeDrafts[group.id] ?? ""
       });
-      pushResultToast(result);
+      setMessage({
+        tone: result.ok ? "success" : "error",
+        text: result.message
+      });
 
       if (result.ok) {
         setInviteCodeDrafts((current) => ({
@@ -622,7 +658,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         await loadGroupDetail(group.id, true);
       }
     } catch (error) {
-      pushTextToast("error", error instanceof Error ? error.message : "Could not update the invite code.");
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Could not update the invite code."
+      });
     } finally {
       setInviteCodeActionGroupId(null);
       setInviteCodeActionType(null);
@@ -632,10 +671,14 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleDeactivateInviteCode(group: MyManagedGroup) {
     setInviteCodeActionGroupId(group.id);
     setInviteCodeActionType("deactivate");
+    setMessage(null);
 
     try {
       const result = await deactivateManagedGroupInviteCodeAction(group.id);
-      pushResultToast(result);
+      setMessage({
+        tone: result.ok ? "success" : "error",
+        text: result.message
+      });
 
       if (result.ok) {
         setGroupDetailsById((current) => {
@@ -655,7 +698,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         await loadGroupDetail(group.id, true);
       }
     } catch (error) {
-      pushTextToast("error", error instanceof Error ? error.message : "Could not deactivate the invite code.");
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Could not deactivate the invite code."
+      });
     } finally {
       setInviteCodeActionGroupId(null);
       setInviteCodeActionType(null);
@@ -665,7 +711,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleCreateEmailInvite(group: MyManagedGroup) {
     const email = newInviteEmailsByGroup[group.id]?.trim() ?? "";
     if (!email) {
-      pushTextToast("error", "Enter an email address first.");
+      setMessage({ tone: "error", text: "Enter an email address first." });
       return;
     }
 
@@ -689,9 +735,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               note:
                 result.deliveryStatus === "queue_failed"
                   ? "Invite created, but email could not be queued. Copy the link below and share it manually."
-                  : result.deliveryStatus === "sent_inline"
-                    ? "Invite email was sent. The link is shown below if you also want to share it manually."
-                    : "Invite email queued. The link is shown below if you also want to share it manually."
+                  : "Invite email queued. The link is shown below if you also want to share it manually."
             }
           }));
         }
@@ -701,7 +745,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
           [group.id]: ""
         }));
 
-        if (copiedToClipboard) {
+        if (copiedToClipboard && result.deliveryStatus !== "queue_failed") {
           setManualInviteLinkByGroup((current) => {
             if (!current[group.id]) {
               return current;
@@ -711,29 +755,32 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             delete next[group.id];
             return next;
           });
+        } else {
+          setManualInviteLinkByGroup((current) => ({
+            ...current,
+            [group.id]: {
+              url: result.claimUrl,
+              note:
+                result.deliveryStatus === "queue_failed"
+                  ? "Invite created, but email could not be queued. Copy the link below and share it manually."
+                  : "Copy failed. Copy the link from the field below."
+            }
+          }));
         }
 
-        pushToast({
-          tone:
-            result.deliveryStatus === "queue_failed" || !copiedToClipboard
-              ? "tip"
-              : "success",
+        setMessage({
+          tone: result.deliveryStatus === "queue_failed" || !copiedToClipboard ? "tip" : "success",
           text:
             result.deliveryStatus === "queue_failed"
-              ? "Invite created, but email could not be queued. Copy the link below and share it manually."
-              : result.deliveryStatus === "sent_inline"
-                ? "Invite email sent. The invite link is also available if you want to share it manually."
-                : copiedToClipboard
-                  ? "Invite email queued. The link is also available below."
-                  : "Copy failed. Copy the link from the field below."
+              ? "Invite created, but email could not be queued. Copy the link from the field below and share it manually."
+              : copiedToClipboard
+                ? "Invite email queued. The invite link is also available if you want to share it manually."
+                : "Copy failed. Copy the link from the field below."
         });
-      }
-      if (!result.ok) {
-        pushTextToast("error", result.message);
-      }
 
-      if (result.ok) {
         await loadGroupDetail(group.id, true);
+      } else {
+        setMessage({ tone: "error", text: result.message });
       }
     });
   }
@@ -765,7 +812,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleAwardTrophyFromSheet(groupId: string, userId: string, trophyId: string) {
     await withAction(`award-trophy-${groupId}:${userId}:${trophyId}`, async () => {
       const result = await awardManagedGroupTrophyAction(groupId, userId, trophyId);
-      pushResultToast(result);
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
       if (result.ok) {
         if (!result.alreadyAwarded && result.trophy) {
           setCelebrationTrophy(result.trophy);
@@ -779,13 +826,13 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   async function handleAwardTrophyFromList(groupId: string, trophyId: string) {
     const selectedUserId = groupTrophyAwardSelections[groupId]?.[trophyId]?.trim() ?? "";
     if (!selectedUserId) {
-      pushTextToast("error", "Choose a player first.");
+      setMessage({ tone: "error", text: "Choose a player first." });
       return;
     }
 
     await withAction(`award-trophy-${groupId}:${selectedUserId}:${trophyId}`, async () => {
       const result = await awardManagedGroupTrophyAction(groupId, selectedUserId, trophyId);
-      pushResultToast(result);
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
       if (result.ok) {
         if (!result.alreadyAwarded && result.trophy) {
           setCelebrationTrophy(result.trophy);
@@ -812,7 +859,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         icon: draft.icon,
         description: draft.description
       });
-      pushResultToast(result);
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
       if (result.ok) {
         setGroupTrophyDrafts((current) => ({
           ...current,
@@ -871,7 +918,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       )
     : undefined;
   const inviteLoginPath = inviteToken
-    ? `/login?mode=login&flow=invite&lang=${resolvedInviteLanguage}&next=${encodeURIComponent(inviteReturnPath ?? "/my-groups")}`
+    ? `/login?flow=invite&lang=${resolvedInviteLanguage}&next=${encodeURIComponent(inviteReturnPath ?? "/my-groups")}`
     : "/login";
   const inviteSignupPath = inviteToken
     ? `/login?mode=signup&flow=invite&lang=${resolvedInviteLanguage}&next=${encodeURIComponent(inviteReturnPath ?? "/my-groups")}`
@@ -884,45 +931,12 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       normalizedInviteEmail === normalizedCurrentUserEmail
   );
 
-  useEffect(() => {
-    if (!inviteToken || !isSignedIn || !invitePreview || isLoadingInvitePreview || !isInviteEmailMatch || hasAttemptedAutoAccept) {
-      return;
-    }
-
-    if (invitePreview.status !== "pending") {
-      return;
-    }
-
-    setHasAttemptedAutoAccept(true);
-    void (async () => {
-      setIsAcceptingInvite(true);
-      const result = await acceptGroupInviteAction({ token: inviteToken });
-      setInvitePreviewMessage({ tone: result.ok ? "success" : "error", text: result.message });
-      setIsAcceptingInvite(false);
-
-      if (result.ok) {
-        await load();
-        router.replace("/my-groups");
-        router.refresh();
-      }
-    })();
-  }, [
-    hasAttemptedAutoAccept,
-    invitePreview,
-    inviteToken,
-    isInviteEmailMatch,
-    isLoadingInvitePreview,
-    isSignedIn,
-    load,
-    router
-  ]);
-
   return (
     <section className="space-y-5">
       <ManagementIntro
         eyebrow="My Groups"
         title="Play in groups and manage them"
-        description="Players see the groups they belong to. Managers get group controls. Directors get an elevated control layer at the top."
+        description="Players see the groups they belong to. Organizers get the group controls their tier allows."
         statusChip={
           summary?.ok
             ? `${summary.groupAccess.joinedGroupCount} joined · ${summary.groupAccess.managedGroupCount} managed`
@@ -930,44 +944,48 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         }
       />
 
-      {confirmation ? (
-        <InlineConfirmation
-          title={confirmation.title}
-          description={confirmation.description}
-          confirmLabel={confirmation.confirmLabel}
-          onConfirm={confirmation.onConfirm}
-          onCancel={() => setConfirmation(null)}
-          isPending={actionKey === confirmation.key}
-        />
-      ) : null}
+      {confirmation || deleteConfirmation ? (
+        <div ref={confirmationRef} className="scroll-mt-28 space-y-3">
+          {confirmation ? (
+            <InlineConfirmation
+              title={confirmation.title}
+              description={confirmation.description}
+              confirmLabel={confirmation.confirmLabel}
+              onConfirm={confirmation.onConfirm}
+              onCancel={() => setConfirmation(null)}
+              isPending={actionKey === confirmation.key}
+            />
+          ) : null}
 
-      {deleteConfirmation ? (
-        <InlineTextConfirmation
-          title={`Delete ${deleteConfirmation.groupName}?`}
-          description="This removes the group, its memberships, and its pending group invites. It does not delete player accounts, app-level invites, or predictions."
-          confirmLabel="Delete Group"
-          expectedValue={deleteConfirmation.groupName}
-          inputLabel="Type the group name to confirm"
-          inputPlaceholder={deleteConfirmation.groupName}
-          value={deleteConfirmationValue}
-          onValueChange={setDeleteConfirmationValue}
-          onConfirm={() => {
-            void withAction(deleteConfirmation.key, async () => {
-              const result = await deleteManagedGroupAction(deleteConfirmation.groupId, deleteConfirmationValue);
-              pushResultToast(result);
-              if (result.ok) {
+          {deleteConfirmation ? (
+            <InlineTextConfirmation
+              title={`Delete ${deleteConfirmation.groupName}?`}
+              description="This removes the group, its memberships, and its pending group invites. It does not delete player accounts, app-level invites, or predictions."
+              confirmLabel="Delete Group"
+              expectedValue={deleteConfirmation.groupName}
+              inputLabel="Type the group name to confirm"
+              inputPlaceholder={deleteConfirmation.groupName}
+              value={deleteConfirmationValue}
+              onValueChange={setDeleteConfirmationValue}
+              onConfirm={() => {
+                void withAction(deleteConfirmation.key, async () => {
+                  const result = await deleteManagedGroupAction(deleteConfirmation.groupId, deleteConfirmationValue);
+                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                  if (result.ok) {
+                    setDeleteConfirmation(null);
+                    setDeleteConfirmationValue("");
+                    await load();
+                  }
+                });
+              }}
+              onCancel={() => {
                 setDeleteConfirmation(null);
                 setDeleteConfirmationValue("");
-                await load();
-              }
-            });
-          }}
-          onCancel={() => {
-            setDeleteConfirmation(null);
-            setDeleteConfirmationValue("");
-          }}
-          isPending={actionKey === deleteConfirmation.key}
-        />
+              }}
+              isPending={actionKey === deleteConfirmation.key}
+            />
+          ) : null}
+        </div>
       ) : null}
 
       {inviteToken ? (
@@ -983,7 +1001,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               </p>
               <p className="text-sm font-semibold text-gray-600">
                 Status: {invitePreview.status}
-                {invitePreview.expiresAt ? ` · Expires ${formatDate(invitePreview.expiresAt)}` : ""}
+                {invitePreview.expiresAt ? ` · Expires ${formatDateOnly(invitePreview.expiresAt)}` : ""}
               </p>
               {invitePreview.customMessage ? (
                 <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
@@ -1040,8 +1058,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     {invitePreview.status !== "pending"
                       ? "Invite expired or canceled."
                       : invitePreview.existingAccount
-                      ? "This invited email already has an account. Sign in with that email to join the group."
-                      : "Sign in or create your account with the invited email first. You can come right back to this invite."}
+                        ? "This invited email already has an account. Sign in with that email to join the group."
+                        : "Sign in or create your account with the invited email first. You can come right back to this invite."}
                   </p>
                   {invitePreview.status !== "pending" ? null : invitePreview.existingAccount ? (
                     <Link
@@ -1069,8 +1087,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                 </div>
               )}
             </div>
-          ) : invitePreviewMessage ? (
-            <p className="mt-3 text-sm font-semibold text-gray-600">{invitePreviewMessage.text}</p>
           ) : null}
         </section>
       ) : null}
@@ -1081,7 +1097,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
           subtitle="Full system control lives here without adding another dock tab."
           badges={
             <>
-              <ManagementBadge label={getRoleBadgeLabel("super admin")} tone="accent" />
+              <TierIconBadge accessLevel="super_admin" size={22} />
               <ManagementBadge label="unlimited" tone="accent" />
             </>
           }
@@ -1100,10 +1116,19 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             <p className="text-sm font-semibold leading-6 text-gray-600">
               Create groups without limits, invite players globally, and review every group from this hub.
             </p>
-            <AdminInvitesSection showHeader={false} showInviteList={false} />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Link href="/admin/invites" className="inline-flex">
+                <ActionButton fullWidth>Open Invite Controls</ActionButton>
+              </Link>
+              <Link href="/admin/groups" className="inline-flex">
+                <ActionButton fullWidth>Open Group Controls</ActionButton>
+              </Link>
+            </div>
           </div>
         </ManagementCard>
       ) : null}
+
+      {summary?.ok && summary.tierAccess.capabilities.canManageOrganizationBranding ? <OrganizationBrandingPanel /> : null}
 
       {summary?.ok && !hasAnyGroups ? (
         <ManagementCard
@@ -1136,22 +1161,30 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               onSubmit={handleInviteEntrySubmit}
               submitLabel="Open Invite"
             />
-            {inviteEntryError ? <p className="mt-2 text-sm font-semibold text-red-700">{inviteEntryError}</p> : null}
           </div>
         </ManagementCard>
       ) : null}
 
       {canCreateGroups ? (
         managerGroupLimitReached ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-            <div className="flex items-start gap-2 text-sm font-semibold text-amber-800">
-              <Info aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
-              <p>
-                You are already using all {summary?.ok ? summary.managerAccess.maxGroups : 0} of your available groups.
-                Ask a super admin if you need a higher group limit.
-              </p>
+          groupLimitWarningState.hasHydrated && !groupLimitWarningState.isDismissed ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <div className="flex items-center gap-2 text-amber-800">
+              <Info aria-hidden className="h-3.5 w-3.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <DismissibleHelperText
+                  storageKey={groupLimitWarningStorageKey}
+                  dismissLabel="Hide this limit note"
+                >
+                  <p className="text-[11px] font-semibold leading-4 text-amber-800">
+                    Your current tier allows {summary?.ok ? summary.tierAccess.limits.maxGroups : 0} group
+                    {summary?.ok && summary.tierAccess.limits.maxGroups === 1 ? "" : "s"}.
+                  </p>
+                </DismissibleHelperText>
+              </div>
             </div>
           </div>
+          ) : null
         ) : (
           <form
             onSubmit={handleCreateGroup}
@@ -1178,6 +1211,20 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   />
                 </label>
                 <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Short description</span>
+                  <textarea
+                    value={groupDescription}
+                    onChange={(event) => setGroupDescription(event.target.value)}
+                    rows={2}
+                    maxLength={250}
+                    placeholder="The family World Cup pool - winner gets eternal bragging rights."
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  />
+                  <p className="mt-2 text-xs font-semibold text-gray-500">
+                    Optional. Keep it short and friendly.
+                  </p>
+                </label>
+                <label className="block">
                   <span className="text-sm font-bold text-gray-800">Membership limit</span>
                   <input
                     type="number"
@@ -1185,8 +1232,17 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     value={membershipLimit}
                     onChange={(event) => setMembershipLimit(event.target.value)}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                    placeholder="Leave blank for the default"
+                    placeholder={
+                      summary?.ok && summary.currentUser.role !== "admin" && tierAccess?.limits.maxMembersPerGroup
+                        ? `Up to ${tierAccess.limits.maxMembersPerGroup}`
+                        : "Leave blank for the default"
+                    }
                   />
+                  {summary?.ok && summary.currentUser.role !== "admin" && tierAccess?.limits.maxMembersPerGroup ? (
+                    <p className="mt-2 text-xs font-semibold text-gray-500">
+                      Your current tier allows up to {tierAccess.limits.maxMembersPerGroup} members per group.
+                    </p>
+                  ) : null}
                 </label>
                 <label className="block">
                   <span className="text-sm font-bold text-gray-800">Invite specific players by email</span>
@@ -1212,12 +1268,12 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
       <section className="space-y-3">
         <div>
-          <h3 className="text-lg font-bold">Groups</h3>
+          <h3 className="text-xl font-black">Groups</h3>
           <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-700">
             {summary?.ok && summary.currentUser.role === "admin"
               ? "See every group, members, invites, and the admin control layer."
-              : summary?.ok && summary.managerAccess.enabled
-                ? "See your groups, members, invites, and the limits that apply to you."
+              : summary?.ok && summary.tierAccess.capabilities.canSeeOrganizerControls
+                ? "See your groups, members, invites, and the limits that apply to your tier."
                 : "See the groups you belong to and who is in them."}
           </p>
         </div>
@@ -1240,7 +1296,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               isSuperAdmin && superAdminGroupQuery.trim()
                 ? "No groups match that search."
                 : summary?.ok && !summary.groupAccess.hasAnyGroups
-                ? "No managed groups yet. Use a new invite link or create a group if you have manager access."
+                ? "No managed groups yet. Use a new invite link or create a group if your tier includes it."
                 : "No groups available right now."
             }
           />
@@ -1260,6 +1316,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const groupLimitFormValue = groupLimitForms[group.id] ?? String(group.membershipLimit);
             const usesDisclosure = true;
             const isExpanded = usesDisclosure ? expandedGroupIds.includes(group.id) : true;
+            const compactMemberCount = resolvedMemberCount ?? 0;
+            const compactPendingInviteCount = resolvedPendingInviteCount ?? 0;
             const isInviteCodeExpanded = expandedInviteCodeIds.includes(group.id);
             const isGroupLimitExpanded = expandedGroupLimitIds.includes(group.id);
             const isPeopleInvitesExpanded = expandedPeopleInviteIds.includes(group.id);
@@ -1287,50 +1345,52 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               <ManagementCard
                 key={group.id}
                 title={
-                  <>
-                    <div className="text-xl font-black leading-tight text-gray-950">{group.name}</div>
-                    <div className="mt-1 truncate text-[10px] font-semibold uppercase tracking-wide text-gray-700">
-                      {group.canManage
-                        ? resolvedMemberCount !== undefined && resolvedPendingInviteCount !== undefined
-                          ? `${resolvedMemberCount} members · ${resolvedPendingInviteCount} pending invites`
-                          : "Open to load members and invites"
-                        : resolvedMemberCount !== undefined
-                          ? `${resolvedMemberCount} members`
-                          : "Open to load members"}
+                  <div className="flex min-w-0 items-start gap-3">
+                    <Avatar name={group.name} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="min-w-0 flex-1 truncate text-base font-black leading-tight text-gray-950">
+                          {group.name}
+                        </div>
+                        <TierIconBadge accessLevel={getGroupCardTierAccessLevel(group)} size={16} />
+                      </div>
+                      <div className="mt-1 truncate text-[10px] font-semibold uppercase tracking-wide text-gray-700">
+                        {group.canManage
+                          ? `${compactMemberCount} members · ${compactPendingInviteCount} pending invites`
+                          : `${compactMemberCount} members`}
+                      </div>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
-                      <ManagementBadge label={`${group.membershipLimit} seats`} tone="neutral" />
-                      {group.userRole === "super_admin" ? (
-                        <ManagementBadge label={getRoleBadgeLabel("super admin")} tone="accent" />
-                      ) : group.userRole === "manager" ? (
-                        <ManagementBadge label={getRoleBadgeLabel("manager")} tone="accent" />
-                      ) : (
-                        <ManagementBadge label={getRoleBadgeLabel("player")} tone="neutral" />
-                      )}
-                    </div>
-                  </>
+                  </div>
                 }
                 className="bg-gray-50"
+                badges={
+                  <>
+                    <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
+                    <ManagementBadge label={`Cap ${group.membershipLimit}`} tone="neutral" />
+                  </>
+                }
                 headerActions={
                   usesDisclosure ? (
-                    <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center gap-2">
                       <InlineDisclosureButton
                         isOpen={isExpanded}
+                        variant="subtle"
                         onClick={() => toggleExpandedGroup(group.id)}
                       />
-                      <Link
-                        href={getGroupLeaderboardHref(group)}
-                        className="inline-flex rounded-md border border-gray-300 bg-gray-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
-                      >
-                        Leaderboard
-                      </Link>
                     </div>
                   ) : null
                 }
               >
                 {isExpanded ? (
                   <>
+                    <div className="mt-1 flex justify-end">
+                      <Link
+                        href={getGroupLeaderboardHref(group)}
+                        className="inline-flex rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
+                      >
+                        Leaderboard
+                      </Link>
+                    </div>
                     {group.canManage ? (
                       <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1350,7 +1410,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               <p className="text-sm font-semibold text-gray-600">Loading invite code...</p>
                             ) : inviteCode ? (
                               <>
-                                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-3">
                                   <code className="text-base font-black uppercase tracking-[0.18em] text-gray-950">
                                     {inviteCode.code}
                                   </code>
@@ -1359,22 +1419,32 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     onClick={() => {
                                       void navigator.clipboard
                                         .writeText(inviteCode.code)
-                                        .then(() => pushTextToast("success", "Invite code copied."))
-                                        .catch(() => pushTextToast("tip", "Copy failed. Copy the invite code from the field above."));
+                                        .then(() => {
+                                          setMessage({ tone: "success", text: "Invite code copied." });
+                                        })
+                                        .catch((clipboardError) => {
+                                          console.warn("Could not copy invite code.", clipboardError);
+                                          setMessage({ tone: "tip", text: "Copy failed. Copy the code from this card manually." });
+                                        });
                                     }}
                                     className="text-[10px] font-bold uppercase tracking-wide text-gray-600 transition hover:text-accent-dark"
                                   >
                                     Copy code
                                   </button>
                                 </div>
-                                <div className="grid gap-2 sm:grid-cols-2">
+                                <div className="grid gap-2 sm:grid-cols-3">
                                   <ActionButton
                                     type="button"
                                     onClick={() => {
                                       void navigator.clipboard
                                         .writeText(inviteCode.shareMessage)
-                                        .then(() => pushTextToast("success", "Invite message copied."))
-                                        .catch(() => pushTextToast("tip", "Copy failed. Try again or use WhatsApp below."));
+                                        .then(() => {
+                                          setMessage({ tone: "success", text: "Invite message copied." });
+                                        })
+                                        .catch((clipboardError) => {
+                                          console.warn("Could not copy invite message.", clipboardError);
+                                          setMessage({ tone: "tip", text: "Copy failed. Share the invite code or links from this card manually." });
+                                        });
                                     }}
                                     fullWidth
                                   >
@@ -1383,6 +1453,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   <Link href={inviteCode.whatsAppUrl} target="_blank" rel="noreferrer" className="inline-flex">
                                     <ActionButton fullWidth>Send via WhatsApp</ActionButton>
                                   </Link>
+                                  <a href={inviteCode.emailUrl} className="inline-flex">
+                                    <ActionButton fullWidth>Send via Email</ActionButton>
+                                  </a>
+                                </div>
+                                <div className="grid gap-2 sm:grid-cols-3">
                                   <ActionButton
                                     type="button"
                                     disabled={inviteCodeActionGroupId === group.id}
@@ -1414,7 +1489,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                         }))
                                       }
                                       disabled={inviteCodeActionGroupId === group.id}
-                                      placeholder="Leave blank for an automatic code"
+                                      placeholder="Type your code here"
                                       className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold uppercase tracking-[0.14em] text-gray-950 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                                       aria-label={`Choose an invite code for ${group.name}`}
                                     />
@@ -1484,7 +1559,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                             {invite.existingAccount
                                               ? "Existing user — they can log in and join from the invite link."
                                               : "Pending signup."}
-                                            {invite.expiresAt ? ` Expires ${formatDate(invite.expiresAt)}.` : ""}
+                                            {invite.expiresAt ? ` Expires ${formatDateOnly(invite.expiresAt)}.` : ""}
                                           </p>
                                         </div>
                                         <ActionButton
@@ -1499,7 +1574,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                               onConfirm: () => {
                                                 void withAction(`cancel-inline-invite-${invite.id}`, async () => {
                                                   const result = await cancelGroupInviteAction(invite.id);
-                                                  pushResultToast(result);
+                                                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
                                                   if (result.ok) {
                                                     setConfirmation(null);
                                                     await loadGroupDetail(group.id, true);
@@ -1698,46 +1773,24 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 <Avatar name={member.name} avatarUrl={member.avatarUrl} size="sm" />
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
-                                  <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
+                                  <p className="truncate text-sm font-semibold text-gray-600">
+                                    {redactEmailAddress(member.email)}
+                                  </p>
                                   {member.homeTeamId ? (
                                     <div className="mt-2">
                                       <HomeTeamBadge teamId={member.homeTeamId} compact />
                                     </div>
                                   ) : null}
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {member.trophies.length > 0 ? (
-                                      member.trophies.map((trophy) => (
-                                        <span
-                                          key={`${member.membershipId}-${trophy.id}`}
-                                          className="rounded-md bg-gray-100 px-2 py-1 text-xs font-bold text-gray-700"
-                                        >
-                                          {trophy.icon} {trophy.name}
-                                        </span>
-                                      ))
-                                    ) : (
-                                      <span className="text-xs font-semibold text-gray-500">No trophies yet</span>
-                                    )}
-                                  </div>
                                   <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {member.role} · Joined {formatDate(member.joinedAt)}
+                                    {member.role} · Joined {formatDateOnly(member.joinedAt)}
                                   </p>
                                 </div>
                               </div>
-                                  {group.canManage && (member.userId !== currentUserId || canSelfAwardTrophies) ? (
+                                  {group.canManage ? (
                                     <div className="flex flex-col items-end gap-2">
-                                      <button
-                                        type="button"
-                                      onClick={() => {
-                                        setTrophySheetTarget({ groupId: group.id, userId: member.userId });
-                                    }}
-                                    className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-lg transition hover:border-amber-300 hover:bg-amber-100"
-                                    aria-label={`Award ${member.name} a trophy`}
-                                  >
-                                    🏆
-                                  </button>
-                                  {member.role === "member" ? (
-                                    <ActionButton
-                                      tone="danger"
+                                      {member.role === "member" ? (
+                                        <ActionButton
+                                          tone="danger"
                                       disabled={actionKey === `remove-member-${member.membershipId}`}
                                       onClick={() => {
                                         setConfirmation({
@@ -1748,7 +1801,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                           onConfirm: () => {
                                             void withAction(`remove-member-${member.membershipId}`, async () => {
                                               const result = await removeGroupMemberAction(group.id, member.userId);
-                                              pushResultToast(result);
+                                              setMessage({ tone: result.ok ? "success" : "error", text: result.message });
                                               if (result.ok) {
                                                 setConfirmation(null);
                                                 await load();
@@ -1768,7 +1821,21 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         ))}
 
                         {filteredInvites.map((invite) => {
-                          const inviteStatusLabel = invite.status === "revoked" ? "canceled" : invite.status;
+                          const inviteStatusLabel =
+                            invite.status === "accepted"
+                              ? "accepted"
+                              : invite.status === "revoked"
+                                ? "canceled"
+                                : invite.status === "expired"
+                                  ? "expired"
+                                  : invite.emailStatus === "failed"
+                                    ? "failed"
+                                    : invite.emailStatus === "sent"
+                                      ? "sent"
+                                      : "pending";
+                          const canResendInvite =
+                            invite.status === "pending" &&
+                            (invite.emailStatus === "pending" || invite.emailStatus === "sent" || invite.emailStatus === "failed");
                           const editValue = editingInviteNames[invite.id] ?? invite.suggestedDisplayName ?? "";
                           const isInviteEditorExpanded = expandedInviteEditorIds.includes(invite.id);
 
@@ -1779,39 +1846,36 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   <p className="truncate text-sm font-black text-gray-950">{invite.email}</p>
                                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
                                     {inviteStatusLabel}
-                                    {invite.expiresAt ? ` · Expires ${formatDate(invite.expiresAt)}` : ""}
-                                  </p>
-                                  <p className="mt-1 text-xs font-semibold text-gray-500">
-                                    {invite.existingAccount
-                                      ? "Existing user — they can log in and join from the invite link."
-                                      : "Pending signup."}
+                                    {invite.expiresAt ? ` · Expires ${formatDateOnly(invite.expiresAt)}` : ""}
                                   </p>
                                   <p className="mt-1 text-xs font-semibold text-gray-500">
                                     {invite.invitedByLabel ? `Invited by ${invite.invitedByLabel}` : "Group invite"}
-                                    {invite.lastSentAt ? ` · Last sent ${formatDate(invite.lastSentAt)}` : ""}
-                                    {` · Send attempts ${invite.sendAttempts}`}
+                                    {invite.emailSentAt ? ` · Last sent ${formatDateOnly(invite.emailSentAt)}` : ""}
+                                    {` · Send attempts ${invite.emailAttemptCount}`}
                                   </p>
-                                  {invite.lastError ? (
-                                    <p className="mt-1 text-xs font-semibold text-red-700">{invite.lastError}</p>
+                                  {invite.emailError ? (
+                                    <p className="mt-1 text-xs font-semibold text-red-700">Delivery failed. Try resend.</p>
                                   ) : null}
                                 </div>
                                 <div className="flex flex-col gap-2">
                                   {invite.status !== "accepted" ? (
                                     <>
-                                      <ActionButton
-                                        disabled={actionKey === `resend-invite-${invite.id}`}
-                                        onClick={() =>
-                                          void withAction(`resend-invite-${invite.id}`, async () => {
-                                            const result = await resendGroupInviteAction(invite.id);
-                                            pushResultToast(result);
-                                            if (result.ok) {
-                                              await load();
-                                            }
-                                          })
-                                        }
-                                      >
-                                        Resend
-                                      </ActionButton>
+                                      {canResendInvite ? (
+                                        <ActionButton
+                                          disabled={actionKey === `resend-invite-${invite.id}`}
+                                          onClick={() =>
+                                            void withAction(`resend-invite-${invite.id}`, async () => {
+                                              const result = await resendGroupInviteAction(invite.id);
+                                              setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                              if (result.ok) {
+                                                await load();
+                                              }
+                                            })
+                                          }
+                                        >
+                                          Resend
+                                        </ActionButton>
+                                      ) : null}
                                       <ActionButton
                                         onClick={() => toggleExpandedInviteEditor(invite.id)}
                                       >
@@ -1829,7 +1893,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                             onConfirm: () => {
                                               void withAction(`cancel-invite-${invite.id}`, async () => {
                                                 const result = await cancelGroupInviteAction(invite.id);
-                                                pushResultToast(result);
+                                                setMessage({ tone: result.ok ? "success" : "error", text: result.message });
                                                 if (result.ok) {
                                                   setConfirmation(null);
                                                   await load();
@@ -1866,7 +1930,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     onClick={() =>
                                       void withAction(`update-invite-${invite.id}`, async () => {
                                         const result = await updateGroupInviteNameAction(invite.id, editValue);
-                                        pushResultToast(result);
+                                        setMessage({ tone: result.ok ? "success" : "error", text: result.message });
                                         if (result.ok) {
                                           await load();
                                         }
@@ -1889,6 +1953,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         ) : null}
                       </div>
 
+                      {canManageSocialTrophies ? (
                       <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
@@ -1906,7 +1971,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
                         {isTrophyExpanded ? (
                           <>
-                            {group.userRole === "super_admin" || managerCustomTrophiesEnabled ? (
+                            {isSuperAdmin || managerCustomTrophiesEnabled ? (
                               <div className="mt-3 space-y-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-600">
                                 <div>
                                   <p className="font-black text-gray-900">Create Trophy</p>
@@ -2013,7 +2078,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               </div>
                             ) : (
                               <div className="mt-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-600">
-                                Custom trophy creation is manager-only and currently turned off.
+                                Custom trophy creation is only available for League organizers and is currently turned off.
                               </div>
                             )}
 
@@ -2106,12 +2171,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 </div>
                               )}
                             </div>
-                            <div className="mt-4 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-600">
-                              Want the fastest path? Open a player row and tap <span className="font-black text-gray-900">🏆</span> for quick awarding.
-                            </div>
                           </>
                         ) : null}
                       </div>
+                      ) : null}
                           </>
                         ) : null}
                       </div>
@@ -2134,14 +2197,13 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 <Avatar name={member.name} avatarUrl={member.avatarUrl} size="sm" />
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
-                                  <p className="truncate text-sm font-semibold text-gray-600">{member.email}</p>
                                   {member.homeTeamId ? (
                                     <div className="mt-2">
                                       <HomeTeamBadge teamId={member.homeTeamId} compact />
                                     </div>
                                   ) : null}
                                   <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {member.role} · Joined {formatDate(member.joinedAt)}
+                                    {member.role} · Joined {formatDateOnly(member.joinedAt)}
                                   </p>
                                 </div>
                               </div>
@@ -2159,7 +2221,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                             <p className="mt-1 text-xs font-semibold text-gray-500">
                               {isSuperAdmin
                                 ? "Adjust this group directly with unlimited super admin access."
-                                : `Your current manager allowance is ${summary?.ok ? summary.managerAccess.maxMembersPerGroup : group.membershipLimit} members per group.`}
+                                : `Your current tier allows up to ${summary?.ok ? summary.tierAccess.limits.maxMembersPerGroup : group.membershipLimit} members per group.`}
                             </p>
                           </div>
                           <InlineDisclosureButton
@@ -2176,7 +2238,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               event.preventDefault();
                               void withAction(`update-group-limit-${group.id}`, async () => {
                                 const result = await updateManagedGroupLimitAction(group.id, Number(groupLimitFormValue));
-                                pushResultToast(result);
+                                setMessage({ tone: result.ok ? "success" : "error", text: result.message });
                                 if (result.ok) {
                                   await load();
                                 }
@@ -2224,7 +2286,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               {isGroupInfoExpanded ? (
                                 <div className="mt-3 space-y-4">
                                   <ManagementGrid>
-                                    <ManagementDatum
+                                  <ManagementDatum
                                       label="Capacity"
                                       value={
                                         resolvedMemberCount !== undefined && resolvedPendingInviteCount !== undefined
@@ -2232,6 +2294,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                           : `Open group details to load seat usage`
                                       }
                                     />
+                                    <ManagementDatum label="Description" value={group.description?.trim() || "None"} />
                                     <ManagementDatum label="Group limit" value={`${group.membershipLimit} members`} />
                                     <ManagementDatum label="Members" value={resolvedMemberCount ?? "—"} />
                                     <ManagementDatum label="Pending invites" value={resolvedPendingInviteCount ?? "—"} />

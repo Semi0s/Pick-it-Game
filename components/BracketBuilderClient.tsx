@@ -1,0 +1,830 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, ChevronUp, GripVertical, TriangleAlert } from "lucide-react";
+import { saveLightSeedBuilderAction } from "@/app/groups/actions";
+import { ActionButton, InlineDisclosureButton } from "@/components/player-management/Shared";
+import { showAppToast } from "@/lib/app-toast";
+import { storeGroupsEntryIntent } from "@/lib/groups-entry-intent";
+import {
+  buildDefaultLightSeedBuilderSnapshot,
+  type LightSeedBuilderSnapshot
+} from "@/lib/group-stage-modes";
+import { formatGroupName, normalizeGroupKey } from "@/lib/group-standings";
+import {
+  buildProjectedGroupStandingsFromSeedRankings,
+  buildUserProjectedRoundOf32,
+  type GroupSeedRankingInput,
+  type KnockoutPlaceholderMatch
+} from "@/lib/knockout-seeding";
+import type { MatchWithTeams, Team } from "@/lib/types";
+import { getLocalGroupMatches } from "@/lib/group-matches";
+
+type RankedTeam = {
+  id: string;
+  name: string;
+  shortName: string;
+  groupName: string;
+  flagEmoji: string;
+};
+
+type BracketBuilderClientProps = {
+  initialMatches?: MatchWithTeams[];
+  initialKnockoutSeeded?: boolean;
+  initialSnapshot?: LightSeedBuilderSnapshot | null;
+  requiredThirdPlaceQualifierCount?: number;
+  roundOf32Placeholders: KnockoutPlaceholderMatch[];
+  groupStageDueAt?: string | null;
+};
+
+const SWIPE_THRESHOLD_PX = 42;
+const NEAR_DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
+const TEAM_NAME_CHIP_THRESHOLD = 12;
+const COMPACT_ICON_BUTTON_CLASS =
+  "inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 transition hover:border-accent hover:text-accent-dark disabled:cursor-not-allowed disabled:opacity-40";
+
+function moveItem<T>(items: T[], index: number, direction: -1 | 1) {
+  const nextIndex = index + direction;
+  if (nextIndex < 0 || nextIndex >= items.length) {
+    return items;
+  }
+
+  const nextItems = [...items];
+  [nextItems[index], nextItems[nextIndex]] = [nextItems[nextIndex], nextItems[index]];
+  return nextItems;
+}
+
+function reorderItems<T>(items: T[], fromIndex: number, toIndex: number) {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= items.length || toIndex >= items.length) {
+    return items;
+  }
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
+
+function shouldUseCompactCode(team: RankedTeam) {
+  return team.name.length > TEAM_NAME_CHIP_THRESHOLD;
+}
+
+function getBracketLayout(matchCount: number) {
+  const rowHeight = 16;
+  const teamGap = 0;
+  const setGap = 18;
+  const matchBlockHeight = rowHeight * 2 + teamGap + setGap;
+  const positions = Array.from({ length: matchCount }, (_, index) => index * matchBlockHeight);
+  const rounds: number[][] = [];
+  let current = positions.map((position) => position + rowHeight / 2 + 2);
+
+  while (current.length > 1) {
+    rounds.push(current);
+    const nextRound: number[] = [];
+    for (let index = 0; index < current.length; index += 2) {
+      nextRound.push((current[index] + current[index + 1]) / 2);
+    }
+    current = nextRound;
+  }
+
+  return {
+    rowHeight,
+    pairGap: teamGap,
+    matchBlockHeight,
+    totalHeight: matchCount * matchBlockHeight - setGap,
+    rounds
+  };
+}
+
+export function BracketBuilderClient({
+  initialMatches,
+  initialKnockoutSeeded = false,
+  initialSnapshot,
+  requiredThirdPlaceQualifierCount = 0,
+  roundOf32Placeholders,
+  groupStageDueAt = null
+}: BracketBuilderClientProps) {
+  const router = useRouter();
+  const touchStartXRef = useRef<number | null>(null);
+  const hasMountedRef = useRef(false);
+  const completionWasValidRef = useRef(false);
+  const matches = initialMatches ?? getLocalGroupMatches();
+  const teams = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          matches.flatMap((match) => {
+            const entries: Array<[string, Team]> = [];
+            if (match.homeTeam?.id) {
+              entries.push([match.homeTeam.id, match.homeTeam]);
+            }
+            if (match.awayTeam?.id) {
+              entries.push([match.awayTeam.id, match.awayTeam]);
+            }
+            return entries;
+          })
+        ).values()
+      ),
+    [matches]
+  );
+  const defaultSnapshot = useMemo(() => buildDefaultLightSeedBuilderSnapshot(teams), [teams]);
+  const hasSavedSnapshot = Boolean(initialSnapshot?.groupRankings?.length);
+  const [groupRankings, setGroupRankings] = useState<LightSeedBuilderSnapshot["groupRankings"]>(
+    initialSnapshot?.groupRankings?.length ? initialSnapshot.groupRankings : defaultSnapshot.groupRankings
+  );
+  const [thirdPlaceRankings, setThirdPlaceRankings] = useState<string[]>(
+    initialSnapshot?.thirdPlaceRankings?.length
+      ? [...initialSnapshot.thirdPlaceRankings].sort((left, right) => left.rank - right.rank).map((row) => row.teamId)
+      : []
+  );
+  const [activeGroupIndex, setActiveGroupIndex] = useState(0);
+  const [visitedGroups, setVisitedGroups] = useState<Set<string>>(
+    hasSavedSnapshot ? new Set(defaultSnapshot.groupRankings.map((ranking) => normalizeGroupKey(ranking.groupName) ?? ranking.groupName)) : new Set()
+  );
+  const [hasInteracted, setHasInteracted] = useState(false);
+  const [, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [, setSaveMessage] = useState("Saves automatically");
+  const [showCompletionScreen, setShowCompletionScreen] = useState(false);
+  const [draggedTeamId, setDraggedTeamId] = useState<string | null>(null);
+  const [dragOverTeamId, setDragOverTeamId] = useState<string | null>(null);
+  const [isThirdPlaceListOpen, setIsThirdPlaceListOpen] = useState(true);
+
+  const teamsById = useMemo(
+    () =>
+      new Map(
+        teams.map((team) => [
+          team.id,
+          {
+            id: team.id,
+            name: team.name,
+            shortName: team.shortName,
+            groupName: normalizeGroupKey(team.groupName) ?? team.groupName,
+            flagEmoji: team.flagEmoji
+          } satisfies RankedTeam
+        ])
+      ),
+    [teams]
+  );
+
+  const sortedGroupNames = useMemo(
+    () =>
+      groupRankings
+        .map((ranking) => normalizeGroupKey(ranking.groupName) ?? ranking.groupName)
+        .sort((left, right) => left.localeCompare(right, undefined, { numeric: true })),
+    [groupRankings]
+  );
+
+  const groupRankingsByGroup = useMemo(
+    () =>
+      new Map(
+        groupRankings.map((ranking) => [
+          normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+          ranking.rankedTeamIds
+        ])
+      ),
+    [groupRankings]
+  );
+
+  const derivedThirdPlacePool = useMemo(
+    () =>
+      sortedGroupNames
+        .map((groupName) => {
+          const rankedTeamIds = groupRankingsByGroup.get(groupName) ?? [];
+          const thirdPlaceTeamId = rankedTeamIds[2] ?? null;
+          return thirdPlaceTeamId ? teamsById.get(thirdPlaceTeamId) ?? null : null;
+        })
+        .filter((team): team is RankedTeam => Boolean(team)),
+    [groupRankingsByGroup, sortedGroupNames, teamsById]
+  );
+
+  const normalizedThirdPlaceRankings = useMemo(() => {
+    const poolIds = new Set(derivedThirdPlacePool.map((team) => team.id));
+    const preserved = thirdPlaceRankings.filter((teamId) => poolIds.has(teamId));
+    const missing = derivedThirdPlacePool.map((team) => team.id).filter((teamId) => !preserved.includes(teamId));
+    return [...preserved, ...missing];
+  }, [derivedThirdPlacePool, thirdPlaceRankings]);
+
+  const areTopTwoQualifiersEstablished =
+    sortedGroupNames.length > 0 &&
+    groupRankings.every((ranking) => ranking.rankedTeamIds.filter(Boolean).length >= 2);
+  const hasUnlockedThirdPlacePhase =
+    areTopTwoQualifiersEstablished &&
+    (hasSavedSnapshot || visitedGroups.size >= sortedGroupNames.length);
+  const isThirdPlacePhase = hasUnlockedThirdPlacePhase && requiredThirdPlaceQualifierCount > 0;
+  const isComplete = isThirdPlacePhase && normalizedThirdPlaceRankings.length >= requiredThirdPlaceQualifierCount;
+  const activeGroupName = sortedGroupNames[activeGroupIndex] ?? null;
+  const activeGroupTeams = activeGroupName
+    ? (groupRankingsByGroup.get(activeGroupName) ?? [])
+        .map((teamId) => teamsById.get(teamId) ?? null)
+        .filter((team): team is RankedTeam => Boolean(team))
+    : [];
+
+  const currentRankingsInput = useMemo<GroupSeedRankingInput[]>(
+    () =>
+      groupRankings.map((ranking) => ({
+        groupName: normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+        rankedTeamIds: ranking.rankedTeamIds
+      })),
+    [groupRankings]
+  );
+
+  const projectedStandings = useMemo(
+    () => buildProjectedGroupStandingsFromSeedRankings(teams, currentRankingsInput),
+    [currentRankingsInput, teams]
+  );
+
+  const projectedBracket = useMemo(
+    () =>
+      buildUserProjectedRoundOf32({
+        groupMatches: [],
+        teams,
+        predictions: [],
+        roundOf32Placeholders,
+        standingsByGroupOverride: projectedStandings,
+        rankedThirdPlaceTeamIdsOverride: isThirdPlacePhase
+          ? normalizedThirdPlaceRankings.slice(0, requiredThirdPlaceQualifierCount)
+          : null
+      }),
+    [isThirdPlacePhase, normalizedThirdPlaceRankings, projectedStandings, requiredThirdPlaceQualifierCount, roundOf32Placeholders, teams]
+  );
+
+  const isReadOnly = useMemo(() => {
+    if (initialKnockoutSeeded) {
+      return true;
+    }
+
+    if (!groupStageDueAt) {
+      return false;
+    }
+
+    return new Date(groupStageDueAt).getTime() <= Date.now();
+  }, [groupStageDueAt, initialKnockoutSeeded]);
+
+  const nearDeadlineMessage = useMemo(() => {
+    if (!groupStageDueAt || isReadOnly || isComplete) {
+      return null;
+    }
+
+    const deadline = new Date(groupStageDueAt).getTime();
+    const now = Date.now();
+    if (deadline <= now || deadline - now > NEAR_DEADLINE_WINDOW_MS) {
+      return null;
+    }
+
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC"
+    }).format(new Date(deadline));
+  }, [groupStageDueAt, isComplete, isReadOnly]);
+
+  useEffect(() => {
+    if (!activeGroupName) {
+      return;
+    }
+
+    setVisitedGroups((current) => {
+      if (current.has(activeGroupName)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.add(activeGroupName);
+      return next;
+    });
+  }, [activeGroupName]);
+
+  useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      completionWasValidRef.current = isComplete;
+      return;
+    }
+
+    if (!hasInteracted || isReadOnly) {
+      return;
+    }
+
+    setSaveState("saving");
+    setSaveMessage("Saving automatically...");
+    const timeout = window.setTimeout(async () => {
+      const result = await saveLightSeedBuilderAction({
+        groupRankings: currentRankingsInput,
+        rankedThirdPlaceTeamIds: normalizedThirdPlaceRankings.slice(0, requiredThirdPlaceQualifierCount)
+      });
+
+      if (result.ok) {
+        setSaveState("saved");
+        setSaveMessage("Saved automatically");
+        if (!completionWasValidRef.current && isComplete) {
+          setShowCompletionScreen(true);
+        }
+        completionWasValidRef.current = isComplete;
+        return;
+      }
+
+      setSaveState("error");
+      setSaveMessage(result.message);
+      showAppToast({ tone: "error", text: result.message });
+    }, 500);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    currentRankingsInput,
+    hasInteracted,
+    isComplete,
+    isReadOnly,
+    normalizedThirdPlaceRankings,
+    requiredThirdPlaceQualifierCount
+  ]);
+
+  function updateGroupRanking(groupName: string, nextRankedTeamIds: string[]) {
+    setHasInteracted(true);
+    setSaveState("saving");
+    setSaveMessage("Saving automatically...");
+    setGroupRankings((current) =>
+      current.map((ranking) =>
+        (normalizeGroupKey(ranking.groupName) ?? ranking.groupName) === groupName
+          ? { ...ranking, rankedTeamIds: nextRankedTeamIds }
+          : ranking
+      )
+    );
+  }
+
+  function moveThirdPlaceTeam(index: number, direction: -1 | 1) {
+    setHasInteracted(true);
+    setSaveState("saving");
+    setSaveMessage("Saving automatically...");
+    setThirdPlaceRankings(moveItem(normalizedThirdPlaceRankings, index, direction));
+  }
+
+  function handleDropReorder(targetTeamId: string) {
+    if (isReadOnly || !activeGroupName || !draggedTeamId || draggedTeamId === targetTeamId) {
+      setDraggedTeamId(null);
+      setDragOverTeamId(null);
+      return;
+    }
+
+    const currentOrder = groupRankingsByGroup.get(activeGroupName) ?? [];
+    const fromIndex = currentOrder.indexOf(draggedTeamId);
+    const toIndex = currentOrder.indexOf(targetTeamId);
+    if (fromIndex === -1 || toIndex === -1) {
+      setDraggedTeamId(null);
+      setDragOverTeamId(null);
+      return;
+    }
+
+    updateGroupRanking(activeGroupName, reorderItems(currentOrder, fromIndex, toIndex));
+    setDraggedTeamId(null);
+    setDragOverTeamId(null);
+  }
+
+  function goToGroup(nextIndex: number) {
+    const boundedIndex = Math.max(0, Math.min(sortedGroupNames.length - 1, nextIndex));
+    setActiveGroupIndex(boundedIndex);
+  }
+
+  function handleSwipeEnd(clientX: number) {
+    const startX = touchStartXRef.current;
+    touchStartXRef.current = null;
+    if (startX === null) {
+      return;
+    }
+
+    const delta = clientX - startX;
+    if (Math.abs(delta) < SWIPE_THRESHOLD_PX) {
+      return;
+    }
+
+    if (delta < 0) {
+      goToGroup(activeGroupIndex + 1);
+      return;
+    }
+
+    goToGroup(activeGroupIndex - 1);
+  }
+
+  function handleGoToFullScoring() {
+    storeGroupsEntryIntent({
+      source: "dashboard",
+      target: "next-pick"
+    });
+    router.push("/groups");
+  }
+
+  if (showCompletionScreen) {
+    return (
+      <div className="flex min-h-[calc(100vh-10rem)] items-center justify-center">
+        <section className="w-full max-w-xl rounded-[2rem] border border-emerald-200 bg-white px-6 py-10 text-center shadow-soft">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+            <CheckCircle2 className="h-8 w-8" />
+          </div>
+          <h1 className="mt-5 text-3xl font-black text-gray-950">Your bracket is complete.</h1>
+          <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">
+            Your base predictions are saved. You can check the dashboard for more information or start scoring matches for more points.
+          </p>
+          <div className="mt-8 grid grid-cols-2 gap-3">
+            <ActionButton fullWidth tone="accent" onClick={() => router.push("/dashboard")}>
+              Dashboard
+            </ActionButton>
+            <ActionButton fullWidth tone="accent" onClick={handleGoToFullScoring}>
+              Full Scoring
+            </ActionButton>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  const leftBracketMatches = projectedBracket.matches.slice(0, 8);
+  const rightBracketMatches = projectedBracket.matches.slice(8, 16);
+  const activeGroupUsesCompactCode = activeGroupTeams.some((team) => shouldUseCompactCode(team));
+  const leftBracketLayout = getBracketLayout(leftBracketMatches.length);
+  const rightBracketLayout = getBracketLayout(rightBracketMatches.length);
+
+  return (
+    <div className="space-y-2 pb-4">
+      {nearDeadlineMessage ? (
+        <section className="rounded-[1.5rem] border border-amber-200 bg-amber-50 px-4 py-4 text-center text-amber-950">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+            <TriangleAlert className="h-7 w-7" />
+          </div>
+          <p className="mt-3 text-xl font-black leading-tight">FINISH BUILDING YOUR BRACKET PREDICTIONS BEFORE: {nearDeadlineMessage}</p>
+        </section>
+      ) : null}
+
+      <section className="px-0 py-0.5 text-center">
+        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-cyan-900">Pick the qualifying teams</p>
+        <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-800">Saves automatically</p>
+      </section>
+
+      <section
+        className="space-y-3 px-0 py-0"
+        onTouchStart={(event) => {
+          touchStartXRef.current = event.changedTouches[0]?.clientX ?? null;
+        }}
+        onTouchEnd={(event) => {
+          handleSwipeEnd(event.changedTouches[0]?.clientX ?? 0);
+        }}
+      >
+        <div className="space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <h1 className="truncate text-[2rem] font-black leading-none text-gray-950 text-left">
+              {activeGroupName ? formatGroupName(activeGroupName) : "Group"}
+            </h1>
+            <div className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.12em] ${isReadOnly ? "bg-gray-100 text-gray-600" : "bg-cyan-50 text-accent-dark"}`}>
+              {isReadOnly ? "Locked" : "Open"}
+            </div>
+          </div>
+          <div className="grid grid-cols-[1.9rem_minmax(0,1fr)_1.9rem] items-center gap-0">
+            <button
+              type="button"
+              onClick={() => goToGroup(activeGroupIndex - 1)}
+              disabled={activeGroupIndex === 0}
+              className="inline-flex h-8 w-[1.9rem] items-center justify-center text-accent-dark disabled:opacity-30"
+              aria-label="Previous group"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div className="flex justify-center">
+              <p className="ui-chip-sm-pill border border-gray-200 bg-white px-4 font-black uppercase tracking-[0.14em] text-gray-700 shadow-sm">
+                Swipe for more
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => goToGroup(activeGroupIndex + 1)}
+              disabled={activeGroupIndex === sortedGroupNames.length - 1}
+              className="inline-flex h-8 w-[1.9rem] items-center justify-center text-accent-dark disabled:opacity-30"
+              aria-label="Next group"
+            >
+              <ArrowRight className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-gray-200">
+          {activeGroupTeams.map((team, index) => {
+            const isTopTwo = index < 2;
+            const isThirdPlaceTeam = index === 2;
+            const isThirdPlaceQualified =
+              isThirdPlacePhase &&
+              isThirdPlaceTeam &&
+              normalizedThirdPlaceRankings.slice(0, requiredThirdPlaceQualifierCount).includes(team.id);
+            const highlightClass = isTopTwo || isThirdPlaceQualified ? "bg-emerald-50" : "bg-white";
+            const teamOrder = activeGroupName ? groupRankingsByGroup.get(activeGroupName) ?? [] : [];
+            const canMoveUp = !isReadOnly && index > 0;
+            const canMoveDown = !isReadOnly && index < activeGroupTeams.length - 1;
+            return (
+              <div
+                key={team.id}
+                onDragOver={(event) => {
+                  if (isReadOnly || !draggedTeamId) {
+                    return;
+                  }
+                  event.preventDefault();
+                  setDragOverTeamId(team.id);
+                }}
+                onDragLeave={() => {
+                  if (dragOverTeamId === team.id) {
+                    setDragOverTeamId(null);
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  handleDropReorder(team.id);
+                }}
+                className={`grid grid-cols-[1.55rem_0.55rem_1.95rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1.5 last:border-b-0 ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""}`}
+              >
+                <div className="flex justify-start">
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
+                    {index + 1}
+                  </span>
+                </div>
+                <div className="flex justify-center">
+                  {isThirdPlacePhase && isThirdPlaceTeam ? (
+                    <span className={`h-4 w-4 rounded-full border ${isThirdPlaceQualified ? "border-emerald-500 bg-emerald-100" : "border-accent/70 bg-transparent"}`} aria-label={isThirdPlaceQualified ? "Third-place qualifier selected" : "Third-place qualifier not selected"} />
+                  ) : (
+                    <span className="h-4 w-4 rounded-full border border-transparent" aria-hidden />
+                  )}
+                </div>
+                <div className="flex items-center justify-center px-1">
+                  <span aria-hidden className="text-[1.6rem] leading-none">{team.flagEmoji}</span>
+                </div>
+                <div className="min-w-0">
+                  {activeGroupUsesCompactCode ? (
+                    <span className="ui-chip-sm-pill max-w-full border border-gray-200 bg-white py-0.5 font-black uppercase tracking-[0.08em] text-gray-700">
+                      <span className="truncate">{team.shortName}</span>
+                    </span>
+                  ) : (
+                    <span className="block truncate text-[11px] font-black text-gray-950">{team.name}</span>
+                  )}
+                </div>
+                <div className="flex items-center justify-end">
+                  <div className="grid grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-white">
+                    <button
+                      type="button"
+                      aria-label={`Move ${team.name} up`}
+                      disabled={!canMoveUp}
+                      onClick={() => activeGroupName && updateGroupRanking(activeGroupName, moveItem(teamOrder, index, -1))}
+                      className="inline-flex h-8 w-8 items-center justify-center border-r border-gray-200 text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
+                    >
+                      <ChevronUp className="h-5 w-5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Move ${team.name} down`}
+                      disabled={!canMoveDown}
+                      onClick={() => activeGroupName && updateGroupRanking(activeGroupName, moveItem(teamOrder, index, 1))}
+                      className="inline-flex h-8 w-8 items-center justify-center text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
+                    >
+                      <ChevronDown className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    draggable={!isReadOnly}
+                    onDragStart={() => {
+                      setDraggedTeamId(team.id);
+                      setHasInteracted(true);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedTeamId(null);
+                      setDragOverTeamId(null);
+                    }}
+                    aria-label={`Drag to reorder ${team.name}`}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-400 ${isReadOnly ? "cursor-not-allowed opacity-60" : "cursor-grab active:cursor-grabbing"}`}
+                  >
+                    <GripVertical className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className={`rounded-md border px-3 py-2 text-center text-xs font-black uppercase tracking-[0.08em] ${isThirdPlacePhase ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
+          {isComplete
+            ? "TOP TWO TEAMS QUALIFY"
+            : isThirdPlacePhase
+              ? "PICK 8 THIRD-PLACE QUALIFIERS"
+              : "TOP TWO TEAMS QUALIFY"}
+        </div>
+
+        {isThirdPlacePhase ? (
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-accent-dark">Third-place qualifiers</p>
+              <InlineDisclosureButton
+                isOpen={isThirdPlaceListOpen}
+                onClick={() => setIsThirdPlaceListOpen((current) => !current)}
+                variant="subtle"
+              />
+            </div>
+            {isThirdPlaceListOpen ? <div className="mt-3 space-y-1.5">
+              {normalizedThirdPlaceRankings.map((teamId, index) => {
+                const team = teamsById.get(teamId);
+                if (!team) {
+                  return null;
+                }
+
+                const isAboveCutoff = index < requiredThirdPlaceQualifierCount;
+                return (
+                  <div key={team.id}>
+                    {index === requiredThirdPlaceQualifierCount ? (
+                      <div className="pb-1 pt-1 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-rose-600">
+                        Cutoff
+                      </div>
+                    ) : null}
+                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_auto] items-center gap-1 rounded-lg border px-2 py-1 ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-white"}`}>
+                      <div className="flex justify-start">
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
+                          {index + 1}
+                        </span>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-3">
+                          <span aria-hidden className="text-[1.6rem] leading-none">{team.flagEmoji}</span>
+                          {shouldUseCompactCode(team) ? (
+                            <span className="ui-chip-sm-pill border border-gray-200 bg-white py-0.5 font-black uppercase tracking-[0.08em] text-gray-700">
+                              {team.shortName}
+                            </span>
+                          ) : (
+                            <span className="truncate text-xs font-black text-gray-950">{team.name}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={isReadOnly || index === 0}
+                          onClick={() => moveThirdPlaceTeam(index, -1)}
+                          className={COMPACT_ICON_BUTTON_CLASS}
+                          aria-label={`Move ${team.name} up`}
+                        >
+                          <ChevronUp className="h-5 w-5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isReadOnly || index === normalizedThirdPlaceRankings.length - 1}
+                          onClick={() => moveThirdPlaceTeam(index, 1)}
+                          className={COMPACT_ICON_BUTTON_CLASS}
+                          aria-label={`Move ${team.name} down`}
+                        >
+                          <ChevronDown className="h-5 w-5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div> : null}
+          </div>
+        ) : (
+          <div className="rounded-[1.1rem] border border-dashed border-gray-200 bg-gray-50/70 px-3 py-3 text-center">
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-gray-500">
+              Third-place qualifiers unlock after you set the top two finishers in each group.
+            </p>
+          </div>
+        )}
+      </section>
+
+      <section className="px-0 py-0">
+        <div className="mb-1 text-right">
+          <p className="text-xs font-semibold text-gray-600">Updates live</p>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500">Projected bracket</p>
+          </div>
+        </div>
+
+        <div className="mt-2 px-0 py-2">
+          <div className="mx-auto grid max-w-[22rem] grid-cols-[minmax(0,1fr)_0.5rem_minmax(0,1fr)] gap-0">
+            <div className="relative" style={{ height: `${leftBracketLayout.totalHeight}px` }}>
+              <svg
+                aria-hidden
+                className="pointer-events-none absolute inset-0 h-full w-full"
+                viewBox={`0 0 160 ${leftBracketLayout.totalHeight}`}
+                preserveAspectRatio="none"
+              >
+                {leftBracketLayout.rounds.map((round, roundIndex) => {
+                  if (roundIndex === leftBracketLayout.rounds.length - 1) {
+                    return null;
+                  }
+                  const xStart = 78 + roundIndex * 22;
+                  const xJoin = xStart + 18;
+                  const nextRound = leftBracketLayout.rounds[roundIndex + 1];
+                  return round.flatMap((y, index) => {
+                    const pairIndex = Math.floor(index / 2);
+                    const targetY = nextRound[pairIndex];
+                    return [
+                      <g key={`left-${roundIndex}-${index}`} className="stroke-gray-200">
+                        <line x1={xStart} y1={y} x2={xJoin} y2={y} strokeWidth="1.25" />
+                        <line x1={xJoin} y1={Math.min(y, targetY)} x2={xJoin} y2={Math.max(y, targetY)} strokeWidth="1.25" />
+                        <line x1={xJoin} y1={targetY} x2={xJoin + 12} y2={targetY} strokeWidth="1.25" />
+                      </g>
+                    ];
+                  });
+                })}
+              </svg>
+              {leftBracketMatches.map((match, index) => (
+                <Link
+                  key={match.matchId}
+                  href="/knockout"
+                  className="absolute left-0 right-0 block space-y-0 rounded-md px-1 py-0 transition hover:bg-gray-50"
+                  style={{ top: `${index * leftBracketLayout.matchBlockHeight}px` }}
+                >
+                  {[match.home, match.away].map((side, sideIndex) => {
+                    const team = side.teamId ? teamsById.get(side.teamId) ?? null : null;
+                    return (
+                      <div
+                        key={`${match.matchId}-${sideIndex}`}
+                        className={`grid min-h-[16px] grid-cols-[1.15rem_minmax(0,1fr)] items-center gap-1.5 px-1 py-0 ${team ? "text-gray-900" : "text-gray-400"}`}
+                      >
+                        <span aria-hidden className="text-xs">{team?.flagEmoji ?? " "}</span>
+                        <span className="truncate text-[11px] font-black">
+                          {team?.shortName ?? side.sourceLabel ?? "TBD"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </Link>
+              ))}
+            </div>
+
+            <div aria-hidden />
+
+            <div className="relative" style={{ height: `${rightBracketLayout.totalHeight}px` }}>
+              <svg
+                aria-hidden
+                className="pointer-events-none absolute inset-0 h-full w-full"
+                viewBox={`0 0 160 ${rightBracketLayout.totalHeight}`}
+                preserveAspectRatio="none"
+              >
+                {rightBracketLayout.rounds.map((round, roundIndex) => {
+                  if (roundIndex === rightBracketLayout.rounds.length - 1) {
+                    return null;
+                  }
+                  const xStart = 82 - roundIndex * 22;
+                  const xJoin = xStart - 18;
+                  const nextRound = rightBracketLayout.rounds[roundIndex + 1];
+                  return round.flatMap((y, index) => {
+                    const pairIndex = Math.floor(index / 2);
+                    const targetY = nextRound[pairIndex];
+                    return [
+                      <g key={`right-${roundIndex}-${index}`} className="stroke-gray-200">
+                        <line x1={xStart} y1={y} x2={xJoin} y2={y} strokeWidth="1.25" />
+                        <line x1={xJoin} y1={Math.min(y, targetY)} x2={xJoin} y2={Math.max(y, targetY)} strokeWidth="1.25" />
+                        <line x1={xJoin} y1={targetY} x2={xJoin - 12} y2={targetY} strokeWidth="1.25" />
+                      </g>
+                    ];
+                  });
+                })}
+              </svg>
+              {rightBracketMatches.map((match, index) => (
+                <Link
+                  key={match.matchId}
+                  href="/knockout"
+                  className="absolute left-0 right-0 block space-y-0 rounded-md px-1 py-0 transition hover:bg-gray-50"
+                  style={{ top: `${index * rightBracketLayout.matchBlockHeight}px` }}
+                >
+                  {[match.home, match.away].map((side, sideIndex) => {
+                    const team = side.teamId ? teamsById.get(side.teamId) ?? null : null;
+                    return (
+                      <div
+                        key={`${match.matchId}-${sideIndex}`}
+                        className={`grid min-h-[16px] grid-cols-[minmax(0,1fr)_1.15rem] items-center gap-1.5 px-1 py-0 text-right ${team ? "text-gray-900" : "text-gray-400"}`}
+                      >
+                        <span className="truncate text-[11px] font-black">
+                          {team?.shortName ?? side.sourceLabel ?? "TBD"}
+                        </span>
+                        <span aria-hidden className="text-xs">{team?.flagEmoji ?? " "}</span>
+                      </div>
+                    );
+                  })}
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3">
+          <p className="mb-2 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">Pick scores, earn more points</p>
+          <div className="grid grid-cols-2 gap-3">
+          <ActionButton fullWidth onClick={() => router.push("/dashboard")}>
+            Dashboard
+          </ActionButton>
+          <ActionButton fullWidth tone="accent" onClick={handleGoToFullScoring}>
+            Full Scoring
+          </ActionButton>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}

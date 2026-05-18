@@ -1,6 +1,7 @@
 "use client";
 
 import { AUTO_PICK_DRAFT_STORAGE_KEY, buildAutoPickDraft } from "@/lib/auto-pick";
+import { parseJsonResponse } from "@/lib/fetch-json";
 import type { AutoPickDraft, AutoPickResult } from "@/lib/types";
 
 type AutoPickApiResult =
@@ -32,7 +33,11 @@ async function fetchAutoPickSuggestion(preferredMatchIds?: string[]): Promise<Au
     )
   });
 
-  const result = (await response.json()) as AutoPickApiResult;
+  const result = await parseJsonResponse<AutoPickApiResult>(
+    response,
+    "Could not create an auto pick.",
+    "auto pick"
+  );
   if (!response.ok || !result.ok) {
     throw new Error(result.ok ? "Could not create an auto pick." : result.message);
   }
