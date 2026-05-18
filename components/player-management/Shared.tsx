@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react";
-import { Dispatch, SetStateAction, useCallback, useEffect, useRef, useState } from "react";
+import { Dispatch, SetStateAction, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AccessLevel } from "@/lib/tier-access";
 
@@ -216,13 +216,7 @@ export function WindowChoiceRail({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const beltRef = useRef<HTMLDivElement | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
-  const isDraggingRef = useRef(false);
-  const minTotalOffsetRef = useRef(0);
-  const centeredOffsetRef = useRef(0);
-  const userOffsetRef = useRef(0);
   const [offsetX, setOffsetX] = useState(0);
-  const [userOffsetX, setUserOffsetX] = useState(0);
-  const [dragOffsetX, setDragOffsetX] = useState(0);
   const [hasOverflow, setHasOverflow] = useState(false);
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
@@ -230,32 +224,6 @@ export function WindowChoiceRail({
   const beltGutterWidth = 40;
   const baseScrollerClassName = "flex min-w-max gap-1.5 px-0.5 pb-0.5";
   const isAnchored = motionMode === "anchored";
-
-  const clampUserOffset = useCallback((nextUserOffset: number) => {
-    const minUserOffset = minTotalOffsetRef.current - centeredOffsetRef.current;
-    const maxUserOffset = 0 - centeredOffsetRef.current;
-    return Math.max(minUserOffset, Math.min(maxUserOffset, nextUserOffset));
-  }, []);
-
-  const updateUserOffset = useCallback(
-    (nextUserOffset: number) => {
-      const clampedOffset = clampUserOffset(nextUserOffset);
-      userOffsetRef.current = clampedOffset;
-      setUserOffsetX(clampedOffset);
-    },
-    [clampUserOffset]
-  );
-
-  useEffect(() => {
-    if (isAnchored) {
-      userOffsetRef.current = 0;
-      setUserOffsetX(0);
-      setDragOffsetX(0);
-      return;
-    }
-
-    updateUserOffset(0);
-  }, [activeItemKey, isAnchored, updateUserOffset]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -284,8 +252,6 @@ export function WindowChoiceRail({
       setCanScrollNext(activeIndex < items.length - 1);
 
       if (isAnchored) {
-        minTotalOffsetRef.current = 0;
-        centeredOffsetRef.current = 0;
         setOffsetX(0);
         const viewportBounds = viewport.getBoundingClientRect();
         const itemBounds = activeItem.getBoundingClientRect();
@@ -305,11 +271,7 @@ export function WindowChoiceRail({
       const minOffset = Math.min(0, viewportWidth - beltWidth);
       const desiredOffset = viewportWidth / 2 - (activeItem.offsetLeft + activeItem.offsetWidth / 2);
       const clampedOffset = Math.max(minOffset, Math.min(0, desiredOffset));
-      minTotalOffsetRef.current = minOffset;
-      centeredOffsetRef.current = clampedOffset;
-
       setOffsetX(clampedOffset);
-      updateUserOffset(userOffsetRef.current);
     };
 
     updateLayout();
@@ -326,7 +288,7 @@ export function WindowChoiceRail({
       window.removeEventListener("resize", updateLayout);
       resizeObserver?.disconnect();
     };
-  }, [activeItemKey, children, isAnchored, updateUserOffset]);
+  }, [activeItemKey, children, isAnchored]);
 
   function nudge(direction: "prev" | "next") {
     const belt = beltRef.current;
@@ -356,33 +318,14 @@ export function WindowChoiceRail({
       return;
     }
 
-    isDraggingRef.current = false;
-    setDragOffsetX(0);
     touchStartRef.current = { x: touch.clientX, y: touch.clientY };
   }
 
-  function handleTouchMove(event: React.TouchEvent<HTMLDivElement>) {
+  function handleTouchMove() {
     if (isAnchored) {
       return;
     }
-    const start = touchStartRef.current;
-    if (!start) {
-      return;
-    }
-
-    const touch = event.touches[0];
-    if (!touch) {
-      return;
-    }
-
-    const deltaX = touch.clientX - start.x;
-    const deltaY = touch.clientY - start.y;
-    if (Math.abs(deltaX) <= Math.abs(deltaY)) {
-      return;
-    }
-
-    isDraggingRef.current = true;
-    setDragOffsetX(deltaX);
+    return;
   }
 
   function handleTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
@@ -391,28 +334,23 @@ export function WindowChoiceRail({
     }
     const start = touchStartRef.current;
     touchStartRef.current = null;
-    const wasDragging = isDraggingRef.current;
-    isDraggingRef.current = false;
     if (!start) {
-      setDragOffsetX(0);
       return;
     }
 
     const touch = event.changedTouches[0];
     if (!touch) {
-      setDragOffsetX(0);
       return;
     }
 
     const deltaX = touch.clientX - start.x;
     const deltaY = touch.clientY - start.y;
-    if (!wasDragging || Math.abs(deltaX) <= Math.abs(deltaY)) {
-      setDragOffsetX(0);
+    const horizontalIntent = Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) >= 28;
+    if (!horizontalIntent) {
       return;
     }
 
-    updateUserOffset(userOffsetRef.current + deltaX);
-    setDragOffsetX(0);
+    nudge(deltaX < 0 ? "next" : "prev");
   }
 
   return (
@@ -444,8 +382,6 @@ export function WindowChoiceRail({
           onTouchEnd={handleTouchEnd}
           onTouchCancel={() => {
             touchStartRef.current = null;
-            isDraggingRef.current = false;
-            setDragOffsetX(0);
           }}
         >
           {showControls ? (
@@ -461,8 +397,8 @@ export function WindowChoiceRail({
               isAnchored
                 ? undefined
                 : {
-                    transform: `translateX(${offsetX + userOffsetX + dragOffsetX}px)`,
-                    transition: hasOverflow ? (dragOffsetX !== 0 ? "none" : "transform 180ms ease-out") : undefined,
+                    transform: `translateX(${offsetX}px)`,
+                    transition: hasOverflow ? "transform 180ms ease-out" : undefined,
                     willChange: "transform"
                   }
             }

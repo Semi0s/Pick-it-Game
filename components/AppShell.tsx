@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ChevronDown, CircleUserRound, GitBranch, Globe, ListOrdered, SquareCheckBig, UsersRound } from "lucide-react";
+import { ChevronDown, CircleUserRound, GitBranch, Globe, ListOrdered, SquareCheckBig } from "lucide-react";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TierIconBadge } from "@/components/TierIconBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
@@ -68,7 +68,7 @@ export function AppShell({ children }: AppShellProps) {
   const navItems = [
     { href: "/bracket-builder", label: copy.myBracket, ariaLabel: copy.myBracket, icon: GitBranch },
     { href: "/groups", label: copy.myPicks, ariaLabel: copy.myPicks, icon: SquareCheckBig },
-    { href: "/my-groups", label: copy.myGroups, ariaLabel: copy.myGroups, icon: UsersRound },
+    { href: "/knockout", label: copy.knockoutPicks, ariaLabel: copy.knockoutPicks, icon: GitBranch },
     { href: "/leaderboard", label: copy.results, ariaLabel: copy.results, icon: ListOrdered }
   ];
   const [pendingCelebrationQueue, setPendingCelebrationQueue] = useState<PendingTrophyCelebration[]>([]);
@@ -466,7 +466,7 @@ export function AppShell({ children }: AppShellProps) {
       }
     >
       <header ref={headerRef} className="sticky top-0 z-20 bg-white">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-2">
+        <div className="mx-auto flex max-w-4xl items-center justify-between gap-2.5 px-3 py-2 sm:px-4">
           <Link href="/dashboard" className="min-w-0" aria-label="PICK-IT! World Cup 2026 home">
             <Image
               src="/images/pickit-header-logo.png"
@@ -474,10 +474,10 @@ export function AppShell({ children }: AppShellProps) {
               width={648}
               height={220}
               priority
-              className="h-[4.25rem] w-auto sm:h-[5.1rem]"
+              className="h-[4.25rem] w-auto max-[399px]:h-[3.6rem] sm:h-[5.1rem]"
             />
           </Link>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 max-[399px]:gap-2.5">
             <NotificationsBell />
             {shouldShowAccessBadge(user) ? (
               <TierIconBadge accessLevel={getAccessLevel(user)} size={24} />
@@ -486,14 +486,14 @@ export function AppShell({ children }: AppShellProps) {
               <button
                 type="button"
                 onClick={() => setIsLanguageMenuOpen((current) => !current)}
-                className="inline-flex h-8 items-center gap-1 rounded-md border border-gray-300 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light sm:h-9 sm:px-2"
+                className="inline-flex h-8 items-center gap-1 rounded-md border border-gray-300 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light max-[399px]:h-8 max-[399px]:gap-1.5 max-[399px]:px-2.5 max-[399px]:text-[10px] sm:h-9 sm:px-2"
                 aria-haspopup="menu"
                 aria-expanded={isLanguageMenuOpen}
                 aria-label={`Translate helper copy. Current language: ${EXPLAINER_LANGUAGE_LABELS[displayLanguage]}`}
               >
-                <Globe aria-hidden className="h-3 w-3 text-accent-dark" />
+                <Globe aria-hidden className="h-[18px] w-[18px] text-accent-dark max-[399px]:h-[15px] max-[399px]:w-[15px]" />
                 <span>{displayLanguage.toUpperCase()}</span>
-                <ChevronDown aria-hidden className="h-3 w-3 text-gray-500" />
+                <ChevronDown aria-hidden className="h-3 w-3 text-gray-500 max-[399px]:h-2.5 max-[399px]:w-2.5" />
               </button>
               {isLanguageMenuOpen ? (
                 <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
@@ -525,10 +525,10 @@ export function AppShell({ children }: AppShellProps) {
             </div>
             <Link
               href="/profile"
-              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1.5 text-[11px] font-semibold text-gray-700 sm:px-2.5"
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1.5 text-[11px] font-semibold text-gray-700 max-[399px]:h-8 max-[399px]:gap-1 max-[399px]:px-2.25 max-[399px]:py-0 max-[399px]:text-[10px] sm:px-2.5"
             >
-              <CircleUserRound aria-hidden className="h-4 w-4" />
-              <span>Account</span>
+              <CircleUserRound aria-hidden className="h-[17.5px] w-[17.5px] max-[399px]:h-[15px] max-[399px]:w-[15px]" />
+              <span className="max-[399px]:hidden">Account</span>
             </Link>
           </div>
         </div>

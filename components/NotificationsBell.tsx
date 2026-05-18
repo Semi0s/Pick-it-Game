@@ -56,12 +56,12 @@ export function NotificationsBell() {
         onClick={() => {
           setIsOpen((current) => !current);
         }}
-        className="relative rounded-full border border-gray-300 bg-white p-2 text-gray-700 transition hover:border-accent hover:bg-accent-light"
+        className="relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-gray-300 bg-white p-2 text-gray-700 transition hover:border-accent hover:bg-accent-light max-[399px]:h-8 max-[399px]:w-8 max-[399px]:p-0"
         aria-label="Notifications"
       >
-        <Bell className="h-4 w-4" />
+        <Bell className="h-4 w-4 max-[399px]:h-3.5 max-[399px]:w-3.5" />
         {unreadCount > 0 ? (
-          <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-black text-white">
+          <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-black text-white max-[399px]:min-h-4 max-[399px]:min-w-4 max-[399px]:text-[9px]">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         ) : null}

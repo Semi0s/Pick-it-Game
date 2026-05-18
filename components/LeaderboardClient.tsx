@@ -1328,7 +1328,7 @@ export function LeaderboardClient() {
       </section>
 
       {!isLoading && !error && canEvaluateDailyWinnerDismissal && dailyWinners.length > 0 && !isDailyWinnerDismissed ? (
-        <section className="relative overflow-hidden rounded-lg border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-amber-100 p-4 shadow-sm">
+        <section className="relative overflow-hidden rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
           <div className="relative">
             <div>
               <div className="flex items-start justify-between gap-3">

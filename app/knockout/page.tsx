@@ -49,7 +49,6 @@ export default async function KnockoutPage() {
   const projectedComparisonView = user && isOfficialSeeded
     ? await fetchProjectedKnockoutBracketPreview(user.id, { comparisonOnly: true }).catch(() => null)
     : null;
-  const phaseChip = getKnockoutPhaseChip(knockoutStatus.counts);
   const shouldShowEditableProjected = Boolean(projectedChallengeView && !projectedChallengeView.isLocked && !isOfficialSeeded);
   const shouldShowLockedProjected = Boolean(projectedChallengeView && projectedChallengeView.isLocked && !isOfficialSeeded);
   const shouldShowOfficialBracket = Boolean(officialBracketView && isOfficialSeeded);
@@ -59,28 +58,28 @@ export default async function KnockoutPage() {
       ? "Locked Projected Challenge"
       : "Projected Bracket Challenge"
     : isOfficialSeeded
-      ? "Official Knockout Picks"
+      ? "Knockout Stage"
       : "Knockout Picks";
   const introTitle = (shouldShowEditableProjected || shouldShowLockedProjected)
     ? shouldShowLockedProjected
       ? "Locked Projected Challenge"
       : "Projected Bracket Challenge"
     : isOfficialSeeded
-      ? "Official Knockout Picks"
+      ? "Pick a Winner"
       : "Knockout picks coming soon";
   const introDescription = (shouldShowEditableProjected || shouldShowLockedProjected)
     ? shouldShowLockedProjected
       ? "Your projected bracket challenge is locked for this phase. It will stay visible as its own archived side-pick once the official Round of 32 is seeded."
       : "Build your projected bracket challenge from your group-stage picks. Official knockout picks open after the real Round of 32 is seeded."
     : isOfficialSeeded
-      ? "Based on the real seeded teams."
+      ? "Swipe left/right to compare with early predictions."
       : "We will open official knockout picks once the full group stage is complete and the real Round of 32 is seeded.";
   const introSecondaryNote = (shouldShowEditableProjected || shouldShowLockedProjected)
     ? shouldShowLockedProjected
       ? "Projection status updates as matches become final."
       : "Official knockout picks open after the real Round of 32 is seeded."
     : isOfficialSeeded
-      ? "Official seeding remains phase-level. Your projected bracket is compared separately as real results come in."
+      ? null
       : null;
   const primaryBracketView = shouldShowOfficialBracket ? officialBracketView : projectedChallengeView;
 
@@ -91,11 +90,11 @@ export default async function KnockoutPage() {
         title={introTitle}
         description={introDescription}
         secondaryNote={introSecondaryNote}
-        statusChip={phaseChip}
+        statusChip={showingProjectedChallengeOnly ? getKnockoutPhaseChip(knockoutStatus.counts) : null}
       />
 
       {primaryBracketView ? (
-        <div className="mt-5">
+        <div className="-mx-4 mt-5 sm:mx-0">
           <KnockoutBracketBuilder
             initialView={primaryBracketView}
             projectedComparisonView={shouldShowOfficialBracket ? projectedComparisonView : null}

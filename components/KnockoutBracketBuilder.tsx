@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, CheckSquare, Trophy, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { previewBracketPredictionImpactAction, saveBracketPredictionAction } from "@/app/knockout/actions";
 import { WindowChoiceRail, useSessionJsonState } from "@/components/player-management/Shared";
 import { showAppToast } from "@/lib/app-toast";
@@ -38,7 +38,7 @@ type BracketSlideView = {
 
 const KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY = "knockout-active-slide";
 const KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY = "knockout-active-country-filter";
-const KNOCKOUT_STAGE_COMPARE_BIAS_STORAGE_KEY = "knockout-stage-compare-bias";
+const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
 
 export function KnockoutBracketBuilder({ initialView, projectedComparisonView = null }: KnockoutBracketBuilderProps) {
   const [baseView, setBaseView] = useState<KnockoutBracketEditorView>(initialView);
@@ -509,7 +509,7 @@ function BracketStageViewport({
       ) : null}
 
       <div
-        className={`mx-auto min-h-[30rem] w-full max-w-full overflow-x-clip px-3 py-2.5 transition-[opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] sm:min-h-[32rem] sm:px-4 sm:py-3 ${
+        className={`mx-auto min-h-[30rem] w-full max-w-full overflow-x-clip px-0 py-2.5 transition-[opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] sm:min-h-[32rem] sm:px-4 sm:py-3 ${
           ready ? "opacity-100" : "opacity-88"
         }`}
       >
@@ -519,7 +519,6 @@ function BracketStageViewport({
             officialMatches={filteredSlide.currentMatches}
             officialState="pending"
             isOfficialRound={false}
-            stageTitle={slide.title}
             pendingMatchId={pendingMatchId}
             pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
@@ -532,7 +531,6 @@ function BracketStageViewport({
             officialMatches={filteredSlide.currentMatches}
             officialState="live"
             isOfficialRound
-            stageTitle={slide.currentStage === "r32" ? "Round of 32 Projection Check" : slide.title}
             pendingMatchId={pendingMatchId}
             pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
@@ -657,7 +655,6 @@ function ProjectedAndOfficialRoundView({
   officialMatches,
   officialState,
   isOfficialRound,
-  stageTitle,
   pendingMatchId,
   pendingConfirmation,
   onSelect,
@@ -668,7 +665,6 @@ function ProjectedAndOfficialRoundView({
   officialMatches: KnockoutBracketMatchView[];
   officialState: "pending" | "live";
   isOfficialRound: boolean;
-  stageTitle: string;
   pendingMatchId: string | null;
   pendingConfirmation: {
     matchId: string;
@@ -681,113 +677,238 @@ function ProjectedAndOfficialRoundView({
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
 }) {
-  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const snapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isProgrammaticSyncRef = useRef(false);
+  const viewportRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const trackRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const pointerStartRef = useRef<{ x: number; y: number; bias: number } | null>(null);
+  const gestureIntentRef = useRef<"horizontal" | "vertical" | null>(null);
   const pairs = officialMatches.map((officialMatch, index) => ({
     slotKey: officialMatch.matchId ?? projectedMatches[index]?.matchId ?? `${officialMatch.stage}-${index}`,
     projected: projectedMatches[index] ?? null,
     official: officialMatch
   }));
-  const stageKey = officialMatches[0]?.stage ?? stageTitle;
   const defaultOfficialBias = officialState === "live" ? 0.72 : 0.28;
-  const [storedBiasByStage, setStoredBiasByStage] = useSessionJsonState<Record<string, number>>(
-    KNOCKOUT_STAGE_COMPARE_BIAS_STORAGE_KEY,
-    {}
+  const maxMobileCardWidthPx = 22.5 * 16;
+  const mobilePeekInsetPx = 1.35 * 16;
+  const mobileColumnGapPx = 48;
+  const mobileSnapEdgeInsetPx = 35;
+  const [compareViewState, setCompareViewState] = useSessionJsonState<{
+    hasInteracted: boolean;
+    lastBias: number | null;
+  }>(
+    KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY,
+    {
+      hasInteracted: false,
+      lastBias: null
+    }
   );
-  const storedBias = storedBiasByStage[stageKey];
-  const [officialBias, setOfficialBias] = useState(storedBias ?? defaultOfficialBias);
-  const [snapEnabled, setSnapEnabled] = useState(storedBias != null);
+  const officialBias =
+    compareViewState.hasInteracted && typeof compareViewState.lastBias === "number"
+      ? compareViewState.lastBias
+      : defaultOfficialBias;
+  const snapTargets = useMemo(() => [0, 1], []);
+  const [dragBias, setDragBias] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isNarrowViewport, setIsNarrowViewport] = useState(false);
+  const [maxTrackOffset, setMaxTrackOffset] = useState(0);
+  const [narrowViewportWidth, setNarrowViewportWidth] = useState(0);
+  const effectiveBias = dragBias ?? officialBias;
+  const mobileCardWidthPx =
+    isNarrowViewport && narrowViewportWidth > 0
+      ? Math.min(Math.max(0, narrowViewportWidth - mobilePeekInsetPx), maxMobileCardWidthPx)
+      : 0;
+  const mobileCenterGutterPx =
+    isNarrowViewport && narrowViewportWidth > 0 ? Math.max(0, (narrowViewportWidth - mobileCardWidthPx) / 2) : 0;
+  const mobileMirrorSeamPx =
+    isNarrowViewport && narrowViewportWidth > 0
+      ? mobileCenterGutterPx + mobileCardWidthPx + mobileColumnGapPx / 2 - (mobileCardWidthPx + mobileColumnGapPx) * effectiveBias
+      : 0;
+  const mobileSnapSeamPx =
+    isNarrowViewport && narrowViewportWidth > 0
+      ? mobileCenterGutterPx +
+        mobileCardWidthPx +
+        mobileColumnGapPx / 2 -
+        (mobileCardWidthPx + mobileColumnGapPx) * officialBias
+      : 0;
+  const mobileSnapTranslatePx =
+    !isDragging && isNarrowViewport && compareViewState.hasInteracted
+      ? officialBias === 0
+        ? narrowViewportWidth - mobileSnapEdgeInsetPx - mobileSnapSeamPx
+        : officialBias === 1
+          ? mobileSnapEdgeInsetPx - mobileSnapSeamPx
+          : 0
+      : 0;
+
+  const refreshMeasurements = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const sampleKey = pairs[0]?.slotKey;
+    const narrow = window.innerWidth < 640;
+    setIsNarrowViewport(narrow);
+    if (!narrow || !sampleKey) {
+      setMaxTrackOffset(0);
+      return;
+    }
+
+    const viewport = viewportRefs.current[sampleKey];
+    const track = trackRefs.current[sampleKey];
+    if (!viewport || !track) {
+      setNarrowViewportWidth(0);
+      setMaxTrackOffset(0);
+      return;
+    }
+
+    setNarrowViewportWidth(viewport.clientWidth);
+    setMaxTrackOffset(Math.max(0, track.scrollWidth - viewport.clientWidth));
+  }, [pairs]);
 
   useEffect(() => {
-    const nextBias = storedBias ?? defaultOfficialBias;
-    setOfficialBias(nextBias);
-    setSnapEnabled(storedBias != null);
-  }, [defaultOfficialBias, storedBias, stageKey]);
+    return () => {
+      pointerStartRef.current = null;
+      gestureIntentRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
+    refreshMeasurements();
+    window.addEventListener("resize", refreshMeasurements);
 
-    const applySharedFocus = () => {
-      const isNarrowViewport = window.innerWidth < 640;
-      if (!isNarrowViewport) {
-        return;
-      }
-
-      isProgrammaticSyncRef.current = true;
-      for (const pair of pairs) {
-        const row = rowRefs.current[pair.slotKey];
-        if (!row) {
-          continue;
-        }
-
-        const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
-        row.scrollLeft = maxScrollLeft * officialBias;
-      }
-      requestAnimationFrame(() => {
-        isProgrammaticSyncRef.current = false;
-      });
-    };
-
-    applySharedFocus();
-    return () => {
-      if (snapTimerRef.current) {
-        clearTimeout(snapTimerRef.current);
-        snapTimerRef.current = null;
-      }
-    };
-  }, [officialBias, officialState, pairs]);
-
-  const syncStageScroll = (sourceRow: HTMLDivElement, sourceKey: string) => {
-    const maxScrollLeft = Math.max(1, sourceRow.scrollWidth - sourceRow.clientWidth);
-    const nextRatio = sourceRow.scrollLeft / maxScrollLeft;
-    isProgrammaticSyncRef.current = true;
-    for (const pair of pairs) {
-      if (pair.slotKey === sourceKey) {
-        continue;
-      }
-
-      const row = rowRefs.current[pair.slotKey];
-      if (!row) {
-        continue;
-      }
-
-      const rowMaxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
-      row.scrollLeft = rowMaxScrollLeft * nextRatio;
+    let resizeObserver: ResizeObserver | null = null;
+    const sampleKey = pairs[0]?.slotKey;
+    const sampleViewport = sampleKey ? viewportRefs.current[sampleKey] : null;
+    const sampleTrack = sampleKey ? trackRefs.current[sampleKey] : null;
+    if (typeof ResizeObserver !== "undefined" && sampleViewport && sampleTrack) {
+      resizeObserver = new ResizeObserver(refreshMeasurements);
+      resizeObserver.observe(sampleViewport);
+      resizeObserver.observe(sampleTrack);
     }
-    requestAnimationFrame(() => {
-      isProgrammaticSyncRef.current = false;
+
+    return () => {
+      window.removeEventListener("resize", refreshMeasurements);
+      resizeObserver?.disconnect();
+    };
+  }, [pairs, refreshMeasurements]);
+
+  const snapStageBias = (currentBias: number) => {
+    const snappedRatio = snapTargets.reduce((closest, candidate) =>
+      Math.abs(candidate - currentBias) < Math.abs(closest - currentBias) ? candidate : closest
+    );
+    setCompareViewState({
+      hasInteracted: true,
+      lastBias: snappedRatio
     });
+    setDragBias(null);
+    setIsDragging(false);
   };
 
-  const snapStageScroll = (sourceRow: HTMLDivElement, sourceKey: string) => {
-    const maxScrollLeft = Math.max(0, sourceRow.scrollWidth - sourceRow.clientWidth);
-    if (maxScrollLeft <= 0) {
+  function getMaxTrackOffset(slotKey: string) {
+    const viewport = viewportRefs.current[slotKey];
+    const track = trackRefs.current[slotKey];
+    if (!viewport || !track) {
+      return 0;
+    }
+
+    return Math.max(0, track.scrollWidth - viewport.clientWidth);
+  }
+
+  function beginDrag(startX: number, startY: number) {
+    pointerStartRef.current = {
+      x: startX,
+      y: startY,
+      bias: effectiveBias
+    };
+    gestureIntentRef.current = null;
+    setDragBias(effectiveBias);
+    setIsDragging(true);
+  }
+
+  function updateDrag(slotKey: string, currentX: number, currentY: number) {
+    const start = pointerStartRef.current;
+    if (!start) {
+      return { intent: gestureIntentRef.current, active: false as const };
+    }
+
+    const deltaX = currentX - start.x;
+    const deltaY = currentY - start.y;
+    if (!gestureIntentRef.current) {
+      if (Math.abs(deltaX) < 6 && Math.abs(deltaY) < 6) {
+        return { intent: null, active: true as const };
+      }
+      gestureIntentRef.current = Math.abs(deltaX) > Math.abs(deltaY) ? "horizontal" : "vertical";
+    }
+
+    if (gestureIntentRef.current !== "horizontal") {
+      setDragBias(null);
+      setIsDragging(false);
+      return { intent: gestureIntentRef.current, active: false as const };
+    }
+
+    const maxOffset = maxTrackOffset || getMaxTrackOffset(slotKey);
+    if (maxOffset <= 0) {
+      return { intent: gestureIntentRef.current, active: true as const };
+    }
+
+    const nextBias = Math.max(0, Math.min(1, start.bias - deltaX / maxOffset));
+    setDragBias(nextBias);
+    return { intent: gestureIntentRef.current, active: true as const };
+  }
+
+  function finishDrag() {
+    const start = pointerStartRef.current;
+    const intent = gestureIntentRef.current;
+    pointerStartRef.current = null;
+    gestureIntentRef.current = null;
+
+    if (!start) {
+      setDragBias(null);
+      setIsDragging(false);
       return;
     }
 
-    const snappedRatio = sourceRow.scrollLeft / maxScrollLeft >= 0.5 ? 1 : 0;
-    setOfficialBias(snappedRatio);
-    setStoredBiasByStage((current) => ({ ...current, [stageKey]: snappedRatio }));
-    isProgrammaticSyncRef.current = true;
-    for (const pair of pairs) {
-      const row = rowRefs.current[pair.slotKey];
-      if (!row) {
-        continue;
-      }
-
-      const rowMaxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
-      row.scrollTo({
-        left: rowMaxScrollLeft * snappedRatio,
-        behavior: pair.slotKey === sourceKey ? "smooth" : "auto"
-      });
+    if (intent !== "horizontal") {
+      setDragBias(null);
+      setIsDragging(false);
+      return;
     }
-    requestAnimationFrame(() => {
-      isProgrammaticSyncRef.current = false;
-    });
-  };
+
+    snapStageBias(dragBias ?? start.bias);
+  }
+
+  function handlePointerStart(slotKey: string, event: React.PointerEvent<HTMLDivElement>) {
+    if (!isNarrowViewport) {
+      return;
+    }
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+
+    beginDrag(event.clientX, event.clientY);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function handlePointerMove(slotKey: string, event: React.PointerEvent<HTMLDivElement>) {
+    if (!isNarrowViewport) {
+      return;
+    }
+    const dragState = updateDrag(slotKey, event.clientX, event.clientY);
+    if (dragState.intent === "horizontal") {
+      event.preventDefault();
+    }
+  }
+
+  function handlePointerEnd(event?: React.PointerEvent<HTMLDivElement>) {
+    if (!isNarrowViewport) {
+      return;
+    }
+    if (event) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    }
+    finishDrag();
+  }
 
   return (
     <div className="space-y-4">
@@ -820,36 +941,66 @@ function ProjectedAndOfficialRoundView({
               </p>
             </div>
             <div className="relative">
-              <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-2 bg-gradient-to-r from-white via-white/55 to-transparent" />
-              <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-[1] w-2 bg-gradient-to-l from-white via-white/55 to-transparent" />
-              <div aria-hidden className="pointer-events-none absolute bottom-3 top-3 left-[calc(50%-5px)] z-[1] w-2.5 rounded-full bg-white/35 blur-[2px] sm:hidden" />
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-y-1 left-0 z-[1] w-2 sm:w-3"
+                style={{ boxShadow: "inset 8px 0 8px -8px rgba(15,23,42,0.22)" }}
+              />
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-y-1 right-0 z-[1] w-2 sm:w-3"
+                style={{ boxShadow: "inset -8px 0 8px -8px rgba(15,23,42,0.22)" }}
+              />
+              {isNarrowViewport ? (
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-y-2 z-[2] hidden w-px -translate-x-1/2 sm:hidden"
+                  style={{
+                    left: `${mobileMirrorSeamPx}px`,
+                    backgroundColor: "rgba(148,163,184,0.22)",
+                    boxShadow: "0 0 0 1px rgba(255,255,255,0.75), 0 0 12px rgba(15,23,42,0.14)"
+                  }}
+                />
+              ) : null}
               <div
                 ref={(node) => {
-                  rowRefs.current[pair.slotKey] = node;
+                  viewportRefs.current[pair.slotKey] = node;
+                  refreshMeasurements();
                 }}
-                onScroll={(event) => {
-                  if (isProgrammaticSyncRef.current || typeof window === "undefined" || window.innerWidth >= 640) {
-                    return;
-                  }
-                  if (!snapEnabled) {
-                    setSnapEnabled(true);
-                  }
-                  syncStageScroll(event.currentTarget, pair.slotKey);
-                  if (snapTimerRef.current) {
-                    clearTimeout(snapTimerRef.current);
-                  }
-                  snapTimerRef.current = setTimeout(() => {
-                    snapStageScroll(event.currentTarget, pair.slotKey);
-                  }, 110);
-                }}
-                className={`overflow-x-auto overflow-y-visible px-0 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] ${
-                  snapEnabled ? "snap-x snap-mandatory" : ""
-                }`}
+                onPointerDown={(event) => handlePointerStart(pair.slotKey, event)}
+                onPointerMove={(event) => handlePointerMove(pair.slotKey, event)}
+                onPointerUp={(event) => handlePointerEnd(event)}
+                onPointerCancel={(event) => handlePointerEnd(event)}
+                className="overflow-hidden px-0 pb-1 touch-pan-y"
               >
-                <div className="flex min-w-max gap-2.5 sm:grid sm:min-w-0 sm:grid-cols-2 sm:gap-3">
-                  <div className={`w-[calc(100vw-2.75rem)] max-w-[21.5rem] shrink-0 sm:w-auto sm:max-w-none sm:min-w-0 ${snapEnabled ? "snap-center" : ""}`}>
+                <div
+                  ref={(node) => {
+                    trackRefs.current[pair.slotKey] = node;
+                    refreshMeasurements();
+                  }}
+                  className="flex min-w-max gap-0 sm:grid sm:min-w-0 sm:grid-cols-2 sm:gap-3"
+                  style={
+                    isNarrowViewport
+                      ? {
+                          columnGap: `${mobileColumnGapPx}px`,
+                          transform: `translateX(${-(maxTrackOffset * effectiveBias) + mobileSnapTranslatePx}px)`,
+                          transition: isDragging ? "none" : "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)",
+                          willChange: "transform"
+                        }
+                      : undefined
+                  }
+                >
+                  <div
+                    aria-hidden
+                    className="shrink-0 sm:hidden"
+                    style={{ width: `${mobileCenterGutterPx}px` }}
+                  />
+                  <div
+                    className="shrink-0 sm:w-auto sm:max-w-none sm:min-w-0"
+                    style={isNarrowViewport ? { width: `${mobileCardWidthPx}px` } : undefined}
+                  >
                     <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">
-                      My Picks/Predictions
+                      Early Side Picks
                     </div>
                     {pair.projected ? (
                       <CurrentRoundMatchCard
@@ -873,6 +1024,11 @@ function ProjectedAndOfficialRoundView({
                     )}
                   </div>
                   {renderOfficialCard(pair)}
+                  <div
+                    aria-hidden
+                    className="shrink-0 sm:hidden"
+                    style={{ width: `${mobileCenterGutterPx}px` }}
+                  />
                 </div>
               </div>
             </div>
@@ -884,7 +1040,10 @@ function ProjectedAndOfficialRoundView({
 
   function renderOfficialCard(pair: (typeof pairs)[number]) {
     return (
-      <div className={`w-[calc(100vw-2.75rem)] max-w-[21.5rem] shrink-0 sm:w-auto sm:max-w-none sm:min-w-0 ${snapEnabled ? "snap-center" : ""}`}>
+      <div
+        className="shrink-0 sm:w-auto sm:max-w-none sm:min-w-0"
+        style={isNarrowViewport ? { width: `${mobileCardWidthPx}px` } : undefined}
+      >
         <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide text-gray-600">
           Qualifying Teams
         </div>
@@ -1154,7 +1313,7 @@ function CurrentRoundMatchCard({
           ? `${isHero ? "p-1" : "p-0.5"}`
           : `box-border w-full max-w-full overflow-hidden rounded-lg border ${
               match.viewMode === "projected"
-                ? "border-amber-200 bg-[linear-gradient(135deg,#fff9e6_0%,#fffef6_50%,#fff5cb_100%)] p-2"
+                ? "border-green-200 bg-green-50 p-2"
                 : shellState === "final"
                   ? "border-gray-200 bg-gray-100 p-2"
                   : "border-gray-200 bg-white p-2"
@@ -1184,7 +1343,7 @@ function CurrentRoundMatchCard({
         </div>
       ) : null}
 
-      <div className={`${showHeader ? "mt-1.5" : ""} relative px-1 py-1`}>
+      <div className={`${showHeader ? "mt-1.5" : ""} relative px-2 py-1`}>
         <span
           aria-hidden
           className="pointer-events-none absolute bottom-1 left-1/2 top-1 -translate-x-1/2 border-l border-gray-200"
@@ -1253,7 +1412,7 @@ function CurrentRoundMatchCard({
       </div>
 
       {footerContextChips.left || footerContextChips.right ? (
-        <div className="mt-1.5 border-t border-gray-100 px-1 pt-2">
+        <div className="mt-1.5 border-t border-gray-100 px-2 pt-2">
           <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-1.5">
             <div className="flex min-w-0 justify-center">
               {footerContextChips.left ? (
@@ -1599,10 +1758,12 @@ function KnockoutTeamPanel({
   const isCompact = density === "compact";
   const userTeam = team;
   const isProjectedReadOnly = viewMode === "projected" && isReadOnly;
+  const unresolvedLabel =
+    viewMode === "official" && !team && !officialTeam ? formatRoundOf32PlaceholderLabel(placeholderLabel) : null;
   const displayLabel =
     viewMode === "projected"
       ? team?.name ?? "Not Picked"
-      : team?.name ?? officialTeam?.name ?? formatRoundOf32PlaceholderLabel(placeholderLabel).primary;
+      : team?.name ?? officialTeam?.name ?? unresolvedLabel?.primary ?? "TBD";
   const displayFlag =
     viewMode === "projected"
       ? team?.flagEmoji ?? null
@@ -1688,9 +1849,22 @@ function KnockoutTeamPanel({
               </span>
             </span>
           ) : null}
-          <span className="block min-w-0 text-center text-[14px] font-bold leading-tight text-gray-950 sm:text-base">
-            <span className="block min-w-0 truncate">{displayLabel}</span>
-          </span>
+          {unresolvedLabel ? (
+            <span className="flex min-w-0 flex-col items-center text-center leading-none">
+              <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">
+                {unresolvedLabel.primary}
+              </span>
+              {unresolvedLabel.secondary ? (
+                <span className="mt-1 block min-w-0 truncate text-[11px] font-semibold text-gray-500">
+                  {unresolvedLabel.secondary}
+                </span>
+              ) : null}
+            </span>
+          ) : (
+            <span className="block min-w-0 text-center text-[14px] font-bold leading-tight text-gray-950 sm:text-base">
+              <span className="block min-w-0 truncate">{displayLabel}</span>
+            </span>
+          )}
       </span>
     </span>
   );
@@ -1907,7 +2081,7 @@ function getPlaceholderMatchNumber(label: string) {
 
 function ChampionCard({ champion }: { champion: BracketTeamOption | null }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-amber-200 bg-[linear-gradient(135deg,#fff8eb_0%,#ffffff_35%,#fff1c2_100%)] p-5">
+    <div className="overflow-hidden rounded-lg border border-amber-200 bg-amber-50 p-5">
       <div className="flex items-center gap-3">
         <div className="inline-flex h-12 w-12 items-center justify-center rounded-lg border border-white/80 bg-white/85 text-amber-700">
           <Trophy aria-hidden className="h-5 w-5" />
@@ -2231,7 +2405,7 @@ function ActualComparisonMatchCard({
         </div>
       </div>
 
-      <div className="mt-1.5 relative px-1 py-1">
+      <div className="mt-1.5 relative px-2 py-1">
         <span
           aria-hidden
           className="pointer-events-none absolute bottom-1 left-1/2 top-1 -translate-x-1/2 border-l border-gray-200"
@@ -2284,17 +2458,17 @@ function ActualComparisonMatchCard({
       </div>
 
       {match.status === "final" && hasActualFinalScores ? (
-        <div className="mt-1.5 border-t border-gray-300 px-1 pt-2 text-center">
+        <div className="mt-1.5 border-t border-gray-300 px-2 pt-2 text-center">
           <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">
             Actual result finalized
           </div>
         </div>
       ) : pendingOnly ? (
-        <div className="mt-1.5 border-t border-gray-100 bg-gray-50/60 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">
+        <div className="mt-1.5 border-t border-gray-100 bg-gray-50/60 px-2 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">
           Official bracket pending
         </div>
       ) : actualHomeTeam && actualAwayTeam ? (
-        <div className="mt-1.5 border-t border-gray-100 bg-gray-50/60 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">
+        <div className="mt-1.5 border-t border-gray-100 bg-gray-50/60 px-2 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">
           Result pending
         </div>
       ) : (
@@ -2319,7 +2493,7 @@ function ComparisonPlaceholderCard({
     <div
       className={`box-border w-full max-w-full rounded-lg border p-4 ${
         tone === "projected"
-          ? "border-amber-200 bg-[linear-gradient(135deg,#fff9e6_0%,#fffef6_50%,#fff5cb_100%)]"
+          ? "border-amber-200 bg-amber-50"
           : "border-gray-200 bg-white"
       }`}
     >
@@ -2360,27 +2534,27 @@ function formatTeamToken(team: BracketTeamOption | null): MatchContextChip | nul
 }
 
 function buildMatchContextChips(match: KnockoutBracketMatchView) {
-  if (match.stage !== "r32" && match.status !== "final") {
-    return {
-      left: null,
-      right: null
-    };
-  }
-
   if (match.viewMode === "projected") {
+    const shouldHideProjectedReferences =
+      match.stage !== "r32" &&
+      match.status !== "final" &&
+      Boolean(match.seededHomeTeam && match.seededAwayTeam);
+
     return {
-      left: formatTeamToken(match.seededHomeTeam) ?? (match.homeSourceLabel ? formatRoundOf32PlaceholderLabel(match.homeSourceLabel) : null),
-      right: formatTeamToken(match.seededAwayTeam) ?? (match.awaySourceLabel ? formatRoundOf32PlaceholderLabel(match.awaySourceLabel) : null)
+      left: shouldHideProjectedReferences
+        ? null
+        : formatTeamToken(match.seededHomeTeam) ??
+          (match.homeSourceLabel ? formatRoundOf32PlaceholderLabel(match.homeSourceLabel) : null),
+      right: shouldHideProjectedReferences
+        ? null
+        : formatTeamToken(match.seededAwayTeam) ??
+          (match.awaySourceLabel ? formatRoundOf32PlaceholderLabel(match.awaySourceLabel) : null)
     };
   }
 
   return {
-    left: match.status === "final"
-      ? formatTeamToken(match.seededHomeTeam) ?? (match.homeSourceLabel ? formatRoundOf32PlaceholderLabel(match.homeSourceLabel) : null)
-      : null,
-    right: match.status === "final"
-      ? formatTeamToken(match.seededAwayTeam) ?? (match.awaySourceLabel ? formatRoundOf32PlaceholderLabel(match.awaySourceLabel) : null)
-      : null
+    left: null,
+    right: null
   };
 }
 
