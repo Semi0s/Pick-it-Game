@@ -50,6 +50,7 @@ import {
   ADMIN_RESET_TOOL_DEFINITIONS,
   type AdminRecoveryScope,
   getResetDiagnostics,
+  isSelfServiceTestResetEnabled,
   getTestingResetAvailability,
   logTestingResetEnvDiagnostics
 } from "@/lib/admin/destructive-tools";
@@ -261,6 +262,27 @@ export type BatchFinalizeMatchResultsResult =
       message: string;
     };
 
+export type BatchClearMatchResultsInput = {
+  fromDate: string;
+  toDate: string;
+  scope: BatchFinalizeMatchScope;
+  confirmationText: string;
+};
+
+export type BatchClearMatchResultsResult =
+  | {
+      ok: true;
+      processed: number;
+      cleared: number;
+      skipped: number;
+      repairedKnockoutMatches: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export type RepairKnockoutAdvancementResult =
   | {
       ok: true;
@@ -431,6 +453,12 @@ export type ClearUserTestPredictionsResult =
       ok: false;
       message: string;
     };
+
+export type SelfServiceClearCurrentUserTestPredictionsInput = {
+  confirmationText: string;
+  acknowledged: boolean;
+  reason: string;
+};
 
 export type ResetGroupLocalStateInput = {
   groupId: string;
@@ -1444,86 +1472,18 @@ export async function clearUserTestPredictionsAction(
     });
 
     const adminSupabase = createAdminClient();
-    const { data: userProfile, error: userProfileError } = await adminSupabase
-      .from("users")
-      .select("id,email")
-      .eq("id", trimmedUserId)
-      .maybeSingle();
-
-    if (userProfileError) {
-      return { ok: false, message: userProfileError.message };
-    }
-
-    if (!userProfile) {
-      return { ok: false, message: "That user was not found." };
-    }
-
-    const normalizedEmail = (userProfile.email ?? "").trim().toLowerCase();
-    if (normalizedEmail !== input.expectedEmail.trim().toLowerCase()) {
-      return { ok: false, message: `Type ${normalizedEmail} to confirm this user reset.` };
-    }
-
-    const [
-      predictionsResult,
-      bracketPredictionsResult,
-      projectedBracketPredictionsResult,
-      legacyBracketPicksResult,
-      bracketScoresResult,
-      predictionScoresResult,
-      leaderboardEventsResult,
-      leaderboardSnapshotsResult
-    ] = await Promise.all([
-      adminSupabase.from("predictions").select("id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
-      countOptionalGameplayRows(adminSupabase, "bracket_predictions", trimmedUserId),
-      countOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", trimmedUserId),
-      countOptionalGameplayRows(adminSupabase, "bracket_picks", trimmedUserId),
-      adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
-      adminSupabase.from("prediction_scores").select("prediction_id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
-      adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).eq("user_id", trimmedUserId),
-      adminSupabase.from("leaderboard_snapshots").select("id", { count: "exact", head: true }).eq("user_id", trimmedUserId)
-    ]);
-
-    const deletionResults = await Promise.all([
-      adminSupabase.from("predictions").delete().eq("user_id", trimmedUserId),
-      deleteOptionalGameplayRows(adminSupabase, "bracket_predictions", trimmedUserId),
-      deleteOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", trimmedUserId),
-      deleteOptionalGameplayRows(adminSupabase, "bracket_picks", trimmedUserId),
-      adminSupabase.from("bracket_scores").delete().eq("user_id", trimmedUserId),
-      adminSupabase.from("prediction_scores").delete().eq("user_id", trimmedUserId),
-      adminSupabase.from("leaderboard_events").delete().eq("user_id", trimmedUserId),
-      adminSupabase.from("leaderboard_snapshots").delete().eq("user_id", trimmedUserId)
-    ]);
-
-    const failedDeletion = deletionResults.find((result) => result.error);
-    if (failedDeletion?.error) {
-      return { ok: false, message: failedDeletion.error.message };
-    }
-
-    const leaderboardResult = await recalculateLeaderboard(adminSupabase);
-    if (!leaderboardResult.ok) {
-      return leaderboardResult;
-    }
-
-    const resetMarkerWarning = await bumpDashboardUiResetEpoch("user test reset");
-    await writeAdminResetAuditLog(adminSupabase, {
+    const resetResult = await performClearUserPredictionReset(adminSupabase, {
+      targetUserId: trimmedUserId,
       actorUserId: superAdminCheck.userId,
       actorEmail: superAdminCheck.email,
-      actionKey: "clear_user_test_predictions",
-      scope: "user",
+      actorTier: "super_admin",
       reason: trimmedReason,
-      success: true,
-      targetIds: [trimmedUserId],
-      affectedCounts: {
-        predictions: predictionsResult.count ?? 0,
-        bracketPredictions: bracketPredictionsResult.count ?? 0,
-        projectedBracketPredictions: projectedBracketPredictionsResult.count ?? 0,
-        legacyBracketPicks: legacyBracketPicksResult.count ?? 0,
-        bracketScores: bracketScoresResult.count ?? 0,
-        predictionScores: predictionScoresResult.count ?? 0,
-        leaderboardEvents: leaderboardEventsResult.count ?? 0,
-        leaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0
-      }
+      actionKey: "clear_user_test_predictions",
+      expectedEmail: input.expectedEmail
     });
+    if (!resetResult.ok) {
+      return resetResult;
+    }
 
     revalidatePath("/admin/players");
     revalidatePath("/dashboard");
@@ -1534,20 +1494,104 @@ export async function clearUserTestPredictionsAction(
 
     return {
       ok: true,
-      affectedPredictionCount: predictionsResult.count ?? 0,
-      affectedBracketPredictionCount: bracketPredictionsResult.count ?? 0,
-      affectedProjectedBracketPredictionCount: projectedBracketPredictionsResult.count ?? 0,
-      affectedLegacyBracketPickCount: legacyBracketPicksResult.count ?? 0,
-      affectedBracketScoreCount: bracketScoresResult.count ?? 0,
-      affectedPredictionScoreCount: predictionScoresResult.count ?? 0,
-      affectedLeaderboardEventCount: leaderboardEventsResult.count ?? 0,
-      affectedLeaderboardSnapshotCount: leaderboardSnapshotsResult.count ?? 0,
-      message: resetMarkerWarning
-        ? `Cleared ${userProfile.email}'s test predictions and rebuilt leaderboard state. ${resetMarkerWarning}`
-        : `Cleared ${userProfile.email}'s test predictions and rebuilt leaderboard state.`
+      affectedPredictionCount: resetResult.affectedCounts.predictions,
+      affectedBracketPredictionCount: resetResult.affectedCounts.bracketPredictions,
+      affectedProjectedBracketPredictionCount: resetResult.affectedCounts.projectedBracketPredictions,
+      affectedLegacyBracketPickCount: resetResult.affectedCounts.legacyBracketPicks,
+      affectedBracketScoreCount: resetResult.affectedCounts.bracketScores,
+      affectedPredictionScoreCount: resetResult.affectedCounts.predictionScores,
+      affectedLeaderboardEventCount: resetResult.affectedCounts.leaderboardEvents,
+      affectedLeaderboardSnapshotCount: resetResult.affectedCounts.leaderboardSnapshots,
+      message: resetResult.message
     };
   } catch (error) {
     return { ok: false, message: buildAdminActionErrorMessage(error, "Could not clear that user's test data.") };
+  }
+}
+
+export async function clearCurrentUserTestPredictionsAction(
+  input: SelfServiceClearCurrentUserTestPredictionsInput
+): Promise<ClearUserTestPredictionsResult> {
+  if (!isSelfServiceTestResetEnabled()) {
+    return { ok: false, message: "Testing reset tools are not enabled right now." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to clear your test predictions." };
+  }
+
+  if (!input.acknowledged) {
+    return { ok: false, message: "Confirm that you understand this will clear your saved test predictions." };
+  }
+
+  if (input.confirmationText.trim().toUpperCase() !== "RESET MY PICKS") {
+    return { ok: false, message: "Type RESET MY PICKS to confirm." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const { data: profile, error: profileError } = await adminSupabase
+      .from("users")
+      .select("id,email,role,plan_tier")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      return { ok: false, message: profileError.message };
+    }
+
+    if (!profile) {
+      return { ok: false, message: "Your player profile could not be found." };
+    }
+
+    const tierAccess = resolveTierAccess({
+      role: profile.role,
+      planTier: profile.plan_tier ?? null,
+      managerLimits: null
+    });
+    if (tierAccess.accessLevel === "player") {
+      return { ok: false, message: "Only Captain tier and above can use this testing reset." };
+    }
+
+    const trimmedReason = buildRequiredResetReason(input.reason);
+    const resetResult = await performClearUserPredictionReset(adminSupabase, {
+      targetUserId: profile.id,
+      actorUserId: profile.id,
+      actorEmail: profile.email ?? user.email ?? null,
+      actorTier: tierAccess.accessLevel,
+      reason: trimmedReason,
+      actionKey: "self_service_prediction_reset"
+    });
+    if (!resetResult.ok) {
+      return resetResult;
+    }
+
+    revalidatePath("/dashboard");
+    revalidatePath("/leaderboard");
+    revalidatePath("/groups");
+    revalidatePath("/knockout");
+    revalidatePath("/profile");
+
+    return {
+      ok: true,
+      affectedPredictionCount: resetResult.affectedCounts.predictions,
+      affectedBracketPredictionCount: resetResult.affectedCounts.bracketPredictions,
+      affectedProjectedBracketPredictionCount: resetResult.affectedCounts.projectedBracketPredictions,
+      affectedLegacyBracketPickCount: resetResult.affectedCounts.legacyBracketPicks,
+      affectedBracketScoreCount: resetResult.affectedCounts.bracketScores,
+      affectedPredictionScoreCount: resetResult.affectedCounts.predictionScores,
+      affectedLeaderboardEventCount: resetResult.affectedCounts.leaderboardEvents,
+      affectedLeaderboardSnapshotCount: resetResult.affectedCounts.leaderboardSnapshots,
+      message: "Your test predictions were cleared."
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not clear your test predictions. Please try again.") };
   }
 }
 
@@ -1745,7 +1789,7 @@ export async function resetMatchToOpenAction(
 
     let clearedDownstreamPredictions = 0;
     if ((matchRow as MatchRow).stage === "group") {
-      const resetResult = await resetGroupMatchScoring(adminSupabase, trimmedMatchId);
+      const resetResult = await clearDerivedGroupMatchScoringState(adminSupabase, trimmedMatchId);
       if (!resetResult.ok) {
         return resetResult;
       }
@@ -2380,6 +2424,131 @@ async function clearTestingSocialStateWithClient(
     deletedLeaderboardEvents: leaderboardEventsCountResult.count ?? 0,
     deletedUserTrophies: userTrophiesCountResult.count ?? 0,
     deletedLeaderboardSnapshots: leaderboardSnapshotsCountResult.count ?? 0
+  };
+}
+
+async function performClearUserPredictionReset(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    targetUserId: string;
+    actorUserId: string;
+    actorEmail: string | null;
+    actorTier: AccessLevel;
+    reason: string;
+    actionKey: "clear_user_test_predictions" | "self_service_prediction_reset";
+    expectedEmail?: string;
+  }
+):
+  Promise<
+    | {
+        ok: true;
+        message: string;
+        affectedCounts: {
+          predictions: number;
+          bracketPredictions: number;
+          projectedBracketPredictions: number;
+          legacyBracketPicks: number;
+          bracketScores: number;
+          predictionScores: number;
+          leaderboardEvents: number;
+          leaderboardSnapshots: number;
+        };
+      }
+    | { ok: false; message: string }
+  > {
+  const { data: userProfile, error: userProfileError } = await adminSupabase
+    .from("users")
+    .select("id,email")
+    .eq("id", input.targetUserId)
+    .maybeSingle();
+
+  if (userProfileError) {
+    return { ok: false, message: userProfileError.message };
+  }
+
+  if (!userProfile) {
+    return { ok: false, message: "That user was not found." };
+  }
+
+  const normalizedEmail = (userProfile.email ?? "").trim().toLowerCase();
+  if (typeof input.expectedEmail === "string" && normalizedEmail !== input.expectedEmail.trim().toLowerCase()) {
+    return { ok: false, message: `Type ${normalizedEmail} to confirm this user reset.` };
+  }
+
+  const [
+    predictionsResult,
+    bracketPredictionsResult,
+    projectedBracketPredictionsResult,
+    legacyBracketPicksResult,
+    bracketScoresResult,
+    predictionScoresResult,
+    leaderboardEventsResult,
+    leaderboardSnapshotsResult
+  ] = await Promise.all([
+    adminSupabase.from("predictions").select("id", { count: "exact", head: true }).eq("user_id", input.targetUserId),
+    countOptionalGameplayRows(adminSupabase, "bracket_predictions", input.targetUserId),
+    countOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", input.targetUserId),
+    countOptionalGameplayRows(adminSupabase, "bracket_picks", input.targetUserId),
+    adminSupabase.from("bracket_scores").select("id", { count: "exact", head: true }).eq("user_id", input.targetUserId),
+    adminSupabase.from("prediction_scores").select("prediction_id", { count: "exact", head: true }).eq("user_id", input.targetUserId),
+    adminSupabase.from("leaderboard_events").select("id", { count: "exact", head: true }).eq("user_id", input.targetUserId),
+    adminSupabase.from("leaderboard_snapshots").select("id", { count: "exact", head: true }).eq("user_id", input.targetUserId)
+  ]);
+
+  const deletionResults = await Promise.all([
+    adminSupabase.from("predictions").delete().eq("user_id", input.targetUserId),
+    deleteOptionalGameplayRows(adminSupabase, "bracket_predictions", input.targetUserId),
+    deleteOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", input.targetUserId),
+    deleteOptionalGameplayRows(adminSupabase, "bracket_picks", input.targetUserId),
+    adminSupabase.from("bracket_scores").delete().eq("user_id", input.targetUserId),
+    adminSupabase.from("prediction_scores").delete().eq("user_id", input.targetUserId),
+    adminSupabase.from("leaderboard_events").delete().eq("user_id", input.targetUserId),
+    adminSupabase.from("leaderboard_snapshots").delete().eq("user_id", input.targetUserId)
+  ]);
+
+  const failedDeletion = deletionResults.find((result) => result.error);
+  if (failedDeletion?.error) {
+    return { ok: false, message: failedDeletion.error.message };
+  }
+
+  const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+  if (!leaderboardResult.ok) {
+    return leaderboardResult;
+  }
+
+  const resetMarkerWarning = await bumpDashboardUiResetEpoch(input.actionKey);
+  const affectedCounts = {
+    predictions: predictionsResult.count ?? 0,
+    bracketPredictions: bracketPredictionsResult.count ?? 0,
+    projectedBracketPredictions: projectedBracketPredictionsResult.count ?? 0,
+    legacyBracketPicks: legacyBracketPicksResult.count ?? 0,
+    bracketScores: bracketScoresResult.count ?? 0,
+    predictionScores: predictionScoresResult.count ?? 0,
+    leaderboardEvents: leaderboardEventsResult.count ?? 0,
+    leaderboardSnapshots: leaderboardSnapshotsResult.count ?? 0
+  };
+
+  await writeAdminResetAuditLog(adminSupabase, {
+    actorUserId: input.actorUserId,
+    actorEmail: input.actorEmail,
+    actionKey: input.actionKey,
+    scope: "user",
+    reason: input.reason,
+    success: true,
+    targetIds: [input.targetUserId],
+    affectedCounts,
+    details: {
+      actorTier: input.actorTier,
+      selfService: input.actionKey === "self_service_prediction_reset"
+    }
+  });
+
+  return {
+    ok: true,
+    affectedCounts,
+    message: resetMarkerWarning
+      ? `Cleared ${userProfile.email}'s test predictions and rebuilt leaderboard state. ${resetMarkerWarning}`
+      : `Cleared ${userProfile.email}'s test predictions and rebuilt leaderboard state.`
   };
 }
 
@@ -3047,7 +3216,7 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
 
   if ((previousMatch as MatchRow).status === "final" && input.status !== "final") {
     if ((previousMatch as MatchRow).stage === "group") {
-      const resetResult = await resetGroupMatchScoring(adminSupabase, input.id);
+      const resetResult = await clearDerivedGroupMatchScoringState(adminSupabase, input.id);
       if (!resetResult.ok) {
         return resetResult;
       }
@@ -3221,7 +3390,7 @@ export async function batchFinalizeMatchResultsAction(
     }
   >).filter((match) => isBatchFinalizeScopeMatch(match, input.scope));
 
-  const maxBatchSize = 50;
+  const maxBatchSize = 72;
   if (candidateMatches.length > maxBatchSize) {
     return {
       ok: false,
@@ -3367,6 +3536,217 @@ export async function batchFinalizeMatchResultsAction(
     scoringJobsTriggered,
     errors,
     message: `Processed ${processed} matches. Finalized ${finalized}, skipped ${skipped}, overwrote ${overwritten}, triggered scoring for ${scoringJobsTriggered}.`
+  };
+}
+
+export async function batchClearMatchResultsAction(
+  input: BatchClearMatchResultsInput
+): Promise<BatchClearMatchResultsResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  if (input.confirmationText !== "CLEAR TEST MATCH RESULTS") {
+    return { ok: false, message: "Batch clear confirmation did not match. No matches were changed." };
+  }
+
+  try {
+    ensureRecoveryActionAllowed("batch_finalize", "batchClearMatchResultsAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Testing tools are disabled in this environment.") };
+  }
+
+  if (!input.fromDate || !input.toDate) {
+    return { ok: false, message: "Choose both a from date and a to date." };
+  }
+
+  if (input.fromDate > input.toDate) {
+    return { ok: false, message: "From date must be before or equal to the to date." };
+  }
+
+  const adminSupabase = createAdminClient();
+  const fromIso = `${input.fromDate}T00:00:00.000Z`;
+  const toIso = `${input.toDate}T23:59:59.999Z`;
+
+  const { data: matches, error } = await adminSupabase
+    .from("matches")
+    .select("id,stage,status,home_score,away_score,winner_team_id,finalized_at,last_synced_at,is_manual_override,kickoff_time")
+    .gte("kickoff_time", fromIso)
+    .lte("kickoff_time", toIso)
+    .order("kickoff_time", { ascending: true });
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  const candidateMatches = ((matches ?? []) as MatchRow[]).filter(
+    (match) => isBatchFinalizeScopeMatch(match, input.scope) && match.is_manual_override === true
+  );
+  const maxBatchSize = 72;
+  if (candidateMatches.length > maxBatchSize) {
+    return {
+      ok: false,
+      message: `Batch result clearing is limited to ${maxBatchSize} matches at a time. Narrow the date range or scope.`
+    };
+  }
+
+  let processed = 0;
+  let cleared = 0;
+  let skipped = 0;
+  const knockoutMatchIds: string[] = [];
+
+  for (const match of candidateMatches) {
+    processed += 1;
+    const hasExistingResult =
+      match.home_score != null ||
+      match.away_score != null ||
+      match.winner_team_id != null ||
+      match.finalized_at != null ||
+      match.last_synced_at != null ||
+      match.status !== "scheduled";
+
+    if (!hasExistingResult) {
+      skipped += 1;
+      continue;
+    }
+
+    const updateResult = await adminSupabase
+      .from("matches")
+      .update({
+        status: "scheduled",
+        home_score: null,
+        away_score: null,
+        winner_team_id: null,
+        finalized_at: null,
+        last_synced_at: null,
+        is_manual_override: false,
+        sync_status: null,
+        sync_error: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", match.id);
+
+    if (updateResult.error && !isOptionalResetColumnError(updateResult.error.message)) {
+      return { ok: false, message: updateResult.error.message };
+    }
+
+    if (updateResult.error) {
+      const fallbackUpdate = await adminSupabase
+        .from("matches")
+        .update({
+          status: "scheduled",
+          home_score: null,
+          away_score: null,
+          winner_team_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", match.id);
+      if (fallbackUpdate.error) {
+        return { ok: false, message: fallbackUpdate.error.message };
+      }
+    }
+
+    if (match.stage === "group") {
+      const resetResult = await clearDerivedGroupMatchScoringState(adminSupabase, match.id);
+      if (!resetResult.ok) {
+        return resetResult;
+      }
+    } else {
+      await resetKnockoutMatchScoring(match.id);
+      knockoutMatchIds.push(match.id);
+    }
+
+    await appendMatchEvent(adminSupabase, {
+      matchId: match.id,
+      eventType: "reopen",
+      payload: {
+        source: "admin-batch-clear",
+        actorUserId: superAdminCheck.userId,
+        previousStatus: match.status,
+        nextStatus: "scheduled"
+      }
+    });
+
+    cleared += 1;
+  }
+
+  if (cleared > 0) {
+    if (knockoutMatchIds.length > 0) {
+      const advancementSummary = await rebuildKnockoutAdvancementSharedWithClient(adminSupabase);
+      const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+      if (!leaderboardResult.ok) {
+        return leaderboardResult;
+      }
+
+      await writeAdminResetAuditLog(adminSupabase, {
+        actorUserId: superAdminCheck.userId,
+        actorEmail: superAdminCheck.email,
+        actionKey: "batch_clear_test_matches",
+        scope: "batch_finalize",
+        reason: `Batch clear ${input.scope} matches from ${input.fromDate} to ${input.toDate}`,
+        success: true,
+        targetIds: candidateMatches.map((match) => match.id),
+        affectedCounts: {
+          processed,
+          cleared,
+          skipped,
+          repairedKnockoutMatches: advancementSummary.touchedMatches
+        },
+        details: {
+          scope: input.scope
+        }
+      });
+    } else {
+      const leaderboardResult = await recalculateLeaderboard(adminSupabase);
+      if (!leaderboardResult.ok) {
+        return leaderboardResult;
+      }
+
+      await writeAdminResetAuditLog(adminSupabase, {
+        actorUserId: superAdminCheck.userId,
+        actorEmail: superAdminCheck.email,
+        actionKey: "batch_clear_test_matches",
+        scope: "batch_finalize",
+        reason: `Batch clear ${input.scope} matches from ${input.fromDate} to ${input.toDate}`,
+        success: true,
+        targetIds: candidateMatches.map((match) => match.id),
+        affectedCounts: {
+          processed,
+          cleared,
+          skipped,
+          repairedKnockoutMatches: 0
+        },
+        details: {
+          scope: input.scope
+        }
+      });
+    }
+  }
+
+  const resetMarkerWarning = await bumpDashboardUiResetEpoch("batch clear match results");
+  revalidatePath("/");
+  revalidatePath("/dashboard");
+  revalidatePath("/groups");
+  revalidatePath("/leaderboard");
+  revalidatePath("/knockout");
+  revalidatePath("/predictions");
+  revalidatePath("/profile");
+  revalidatePath("/admin/matches");
+  revalidatePath("/my-groups");
+
+  return {
+    ok: true,
+    processed,
+    cleared,
+    skipped,
+    repairedKnockoutMatches: knockoutMatchIds.length,
+      message: resetMarkerWarning
+      ? `Processed ${processed} pretend-result matches. Cleared ${cleared}, skipped ${skipped}. ${resetMarkerWarning}`
+      : `Processed ${processed} pretend-result matches. Cleared ${cleared}, skipped ${skipped}.`
   };
 }
 
@@ -5451,10 +5831,11 @@ function buildPointsAwardedMessage(points: number) {
   return `earned +${points} ${points === 1 ? "point" : "points"}`;
 }
 
-async function resetGroupMatchScoring(
+async function clearDerivedGroupMatchScoringState(
   adminSupabase: ReturnType<typeof createAdminClient>,
   matchId: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  // Preserve the pick inputs themselves. Only derived scoring state is cleared here.
   const [{ data: affectedPredictions, error: affectedPredictionsError }, { data: groupMemberships, error: groupMembershipsError }] =
     await Promise.all([
       adminSupabase.from("predictions").select("user_id").eq("match_id", matchId),

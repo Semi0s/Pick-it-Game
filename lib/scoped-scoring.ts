@@ -1,6 +1,8 @@
 import { normalizeKnockoutStage } from "@/lib/match-stage";
+import { getRequiredThirdPlaceQualifierCount } from "@/lib/knockout-seeding";
 import { isMissingAnyRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { normalizeGroupStageMode, type GroupStageMode } from "@/lib/group-stage-modes";
 
 export type ScoringScope = "standard" | "group_custom";
 export type ManagedGroupRulesetStatus = "draft" | "active" | "locked" | "superseded" | "archived";
@@ -21,6 +23,13 @@ export const GROUP_RULESET_BONUS_LIMITS = {
 
 export type ManagedGroupRulesetInput = {
   status?: ManagedGroupRulesetStatus | null;
+  groupStageMode?: GroupStageMode | null;
+  groupStagePredictionDepth?: "simple_results" | "full_match_scores" | null;
+  fullMatchScoringVariant?: "classic" | "goal_difference_bonus" | null;
+  groupBonusMode?: "classic" | "early_bird" | "high_stakes" | "all_in" | null;
+  groupStagePicksDueAt?: string | null;
+  knockoutPicksDueAt?: string | null;
+  scoringSettingsLockedAt?: string | null;
   earlyGroupStageCompletionBonus?: number | null;
   knockoutCompletionBonus?: number | null;
   finalMatchupBonus?: number | null;
@@ -50,6 +59,13 @@ export const MANAGED_GROUP_RULESET_PRESETS: ManagedGroupRulesetPreset[] = [
     description: "No custom bonuses. Standard scoring only inside the group.",
     ruleset: {
       status: "active",
+      groupStageMode: "full_scores",
+      groupStagePredictionDepth: "full_match_scores",
+      fullMatchScoringVariant: "classic",
+      groupBonusMode: "classic",
+      groupStagePicksDueAt: null,
+      knockoutPicksDueAt: null,
+      scoringSettingsLockedAt: null,
       earlyGroupStageCompletionBonus: 0,
       knockoutCompletionBonus: 0,
       finalMatchupBonus: 0,
@@ -63,6 +79,13 @@ export const MANAGED_GROUP_RULESET_PRESETS: ManagedGroupRulesetPreset[] = [
     description: "Adds small completion bonuses and a bigger late-round swing.",
     ruleset: {
       status: "active",
+      groupStageMode: "full_scores",
+      groupStagePredictionDepth: "full_match_scores",
+      fullMatchScoringVariant: "classic",
+      groupBonusMode: "high_stakes",
+      groupStagePicksDueAt: null,
+      knockoutPicksDueAt: null,
+      scoringSettingsLockedAt: null,
       earlyGroupStageCompletionBonus: 10,
       knockoutCompletionBonus: 5,
       finalMatchupBonus: 12,
@@ -76,6 +99,13 @@ export const MANAGED_GROUP_RULESET_PRESETS: ManagedGroupRulesetPreset[] = [
     description: "Keeps the group calm early and makes the final matter most.",
     ruleset: {
       status: "active",
+      groupStageMode: "full_scores",
+      groupStagePredictionDepth: "full_match_scores",
+      fullMatchScoringVariant: "classic",
+      groupBonusMode: "all_in",
+      groupStagePicksDueAt: null,
+      knockoutPicksDueAt: null,
+      scoringSettingsLockedAt: null,
       earlyGroupStageCompletionBonus: 0,
       knockoutCompletionBonus: 0,
       finalMatchupBonus: 15,
@@ -89,6 +119,13 @@ export const MANAGED_GROUP_RULESET_PRESETS: ManagedGroupRulesetPreset[] = [
     description: "Leaves match bonuses light and leans on this group's local side picks.",
     ruleset: {
       status: "active",
+      groupStageMode: "full_scores",
+      groupStagePredictionDepth: "full_match_scores",
+      fullMatchScoringVariant: "classic",
+      groupBonusMode: "classic",
+      groupStagePicksDueAt: null,
+      knockoutPicksDueAt: null,
+      scoringSettingsLockedAt: null,
       earlyGroupStageCompletionBonus: 0,
       knockoutCompletionBonus: 0,
       finalMatchupBonus: 5,
@@ -102,6 +139,13 @@ export const MANAGED_GROUP_RULESET_PRESETS: ManagedGroupRulesetPreset[] = [
     description: "Balanced group-local bonuses with a sharper finals reward.",
     ruleset: {
       status: "active",
+      groupStageMode: "full_scores",
+      groupStagePredictionDepth: "full_match_scores",
+      fullMatchScoringVariant: "classic",
+      groupBonusMode: "all_in",
+      groupStagePicksDueAt: null,
+      knockoutPicksDueAt: null,
+      scoringSettingsLockedAt: null,
       earlyGroupStageCompletionBonus: 8,
       knockoutCompletionBonus: 5,
       finalMatchupBonus: 10,
@@ -116,6 +160,13 @@ export type ManagedGroupRulesetSummary = {
   groupId: string;
   version: number;
   status: ManagedGroupRulesetStatus;
+  groupStageMode: GroupStageMode;
+  groupStagePredictionDepth: "simple_results" | "full_match_scores";
+  fullMatchScoringVariant: "classic" | "goal_difference_bonus" | null;
+  groupBonusMode: "classic" | "early_bird" | "high_stakes" | "all_in";
+  groupStagePicksDueAt: string | null;
+  knockoutPicksDueAt: string | null;
+  scoringSettingsLockedAt: string | null;
   presetKey: ManagedGroupRulesetPresetKey | null;
   earlyGroupStageCompletionBonus: number;
   knockoutCompletionBonus: number;
@@ -143,6 +194,13 @@ type GroupRulesetRow = {
   group_id: string;
   version: number;
   status: ManagedGroupRulesetStatus;
+  group_stage_mode?: string | null;
+  group_stage_prediction_depth?: string | null;
+  full_match_scoring_variant?: string | null;
+  group_bonus_mode?: string | null;
+  group_stage_picks_due_at?: string | null;
+  knockout_picks_due_at?: string | null;
+  scoring_settings_locked_at?: string | null;
   early_group_stage_completion_bonus: number;
   knockout_completion_bonus: number;
   final_matchup_bonus: number;
@@ -189,6 +247,7 @@ type GroupMemberRow = {
 type MatchRow = {
   id: string;
   stage: string;
+  group_name?: string | null;
   kickoff_time: string;
   status: string;
   home_team_id?: string | null;
@@ -198,18 +257,27 @@ type MatchRow = {
   winner_team_id?: string | null;
 };
 
-type PredictionRow = {
-  user_id: string;
-  match_id: string;
-  updated_at?: string | null;
-};
-
 type BracketPredictionRow = {
   user_id: string;
   match_id: string;
   predicted_winner_team_id?: string | null;
   predicted_home_score?: number | null;
   predicted_away_score?: number | null;
+  updated_at?: string | null;
+};
+
+type UserGroupSeedRankingRow = {
+  user_id: string;
+  group_name: string;
+  rank_position: number;
+  updated_at?: string | null;
+};
+
+type UserBestThirdRankingRow = {
+  user_id: string;
+  team_id: string;
+  rank_position: number;
+  updated_at?: string | null;
 };
 
 type GroupBonusScoreInsert = {
@@ -271,6 +339,7 @@ export function deriveManagedGroupRulesetPresetKey(
 export function validateManagedGroupRulesetInput(input: ManagedGroupRulesetInput) {
   return {
     status: normalizeManagedGroupRulesetStatus(input.status),
+    groupStageMode: normalizeGroupStageMode(input.groupStageMode),
     earlyGroupStageCompletionBonus: normalizeBonusValue(
       input.earlyGroupStageCompletionBonus,
       GROUP_RULESET_BONUS_LIMITS.earlyGroupStageCompletionBonus
@@ -295,6 +364,9 @@ export function summarizeManagedGroupRuleset(
   ruleset: Pick<
     ManagedGroupRulesetSummary,
     | "status"
+    | "groupStagePredictionDepth"
+    | "fullMatchScoringVariant"
+    | "groupBonusMode"
     | "earlyGroupStageCompletionBonus"
     | "knockoutCompletionBonus"
     | "finalMatchupBonus"
@@ -303,6 +375,10 @@ export function summarizeManagedGroupRuleset(
   >
 ) {
   const activeItems = [
+    ruleset.fullMatchScoringVariant === "goal_difference_bonus" ? "Goal Difference Bonus" : "Classic score grading",
+    ruleset.groupBonusMode
+      ? `Bonus mode: ${ruleset.groupBonusMode.replace(/_/g, " ")}`
+      : null,
     ruleset.earlyGroupStageCompletionBonus > 0
       ? `Early completion +${ruleset.earlyGroupStageCompletionBonus}`
       : null,
@@ -332,7 +408,7 @@ export async function fetchActiveGroupRulesets(
   const { data, error } = await adminSupabase
     .from("group_rulesets")
     .select(
-      "id,group_id,version,status,early_group_stage_completion_bonus,knockout_completion_bonus,final_matchup_bonus,exact_final_score_bonus,side_pick_package_id,created_by_user_id,created_at,updated_at,side_pick_package:side_pick_packages(id,key,name,scoring_scope)"
+      "id,group_id,version,status,group_stage_mode,group_stage_prediction_depth,full_match_scoring_variant,group_bonus_mode,group_stage_picks_due_at,knockout_picks_due_at,scoring_settings_locked_at,early_group_stage_completion_bonus,knockout_completion_bonus,final_matchup_bonus,exact_final_score_bonus,side_pick_package_id,created_by_user_id,created_at,updated_at,side_pick_package:side_pick_packages(id,key,name,scoring_scope)"
     )
     .in("group_id", uniqueGroupIds)
     .in("status", ["active", "locked", "draft"])
@@ -366,6 +442,13 @@ export async function fetchActiveGroupRulesets(
           exactFinalScoreBonus: row.exact_final_score_bonus ?? 0,
           sidePickPackageKey: sidePickPackage?.key ?? null
         }),
+        groupStageMode: normalizeGroupStageMode(row.group_stage_mode),
+        groupStagePredictionDepth: normalizeGroupStagePredictionDepth(row.group_stage_prediction_depth),
+        fullMatchScoringVariant: normalizeFullMatchScoringVariant(row.full_match_scoring_variant),
+        groupBonusMode: normalizeGroupBonusMode(row.group_bonus_mode),
+        groupStagePicksDueAt: row.group_stage_picks_due_at ?? null,
+        knockoutPicksDueAt: row.knockout_picks_due_at ?? null,
+        scoringSettingsLockedAt: row.scoring_settings_locked_at ?? null,
         earlyGroupStageCompletionBonus: row.early_group_stage_completion_bonus ?? 0,
         knockoutCompletionBonus: row.knockout_completion_bonus ?? 0,
         finalMatchupBonus: row.final_matchup_bonus ?? 0,
@@ -395,6 +478,29 @@ export async function fetchActiveGroupRulesets(
   }
 
   return selectedRulesets;
+}
+
+export function normalizeGroupStagePredictionDepth(value?: string | null): "simple_results" | "full_match_scores" {
+  return value === "simple_results" ? "simple_results" : "full_match_scores";
+}
+
+export function normalizeFullMatchScoringVariant(value?: string | null): "classic" | "goal_difference_bonus" | null {
+  if (value === "goal_difference_bonus") {
+    return "goal_difference_bonus";
+  }
+
+  return value === "classic" ? "classic" : null;
+}
+
+export function normalizeGroupBonusMode(value?: string | null): "classic" | "early_bird" | "high_stakes" | "all_in" {
+  switch (value) {
+    case "early_bird":
+    case "high_stakes":
+    case "all_in":
+      return value;
+    default:
+      return "classic";
+  }
 }
 
 export async function fetchSidePickPackageOptions(
@@ -541,7 +647,7 @@ export async function rebuildGroupCustomBonusScores(
     adminSupabase.from("group_members").select("group_id,user_id").in("group_id", scopedGroupIds),
     adminSupabase
       .from("matches")
-      .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_score,away_score,winner_team_id")
+      .select("id,stage,group_name,kickoff_time,status,home_team_id,away_team_id,home_score,away_score,winner_team_id")
       .order("kickoff_time", { ascending: true })
   ]);
 
@@ -553,21 +659,31 @@ export async function rebuildGroupCustomBonusScores(
   const matchRows = (matches ?? []) as MatchRow[];
   const userIds = Array.from(new Set(memberRows.map((row) => row.user_id)));
 
-  const [{ data: predictions, error: predictionsError }, { data: bracketPredictions, error: bracketPredictionsError }] =
-    await Promise.all([
-      adminSupabase
-        .from("predictions")
-        .select("user_id,match_id,updated_at")
-        .in("user_id", userIds),
+  const [
+    { data: bracketPredictions, error: bracketPredictionsError },
+    { data: seedRankings, error: seedRankingsError },
+    { data: bestThirdRankings, error: bestThirdRankingsError }
+  ] = await Promise.all([
       adminSupabase
         .from("bracket_predictions")
-        .select("user_id,match_id,predicted_winner_team_id,predicted_home_score,predicted_away_score")
+        .select("user_id,match_id,predicted_winner_team_id,predicted_home_score,predicted_away_score,updated_at")
+        .in("user_id", userIds),
+      adminSupabase
+        .from("user_group_seed_rankings")
+        .select("user_id,group_name,rank_position,updated_at")
+        .in("user_id", userIds),
+      adminSupabase
+        .from("user_best_third_rankings")
+        .select("user_id,team_id,rank_position,updated_at")
         .in("user_id", userIds)
     ]);
 
-  if (predictionsError || bracketPredictionsError) {
+  if (bracketPredictionsError || seedRankingsError || bestThirdRankingsError) {
     throw new Error(
-      predictionsError?.message ?? bracketPredictionsError?.message ?? "Could not load predictions for group bonus scoring."
+      bracketPredictionsError?.message ??
+        seedRankingsError?.message ??
+        bestThirdRankingsError?.message ??
+        "Could not load predictions for group bonus scoring."
     );
   }
 
@@ -577,8 +693,9 @@ export async function rebuildGroupCustomBonusScores(
     rulesets,
     memberships: memberRows,
     matches: matchRows,
-    predictions: (predictions ?? []) as PredictionRow[],
-    bracketPredictions: (bracketPredictions ?? []) as BracketPredictionRow[]
+    bracketPredictions: (bracketPredictions ?? []) as BracketPredictionRow[],
+    groupSeedRankings: (seedRankings ?? []) as UserGroupSeedRankingRow[],
+    bestThirdRankings: (bestThirdRankings ?? []) as UserBestThirdRankingRow[]
   });
 
   if (inserts.length === 0) {
@@ -768,6 +885,7 @@ async function fetchActiveGroupRulesetsForRebuild(
     .from("group_rulesets")
     .select(
       "id,group_id,version,status,early_group_stage_completion_bonus,knockout_completion_bonus,final_matchup_bonus,exact_final_score_bonus"
+      + ",group_stage_picks_due_at,knockout_picks_due_at"
     )
     .eq("status", "active");
 
@@ -789,7 +907,7 @@ async function fetchActiveGroupRulesetsForRebuild(
     throw new Error(error.message);
   }
 
-  return ((data ?? []) as Array<{
+  return ((data ?? []) as unknown as Array<{
     id: string;
     group_id: string;
     version: number;
@@ -798,6 +916,8 @@ async function fetchActiveGroupRulesetsForRebuild(
     knockout_completion_bonus: number;
     final_matchup_bonus: number;
     exact_final_score_bonus: number;
+    group_stage_picks_due_at?: string | null;
+    knockout_picks_due_at?: string | null;
   }>);
 }
 
@@ -810,11 +930,14 @@ function buildGroupBonusScoreRows(input: {
     knockout_completion_bonus: number;
     final_matchup_bonus: number;
     exact_final_score_bonus: number;
+    group_stage_picks_due_at?: string | null;
+    knockout_picks_due_at?: string | null;
   }>;
   memberships: GroupMemberRow[];
   matches: MatchRow[];
-  predictions: PredictionRow[];
   bracketPredictions: BracketPredictionRow[];
+  groupSeedRankings: UserGroupSeedRankingRow[];
+  bestThirdRankings: UserBestThirdRankingRow[];
 }): GroupBonusScoreInsert[] {
   const membersByGroup = new Map<string, string[]>();
   for (const membership of input.memberships) {
@@ -825,7 +948,22 @@ function buildGroupBonusScoreRows(input: {
 
   const groupMatches = input.matches.filter((match) => match.stage === "group");
   const earliestGroupKickoff = groupMatches[0]?.kickoff_time ?? null;
-  const groupMatchIds = new Set(groupMatches.map((match) => match.id));
+  const expectedGroupCount = new Set(
+    groupMatches.map((match) => match.group_name?.trim() ?? "").filter((groupName) => groupName.length > 0)
+  ).size;
+  const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(
+    input.matches
+      .filter((match) => normalizeKnockoutStage(match.stage) === "r32")
+      .map((match) => ({
+        id: match.id,
+        stage: match.stage,
+        status: match.status as "scheduled" | "locked" | "live" | "final",
+        homeSource: null,
+        awaySource: null,
+        homeTeamId: match.home_team_id ?? null,
+        awayTeamId: match.away_team_id ?? null
+      }))
+  );
 
   const knockoutMatches = input.matches.filter((match) => match.stage !== "group");
   const knockoutMatchIds = new Set(knockoutMatches.map((match) => match.id));
@@ -836,13 +974,6 @@ function buildGroupBonusScoreRows(input: {
     .filter((teamId): teamId is string => Boolean(teamId))
     .sort();
 
-  const predictionsByUser = new Map<string, PredictionRow[]>();
-  for (const prediction of input.predictions) {
-    const list = predictionsByUser.get(prediction.user_id) ?? [];
-    list.push(prediction);
-    predictionsByUser.set(prediction.user_id, list);
-  }
-
   const bracketPredictionsByUser = new Map<string, BracketPredictionRow[]>();
   for (const prediction of input.bracketPredictions) {
     const list = bracketPredictionsByUser.get(prediction.user_id) ?? [];
@@ -850,20 +981,48 @@ function buildGroupBonusScoreRows(input: {
     bracketPredictionsByUser.set(prediction.user_id, list);
   }
 
+  const seedRankingsByUser = new Map<string, UserGroupSeedRankingRow[]>();
+  for (const ranking of input.groupSeedRankings) {
+    const list = seedRankingsByUser.get(ranking.user_id) ?? [];
+    list.push(ranking);
+    seedRankingsByUser.set(ranking.user_id, list);
+  }
+
+  const bestThirdRankingsByUser = new Map<string, UserBestThirdRankingRow[]>();
+  for (const ranking of input.bestThirdRankings) {
+    const list = bestThirdRankingsByUser.get(ranking.user_id) ?? [];
+    list.push(ranking);
+    bestThirdRankingsByUser.set(ranking.user_id, list);
+  }
+
   const inserts: GroupBonusScoreInsert[] = [];
   for (const ruleset of input.rulesets) {
     const memberUserIds = Array.from(new Set(membersByGroup.get(ruleset.group_id) ?? []));
     for (const userId of memberUserIds) {
-      const userPredictions = predictionsByUser.get(userId) ?? [];
-      const userGroupPredictions = userPredictions.filter((prediction) => groupMatchIds.has(prediction.match_id));
       const userBracketPredictions = bracketPredictionsByUser.get(userId) ?? [];
       const bracketByMatchId = new Map(userBracketPredictions.map((prediction) => [prediction.match_id, prediction]));
+      const userSeedRankings = seedRankingsByUser.get(userId) ?? [];
+      const userBestThirdRankings = bestThirdRankingsByUser.get(userId) ?? [];
+      const latestSeedBuilderUpdateAt = [
+        ...userSeedRankings.map((ranking) => ranking.updated_at ?? null),
+        ...userBestThirdRankings.map((ranking) => ranking.updated_at ?? null)
+      ]
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .at(-1) ?? null;
+      const hasCompleteSeedBuilder =
+        expectedGroupCount > 0 &&
+        userSeedRankings.length === expectedGroupCount * 4 &&
+        userBestThirdRankings.length >= requiredThirdPlaceQualifierCount;
+      const groupStageCompletionCutoff = ruleset.group_stage_picks_due_at ?? earliestGroupKickoff;
+      const knockoutCompletionCutoff = ruleset.knockout_picks_due_at ?? null;
 
       if (
         ruleset.early_group_stage_completion_bonus > 0 &&
-        earliestGroupKickoff &&
-        userGroupPredictions.length === groupMatchIds.size &&
-        userGroupPredictions.every((prediction) => prediction.updated_at && prediction.updated_at <= earliestGroupKickoff)
+        groupStageCompletionCutoff &&
+        hasCompleteSeedBuilder &&
+        latestSeedBuilderUpdateAt &&
+        latestSeedBuilderUpdateAt <= groupStageCompletionCutoff
       ) {
         inserts.push({
           group_id: ruleset.group_id,
@@ -872,14 +1031,25 @@ function buildGroupBonusScoreRows(input: {
           bonus_type: "early_group_stage_completion",
           scoring_scope: "group_custom",
           points: ruleset.early_group_stage_completion_bonus,
-          metadata: { cutoff: earliestGroupKickoff }
+          metadata: { cutoff: groupStageCompletionCutoff }
         });
       }
 
       if (
         ruleset.knockout_completion_bonus > 0 &&
         knockoutMatchIds.size > 0 &&
-        Array.from(knockoutMatchIds).every((matchId) => Boolean(bracketByMatchId.get(matchId)?.predicted_winner_team_id))
+        Array.from(knockoutMatchIds).every((matchId) => {
+          const prediction = bracketByMatchId.get(matchId);
+          if (!prediction?.predicted_winner_team_id) {
+            return false;
+          }
+
+          if (!knockoutCompletionCutoff || !prediction.updated_at) {
+            return Boolean(prediction.predicted_winner_team_id);
+          }
+
+          return prediction.updated_at <= knockoutCompletionCutoff;
+        })
       ) {
         inserts.push({
           group_id: ruleset.group_id,

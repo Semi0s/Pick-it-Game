@@ -4,6 +4,7 @@ import { appendMatchEvent } from "@/lib/match-events";
 import {
   buildGroupStandingsByGroup,
   buildQualifiedTeamSeeds,
+  getRequiredThirdPlaceQualifierCount,
   parseSeedSource,
   resolveRoundOf32SeedAssignments,
   summarizeKnockoutSeedState,
@@ -176,9 +177,13 @@ export async function seedOfficialKnockoutFromFinalGroupResults(
 
   try {
     const standingsByGroup = buildGroupStandingsByGroup(mappedGroupMatches, mappedTeams);
-    const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(standingsByGroup);
-    if (rankedThirdPlaceTeams.length < 8) {
-      throw new Error("Could not determine all eight best third-place qualifiers.");
+    const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(mappedRoundOf32Matches);
+    const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(
+      standingsByGroup,
+      requiredThirdPlaceQualifierCount || 8
+    );
+    if (rankedThirdPlaceTeams.length < (requiredThirdPlaceQualifierCount || 8)) {
+      throw new Error("Could not determine all required best third-place qualifiers.");
     }
 
     const slotDiagnostics = mappedRoundOf32Matches.flatMap((match) => [

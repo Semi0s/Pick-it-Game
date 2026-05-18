@@ -259,6 +259,16 @@ create unique index group_rulesets_active_group_unique_idx
   on public.group_rulesets (group_id)
   where status = 'active';
 
+create unique index group_rulesets_locked_group_unique_idx
+  on public.group_rulesets (group_id)
+  where scoring_settings_locked_at is not null;
+
+create index user_group_seed_rankings_user_group_idx
+  on public.user_group_seed_rankings (user_id, group_name, rank_position);
+
+create index user_best_third_rankings_user_rank_idx
+  on public.user_best_third_rankings (user_id, rank_position);
+
 create index side_pick_definitions_package_idx
   on public.side_pick_definitions (package_id, sort_order);
 
@@ -364,10 +374,18 @@ create table public.group_invites (
   language text not null default 'en',
   helper_language text not null default 'en',
   status public.group_invite_status not null default 'pending',
+  claim_token text,
   token_hash text not null unique,
   expires_at timestamptz,
   accepted_by_user_id uuid references public.users(id) on delete set null,
   accepted_at timestamptz,
+  email_status text not null default 'pending' check (email_status in ('pending', 'sent', 'failed')),
+  email_sent_at timestamptz,
+  email_provider_message_id text,
+  email_error text,
+  email_attempt_count integer not null default 0,
+  last_email_attempt_at timestamptz,
+  last_resent_by_user_id uuid references public.users(id) on delete set null,
   last_sent_at timestamptz,
   send_attempts integer not null default 0,
   last_error text,
@@ -536,6 +554,13 @@ create table public.group_rulesets (
   group_id uuid not null references public.groups(id) on delete cascade,
   version integer not null,
   status text not null default 'active' check (status in ('draft', 'active', 'locked', 'superseded', 'archived')),
+  group_stage_mode text not null default 'full_scores' check (group_stage_mode in ('full_scores', 'light_seed_builder')),
+  group_stage_prediction_depth text check (group_stage_prediction_depth in ('simple_results', 'full_match_scores')),
+  full_match_scoring_variant text check (full_match_scoring_variant in ('classic', 'goal_difference_bonus')),
+  group_bonus_mode text check (group_bonus_mode in ('classic', 'early_bird', 'high_stakes', 'all_in')),
+  group_stage_picks_due_at timestamptz,
+  knockout_picks_due_at timestamptz,
+  scoring_settings_locked_at timestamptz,
   early_group_stage_completion_bonus integer not null default 0,
   knockout_completion_bonus integer not null default 0,
   final_matchup_bonus integer not null default 0,
@@ -551,6 +576,29 @@ create table public.group_rulesets (
     and final_matchup_bonus >= 0 and final_matchup_bonus <= 15
     and exact_final_score_bonus >= 0 and exact_final_score_bonus <= 25
   )
+);
+
+create table public.user_group_seed_rankings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  group_name text not null,
+  team_id text not null references public.teams(id) on delete cascade,
+  rank_position integer not null check (rank_position between 1 and 4),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, group_name, team_id),
+  unique (user_id, group_name, rank_position)
+);
+
+create table public.user_best_third_rankings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  team_id text not null references public.teams(id) on delete cascade,
+  rank_position integer not null check (rank_position >= 1),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, team_id),
+  unique (user_id, rank_position)
 );
 
 create table public.side_pick_entries (
@@ -1585,6 +1633,14 @@ create trigger set_group_rulesets_updated_at
 before update on public.group_rulesets
 for each row execute function public.set_updated_at();
 
+create trigger set_user_group_seed_rankings_updated_at
+before update on public.user_group_seed_rankings
+for each row execute function public.set_updated_at();
+
+create trigger set_user_best_third_rankings_updated_at
+before update on public.user_best_third_rankings
+for each row execute function public.set_updated_at();
+
 create trigger set_side_pick_entries_updated_at
 before update on public.side_pick_entries
 for each row execute function public.set_updated_at();
@@ -1612,6 +1668,8 @@ alter table public.side_picks enable row level security;
 alter table public.side_pick_packages enable row level security;
 alter table public.side_pick_definitions enable row level security;
 alter table public.group_rulesets enable row level security;
+alter table public.user_group_seed_rankings enable row level security;
+alter table public.user_best_third_rankings enable row level security;
 alter table public.side_pick_entries enable row level security;
 alter table public.side_pick_scores enable row level security;
 alter table public.group_bonus_scores enable row level security;
@@ -2644,6 +2702,8 @@ revoke all on public.user_trophies from anon, authenticated, public;
 revoke all on public.side_pick_packages from anon, authenticated, public;
 revoke all on public.side_pick_definitions from anon, authenticated, public;
 revoke all on public.group_rulesets from anon, authenticated, public;
+revoke all on public.user_group_seed_rankings from anon, authenticated, public;
+revoke all on public.user_best_third_rankings from anon, authenticated, public;
 revoke all on public.side_pick_entries from anon, authenticated, public;
 revoke all on public.side_pick_scores from anon, authenticated, public;
 revoke all on public.group_bonus_scores from anon, authenticated, public;
@@ -2712,6 +2772,8 @@ grant select, insert, update, delete on public.user_trophies to service_role;
 grant select, insert, update, delete on public.side_pick_packages to service_role;
 grant select, insert, update, delete on public.side_pick_definitions to service_role;
 grant select, insert, update, delete on public.group_rulesets to service_role;
+grant select, insert, update, delete on public.user_group_seed_rankings to service_role;
+grant select, insert, update, delete on public.user_best_third_rankings to service_role;
 grant select, insert, update, delete on public.side_pick_entries to service_role;
 grant select, insert, update, delete on public.side_pick_scores to service_role;
 grant select, insert, update, delete on public.group_bonus_scores to service_role;

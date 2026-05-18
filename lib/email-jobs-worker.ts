@@ -25,6 +25,8 @@ type EmailJobRow = {
     suggestedDisplayName?: string | null;
     customMessage?: string | null;
     claimUrl?: string;
+    traceId?: string;
+    attemptAlreadyRecorded?: boolean;
     language?: string;
   } | null;
   status: EmailJobStatus;
@@ -45,6 +47,7 @@ type InviteRow = {
 
 type GroupInviteDeliveryRow = {
   id: string;
+  email_attempt_count?: number | null;
   send_attempts?: number | null;
 };
 
@@ -99,17 +102,19 @@ async function processJob(adminSupabase: ReturnType<typeof createAdminClient>, j
   try {
     console.info("[email-jobs] Processing job.", {
       jobId: job.id,
+      traceId: job.payload?.traceId ?? null,
       kind: job.kind,
       email: job.email,
       attempts: job.attempts,
       maxAttempts: job.max_attempts
     });
     let accessResult: AccessEmailResult | null = null;
+    let providerResponseId: string | null = null;
 
     if (job.kind === "access_email") {
       accessResult = await sendAccessEmail(adminSupabase, job);
     } else if (job.kind === "group_invite_email") {
-      await sendGroupInviteEmail(job);
+      providerResponseId = await sendGroupInviteEmail(job);
     } else {
       await sendPasswordRecovery(adminSupabase, job.email, job.payload?.language ?? null);
     }
@@ -121,11 +126,12 @@ async function processJob(adminSupabase: ReturnType<typeof createAdminClient>, j
     } else if (job.kind === "access_email") {
       await clearInviteQueueState(adminSupabase, job.email);
     } else if (job.kind === "group_invite_email") {
-      await markGroupInviteSent(adminSupabase, job);
+      await markGroupInviteSent(adminSupabase, job, providerResponseId);
     }
 
     console.info("[email-jobs] Job sent successfully.", {
       jobId: job.id,
+      traceId: job.payload?.traceId ?? null,
       kind: job.kind,
       email: job.email,
       accessResult
@@ -135,6 +141,7 @@ async function processJob(adminSupabase: ReturnType<typeof createAdminClient>, j
     const message = error instanceof Error ? error.message : "Unknown email processing error.";
     console.error("[email-jobs] Job processing failed.", {
       jobId: job.id,
+      traceId: job.payload?.traceId ?? null,
       kind: job.kind,
       email: job.email,
       message,
@@ -244,6 +251,7 @@ async function sendGroupInviteEmail(job: EmailJobRow) {
 
   console.info("[email-jobs] Sending group invite email.", {
     jobId: job.id,
+    traceId: payload.traceId ?? null,
     groupInviteId: payload.groupInviteId,
     groupId: payload.groupId ?? null,
     email: invitedEmail,
@@ -261,14 +269,17 @@ async function sendGroupInviteEmail(job: EmailJobRow) {
 
     console.info("[email-jobs] Group invite email sent.", {
       jobId: job.id,
+      traceId: payload.traceId ?? null,
       groupInviteId: payload.groupInviteId,
       email: invitedEmail,
       providerResponseId: result.providerResponseId
     });
+    return result.providerResponseId;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Resend error.";
     console.error("[email-jobs] Group invite email send failed.", {
       jobId: job.id,
+      traceId: payload.traceId ?? null,
       groupInviteId: payload.groupInviteId,
       email: invitedEmail,
       message
@@ -492,7 +503,11 @@ async function clearInviteQueueState(adminSupabase: ReturnType<typeof createAdmi
   });
 }
 
-async function markGroupInviteSent(adminSupabase: ReturnType<typeof createAdminClient>, job: EmailJobRow) {
+async function markGroupInviteSent(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  job: EmailJobRow,
+  providerResponseId: string | null
+) {
   const groupInviteId = job.payload?.groupInviteId;
   if (!groupInviteId) {
     return;
@@ -500,7 +515,7 @@ async function markGroupInviteSent(adminSupabase: ReturnType<typeof createAdminC
 
   const { data: invite, error: inviteLookupError } = await adminSupabase
     .from("group_invites")
-    .select("id,send_attempts")
+    .select("id,send_attempts,email_attempt_count")
     .eq("id", groupInviteId)
     .maybeSingle();
 
@@ -509,11 +524,20 @@ async function markGroupInviteSent(adminSupabase: ReturnType<typeof createAdminC
   }
 
   const inviteRow = invite as GroupInviteDeliveryRow;
+  const attemptAlreadyRecorded = Boolean(job.payload?.attemptAlreadyRecorded);
+  const nextAttemptCount = attemptAlreadyRecorded
+    ? inviteRow.email_attempt_count ?? inviteRow.send_attempts ?? 0
+    : Math.max(inviteRow.email_attempt_count ?? 0, inviteRow.send_attempts ?? 0) + 1;
   const { error } = await adminSupabase
     .from("group_invites")
     .update({
+      email_status: "sent",
+      email_sent_at: new Date().toISOString(),
+      email_provider_message_id: providerResponseId,
+      email_error: null,
+      email_attempt_count: nextAttemptCount,
       last_sent_at: new Date().toISOString(),
-      send_attempts: (inviteRow.send_attempts ?? 0) + 1,
+      send_attempts: nextAttemptCount,
       last_error: null
     })
     .eq("id", groupInviteId);
@@ -535,7 +559,7 @@ async function markGroupInviteFailed(
 
   const { data: invite, error: inviteLookupError } = await adminSupabase
     .from("group_invites")
-    .select("id,send_attempts")
+    .select("id,send_attempts,email_attempt_count")
     .eq("id", groupInviteId)
     .maybeSingle();
 
@@ -544,11 +568,18 @@ async function markGroupInviteFailed(
   }
 
   const inviteRow = invite as GroupInviteDeliveryRow;
+  const attemptAlreadyRecorded = Boolean(job.payload?.attemptAlreadyRecorded);
+  const nextAttemptCount = attemptAlreadyRecorded
+    ? inviteRow.email_attempt_count ?? inviteRow.send_attempts ?? 0
+    : Math.max(inviteRow.email_attempt_count ?? 0, inviteRow.send_attempts ?? 0) + 1;
   const { error } = await adminSupabase
     .from("group_invites")
     .update({
-      send_attempts: (inviteRow.send_attempts ?? 0) + 1,
-      last_error: message
+      email_status: "failed",
+      email_error: message.slice(0, 240),
+      email_attempt_count: nextAttemptCount,
+      send_attempts: nextAttemptCount,
+      last_error: message.slice(0, 240)
     })
     .eq("id", groupInviteId);
 

@@ -7,14 +7,25 @@
   background: #ffffff;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  width: 100%;
+}
+
 * {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  width: 100%;
+  overflow-x: clip;
   background: #ffffff;
   color: #111827;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-synthesis-weight: none;
 }
 
 a {
@@ -26,4 +37,14 @@ button,
 input,
 select {
   font: inherit;
+}
+
+@layer components {
+  .ui-chip-sm {
+    @apply inline-flex items-center rounded-md px-2 py-1 text-[10px] leading-none;
+  }
+
+  .ui-chip-sm-pill {
+    @apply inline-flex items-center rounded-full px-2 py-1 text-[10px] leading-none;
+  }
 }

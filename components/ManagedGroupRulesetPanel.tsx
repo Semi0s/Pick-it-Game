@@ -61,7 +61,7 @@ export function ManagedGroupRulesetPanel({
         statusLabel: "no active ruleset",
         summary: "Classic ruleset with no custom bonuses enabled."
       };
-  const isLocked = activeRuleset?.status === "locked";
+  const isLocked = activeRuleset?.status === "locked" || Boolean(activeRuleset?.scoringSettingsLockedAt);
 
   return (
     <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
@@ -93,7 +93,7 @@ export function ManagedGroupRulesetPanel({
 
           {isLocked ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm font-semibold text-amber-900">
-              This ruleset is locked. It stays visible for this group, but only a super admin should reopen or replace it.
+              This group’s scoring settings are locked. They stay visible here for reference, but normal manager edits are closed.
             </div>
           ) : (
             <form
@@ -180,6 +180,12 @@ export function ManagedGroupRulesetPanel({
                 Affects the group leaderboard only.
                 <br />
                 Does not affect the global leaderboard or average group standings.
+                <br />
+                Player prediction data is currently shared across leagues.
+                <br />
+                Players complete one shared Seed Builder, then can optionally add exact Group Stage match scores for more upside.
+                <br />
+                Changing this group’s scoring rules recalculates the group leaderboard from existing picks. Global leaderboard points are not changed.
               </div>
 
               <ActionButton type="submit" disabled={isSaving} fullWidth>

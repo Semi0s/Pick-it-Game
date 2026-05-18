@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
 import {
+  batchClearMatchResultsAction,
   batchFinalizeMatchResultsAction,
   fullPreLaunchTestResetAction,
   fetchKnockoutSeedingStatusAction,
@@ -48,6 +49,7 @@ const stageSortOrder: Record<MatchStage, number> = {
 const KNOCKOUT_RESET_CONFIRMATION_PHRASE = "RESET KNOCKOUT TEST DATA";
 const GROUP_RESET_CONFIRMATION_PHRASE = "RESET GROUP TEST DATA";
 const BATCH_FINALIZE_CONFIRMATION_PHRASE = "FINALIZE TEST MATCHES";
+const BATCH_CLEAR_CONFIRMATION_PHRASE = "CLEAR TEST MATCH RESULTS";
 const FULL_TEST_RESET_CONFIRMATION_PHRASE = "FULL PRE-LAUNCH TEST RESET";
 
 export function AdminMatchesClient() {
@@ -79,6 +81,9 @@ export function AdminMatchesClient() {
   const [isBatchFinalizeAcknowledged, setIsBatchFinalizeAcknowledged] = useState(false);
   const [batchFinalizeConfirmationText, setBatchFinalizeConfirmationText] = useState("");
   const [isBatchFinalizingMatches, setIsBatchFinalizingMatches] = useState(false);
+  const [isBatchClearAcknowledged, setIsBatchClearAcknowledged] = useState(false);
+  const [batchClearConfirmationText, setBatchClearConfirmationText] = useState("");
+  const [isBatchClearingMatches, setIsBatchClearingMatches] = useState(false);
   const [destructiveToolStatus, setDestructiveToolStatus] = useState<DestructiveAdminToolStatusResult | null>(null);
   const [knockoutSeedingStatusText, setKnockoutSeedingStatusText] = useState<string>("");
   const [knockoutSeedingStatusTone, setKnockoutSeedingStatusTone] = useState<"neutral" | "amber" | "emerald" | "rose">("neutral");
@@ -252,6 +257,12 @@ export function AdminMatchesClient() {
     batchFinalizeConfirmationText.trim().length > 0 &&
     batchFinalizeConfirmationText.replace(/\s+/g, "").toUpperCase() ===
       BATCH_FINALIZE_CONFIRMATION_PHRASE.replace(/\s+/g, "");
+  const isBatchClearPhraseValid = batchClearConfirmationText === BATCH_CLEAR_CONFIRMATION_PHRASE;
+  const isBatchClearPhraseClose =
+    !isBatchClearPhraseValid &&
+    batchClearConfirmationText.trim().length > 0 &&
+    batchClearConfirmationText.replace(/\s+/g, "").toUpperCase() ===
+      BATCH_CLEAR_CONFIRMATION_PHRASE.replace(/\s+/g, "");
   const canSubmitKnockoutReset =
     canUseDangerZone &&
     Boolean(knockoutAvailability?.environmentResetAllowed) &&
@@ -274,6 +285,14 @@ export function AdminMatchesClient() {
     isBatchFinalizeAcknowledged &&
     isBatchFinalizePhraseValid &&
     !isBatchFinalizingMatches;
+  const canSubmitBatchClear =
+    canUseDangerZone &&
+    Boolean(batchFinalizeAvailability?.environmentResetAllowed) &&
+    Boolean(batchFinalizeFromDate) &&
+    Boolean(batchFinalizeToDate) &&
+    isBatchClearAcknowledged &&
+    isBatchClearPhraseValid &&
+    !isBatchClearingMatches;
   const isFullResetPhraseValid = fullResetConfirmationText === FULL_TEST_RESET_CONFIRMATION_PHRASE;
   const resettableMatches = useMemo(
     () =>
@@ -606,6 +625,51 @@ export function AdminMatchesClient() {
       showAppToast({ tone: "error", text: (error as Error).message });
     } finally {
       setIsResettingMatch(false);
+    }
+  }
+
+  async function handleBatchClearMatches() {
+    if (!canSubmitBatchClear) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "You are about to batch clear test match results. This resets scores, winners, finalized state, and derived scoring for the selected matches. Continue?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsBatchClearingMatches(true);
+    try {
+      const result = await batchClearMatchResultsAction({
+        fromDate: batchFinalizeFromDate,
+        toDate: batchFinalizeToDate,
+        scope: batchFinalizeScope,
+        confirmationText: batchClearConfirmationText
+      });
+
+      showAppToast({
+        tone: result.ok ? "success" : "error",
+        text: result.message || "Batch clear finished without a message. Check server logs."
+      });
+
+      if (result.ok) {
+        setIsBatchClearAcknowledged(false);
+        setBatchClearConfirmationText("");
+        await loadMatches();
+        window.setTimeout(() => {
+          router.refresh();
+        }, 150);
+      }
+    } catch (error) {
+      showAppToast({
+        tone: "error",
+        text: (error as Error).message || "Batch clear failed. Check server logs."
+      });
+    } finally {
+      setIsBatchClearingMatches(false);
     }
   }
 
@@ -1033,11 +1097,12 @@ export function AdminMatchesClient() {
               <div className="mt-4 grid gap-4 xl:grid-cols-2">
                 <section className="rounded-lg border border-rose-200 bg-white p-4 xl:col-span-2">
                   <div className="space-y-1">
-                    <h4 className="text-base font-black text-gray-950">Batch Finalize Match Results</h4>
+                    <h4 className="text-base font-black text-gray-950">Batch Create Pretend Match Results</h4>
                     <p className="text-sm font-semibold text-gray-600">
-                      This updates actual match results and finalizes matches for testing. It will trigger scoring through
-                      the normal app flow. Use only in test environments or controlled admin QA.
+                      Create pretend finalized results for testing. This triggers scoring through the normal app flow and
+                      can overwrite only existing pretend/manual-override results when overwrite mode is enabled.
                     </p>
+                    <p className="text-sm font-semibold text-gray-500">Preserves player picks. Rebuilds scoring only.</p>
                   </div>
 
                   <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -1111,8 +1176,8 @@ export function AdminMatchesClient() {
                         onChange={(event) => setBatchFinalizeOverwriteMode(event.target.value as BatchFinalizeMatchOverwriteMode)}
                         className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
                       >
-                        <option value="skip-finalized">Finalize only matches without final scores</option>
-                        <option value="overwrite-test-results">Overwrite existing test results</option>
+                        <option value="skip-finalized">Create only where no final result exists</option>
+                        <option value="overwrite-test-results">Overwrite existing pretend test results only</option>
                       </select>
                     </label>
 
@@ -1140,8 +1205,8 @@ export function AdminMatchesClient() {
                       onChange={(event) => setIsBatchFinalizeAcknowledged(event.target.checked)}
                       className="mt-1 h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
                     />
-                    <span className="text-sm font-semibold text-gray-700">
-                      I understand this will update actual match results and finalize matches for testing.
+                      <span className="text-sm font-semibold text-gray-700">
+                      I understand this will create pretend finalized match results for testing.
                     </span>
                   </label>
 
@@ -1160,8 +1225,64 @@ export function AdminMatchesClient() {
                     onClick={() => void handleBatchFinalizeMatches()}
                     className="mt-4 rounded-md bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
                   >
-                    {isBatchFinalizingMatches ? "Finalizing test matches..." : "Batch Finalize Matches"}
+                    {isBatchFinalizingMatches ? "Creating pretend results..." : "Batch Create Pretend Results"}
                   </button>
+
+                  <div className="mt-5 border-t border-rose-100 pt-4">
+                    <div className="space-y-1">
+                      <h5 className="text-sm font-black text-gray-950">Batch Clear Pretend Match Results</h5>
+                      <p className="text-sm font-semibold text-gray-600">
+                        Clear only pretend/manual-override results for the same date range and scope, then repair derived scoring state.
+                      </p>
+                      <p className="text-sm font-semibold text-gray-500">Preserves player picks. Rebuilds scoring only.</p>
+                    </div>
+
+                    <label className="mt-4 block">
+                      <span className="text-sm font-bold text-gray-700">Type confirmation exactly</span>
+                      <input
+                        type="text"
+                        value={batchClearConfirmationText}
+                        onChange={(event) => setBatchClearConfirmationText(event.target.value)}
+                        placeholder={BATCH_CLEAR_CONFIRMATION_PHRASE}
+                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                      />
+                      {isBatchClearPhraseClose ? (
+                        <p className="mt-2 text-sm font-semibold text-rose-700">
+                          Type exactly: {BATCH_CLEAR_CONFIRMATION_PHRASE}
+                        </p>
+                      ) : null}
+                    </label>
+
+                    <label className="mt-4 flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={isBatchClearAcknowledged}
+                        onChange={(event) => setIsBatchClearAcknowledged(event.target.checked)}
+                        className="mt-1 h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                      />
+                      <span className="text-sm font-semibold text-gray-700">
+                        I understand this will clear pretend/manual-override match results and dependent scoring state for the selected matches.
+                      </span>
+                    </label>
+
+                    {renderResetReadiness({
+                      title: "Clear readiness",
+                      availability: batchFinalizeAvailability,
+                      checkboxChecked: isBatchClearAcknowledged,
+                      phraseMatches: isBatchClearPhraseValid,
+                      productionBlockedMessage:
+                        "Production testing tools are blocked. Enable ALLOW_PRODUCTION_KNOCKOUT_RESET=true or ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
+                    })}
+
+                    <button
+                      type="button"
+                      disabled={!canSubmitBatchClear}
+                      onClick={() => void handleBatchClearMatches()}
+                      className="mt-4 rounded-md border border-rose-300 bg-white px-4 py-3 text-sm font-bold text-rose-700 disabled:border-gray-300 disabled:bg-gray-100 disabled:text-gray-600"
+                    >
+                      {isBatchClearingMatches ? "Clearing pretend results..." : "Batch Clear Pretend Results"}
+                    </button>
+                  </div>
                 </section>
 
                 <section className="rounded-lg border border-rose-200 bg-white p-4">

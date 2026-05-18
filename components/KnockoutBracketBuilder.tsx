@@ -1,8 +1,8 @@
 "use client";
 
-import { Check, Clock3, Trophy, X } from "lucide-react";
-import { PointerEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
-import { saveBracketPredictionAction } from "@/app/knockout/actions";
+import { Check, CheckSquare, Trophy, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { previewBracketPredictionImpactAction, saveBracketPredictionAction } from "@/app/knockout/actions";
 import { WindowChoiceRail, useSessionJsonState } from "@/components/player-management/Shared";
 import { showAppToast } from "@/lib/app-toast";
 import { formatDateTimeWithZone } from "@/lib/date-time";
@@ -15,6 +15,7 @@ import type { BracketPrediction } from "@/lib/types";
 
 type KnockoutBracketBuilderProps = {
   initialView: KnockoutBracketEditorView;
+  projectedComparisonView?: KnockoutBracketEditorView | null;
 };
 
 type BracketSlideView = {
@@ -37,23 +38,28 @@ type BracketSlideView = {
 
 const KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY = "knockout-active-slide";
 const KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY = "knockout-active-country-filter";
+const KNOCKOUT_STAGE_COMPARE_BIAS_STORAGE_KEY = "knockout-stage-compare-bias";
 
-export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderProps) {
+export function KnockoutBracketBuilder({ initialView, projectedComparisonView = null }: KnockoutBracketBuilderProps) {
   const [baseView, setBaseView] = useState<KnockoutBracketEditorView>(initialView);
   const [predictions, setPredictions] = useState<BracketPrediction[]>(initialView.predictions);
   const [draftWinnerByMatchId, setDraftWinnerByMatchId] = useState<Record<string, string>>({});
   const [draftScoreByMatchId, setDraftScoreByMatchId] = useState<Record<string, { homeScore: number; awayScore: number }>>({});
   const [pendingMatchId, setPendingMatchId] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ tone: "error" | "success"; text: string } | null>(null);
+  const [message, setMessage] = useState<{ tone: "error" | "success" | "tip"; text: string } | null>(null);
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    matchId: string;
+    homeScore: number;
+    awayScore: number;
+    teamId: string | null;
+    affectedCount: number;
+  } | null>(null);
   const [activeSlideIndex, setActiveSlideIndex] = useSessionJsonState<number>(KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY, 0);
   const [selectedCountryFilter, setSelectedCountryFilter] = useSessionJsonState<string>(
     KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY,
     ""
   );
   const [transitionReady, setTransitionReady] = useState(true);
-  const touchStartXRef = useRef<number | null>(null);
-  const touchStartYRef = useRef<number | null>(null);
-  const pointerStartXRef = useRef<number | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasAutoFocusedProjectedSlideRef = useRef(false);
 
@@ -136,7 +142,7 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
   return (
     <section className="space-y-3">
       <div
-        className="sticky z-[14] -mx-4 bg-white px-4 py-1.5 sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
+        className="sticky z-[14] w-full overflow-x-hidden rounded-lg bg-white px-0 py-1.5 sm:border sm:border-gray-200 sm:px-4"
         style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <KnockoutPhaseChoiceRail
@@ -186,26 +192,19 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
         <div className="mt-1.5 border-b border-gray-200/80" />
       </div>
 
-      <div className="overflow-visible bg-transparent">
-        <div
-          className="touch-pan-y select-none"
-          onTouchStart={handleTouchStart}
-          onTouchEnd={handleTouchEnd}
-          onTouchCancel={handleTouchCancel}
-          onPointerDown={handlePointerDown}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerCancel}
-        >
+      <div className="w-full max-w-full overflow-x-clip overflow-y-visible bg-transparent px-0">
+        <div className="select-none">
           <BracketStageViewport
             slide={slides[activeSlideIndex]}
             mode={baseView.mode}
+            projectedComparisonView={projectedComparisonView}
             ready={transitionReady}
             pendingMatchId={pendingMatchId}
+            pendingConfirmation={pendingConfirmation}
             onSelect={handleSelectWinner}
             onAdjustScore={handleAdjustScore}
             onSave={handleSaveWinner}
             selectedCountryFilter={selectedCountryFilter || null}
-            onSelectCountryFilter={setSelectedCountryFilter}
           />
         </div>
       </div>
@@ -234,83 +233,10 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
     }, 560);
   }
 
-  function handleTouchStart(event: TouchEvent<HTMLDivElement>) {
-    const firstTouch = event.touches[0];
-    if (!firstTouch) {
-      touchStartXRef.current = null;
-      touchStartYRef.current = null;
-      return;
-    }
-
-    touchStartXRef.current = firstTouch.clientX;
-    touchStartYRef.current = firstTouch.clientY;
-  }
-
-  function handleTouchEnd(event: TouchEvent<HTMLDivElement>) {
-    const startX = touchStartXRef.current;
-    const startY = touchStartYRef.current;
-    touchStartXRef.current = null;
-    touchStartYRef.current = null;
-    if (startX == null || startY == null) {
-      return;
-    }
-
-    const endX = event.changedTouches[0]?.clientX ?? startX;
-    const endY = event.changedTouches[0]?.clientY ?? startY;
-    const deltaX = endX - startX;
-    const deltaY = endY - startY;
-    if (Math.abs(deltaY) > Math.abs(deltaX)) {
-      return;
-    }
-
-    if (Math.abs(deltaX) < 36) {
-      return;
-    }
-
-    if (deltaX < 0) {
-      goToSlide(Math.min(activeSlideIndex + 1, slides.length - 1));
-    } else {
-      goToSlide(Math.max(activeSlideIndex - 1, 0));
-    }
-  }
-
-  function handleTouchCancel() {
-    touchStartXRef.current = null;
-    touchStartYRef.current = null;
-  }
-
-  function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (event.pointerType !== "mouse" && event.pointerType !== "pen") {
-      return;
-    }
-
-    pointerStartXRef.current = event.clientX;
-  }
-
-  function handlePointerUp(event: PointerEvent<HTMLDivElement>) {
-    const startX = pointerStartXRef.current;
-    pointerStartXRef.current = null;
-    if (startX == null) {
-      return;
-    }
-
-    const deltaX = event.clientX - startX;
-    if (Math.abs(deltaX) < 36) {
-      return;
-    }
-
-    if (deltaX < 0) {
-      goToSlide(Math.min(activeSlideIndex + 1, slides.length - 1));
-    } else {
-      goToSlide(Math.max(activeSlideIndex - 1, 0));
-    }
-  }
-
-  function handlePointerCancel() {
-    pointerStartXRef.current = null;
-  }
-
   function handleSelectWinner(matchId: string, teamId: string) {
+    if (pendingConfirmation?.matchId === matchId) {
+      setPendingConfirmation(null);
+    }
     setDraftWinnerByMatchId((current) => ({
       ...current,
       [matchId]: teamId
@@ -318,6 +244,10 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
   }
 
   function handleAdjustScore(matchId: string, side: "home" | "away", delta: 1 | -1) {
+    if (pendingConfirmation?.matchId === matchId) {
+      setPendingConfirmation(null);
+    }
+    let shouldClearExplicitWinner = false;
     setDraftScoreByMatchId((current) => {
       const sourceMatch =
         view.stages.flatMap((stage) => stage.matches).find((match) => match.matchId === matchId) ??
@@ -329,12 +259,26 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
         homeScore: side === "home" ? Math.max(0, currentHomeScore + delta) : currentHomeScore,
         awayScore: side === "away" ? Math.max(0, currentAwayScore + delta) : currentAwayScore
       };
+      const wasTie = currentHomeScore === currentAwayScore;
+      const isTie = nextScore.homeScore === nextScore.awayScore;
+      shouldClearExplicitWinner = wasTie !== isTie || !isTie;
 
       return {
         ...current,
         [matchId]: nextScore
       };
     });
+    if (shouldClearExplicitWinner) {
+      setDraftWinnerByMatchId((current) => {
+        if (!(matchId in current)) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[matchId];
+        return next;
+      });
+    }
   }
 
   async function handleSaveWinner(matchId: string) {
@@ -350,35 +294,99 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
     const teamId = sourceMatch.predictedWinnerTeamId;
 
     if (homeScore === awayScore && !teamId) {
-      setMessage({ tone: "error", text: "Choose who advances by tapping a team name or flag." });
+      setMessage({ tone: "error", text: "Select a winner for tied knockout predictions." });
       return;
     }
 
-    setPendingMatchId(matchId);
-    setMessage(null);
+    if (pendingConfirmation?.matchId === matchId) {
+      await performSave({
+        matchId,
+        homeScore,
+        awayScore,
+        teamId: teamId ?? null,
+        confirmClearDownstream: true
+      });
+      return;
+    }
 
-    const result = await saveBracketPredictionAction({
+    const previewResult = await previewBracketPredictionImpactAction({
       matchId,
       teamId,
       homeScore,
       awayScore,
       mode: baseView.mode
     });
+    if (!previewResult.ok) {
+      setMessage({ tone: "error", text: previewResult.message });
+      return;
+    }
+
+    if (previewResult.affectedCount > 0) {
+      setPendingConfirmation({
+        matchId,
+        homeScore,
+        awayScore,
+        teamId: teamId ?? null,
+        affectedCount: previewResult.affectedCount
+      });
+      setMessage({
+        tone: "tip",
+        text: `This will clear ${previewResult.affectedCount} future ${previewResult.affectedCount === 1 ? "pick" : "picks"}.`
+      });
+      return;
+    }
+
+    await performSave({ matchId, homeScore, awayScore, teamId: teamId ?? null, confirmClearDownstream: false });
+  }
+
+  async function performSave(input: {
+    matchId: string;
+    homeScore: number;
+    awayScore: number;
+    teamId: string | null;
+    confirmClearDownstream: boolean;
+  }) {
+    setPendingMatchId(input.matchId);
+    setMessage(null);
+
+    const result = await saveBracketPredictionAction({
+      matchId: input.matchId,
+      teamId: input.teamId,
+      homeScore: input.homeScore,
+      awayScore: input.awayScore,
+      mode: baseView.mode,
+      confirmClearDownstream: input.confirmClearDownstream
+    });
     if (!result.ok) {
-      setMessage({ tone: "error", text: result.message });
+      if ("requiresConfirmation" in result && result.requiresConfirmation) {
+        setPendingConfirmation({
+          matchId: input.matchId,
+          homeScore: input.homeScore,
+          awayScore: input.awayScore,
+          teamId: input.teamId,
+          affectedCount: result.affectedCount
+        });
+        setMessage({
+          tone: "tip",
+          text: `This will clear ${result.affectedCount} future ${result.affectedCount === 1 ? "pick" : "picks"}.`
+        });
+      } else {
+        setMessage({ tone: "error", text: result.message });
+      }
       setPendingMatchId(null);
       return;
     }
 
+    setPendingConfirmation(null);
     if (result.view) {
       setBaseView(result.view);
     }
     setPredictions(result.view?.predictions ?? result.predictions);
     const matchesForDescendants = result.view ?? view;
-    const descendantMatchIds = collectDescendantMatchIdsFromView(matchesForDescendants, matchId);
+    const descendantMatchIds = collectDescendantMatchIdsFromView(matchesForDescendants, input.matchId);
     setDraftWinnerByMatchId((current) => {
       const next = { ...current };
-      delete next[matchId];
+      delete next[input.matchId];
       for (const descendantMatchId of descendantMatchIds) {
         delete next[descendantMatchId];
       }
@@ -386,13 +394,21 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
     });
     setDraftScoreByMatchId((current) => {
       const next = { ...current };
-      delete next[matchId];
+      delete next[input.matchId];
       for (const descendantMatchId of descendantMatchIds) {
         delete next[descendantMatchId];
       }
       return next;
     });
-    setMessage({ tone: "success", text: baseView.mode === "projected" ? "Projected bracket updated." : "Bracket updated." });
+    setMessage({
+      tone: "success",
+      text:
+        result.clearedDescendantCount > 0
+          ? "Prediction updated. Affected future picks were cleared."
+          : baseView.mode === "projected"
+            ? "Prediction saved."
+            : "Prediction saved."
+    });
     setPendingMatchId(null);
   }
 }
@@ -400,23 +416,31 @@ export function KnockoutBracketBuilder({ initialView }: KnockoutBracketBuilderPr
 function BracketStageViewport({
   slide,
   mode,
+  projectedComparisonView,
   ready,
   pendingMatchId,
+  pendingConfirmation,
   onSelect,
   onAdjustScore,
   onSave,
-  selectedCountryFilter,
-  onSelectCountryFilter
+  selectedCountryFilter
 }: {
   slide: BracketSlideView;
   mode: KnockoutBracketEditorView["mode"];
+  projectedComparisonView: KnockoutBracketEditorView | null;
   ready: boolean;
   pendingMatchId: string | null;
+  pendingConfirmation: {
+    matchId: string;
+    homeScore: number;
+    awayScore: number;
+    teamId: string | null;
+    affectedCount: number;
+  } | null;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
   selectedCountryFilter: string | null;
-  onSelectCountryFilter: (teamId: string) => void;
 }) {
   const filteredSlide = useMemo(() => {
     if (!selectedCountryFilter) {
@@ -430,22 +454,37 @@ function BracketStageViewport({
       )
     };
   }, [selectedCountryFilter, slide]);
-  const stageBanner = getStageBanner(filteredSlide, mode);
+  const projectedMatchesForStage = useMemo(() => {
+    if (!projectedComparisonView) {
+      return [];
+    }
+
+    const projectedStage = projectedComparisonView.stages.find((stage) => stage.stage === slide.currentStage);
+    const stageMatches = projectedStage?.matches ?? [];
+    if (!selectedCountryFilter) {
+      return stageMatches;
+    }
+
+    return stageMatches.filter((match) =>
+      [match.homeTeam?.id, match.awayTeam?.id, match.seededHomeTeam?.id, match.seededAwayTeam?.id].includes(selectedCountryFilter)
+    );
+  }, [projectedComparisonView, selectedCountryFilter, slide.currentStage]);
+  const usesComparisonView = mode === "projected" || projectedMatchesForStage.length > 0;
 
   if (selectedCountryFilter && filteredSlide.currentMatches.length === 0) {
     return (
-      <section className="overflow-visible">
-        <div className="border-b border-gray-200/80 px-3 py-3 sm:px-4 sm:py-4">
+      <section className="w-full max-w-full overflow-x-clip overflow-y-visible">
+        <div className="border-b border-gray-200/80 px-0 py-3 sm:py-4">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <h3 className="text-3xl font-black leading-none text-gray-950 sm:text-4xl">{slide.title}</h3>
+              <h3 className="text-3xl font-extrabold leading-none text-gray-950 sm:text-4xl">{slide.title}</h3>
             </div>
             <div className="shrink-0 pt-1 text-right">
-              <p className="text-sm font-black uppercase tracking-wide text-gray-950 sm:text-base">0 matches</p>
+              <p className="text-sm font-bold uppercase tracking-wide text-gray-950 sm:text-base">0 matches</p>
             </div>
           </div>
         </div>
-        <div className="px-3 py-5 text-center text-sm font-semibold text-gray-600 sm:px-4">
+        <div className="px-0 py-5 text-center text-sm font-semibold text-gray-600">
           No matches in this round for {activeFilterTeamLabel(slide, selectedCountryFilter)}.
         </div>
       </section>
@@ -453,65 +492,79 @@ function BracketStageViewport({
   }
 
   return (
-    <section className="overflow-visible">
-      <div className="border-b border-gray-200/80 px-3 py-3 sm:px-4 sm:py-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h3 className="text-3xl font-black leading-none text-gray-950 sm:text-4xl">{slide.title}</h3>
-          </div>
-          <div className="shrink-0 pt-1 text-right">
-            <p className="text-sm font-black uppercase tracking-wide text-gray-950 sm:text-base">
-              {filteredSlide.currentMatches.length} matches
-            </p>
+    <section className="w-full max-w-full overflow-x-clip overflow-y-visible">
+      {!usesComparisonView ? (
+        <div className="border-b border-gray-200/80 px-0 py-3 sm:py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="text-3xl font-extrabold leading-none text-gray-950 sm:text-4xl">{slide.title}</h3>
+            </div>
+            <div className="shrink-0 pt-1 text-right">
+              <p className="text-sm font-bold uppercase tracking-wide text-gray-950 sm:text-base">
+                {filteredSlide.currentMatches.length} matches
+              </p>
+            </div>
           </div>
         </div>
-        <div
-          className={`mt-4 rounded-md px-4 py-3 text-center text-sm font-bold uppercase tracking-wide sm:text-base ${
-            stageBanner.tone === "wait"
-              ? "bg-amber-50 text-gray-500"
-              : stageBanner.tone === "final"
-                ? "bg-gray-100 text-gray-400"
-                : "bg-green-50 text-green-700"
-          }`}
-        >
-          {stageBanner.text}
-        </div>
-      </div>
+      ) : null}
 
       <div
-        className={`min-h-[30rem] px-2 py-2.5 transition-[opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] sm:min-h-[32rem] sm:px-3 sm:py-3 ${
+        className={`mx-auto min-h-[30rem] w-full max-w-full overflow-x-clip px-3 py-2.5 transition-[opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] sm:min-h-[32rem] sm:px-4 sm:py-3 ${
           ready ? "opacity-100" : "opacity-88"
         }`}
       >
-        {slide.layout === "split" ? (
-          <SplitRoundView
-            slide={filteredSlide}
+        {mode === "projected" ? (
+          <ProjectedAndOfficialRoundView
+            projectedMatches={filteredSlide.currentMatches}
+            officialMatches={filteredSlide.currentMatches}
+            officialState="pending"
+            isOfficialRound={false}
+            stageTitle={slide.title}
             pendingMatchId={pendingMatchId}
+            pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
             onAdjustScore={onAdjustScore}
             onSave={onSave}
-            selectedCountryFilter={selectedCountryFilter}
-            onSelectCountryFilter={onSelectCountryFilter}
+          />
+        ) : projectedMatchesForStage.length > 0 ? (
+          <ProjectedAndOfficialRoundView
+            projectedMatches={projectedMatchesForStage}
+            officialMatches={filteredSlide.currentMatches}
+            officialState="live"
+            isOfficialRound
+            stageTitle={slide.currentStage === "r32" ? "Round of 32 Projection Check" : slide.title}
+            pendingMatchId={pendingMatchId}
+            pendingConfirmation={pendingConfirmation}
+            onSelect={onSelect}
+            onAdjustScore={onAdjustScore}
+            onSave={onSave}
+          />
+        ) : slide.layout === "split" ? (
+          <SplitRoundView
+            slide={filteredSlide}
+            pendingMatchId={pendingMatchId}
+            pendingConfirmation={pendingConfirmation}
+            onSelect={onSelect}
+            onAdjustScore={onAdjustScore}
+            onSave={onSave}
           />
         ) : slide.layout === "finale" ? (
           <FinaleRoundView
             slide={filteredSlide}
             pendingMatchId={pendingMatchId}
+            pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
             onAdjustScore={onAdjustScore}
             onSave={onSave}
-            selectedCountryFilter={selectedCountryFilter}
-            onSelectCountryFilter={onSelectCountryFilter}
           />
         ) : (
           <FocusedRoundView
             slide={filteredSlide}
             pendingMatchId={pendingMatchId}
+            pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
             onAdjustScore={onAdjustScore}
             onSave={onSave}
-            selectedCountryFilter={selectedCountryFilter}
-            onSelectCountryFilter={onSelectCountryFilter}
           />
         )}
       </div>
@@ -534,6 +587,8 @@ function KnockoutPhaseChoiceRail({
 }) {
   return (
     <WindowChoiceRail
+      motionMode="anchored"
+      allowAnchoredTouchScroll={false}
       className={className}
       showControls={showControls}
       prevLabel="Show previous knockout phase"
@@ -549,19 +604,23 @@ function KnockoutPhaseChoiceRail({
 function SplitRoundView({
   slide,
   pendingMatchId,
+  pendingConfirmation,
   onSelect,
   onAdjustScore,
-  onSave,
-  selectedCountryFilter,
-  onSelectCountryFilter
+  onSave
 }: {
   slide: BracketSlideView;
   pendingMatchId: string | null;
+  pendingConfirmation: {
+    matchId: string;
+    homeScore: number;
+    awayScore: number;
+    teamId: string | null;
+    affectedCount: number;
+  } | null;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
-  selectedCountryFilter: string | null;
-  onSelectCountryFilter: (teamId: string) => void;
 }) {
   const pods = groupMatchesIntoPods(slide.currentMatches);
 
@@ -570,7 +629,7 @@ function SplitRoundView({
       {pods.map((pod, index) => (
         <div
           key={`r32-pod-${index}`}
-          className="rounded-xl bg-gray-50/40 px-1 py-1.5 sm:px-1.5 sm:py-2"
+          className="box-border w-full max-w-full rounded-xl bg-gray-50/40 px-1 py-1.5 sm:px-1.5 sm:py-2"
         >
           <div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
             {pod.map((match, podIndex) => (
@@ -578,13 +637,12 @@ function SplitRoundView({
                 key={match.matchId}
                 match={match}
                 isPending={pendingMatchId === match.matchId}
+                pendingConfirmation={pendingConfirmation}
                 onSelect={onSelect}
                 onAdjustScore={onAdjustScore}
                 onSave={onSave}
                 density="compact"
                 side={podIndex === 0 ? "left" : "right"}
-                selectedCountryFilter={selectedCountryFilter}
-                onSelectCountryFilter={onSelectCountryFilter}
               />
             ))}
           </div>
@@ -594,22 +652,283 @@ function SplitRoundView({
   );
 }
 
-function FocusedRoundView({
-  slide,
+function ProjectedAndOfficialRoundView({
+  projectedMatches,
+  officialMatches,
+  officialState,
+  isOfficialRound,
+  stageTitle,
   pendingMatchId,
+  pendingConfirmation,
   onSelect,
   onAdjustScore,
-  onSave,
-  selectedCountryFilter,
-  onSelectCountryFilter
+  onSave
 }: {
-  slide: BracketSlideView;
+  projectedMatches: KnockoutBracketMatchView[];
+  officialMatches: KnockoutBracketMatchView[];
+  officialState: "pending" | "live";
+  isOfficialRound: boolean;
+  stageTitle: string;
   pendingMatchId: string | null;
+  pendingConfirmation: {
+    matchId: string;
+    homeScore: number;
+    awayScore: number;
+    teamId: string | null;
+    affectedCount: number;
+  } | null;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
-  selectedCountryFilter: string | null;
-  onSelectCountryFilter: (teamId: string) => void;
+}) {
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const snapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isProgrammaticSyncRef = useRef(false);
+  const pairs = officialMatches.map((officialMatch, index) => ({
+    slotKey: officialMatch.matchId ?? projectedMatches[index]?.matchId ?? `${officialMatch.stage}-${index}`,
+    projected: projectedMatches[index] ?? null,
+    official: officialMatch
+  }));
+  const stageKey = officialMatches[0]?.stage ?? stageTitle;
+  const defaultOfficialBias = officialState === "live" ? 0.72 : 0.28;
+  const [storedBiasByStage, setStoredBiasByStage] = useSessionJsonState<Record<string, number>>(
+    KNOCKOUT_STAGE_COMPARE_BIAS_STORAGE_KEY,
+    {}
+  );
+  const storedBias = storedBiasByStage[stageKey];
+  const [officialBias, setOfficialBias] = useState(storedBias ?? defaultOfficialBias);
+  const [snapEnabled, setSnapEnabled] = useState(storedBias != null);
+
+  useEffect(() => {
+    const nextBias = storedBias ?? defaultOfficialBias;
+    setOfficialBias(nextBias);
+    setSnapEnabled(storedBias != null);
+  }, [defaultOfficialBias, storedBias, stageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const applySharedFocus = () => {
+      const isNarrowViewport = window.innerWidth < 640;
+      if (!isNarrowViewport) {
+        return;
+      }
+
+      isProgrammaticSyncRef.current = true;
+      for (const pair of pairs) {
+        const row = rowRefs.current[pair.slotKey];
+        if (!row) {
+          continue;
+        }
+
+        const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
+        row.scrollLeft = maxScrollLeft * officialBias;
+      }
+      requestAnimationFrame(() => {
+        isProgrammaticSyncRef.current = false;
+      });
+    };
+
+    applySharedFocus();
+    return () => {
+      if (snapTimerRef.current) {
+        clearTimeout(snapTimerRef.current);
+        snapTimerRef.current = null;
+      }
+    };
+  }, [officialBias, officialState, pairs]);
+
+  const syncStageScroll = (sourceRow: HTMLDivElement, sourceKey: string) => {
+    const maxScrollLeft = Math.max(1, sourceRow.scrollWidth - sourceRow.clientWidth);
+    const nextRatio = sourceRow.scrollLeft / maxScrollLeft;
+    isProgrammaticSyncRef.current = true;
+    for (const pair of pairs) {
+      if (pair.slotKey === sourceKey) {
+        continue;
+      }
+
+      const row = rowRefs.current[pair.slotKey];
+      if (!row) {
+        continue;
+      }
+
+      const rowMaxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
+      row.scrollLeft = rowMaxScrollLeft * nextRatio;
+    }
+    requestAnimationFrame(() => {
+      isProgrammaticSyncRef.current = false;
+    });
+  };
+
+  const snapStageScroll = (sourceRow: HTMLDivElement, sourceKey: string) => {
+    const maxScrollLeft = Math.max(0, sourceRow.scrollWidth - sourceRow.clientWidth);
+    if (maxScrollLeft <= 0) {
+      return;
+    }
+
+    const snappedRatio = sourceRow.scrollLeft / maxScrollLeft >= 0.5 ? 1 : 0;
+    setOfficialBias(snappedRatio);
+    setStoredBiasByStage((current) => ({ ...current, [stageKey]: snappedRatio }));
+    isProgrammaticSyncRef.current = true;
+    for (const pair of pairs) {
+      const row = rowRefs.current[pair.slotKey];
+      if (!row) {
+        continue;
+      }
+
+      const rowMaxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
+      row.scrollTo({
+        left: rowMaxScrollLeft * snappedRatio,
+        behavior: pair.slotKey === sourceKey ? "smooth" : "auto"
+      });
+    }
+    requestAnimationFrame(() => {
+      isProgrammaticSyncRef.current = false;
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-center gap-3 px-1 sm:hidden">
+        <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white/90 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.05em] text-gray-500 shadow-sm">
+          <span aria-hidden>‹</span>
+          <span>My Pick</span>
+          <span className="text-gray-300">|</span>
+          <span>Qualifying Teams</span>
+          <span aria-hidden>›</span>
+        </span>
+      </div>
+      <div className="space-y-4">
+        {pairs.map((pair) => (
+          <div key={pair.slotKey} className="space-y-2">
+            <div className="flex items-center justify-between gap-3 px-1">
+              <div className="flex min-w-0 items-center gap-2">
+                {getKnockoutMatchNumber(pair.official.title ?? pair.projected?.title ?? "") ? (
+                  <KnockoutMatchNumberBadge
+                    number={getKnockoutMatchNumber(pair.official.title ?? pair.projected?.title ?? "") ?? 0}
+                    compact
+                  />
+                ) : null}
+                <span className="truncate text-[11px] font-bold uppercase tracking-wide text-gray-500">
+                  {getStageDisplayName(pair.official.stage)}
+                </span>
+              </div>
+              <p className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                {formatCompactKickoff(pair.official.kickoffTime)}
+              </p>
+            </div>
+            <div className="relative">
+              <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-2 bg-gradient-to-r from-white via-white/55 to-transparent" />
+              <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-[1] w-2 bg-gradient-to-l from-white via-white/55 to-transparent" />
+              <div aria-hidden className="pointer-events-none absolute bottom-3 top-3 left-[calc(50%-5px)] z-[1] w-2.5 rounded-full bg-white/35 blur-[2px] sm:hidden" />
+              <div
+                ref={(node) => {
+                  rowRefs.current[pair.slotKey] = node;
+                }}
+                onScroll={(event) => {
+                  if (isProgrammaticSyncRef.current || typeof window === "undefined" || window.innerWidth >= 640) {
+                    return;
+                  }
+                  if (!snapEnabled) {
+                    setSnapEnabled(true);
+                  }
+                  syncStageScroll(event.currentTarget, pair.slotKey);
+                  if (snapTimerRef.current) {
+                    clearTimeout(snapTimerRef.current);
+                  }
+                  snapTimerRef.current = setTimeout(() => {
+                    snapStageScroll(event.currentTarget, pair.slotKey);
+                  }, 110);
+                }}
+                className={`overflow-x-auto overflow-y-visible px-0 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] ${
+                  snapEnabled ? "snap-x snap-mandatory" : ""
+                }`}
+              >
+                <div className="flex min-w-max gap-2.5 sm:grid sm:min-w-0 sm:grid-cols-2 sm:gap-3">
+                  <div className={`w-[calc(100vw-2.75rem)] max-w-[21.5rem] shrink-0 sm:w-auto sm:max-w-none sm:min-w-0 ${snapEnabled ? "snap-center" : ""}`}>
+                    <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                      My Picks/Predictions
+                    </div>
+                    {pair.projected ? (
+                      <CurrentRoundMatchCard
+                        match={pair.projected}
+                        isPending={false}
+                        pendingConfirmation={null}
+                        onSelect={() => undefined}
+                        onAdjustScore={() => undefined}
+                      onSave={() => undefined}
+                      density="compact"
+                      side="left"
+                      showHeader={false}
+                      showMatchIdentity={false}
+                    />
+                    ) : (
+                      <ComparisonPlaceholderCard
+                        tone="projected"
+                        title="Projected slot incomplete"
+                        body="Built from your group-stage picks."
+                      />
+                    )}
+                  </div>
+                  {renderOfficialCard(pair)}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  function renderOfficialCard(pair: (typeof pairs)[number]) {
+    return (
+      <div className={`w-[calc(100vw-2.75rem)] max-w-[21.5rem] shrink-0 sm:w-auto sm:max-w-none sm:min-w-0 ${snapEnabled ? "snap-center" : ""}`}>
+        <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide text-gray-600">
+          Qualifying Teams
+        </div>
+        {officialState === "live" && isOfficialRound ? (
+          <CurrentRoundMatchCard
+            match={pair.official}
+            isPending={pendingMatchId === pair.official.matchId}
+            pendingConfirmation={pendingConfirmation}
+            onSelect={onSelect}
+            onAdjustScore={onAdjustScore}
+            onSave={onSave}
+            density="compact"
+            side="right"
+            showHeader={false}
+            showMatchIdentity={false}
+          />
+        ) : (
+          <ActualComparisonMatchCard match={pair.official} pendingOnly />
+        )}
+      </div>
+    );
+  }
+}
+
+function FocusedRoundView({
+  slide,
+  pendingMatchId,
+  pendingConfirmation,
+  onSelect,
+  onAdjustScore,
+  onSave
+}: {
+  slide: BracketSlideView;
+  pendingMatchId: string | null;
+  pendingConfirmation: {
+    matchId: string;
+    homeScore: number;
+    awayScore: number;
+    teamId: string | null;
+    affectedCount: number;
+  } | null;
+  onSelect: (matchId: string, teamId: string) => void | Promise<void>;
+  onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
+  onSave: (matchId: string) => void | Promise<void>;
 }) {
   const pods = groupMatchesIntoPods(slide.currentMatches);
 
@@ -618,7 +937,7 @@ function FocusedRoundView({
       {pods.map((pod, index) => (
         <div
           key={`focus-pod-${index}`}
-          className="rounded-xl bg-gray-50/40 px-1 py-1.5 sm:px-1.5 sm:py-2"
+          className="box-border w-full max-w-full rounded-xl bg-gray-50/40 px-1 py-1.5 sm:px-1.5 sm:py-2"
         >
           <div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
             {pod.map((match, podIndex) => (
@@ -626,13 +945,12 @@ function FocusedRoundView({
                 key={match.matchId}
                 match={match}
                 isPending={pendingMatchId === match.matchId}
+                pendingConfirmation={pendingConfirmation}
                 onSelect={onSelect}
                 onAdjustScore={onAdjustScore}
                 onSave={onSave}
                 density="expanded"
                 side={podIndex === 0 ? "left" : "right"}
-                selectedCountryFilter={selectedCountryFilter}
-                onSelectCountryFilter={onSelectCountryFilter}
               />
             ))}
           </div>
@@ -645,19 +963,23 @@ function FocusedRoundView({
 function FinaleRoundView({
   slide,
   pendingMatchId,
+  pendingConfirmation,
   onSelect,
   onAdjustScore,
-  onSave,
-  selectedCountryFilter,
-  onSelectCountryFilter
+  onSave
 }: {
   slide: BracketSlideView;
   pendingMatchId: string | null;
+  pendingConfirmation: {
+    matchId: string;
+    homeScore: number;
+    awayScore: number;
+    teamId: string | null;
+    affectedCount: number;
+  } | null;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
-  selectedCountryFilter: string | null;
-  onSelectCountryFilter: (teamId: string) => void;
 }) {
   const finalMatch = slide.currentMatches[0] ?? null;
 
@@ -665,17 +987,16 @@ function FinaleRoundView({
     <div className="space-y-3">
       <ChampionCard champion={slide.champion} />
       {finalMatch ? (
-        <div className="rounded-xl bg-gray-50/40 px-1 py-1.5 sm:px-1.5 sm:py-2">
+        <div className="box-border w-full max-w-full rounded-xl bg-gray-50/40 px-1 py-1.5 sm:px-1.5 sm:py-2">
           <CurrentRoundMatchCard
             match={finalMatch}
             isPending={pendingMatchId === finalMatch.matchId}
+            pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
             onAdjustScore={onAdjustScore}
             onSave={onSave}
             density="hero"
             side="center"
-            selectedCountryFilter={selectedCountryFilter}
-            onSelectCountryFilter={onSelectCountryFilter}
           />
         </div>
       ) : null}
@@ -686,25 +1007,31 @@ function FinaleRoundView({
 function CurrentRoundMatchCard({
   match,
   isPending,
+  pendingConfirmation,
   onSelect,
   onAdjustScore,
   onSave,
   density,
   side = "left",
   showHeader = true,
-  selectedCountryFilter,
-  onSelectCountryFilter
+  showMatchIdentity = true
 }: {
   match: KnockoutBracketMatchView;
   isPending: boolean;
+  pendingConfirmation: {
+    matchId: string;
+    homeScore: number;
+    awayScore: number;
+    teamId: string | null;
+    affectedCount: number;
+  } | null;
   onSelect: (matchId: string, teamId: string) => void | Promise<void>;
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
   density: "compact" | "expanded" | "hero";
   side?: "left" | "right" | "center";
   showHeader?: boolean;
-  selectedCountryFilter?: string | null;
-  onSelectCountryFilter?: (teamId: string) => void;
+  showMatchIdentity?: boolean;
 }) {
   const isCompact = density === "compact";
   const isHero = density === "hero";
@@ -714,53 +1041,39 @@ function CurrentRoundMatchCard({
   const shellState = getKnockoutMatchShellState(match);
   const currentHomeScore = match.predictedHomeScore;
   const currentAwayScore = match.predictedAwayScore;
-  const savedHomeScore = match.savedHomeScore;
-  const savedAwayScore = match.savedAwayScore;
-  const effectiveCurrentHomeScore = currentHomeScore ?? 0;
-  const effectiveCurrentAwayScore = currentAwayScore ?? 0;
-  const effectiveSavedHomeScore = savedHomeScore ?? 0;
-  const effectiveSavedAwayScore = savedAwayScore ?? 0;
-  const footerHomeTeam =
-    match.viewMode === "projected" && match.seededHomeTeam ? match.seededHomeTeam : match.homeTeam ?? match.seededHomeTeam;
-  const footerAwayTeam =
-    match.viewMode === "projected" && match.seededAwayTeam ? match.seededAwayTeam : match.awayTeam ?? match.seededAwayTeam;
-  const homeCode = footerHomeTeam ? getTeamDisplayCode(footerHomeTeam) : "TBD";
-  const awayCode = footerAwayTeam ? getTeamDisplayCode(footerAwayTeam) : "TBD";
   const hasActualFinalScores =
     match.homeScore !== null &&
     match.homeScore !== undefined &&
     match.awayScore !== null &&
     match.awayScore !== undefined;
   const hasActualLiveScores = hasActualFinalScores && match.status !== "final";
-  const hasSavedPredictedScores =
-    match.savedHomeScore !== null &&
-    match.savedHomeScore !== undefined &&
-    match.savedAwayScore !== null &&
-    match.savedAwayScore !== undefined;
-  const isExactPredictedScore =
-    hasActualFinalScores &&
-    hasSavedPredictedScores &&
-    match.savedHomeScore === match.homeScore &&
-    match.savedAwayScore === match.awayScore;
-  const showScorelineMissOverlay =
-    match.status === "final" && hasActualFinalScores && hasSavedPredictedScores && !isExactPredictedScore;
-  const hasUnsavedScoreChange =
-    effectiveCurrentHomeScore !== effectiveSavedHomeScore || effectiveCurrentAwayScore !== effectiveSavedAwayScore;
-  const hasUnsavedSelectionChange = match.predictedWinnerTeamId !== match.savedWinnerTeamId;
-  const hasUnsavedPredictionChange = hasUnsavedScoreChange || hasUnsavedSelectionChange;
+  const localWinnerTeamId = getLocalPredictedWinner(match);
+  const hasUnsavedPredictionChange = isPredictionDirty(match, localWinnerTeamId);
   const hasSavedSelection = Boolean(match.savedAt);
-  const requiresWinnerSelection = shellState === "open" && effectiveCurrentHomeScore === effectiveCurrentAwayScore;
+  const requiresWinnerSelection = requiresTieWinner(match);
   const isProjectedEditable = match.viewMode === "projected" && shellState === "open";
   const isOfficialEditable = match.viewMode === "official" && shellState === "open";
-  const hasValidProjectedPrediction =
-    Boolean(match.predictedWinnerTeamId) &&
-    currentHomeScore !== null &&
-    currentHomeScore !== undefined &&
-    currentAwayScore !== null &&
-    currentAwayScore !== undefined;
-  const showProjectedSaveButton = isProjectedEditable && hasValidProjectedPrediction && hasUnsavedPredictionChange;
+  const hasValidPrediction = canSavePrediction(match, localWinnerTeamId);
+  const showProjectedSaveButton = isProjectedEditable && hasUnsavedPredictionChange;
   const showOfficialSaveButton = isOfficialEditable && hasUnsavedPredictionChange;
   const showSaveButton = showProjectedSaveButton || showOfficialSaveButton;
+  const shouldShowOfficialScoreArea =
+    match.viewMode === "official"
+      ? Boolean(match.homeTeam && match.awayTeam)
+      : true;
+  const shouldShowProjectedScoreArea =
+    match.viewMode === "projected"
+      ? match.stage !== "r32" &&
+        (
+          isProjectedEditable ||
+          match.savedHomeScore !== null ||
+          match.savedAwayScore !== null ||
+          match.predictedHomeScore !== null ||
+          match.predictedAwayScore !== null
+        )
+      : true;
+  const shouldShowScoreArea = match.viewMode === "official" ? shouldShowOfficialScoreArea : shouldShowProjectedScoreArea;
+  const isAwaitingClearConfirmation = pendingConfirmation?.matchId === match.matchId;
   const hasUserPrediction = Boolean(match.savedAt || hasUnsavedPredictionChange);
   const finalStatusMessage = hasActualFinalScores
     ? hasUserPrediction
@@ -776,7 +1089,9 @@ function CurrentRoundMatchCard({
       ? null
       : match.viewMode === "projected"
         ? match.isCorrectWinner
-          ? "Projected winner matched the real result"
+          ? match.exactScorePoints && match.exactScorePoints > 0
+            ? "Perfect projected hit"
+            : "Projected winner matched the real result"
           : "Projected winner missed the real result"
         : match.isCorrectWinner === true
           ? match.awardedPoints == null
@@ -793,56 +1108,79 @@ function CurrentRoundMatchCard({
               : "No points earned · 0 pts";
   const statusBadge =
     shellState === "final" ? (
-      <span className="shrink-0 rounded-md bg-gray-200 px-2 py-1 text-[10px] font-black text-gray-700">Final</span>
+      <span className="ui-chip-sm shrink-0 bg-gray-200 font-bold text-gray-700">Final</span>
     ) : shellState === "wait" && match.viewMode === "projected" ? (
-      <ProjectedMatchStatusChip
-        hasOfficialTeams={hasOfficialTeams}
-      />
+      <ProjectedMatchStatusChip hasOfficialTeams={hasOfficialTeams} />
     ) : shellState === "closed" ? (
-      <span className="shrink-0 rounded-md bg-gray-950 px-2 py-1 text-[10px] font-black text-white">Locked</span>
+      <span className="ui-chip-sm shrink-0 bg-gray-950 font-bold text-white">Locked</span>
     ) : shellState === "open" ? (
-      <span className="shrink-0 rounded-md bg-green-50 px-2 py-1 text-[10px] font-black text-green-700">Open</span>
+      <span className="ui-chip-sm shrink-0 bg-green-50 font-bold text-green-700">Open</span>
     ) : (
-      <span className="shrink-0 rounded-md bg-amber-50 px-2 py-1 text-[10px] font-black text-amber-700">Wait</span>
+      <span className="ui-chip-sm shrink-0 bg-amber-50 font-bold text-amber-700">Pending</span>
     );
   const isReadOnly = shellState === "closed" || shellState === "final" || shellState === "wait";
-  const selectedCountryGroupName = activeCountryGroupName(selectedCountryFilter ?? null, match);
+  const displayWinnerTeamId =
+    shellState === "final" || isReadOnly ? match.savedWinnerTeamId ?? localWinnerTeamId : localWinnerTeamId;
+  const homeSelected = Boolean(
+    displayWinnerTeamId &&
+      [match.homeTeam?.id ?? null, match.seededHomeTeam?.id ?? null].includes(displayWinnerTeamId)
+  );
+  const awaySelected = Boolean(
+    displayWinnerTeamId &&
+      [match.awayTeam?.id ?? null, match.seededAwayTeam?.id ?? null].includes(displayWinnerTeamId)
+  );
+  const projectedHomeComparisonState =
+    match.viewMode === "projected" && match.seededHomeTeam
+      ? match.homeTeam
+        ? match.homeTeam.id === match.seededHomeTeam.id
+          ? "match"
+          : "miss"
+        : null
+      : null;
+  const projectedAwayComparisonState =
+    match.viewMode === "projected" && match.seededAwayTeam
+      ? match.awayTeam
+        ? match.awayTeam.id === match.seededAwayTeam.id
+          ? "match"
+          : "miss"
+        : null
+      : null;
+  const footerContextChips = buildMatchContextChips(match);
 
   return (
     <div
       className={
         isEmbeddedCenterCard
           ? `${isHero ? "p-1" : "p-0.5"}`
-          : `w-full rounded-lg border ${
-              shellState === "final"
-                ? "border-gray-200 bg-gray-100 p-2"
-                : isHero
-                  ? match.viewMode === "projected"
-                    ? "border-amber-200 bg-[linear-gradient(135deg,#fff7da_0%,#fffdf4_50%,#fff1b8_100%)] p-2"
-                    : "border-amber-200 bg-white p-2"
-                  : isCompact
-                    ? match.viewMode === "projected"
-                      ? "border-amber-200 bg-[linear-gradient(135deg,#fff9e6_0%,#fffef6_50%,#fff5cb_100%)] p-2"
-                      : "border-gray-200 bg-white p-2"
-                    : match.viewMode === "projected"
-                      ? "border-amber-200 bg-[linear-gradient(135deg,#fff9e6_0%,#fffef6_50%,#fff5cb_100%)] p-2"
-                      : "border-gray-200 bg-white p-2"
+          : `box-border w-full max-w-full overflow-hidden rounded-lg border ${
+              match.viewMode === "projected"
+                ? "border-amber-200 bg-[linear-gradient(135deg,#fff9e6_0%,#fffef6_50%,#fff5cb_100%)] p-2"
+                : shellState === "final"
+                  ? "border-gray-200 bg-gray-100 p-2"
+                  : "border-gray-200 bg-white p-2"
             }`
       }
     >
       {showHeader ? (
         <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
-          <div>
-            {matchNumber ? (
-              <KnockoutMatchNumberBadge number={matchNumber} compact={isCompact} />
+          <div className="min-w-0">
+            {showMatchIdentity && matchNumber ? (
+              <div className="flex items-center gap-2">
+                <KnockoutMatchNumberBadge number={matchNumber} compact={isCompact} />
+                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">
+                  {getStageDisplayName(match.stage)}
+                </span>
+              </div>
+            ) : showMatchIdentity ? (
+              <p className={`${isCompact ? "text-xs" : "text-sm"} font-bold text-gray-950`}>{match.title}</p>
             ) : (
-              <p className={`${isCompact ? "text-xs" : "text-sm"} font-black text-gray-950`}>{match.title}</p>
+              <span aria-hidden className="inline-flex h-6" />
             )}
           </div>
           <p className="min-w-0 truncate text-[10px] font-bold uppercase tracking-wide text-gray-500">
             {shellState === "open" ? `Pick before: ${formatCompactKickoff(match.kickoffTime)}` : formatCompactKickoff(match.kickoffTime)}
           </p>
-          <div className="justify-self-end">{statusBadge}</div>
+          <div className="min-w-0 justify-self-end">{statusBadge}</div>
         </div>
       ) : null}
 
@@ -851,17 +1189,16 @@ function CurrentRoundMatchCard({
           aria-hidden
           className="pointer-events-none absolute bottom-1 left-1/2 top-1 -translate-x-1/2 border-l border-gray-200"
         />
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5 overflow-hidden">
           <KnockoutTeamPanel
             team={match.homeTeam}
             officialTeam={match.seededHomeTeam}
             placeholderLabel={match.homeSourceLabel}
-            projectionSource={match.homeResolutionSource}
             viewMode={match.viewMode}
             status={match.status}
-            officialScore={match.homeScore}
-            isSelected={Boolean(match.homeTeam?.id && match.predictedWinnerTeamId === match.homeTeam.id)}
-            isCorrectSelection={match.status === "final" && match.homeTeam?.id === match.predictedWinnerTeamId ? match.isCorrectWinner : null}
+            isSelected={homeSelected}
+            isCorrectSelection={match.status === "final" && homeSelected ? match.isCorrectWinner : null}
+            slotComparisonState={projectedHomeComparisonState}
             isDisabled={!match.homeTeam || !match.canSelectWinner || isPending}
             onClick={() => {
               if (match.homeTeam?.id) {
@@ -873,15 +1210,12 @@ function CurrentRoundMatchCard({
             isReadOnly={isReadOnly}
             canSelectByTap={requiresWinnerSelection}
             predictedScore={currentHomeScore}
-            showScorelineMiss={showScorelineMissOverlay}
             onIncrement={() => onAdjustScore(match.matchId, "home", 1)}
             onDecrement={() => onAdjustScore(match.matchId, "home", -1)}
-            selectedCountryFilter={selectedCountryFilter ?? null}
-            filterGroupName={selectedCountryGroupName}
-            onSelectCountryFilter={onSelectCountryFilter}
+            showScoreArea={shouldShowScoreArea}
           />
           <span
-            className={`inline-flex h-7 w-7 items-center justify-center rounded-full border text-[8px] font-black uppercase ${
+            className={`inline-flex h-7 w-7 items-center justify-center rounded-full border text-[8px] font-bold uppercase ${
               match.status === "final"
                 ? "border-gray-300 bg-white text-gray-500"
                 : shellState === "closed"
@@ -895,12 +1229,11 @@ function CurrentRoundMatchCard({
             team={match.awayTeam}
             officialTeam={match.seededAwayTeam}
             placeholderLabel={match.awaySourceLabel}
-            projectionSource={match.awayResolutionSource}
             viewMode={match.viewMode}
             status={match.status}
-            officialScore={match.awayScore}
-            isSelected={Boolean(match.awayTeam?.id && match.predictedWinnerTeamId === match.awayTeam.id)}
-            isCorrectSelection={match.status === "final" && match.awayTeam?.id === match.predictedWinnerTeamId ? match.isCorrectWinner : null}
+            isSelected={awaySelected}
+            isCorrectSelection={match.status === "final" && awaySelected ? match.isCorrectWinner : null}
+            slotComparisonState={projectedAwayComparisonState}
             isDisabled={!match.awayTeam || !match.canSelectWinner || isPending}
             onClick={() => {
               if (match.awayTeam?.id) {
@@ -912,35 +1245,68 @@ function CurrentRoundMatchCard({
             isReadOnly={isReadOnly}
             canSelectByTap={requiresWinnerSelection}
             predictedScore={currentAwayScore}
-            showScorelineMiss={showScorelineMissOverlay}
             onIncrement={() => onAdjustScore(match.matchId, "away", 1)}
             onDecrement={() => onAdjustScore(match.matchId, "away", -1)}
-            selectedCountryFilter={selectedCountryFilter ?? null}
-            filterGroupName={selectedCountryGroupName}
-            onSelectCountryFilter={onSelectCountryFilter}
+            showScoreArea={shouldShowScoreArea}
           />
         </div>
       </div>
 
-      {match.status === "final" ? (
+      {footerContextChips.left || footerContextChips.right ? (
+        <div className="mt-1.5 border-t border-gray-100 px-1 pt-2">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-1.5">
+            <div className="flex min-w-0 justify-center">
+              {footerContextChips.left ? (
+                <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.03em] text-gray-500">
+                  <span className="flex min-w-0 flex-col items-center text-center leading-[1.05]">
+                    <span className="min-w-0 truncate">{footerContextChips.left.primary}</span>
+                    {footerContextChips.left.secondary ? (
+                      <span className="min-w-0 truncate text-[9px] font-semibold tracking-[0.02em] text-gray-400">
+                        {footerContextChips.left.secondary}
+                      </span>
+                    ) : null}
+                  </span>
+                </span>
+              ) : null}
+            </div>
+            <span aria-hidden className="inline-flex h-1 w-7" />
+            <div className="flex min-w-0 justify-center">
+              {footerContextChips.right ? (
+                <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.03em] text-gray-500">
+                  <span className="flex min-w-0 flex-col items-center text-center leading-[1.05]">
+                    <span className="min-w-0 truncate">{footerContextChips.right.primary}</span>
+                    {footerContextChips.right.secondary ? (
+                      <span className="min-w-0 truncate text-[9px] font-semibold tracking-[0.02em] text-gray-400">
+                        {footerContextChips.right.secondary}
+                      </span>
+                    ) : null}
+                  </span>
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {match.status === "final" && match.viewMode === "official" ? (
         <div className="mt-1.5 border-t border-gray-300 px-1 pt-2 text-center">
           <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
             <div className="flex min-w-0 items-center justify-start gap-2">
-              <span className="text-sm font-black leading-none tabular-nums text-gray-800">
+              <span className="text-sm font-bold leading-none tabular-nums text-gray-800">
                 {hasActualFinalScores ? match.homeScore : "—"}
               </span>
-              <span className="text-sm font-black uppercase leading-none text-gray-500">
-                {homeCode}
+              <span className="min-w-0 truncate text-sm font-semibold leading-none text-gray-500">
+                {match.seededHomeTeam?.shortName ?? match.homeTeam?.shortName ?? "Home"}
               </span>
             </div>
             <div className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500">
               {hasActualFinalScores ? "<- Final Scores ->" : "Final Scores: Awaiting score"}
             </div>
             <div className="flex min-w-0 items-center justify-end gap-2">
-              <span className="text-sm font-black uppercase leading-none text-gray-500">
-                {awayCode}
+              <span className="min-w-0 truncate text-sm font-semibold leading-none text-gray-500">
+                {match.seededAwayTeam?.shortName ?? match.awayTeam?.shortName ?? "Away"}
               </span>
-              <span className="text-sm font-black leading-none tabular-nums text-gray-800">
+              <span className="text-sm font-bold leading-none tabular-nums text-gray-800">
                 {hasActualFinalScores ? match.awayScore : "—"}
               </span>
             </div>
@@ -969,26 +1335,57 @@ function CurrentRoundMatchCard({
             </div>
           ) : null}
         </div>
+      ) : match.status === "final" && match.viewMode === "projected" ? (
+        <div className="mt-1.5 border-t border-amber-200/80 px-1 pt-2 text-center">
+          {shouldShowProjectedScoreArea && match.savedHomeScore !== null && match.savedAwayScore !== null ? (
+            <div className="text-[10px] font-bold uppercase tracking-wide text-amber-800">
+              Projected score: {match.savedHomeScore}-{match.savedAwayScore}
+            </div>
+          ) : null}
+          {match.isCorrectWinner != null ? (
+            <div className={`${shouldShowProjectedScoreArea && match.savedHomeScore !== null && match.savedAwayScore !== null ? "mt-1" : ""} flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-wide text-amber-900`}>
+              {match.isCorrectWinner === true ? (
+                <Check aria-hidden className="h-4 w-4 text-accent-dark" />
+              ) : (
+                <X aria-hidden className="h-4 w-4 text-rose-600" />
+              )}
+              <span>{gradedPointsLabel}</span>
+            </div>
+          ) : null}
+          {finalStatusMessage ? (
+            <div className="mt-1 flex items-center justify-center gap-2 text-center text-[10px] font-bold uppercase tracking-wide text-amber-800">
+              {finalStatusMessage === "No pick saved." ? (
+                <>
+                  <X aria-hidden className="h-4 w-4 text-rose-600" />
+                  <span>No pick saved.</span>
+                  <span className="text-amber-900">No points</span>
+                </>
+              ) : (
+                <span>{finalStatusMessage}</span>
+              )}
+            </div>
+          ) : null}
+        </div>
       ) : shellState === "closed" && match.viewMode === "official" ? (
         <div className="mt-1.5 border-t border-gray-300 px-1 pt-2 text-center">
           {hasActualLiveScores ? (
             <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
               <div className="flex min-w-0 items-center justify-start gap-2">
-                <span className="text-sm font-black leading-none tabular-nums text-orange-500">
+                <span className="text-sm font-bold leading-none tabular-nums text-orange-500">
                   {match.homeScore}
                 </span>
-                <span className="text-sm font-black uppercase leading-none text-gray-500">
-                  {homeCode}
+                <span className="min-w-0 truncate text-sm font-semibold leading-none text-gray-500">
+                  {match.seededHomeTeam?.shortName ?? match.homeTeam?.shortName ?? "Home"}
                 </span>
               </div>
               <div className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                 {"<- Live Score ->"}
               </div>
               <div className="flex min-w-0 items-center justify-end gap-2">
-                <span className="text-sm font-black uppercase leading-none text-gray-500">
-                  {awayCode}
+                <span className="min-w-0 truncate text-sm font-semibold leading-none text-gray-500">
+                  {match.seededAwayTeam?.shortName ?? match.awayTeam?.shortName ?? "Away"}
                 </span>
-                <span className="text-sm font-black leading-none tabular-nums text-orange-500">
+                <span className="text-sm font-bold leading-none tabular-nums text-orange-500">
                   {match.awayScore}
                 </span>
               </div>
@@ -996,26 +1393,40 @@ function CurrentRoundMatchCard({
           ) : null}
           <div className={`${hasActualLiveScores ? "mt-1" : ""} text-center text-[10px] font-bold uppercase tracking-wide text-gray-500`}>
             {hasSavedSelection
-              ? `MATCH IN PLAY - Saved on: ${formatSavedTimestamp(match.savedAt)}`
+              ? `Saved on: ${formatSavedTimestamp(match.savedAt)}`
               : hasOfficialTeams
-                ? "MATCH IN PLAY - Scores will show here when final"
-                : "Teams not set yet"}
+                ? "Predictions locked at kickoff"
+                : "Official bracket pending"}
           </div>
         </div>
       ) : showSaveButton ? (
         <>
-          {requiresWinnerSelection && !match.predictedWinnerTeamId ? (
-            <div className="mt-1.5 border-t border-gray-100 px-1 pt-2 text-center text-xs font-bold uppercase tracking-wide text-accent-dark">
-              Tap for winner
+          {isAwaitingClearConfirmation ? (
+            <div className="mt-1.5 flex min-h-[28px] items-center justify-center overflow-hidden border-t border-amber-200/80 bg-amber-50/70 px-1.5 text-center text-[10px] font-bold uppercase leading-none tracking-[0.02em] text-amber-800">
+              {`This will clear ${pendingConfirmation.affectedCount} future ${pendingConfirmation.affectedCount === 1 ? "pick" : "picks"}`}
+            </div>
+          ) : requiresWinnerSelection && !localWinnerTeamId ? (
+            <div className="mt-1 flex min-h-[22px] items-center justify-center overflow-hidden border-t border-amber-300 bg-amber-200/80 px-1.5 pb-0.5 pt-0 text-center text-amber-900">
+              <span className="block w-full min-w-0 truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
+                Knockout Only: Select a winner to save
+              </span>
             </div>
           ) : null}
           <button
             type="button"
             disabled={isPending}
             onClick={() => void onSave(match.matchId)}
-            className="mt-1.5 inline-flex w-full items-center justify-center rounded-md bg-accent px-4 py-3 text-sm font-black uppercase tracking-wide text-white transition hover:bg-accent-dark disabled:cursor-not-allowed disabled:opacity-60"
+            className={`mt-1.5 inline-flex w-full items-center justify-center rounded-md px-4 py-3 text-sm font-bold uppercase tracking-wide text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
+              isAwaitingClearConfirmation
+                ? "bg-amber-500 hover:bg-amber-600"
+                : "bg-accent hover:bg-accent-dark"
+            }`}
           >
-            {isPending ? "Saving..." : `Save Match ${matchNumber ?? ""}`.trim()}
+            {isPending
+              ? "Saving..."
+              : isAwaitingClearConfirmation
+                ? "Confirm clear and save"
+                : `Save Match ${matchNumber ?? ""}`.trim()}
           </button>
         </>
       ) : hasSavedSelection ? (
@@ -1023,14 +1434,25 @@ function CurrentRoundMatchCard({
           Saved on: {formatSavedTimestamp(match.savedAt)}
         </div>
       ) : isProjectedEditable ? (
-        <div className="mt-1.5 border-t border-amber-200/70 bg-amber-50/60 px-1 pt-2 text-center">
+        <div
+          className={`mt-1.5 border-t px-1 pt-2 text-center ${
+            requiresWinnerSelection && !localWinnerTeamId
+              ? "border-amber-300 bg-amber-200/80"
+              : "border-amber-200/70 bg-amber-50/60"
+          }`}
+        >
           <div className="text-xs font-bold uppercase tracking-wide text-amber-800">
-            {requiresWinnerSelection && !match.predictedWinnerTeamId
-              ? "Pick a winner to unlock Save"
-              : "Adjust the score or winner to save this projected match"}
-          </div>
-          <div className="mt-0.5 text-[10px] font-semibold text-amber-700">
-            Projected picks stay separate from official knockout picks.
+            {requiresWinnerSelection && !localWinnerTeamId ? (
+              <span className="flex min-h-[22px] w-full min-w-0 items-center justify-center overflow-hidden px-1.5 pb-0.5 pt-0">
+                <span className="block w-full min-w-0 truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] text-amber-900 [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
+                  Knockout Only: Select a winner to save
+                </span>
+              </span>
+            ) : !hasValidPrediction ? (
+              "Complete this prediction to save the match"
+            ) : (
+              "Adjust the score or winner to save this projected match"
+            )}
           </div>
         </div>
       ) : shellState === "open" ? (
@@ -1039,7 +1461,15 @@ function CurrentRoundMatchCard({
         </div>
       ) : (
         <div className="mt-1.5 border-t border-gray-300 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-400">
-          {hasOfficialTeams ? "MATCH IN PLAY - Scores will show here when final" : "Teams not set yet"}
+          {match.viewMode === "projected"
+            ? !match.homeTeam || !match.awayTeam
+              ? "Not picked"
+              : hasOfficialTeams
+                ? "Side-pick scoring coming soon"
+                : "Match not seeded"
+            : hasOfficialTeams
+              ? "Predictions locked at kickoff"
+              : "Official bracket pending"}
         </div>
       )}
     </div>
@@ -1048,99 +1478,14 @@ function CurrentRoundMatchCard({
 
 function ProjectedMatchStatusChip({ hasOfficialTeams }: { hasOfficialTeams: boolean }) {
   if (hasOfficialTeams) {
-    return <span className="shrink-0 rounded-md bg-green-50 px-2 py-1 text-[10px] font-black text-green-700">READY</span>;
+    return <span className="ui-chip-sm shrink-0 bg-amber-50 font-bold text-amber-700">Locked</span>;
   }
 
   return (
-    <span
-      className="inline-flex shrink-0 items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-gray-500"
-      aria-label="Projected bracket preview"
-      title="Projected bracket preview"
-    >
-      <Clock3 aria-hidden className="h-3.5 w-3.5" />
+    <span className="ui-chip-sm shrink-0 bg-gray-100 font-bold text-gray-500">
+      Pending
     </span>
   );
-}
-
-function getStageBanner(
-  slide: BracketSlideView,
-  mode: KnockoutBracketEditorView["mode"]
-): { tone: "wait" | "open" | "final"; text: string } {
-  if (slide.currentStage === "r32") {
-    return getRoundOf32Banner(slide);
-  }
-
-  const hasMatches = slide.currentMatches.length > 0;
-  const allFinal = hasMatches && slide.currentMatches.every((match) => match.status === "final");
-  const anyOpen = slide.currentMatches.some((match) => getKnockoutMatchShellState(match) === "open");
-
-  if (allFinal) {
-    return {
-      tone: "final",
-      text: `${slide.title.toUpperCase()} IS FINAL`
-    };
-  }
-
-  if (mode === "projected" && anyOpen) {
-    return {
-      tone: "open",
-      text: "PROJECTED PICKS ARE EDITABLE UNTIL KICKOFF"
-    };
-  }
-
-  if (mode === "projected" || !anyOpen) {
-    return {
-      tone: "wait",
-      text: mode === "projected" ? "COMPLETE MORE GROUP PICKS TO BUILD THIS ROUND" : "MATCHES UNLOCK WHEN GROUP PHASE IS COMPLETED"
-    };
-  }
-
-  return {
-    tone: "open",
-    text: "PREDICTIONS ARE EDITABLE UNTIL KICKOFF"
-  };
-}
-
-function getRoundOf32Banner(slide: BracketSlideView): { tone: "wait" | "open" | "final"; text: string } {
-  const hasMatches = slide.currentMatches.length > 0;
-  const allFinal = hasMatches && slide.currentMatches.every((match) => match.status === "final");
-  const anyOpen = slide.currentMatches.some((match) => getKnockoutMatchShellState(match) === "open");
-  const hasOfficialTeams = slide.currentMatches.some(
-    (match) => Boolean(match.seededHomeTeam && match.seededAwayTeam)
-  );
-
-  if (allFinal) {
-    return {
-      tone: "final",
-      text: "ROUND OF 32 IS FINAL"
-    };
-  }
-
-  if (!hasOfficialTeams) {
-    if (slide.currentMatches.some((match) => match.viewMode === "projected" && getKnockoutMatchShellState(match) === "open")) {
-      return {
-        tone: "open",
-        text: "PROJECTED ROUND OF 32 PICKS ARE EDITABLE"
-      };
-    }
-
-    return {
-      tone: "wait",
-      text: "MATCHES UNLOCK WHEN GROUP PHASE IS COMPLETED"
-    };
-  }
-
-  if (anyOpen) {
-    return {
-      tone: "open",
-      text: "PREDICTIONS ARE EDITABLE UNTIL KICKOFF"
-    };
-  }
-
-  return {
-    tone: "wait",
-    text: "ROUND OF 32 IS CLOSED"
-  };
 }
 
 function groupMatchesIntoPods(matches: KnockoutBracketMatchView[]) {
@@ -1216,12 +1561,11 @@ function KnockoutTeamPanel({
   team,
   officialTeam,
   placeholderLabel,
-  projectionSource,
   viewMode,
   status,
-  officialScore,
   isSelected,
   isCorrectSelection,
+  slotComparisonState,
   isDisabled,
   onClick,
   density,
@@ -1229,22 +1573,18 @@ function KnockoutTeamPanel({
   isReadOnly,
   canSelectByTap,
   predictedScore,
-  showScorelineMiss,
   onIncrement,
   onDecrement,
-  selectedCountryFilter,
-  filterGroupName,
-  onSelectCountryFilter
+  showScoreArea,
 }: {
   team: BracketTeamOption | null;
   officialTeam: BracketTeamOption | null;
   placeholderLabel: string | null;
-  projectionSource: KnockoutBracketMatchView["homeResolutionSource"];
   viewMode: KnockoutBracketMatchView["viewMode"];
   status: KnockoutBracketMatchView["status"];
-  officialScore: number | null;
   isSelected: boolean;
   isCorrectSelection: boolean | null;
+  slotComparisonState: "match" | "miss" | null;
   isDisabled: boolean;
   onClick: () => void;
   density: "compact" | "expanded" | "hero";
@@ -1252,35 +1592,29 @@ function KnockoutTeamPanel({
   isReadOnly: boolean;
   canSelectByTap: boolean;
   predictedScore: number | null;
-  showScorelineMiss: boolean;
   onIncrement: () => void;
   onDecrement: () => void;
-  selectedCountryFilter: string | null;
-  filterGroupName: string | null;
-  onSelectCountryFilter?: (teamId: string) => void;
+  showScoreArea: boolean;
 }) {
   const isCompact = density === "compact";
   const userTeam = team;
   const isProjectedReadOnly = viewMode === "projected" && isReadOnly;
-  const layers = getKnockoutCardLayers({
-    competitorSide: side,
-    userTeam,
-    officialTeam,
-    placeholderLabel,
-    projectionSource,
-    viewMode,
-    status,
-    officialScore,
-    isSelected,
-    isCorrectSelection
-  });
-  const userLayer = layers.userLayer;
-  const displayLabel = team?.name ?? officialTeam?.name ?? formatRoundOf32PlaceholderLabel(placeholderLabel);
-  const displayFlag = team?.flagEmoji ?? officialTeam?.flagEmoji ?? null;
-  const displayTeam = team ?? officialTeam ?? null;
-  const displayCode = displayTeam ? getTeamDisplayCode(displayTeam) : null;
+  const displayLabel =
+    viewMode === "projected"
+      ? team?.name ?? "Not Picked"
+      : team?.name ?? officialTeam?.name ?? formatRoundOf32PlaceholderLabel(placeholderLabel).primary;
+  const displayFlag =
+    viewMode === "projected"
+      ? team?.flagEmoji ?? null
+      : team?.flagEmoji ?? officialTeam?.flagEmoji ?? null;
   const scoreValue = matchScoreDisplay({ predictedScore });
   const ariaTeamName = officialTeam?.name ?? userTeam?.name ?? placeholderLabel ?? "this team";
+  const showProjectedSlotHitOverlay = viewMode === "projected" && slotComparisonState === "match";
+  const showProjectedSlotMissOverlay = viewMode === "projected" && slotComparisonState === "miss";
+  const showCombinedHitOverlay =
+    showProjectedSlotHitOverlay || (status === "final" && isSelected && isCorrectSelection === true);
+  const showCombinedMissOverlay =
+    showProjectedSlotMissOverlay || (status === "final" && isSelected && isCorrectSelection === false);
   const ariaLabel = isProjectedReadOnly
     ? `Projected knockout preview for ${ariaTeamName}.`
     : isReadOnly || isDisabled
@@ -1291,72 +1625,72 @@ function KnockoutTeamPanel({
 
   const content = (
     <span
-      className={`flex min-w-0 flex-col items-center rounded-lg px-1 py-0.5 ${
+      className={`relative flex w-full min-w-0 max-w-full flex-col items-center rounded-lg px-1 py-0.5 ${
         canSelectByTap && isSelected ? "bg-accent-light/40 text-accent-dark" : ""
       } ${isCompact ? "min-h-[86px]" : "min-h-[92px]"}`}
     >
-      <span className="flex min-w-0 justify-center">
-        <span className="flex items-center justify-center gap-2">
-          {side === "left" ? renderWinnerSlot() : null}
-          {side === "left" ? renderStepper() : null}
-          <span
-            onClick={(event) => {
-              if (canSelectByTap) {
-                event.stopPropagation();
-              }
-            }}
-            className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md border-2 bg-white font-black ${
-              isSelected ? "border-accent text-accent-dark" : "border-gray-300 text-gray-400"
-            } ${isCompact ? "h-10 w-9 text-2xl" : "h-10 w-10 text-2xl"}`}
-          >
-            {showScorelineMiss ? (
-              <>
-                <span
-                  aria-hidden
-                  className="pointer-events-none absolute left-1/2 top-1/2 h-[1px] w-[140%] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-rose-300/55"
-                />
-                <span
-                  aria-hidden
-                  className="pointer-events-none absolute left-1/2 top-1/2 h-[1px] w-[140%] -translate-x-1/2 -translate-y-1/2 -rotate-45 bg-rose-300/35"
-                />
-              </>
-            ) : null}
-            {scoreValue}
+      {showCombinedHitOverlay ? (
+        <span className="pointer-events-none absolute left-1/2 -top-5 -translate-x-1/2">
+          <span className="rounded-full bg-white/88 p-1 shadow-sm">
+            <Check aria-hidden className="h-6 w-6 text-accent-dark" strokeWidth={2.6} />
           </span>
-          {side === "right" ? renderStepper() : null}
-          {side === "right" ? renderWinnerSlot() : null}
+        </span>
+      ) : null}
+      {showCombinedMissOverlay ? (
+        <>
+          <span
+            aria-hidden
+            className="pointer-events-none absolute left-1/2 top-1/2 h-[1.5px] w-[118%] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-rose-400/65"
+          />
+          <span
+            aria-hidden
+            className="pointer-events-none absolute left-1/2 top-1/2 h-[1.5px] w-[118%] -translate-x-1/2 -translate-y-1/2 -rotate-45 bg-rose-400/55"
+          />
+        </>
+      ) : null}
+      <span className="flex w-full min-w-0 justify-center overflow-hidden">
+        <span className="flex min-w-0 items-center justify-center gap-2">
+          {showScoreArea ? (
+            <>
+              {side === "left" ? renderWinnerSlot() : null}
+              {side === "left" ? renderStepper() : null}
+              <span
+                onClick={(event) => {
+                  if (canSelectByTap) {
+                    event.stopPropagation();
+                  }
+                }}
+                className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md border-2 bg-white font-bold tabular-nums ${
+                  isProjectedReadOnly
+                    ? "border-transparent bg-transparent text-gray-700"
+                    : isSelected
+                      ? "border-accent text-accent-dark"
+                      : "border-gray-300 text-gray-400"
+                } ${isCompact ? "h-10 w-9 text-2xl" : "h-10 w-10 text-2xl"}`}
+              >
+                {scoreValue}
+              </span>
+              {side === "right" ? renderStepper() : null}
+              {side === "right" ? renderWinnerSlot() : null}
+            </>
+          ) : (
+            <span className="mb-0.5 flex min-h-[36px] items-center justify-center">
+              {renderWinnerSlot()}
+            </span>
+          )}
         </span>
       </span>
-        <span className="mt-0.5 block w-full px-1">
-          <span className="flex items-center justify-center gap-1.5 text-center text-base font-black text-gray-950">
-          {displayFlag && side === "right" ? (
-            <span aria-hidden className="shrink-0 text-xl leading-none">
-              {displayFlag}
-            </span>
-          ) : null}
-            <span className="min-w-0 truncate">{displayLabel}</span>
-            {displayFlag && side === "left" ? (
+      <span className="mt-1 block w-full min-w-0 max-w-full px-1">
+          {displayFlag ? (
+            <span className="mb-1 flex items-center justify-center">
               <span aria-hidden className="shrink-0 text-xl leading-none">
                 {displayFlag}
               </span>
-            ) : null}
-          </span>
-          {displayCode && displayTeam ? (
-            <KnockoutCountryChip
-              teamId={displayTeam.id}
-              countryCode={displayCode}
-              teamName={displayTeam.name}
-              teamGroupName={displayTeam.groupName ?? null}
-              activeCountryId={selectedCountryFilter}
-              selectedCountryGroupName={filterGroupName}
-              onSelectCountry={onSelectCountryFilter}
-            />
-          ) : null}
-          {userLayer.helperText ? (
-            <span className="mt-px block text-center text-[10px] font-semibold text-gray-500">
-              {userLayer.helperText}
             </span>
-        ) : null}
+          ) : null}
+          <span className="block min-w-0 text-center text-[14px] font-bold leading-tight text-gray-950 sm:text-base">
+            <span className="block min-w-0 truncate">{displayLabel}</span>
+          </span>
       </span>
     </span>
   );
@@ -1437,85 +1771,19 @@ function KnockoutTeamPanel({
 
   function renderWinnerSlot() {
     return (
-      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center text-accent-dark">
+      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center text-accent-dark">
         {isSelected ? (
           <Trophy aria-hidden className="h-5 w-5" />
         ) : canSelectByTap ? (
-          <span aria-hidden className="h-4 w-4 rounded-full border border-accent/35" />
+          <span aria-hidden className="relative inline-flex h-5 w-5 items-center justify-center text-accent/45">
+            <Trophy className="h-4.5 w-4.5 stroke-[1.8]" />
+            <CheckSquare className="absolute -bottom-0.5 -right-1 h-3.5 w-3.5 stroke-[1.9]" />
+          </span>
         ) : null}
       </span>
     );
   }
 
-}
-
-function getKnockoutCardLayers({
-  competitorSide,
-  userTeam,
-  officialTeam,
-  placeholderLabel,
-  projectionSource,
-  viewMode,
-  status,
-  officialScore,
-  isSelected,
-  isCorrectSelection
-}: {
-  competitorSide: "left" | "right";
-  userTeam: BracketTeamOption | null;
-  officialTeam: BracketTeamOption | null;
-  placeholderLabel: string | null;
-  projectionSource: KnockoutBracketMatchView["homeResolutionSource"];
-  viewMode: KnockoutBracketMatchView["viewMode"];
-  status: KnockoutBracketMatchView["status"];
-  officialScore: number | null;
-  isSelected: boolean;
-  isCorrectSelection: boolean | null;
-}) {
-  const isProjected = viewMode === "projected";
-  const userDisplayCode = userTeam ? getTeamDisplayCode(userTeam) : "TBD";
-  const officialPlaceholderCode = formatKnockoutPlaceholderCode(placeholderLabel);
-  const officialDisplayName = officialTeam?.name ?? formatKnockoutPlaceholderText(officialPlaceholderCode);
-  const unresolvedHelper =
-    isProjected && projectionSource === "missing" ? "More group results or picks needed" : null;
-  const projectedWinnerHelper =
-    !isProjected && projectionSource === "prediction" && !officialTeam ? "Based on your projected winners" : null;
-  const projectedActualSeedHelper =
-    isProjected && officialTeam && userTeam && officialTeam.id !== userTeam.id
-      ? `Actual seed: ${officialTeam.shortName}`
-      : null;
-
-  const userLayer = isProjected
-    ? {
-        displayCode: userDisplayCode,
-        flagEmoji: userTeam?.flagEmoji ?? null,
-        label: "Yours",
-        helperText: unresolvedHelper ?? projectedActualSeedHelper,
-        isSelected: false,
-        isCorrect: null as boolean | null
-      }
-    : {
-        displayCode: isSelected ? userDisplayCode : "Pick",
-        flagEmoji: isSelected ? userTeam?.flagEmoji ?? null : null,
-        label: isSelected ? "You" : "Pick",
-        helperText: projectedWinnerHelper,
-        isSelected,
-        isCorrect: isSelected ? isCorrectSelection : null
-      };
-
-  const realLayer = {
-    displayName: officialDisplayName,
-    label: officialTeam ? "Actual" : null,
-    scoreText: status === "final" || status === "live" || status === "locked" ? (officialScore != null ? String(officialScore) : null) : null,
-    helperText: !officialTeam && !isProjected ? (placeholderLabel ?? null) : null,
-    placeholderBadge: officialTeam ? null : getKnockoutPlaceholderBadge(placeholderLabel)
-  };
-
-  return {
-    competitorSide,
-    userLayer,
-    realLayer
-  };
 }
 
 function activeFilterTeamLabel(slide: BracketSlideView, selectedCountryFilter: string) {
@@ -1527,79 +1795,10 @@ function activeFilterTeamLabel(slide: BracketSlideView, selectedCountryFilter: s
   return team?.shortName ?? "that team";
 }
 
-function activeCountryGroupName(
-  selectedCountryFilter: string | null,
-  match: Pick<KnockoutBracketMatchView, "homeTeam" | "awayTeam" | "seededHomeTeam" | "seededAwayTeam">
-) {
-  if (!selectedCountryFilter) {
-    return null;
-  }
-
-  const team = [match.homeTeam, match.awayTeam, match.seededHomeTeam, match.seededAwayTeam].find(
-    (candidate) => candidate?.id === selectedCountryFilter
-  );
-
-  return team?.groupName ?? null;
-}
-
-function getTeamDisplayCode(team: BracketTeamOption) {
-  const preferred = team.shortName?.trim() || team.name.trim().slice(0, 3);
-  return preferred.toUpperCase();
-}
-
-function KnockoutCountryChip({
-  teamId,
-  countryCode,
-  teamName,
-  teamGroupName,
-  activeCountryId,
-  selectedCountryGroupName,
-  onSelectCountry
-}: {
-  teamId: string;
-  countryCode: string;
-  teamName: string;
-  teamGroupName: string | null;
-  activeCountryId: string | null;
-  selectedCountryGroupName: string | null;
-  onSelectCountry?: (teamId: string) => void;
-}) {
-  const isActive = activeCountryId === teamId;
-  const isGroupMate =
-    Boolean(
-      activeCountryId &&
-        activeCountryId !== teamId &&
-        selectedCountryGroupName &&
-        teamGroupName &&
-        selectedCountryGroupName === teamGroupName
-    );
-
-  return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onSelectCountry?.(teamId);
-      }}
-      aria-label={`Filter knockout matches by ${teamName}`}
-      className={`mt-0.5 inline-flex cursor-pointer items-center justify-center rounded-md border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide transition ${
-        isActive
-          ? "border-emerald-800 ring-1 ring-emerald-800 text-emerald-900"
-          : isGroupMate
-            ? "border-gray-700 ring-1 ring-gray-700 text-gray-700"
-            : "border-gray-300 text-gray-600 hover:border-accent hover:text-accent-dark"
-      }`}
-    >
-      {countryCode}
-    </button>
-  );
-}
-
 function KnockoutMatchNumberBadge({ number, compact = false }: { number: number; compact?: boolean }) {
   return (
     <span
-      className={`inline-flex items-center justify-center rounded-full bg-accent font-black text-white ${
+      className={`inline-flex items-center justify-center rounded-full bg-accent font-bold text-white ${
         compact ? "h-6 w-6 text-xs" : "h-7 w-7 text-sm"
       }`}
     >
@@ -1618,43 +1817,58 @@ function getKnockoutMatchNumber(title: string) {
   return Number.isFinite(value) ? value : null;
 }
 
-function formatKnockoutPlaceholderCode(placeholderLabel: string | null) {
-  if (!placeholderLabel) {
-    return "TBD";
+function getStageDisplayName(stage: KnockoutBracketMatchView["stage"]) {
+  switch (stage) {
+    case "r32":
+      return "Round of 32";
+    case "r16":
+      return "Round of 16";
+    case "qf":
+      return "Quarter-finals";
+    case "sf":
+      return "Semi-finals";
+    case "final":
+      return "Final";
+    case "third":
+      return "Third Place";
+    default:
+      return "Knockout";
   }
-
-  const normalized = placeholderLabel.replace(/\s+/g, " ").trim();
-  const groupMatch = normalized.match(/^Group\s+([A-Z])\s+(Winner|Runner-up)$/i);
-  if (groupMatch) {
-    return `${groupMatch[1].toUpperCase()}-#${groupMatch[2].toLowerCase() === "winner" ? "1" : "2"}`;
-  }
-
-  const thirdPlaceMatch = normalized.match(/^Best third-place\s+(\d{1,2})$/i);
-  if (thirdPlaceMatch) {
-    return `#3-${thirdPlaceMatch[1]}`;
-  }
-
-  return normalized.slice(0, 3).toUpperCase();
 }
 
-function formatRoundOf32PlaceholderLabel(placeholderLabel: string | null) {
+type MatchContextChip = {
+  primary: string;
+  secondary?: string | null;
+};
+
+function formatRoundOf32PlaceholderLabel(placeholderLabel: string | null): MatchContextChip {
   if (!placeholderLabel) {
-    return "Teams not set yet";
+    return { primary: "TBD" };
   }
 
   const normalized = placeholderLabel.replace(/\s+/g, " ").trim();
   const groupMatch = normalized.match(/^Group\s+([A-Z])\s+(Winner|Runner-up)$/i);
   if (groupMatch) {
-    return `Group ${groupMatch[1].toUpperCase()}: ${groupMatch[2].toLowerCase() === "winner" ? "First Place" : "Second Place"}`;
+    return {
+      primary: `Group ${groupMatch[1].toUpperCase()} ${groupMatch[2].toLowerCase() === "winner" ? "1st" : "2nd"}`
+    };
   }
 
   const stageLabel = getPlaceholderStageLabel(normalized);
   const matchNumber = getPlaceholderMatchNumber(normalized);
   if (stageLabel && matchNumber) {
-    return `${stageLabel}: Match ${matchNumber} - WIN`;
+    return {
+      primary: stageLabel,
+      secondary: `Win Match: ${matchNumber}`
+    };
   }
 
-  return normalized;
+  const tbdGroupMatch = normalized.match(/^TBD(?:\s+from)?\s+Group\s+([A-Z])$/i);
+  if (tbdGroupMatch) {
+    return { primary: `TBD Group ${tbdGroupMatch[1].toUpperCase()}` };
+  }
+
+  return { primary: normalized };
 }
 
 function getPlaceholderStageLabel(label: string) {
@@ -1691,29 +1905,6 @@ function getPlaceholderMatchNumber(label: string) {
   return null;
 }
 
-function formatKnockoutPlaceholderText(code: string) {
-  const groupedCode = code.match(/^([A-Z])-(#\d)$/);
-  if (groupedCode) {
-    return groupedCode[2];
-  }
-
-  return code;
-}
-
-function getKnockoutPlaceholderBadge(placeholderLabel: string | null) {
-  if (!placeholderLabel) {
-    return null;
-  }
-
-  const normalized = placeholderLabel.replace(/\s+/g, " ").trim();
-  const groupMatch = normalized.match(/^Group\s+([A-Z])\s+(Winner|Runner-up)$/i);
-  if (groupMatch) {
-    return groupMatch[1].toUpperCase();
-  }
-
-  return null;
-}
-
 function ChampionCard({ champion }: { champion: BracketTeamOption | null }) {
   return (
     <div className="overflow-hidden rounded-lg border border-amber-200 bg-[linear-gradient(135deg,#fff8eb_0%,#ffffff_35%,#fff1c2_100%)] p-5">
@@ -1723,7 +1914,7 @@ function ChampionCard({ champion }: { champion: BracketTeamOption | null }) {
         </div>
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">Champion</p>
-          <p className="mt-1 text-2xl font-black text-gray-950">{champion?.name ?? "Choose your champion"}</p>
+          <p className="mt-1 text-2xl font-extrabold text-gray-950">{champion?.name ?? "Choose your champion"}</p>
           <p className="mt-1 text-sm font-semibold text-gray-600">Your final winner lands here.</p>
         </div>
       </div>
@@ -1773,10 +1964,11 @@ function deriveEditorView(
         : null;
     const draftWinnerTeamId = draftWinnerByMatchId[match.matchId] ?? null;
     const draftScores = draftScoreByMatchId[match.matchId] ?? null;
+    const matchupReady = Boolean(homeTeam && awayTeam);
     const currentHomeScore =
-      draftScores?.homeScore ?? savedHomeScore ?? (match.isLocked || match.status === "final" ? null : 0);
+      draftScores?.homeScore ?? savedHomeScore ?? (matchupReady && !match.isLocked && match.status !== "final" ? 0 : null);
     const currentAwayScore =
-      draftScores?.awayScore ?? savedAwayScore ?? (match.isLocked || match.status === "final" ? null : 0);
+      draftScores?.awayScore ?? savedAwayScore ?? (matchupReady && !match.isLocked && match.status !== "final" ? 0 : null);
     const validPredictedWinnerTeamId = resolveCurrentWinnerTeamId({
       homeTeamId: homeTeam?.id ?? null,
       awayTeamId: awayTeam?.id ?? null,
@@ -1838,6 +2030,66 @@ function collectDescendantMatchIdsFromView(view: KnockoutBracketEditorView, root
   }
 
   return descendants;
+}
+
+function getLocalPredictedWinner(match: Pick<
+  KnockoutBracketMatchView,
+  "homeTeam" | "awayTeam" | "predictedHomeScore" | "predictedAwayScore" | "predictedWinnerTeamId"
+>) {
+  return resolveCurrentWinnerTeamId({
+    homeTeamId: match.homeTeam?.id ?? null,
+    awayTeamId: match.awayTeam?.id ?? null,
+    homeScore: match.predictedHomeScore ?? 0,
+    awayScore: match.predictedAwayScore ?? 0,
+    explicitWinnerTeamId: match.predictedWinnerTeamId ?? null
+  });
+}
+
+function requiresTieWinner(
+  match: Pick<KnockoutBracketMatchView, "predictedHomeScore" | "predictedAwayScore" | "status" | "canSelectWinner" | "seededHomeTeam" | "seededAwayTeam" | "viewMode">
+) {
+  return (
+    getKnockoutMatchShellState(match) === "open" &&
+    (match.predictedHomeScore ?? 0) === (match.predictedAwayScore ?? 0)
+  );
+}
+
+function canSavePrediction(
+  match: Pick<
+    KnockoutBracketMatchView,
+    "predictedHomeScore" | "predictedAwayScore" | "status" | "canSelectWinner" | "seededHomeTeam" | "seededAwayTeam" | "viewMode"
+  >,
+  localWinnerTeamId: string | null
+) {
+  const hasScores =
+    match.predictedHomeScore !== null &&
+    match.predictedHomeScore !== undefined &&
+    match.predictedAwayScore !== null &&
+    match.predictedAwayScore !== undefined;
+
+  if (!hasScores) {
+    return false;
+  }
+
+  if (requiresTieWinner(match)) {
+    return Boolean(localWinnerTeamId);
+  }
+
+  return true;
+}
+
+function isPredictionDirty(
+  match: Pick<
+    KnockoutBracketMatchView,
+    "predictedHomeScore" | "predictedAwayScore" | "savedHomeScore" | "savedAwayScore" | "savedWinnerTeamId"
+  >,
+  localWinnerTeamId: string | null
+) {
+  return (
+    (match.predictedHomeScore ?? 0) !== (match.savedHomeScore ?? 0) ||
+    (match.predictedAwayScore ?? 0) !== (match.savedAwayScore ?? 0) ||
+    localWinnerTeamId !== match.savedWinnerTeamId
+  );
 }
 
 function resolveCurrentWinnerTeamId({
@@ -1936,6 +2188,149 @@ function stageSortValue(stage: KnockoutBracketMatchView["stage"]) {
   }
 }
 
+function ActualComparisonMatchCard({
+  match,
+  pendingOnly = false
+}: {
+  match: KnockoutBracketMatchView;
+  pendingOnly?: boolean;
+}) {
+  const matchNumber = getKnockoutMatchNumber(match.title);
+  const actualHomeTeam = match.seededHomeTeam;
+  const actualAwayTeam = match.seededAwayTeam;
+  const actualWinnerTeamId = match.actualWinnerTeamId ?? null;
+  const hasActualFinalScores = !pendingOnly && match.homeScore !== null && match.awayScore !== null;
+  const statusLabel = pendingOnly
+    ? "Pending"
+    : match.status === "final"
+      ? "Final"
+      : actualHomeTeam && actualAwayTeam
+        ? "Pending"
+        : "Waiting";
+
+  return (
+    <div className="box-border w-full max-w-full overflow-hidden rounded-lg border border-gray-200 bg-white p-2">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
+        <div className="min-w-0">
+          {matchNumber ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">Match</span>
+              <KnockoutMatchNumberBadge number={matchNumber} compact />
+            </div>
+          ) : (
+            <p className="text-xs font-bold text-gray-950">{match.title}</p>
+          )}
+        </div>
+        <p className="min-w-0 truncate text-[10px] font-bold uppercase tracking-wide text-gray-500">
+          {formatCompactKickoff(match.kickoffTime)}
+        </p>
+        <div className="min-w-0 justify-self-end">
+          <span className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[10px] font-bold text-gray-600">
+            {statusLabel}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-1.5 relative px-1 py-1">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute bottom-1 left-1/2 top-1 -translate-x-1/2 border-l border-gray-200"
+        />
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5 overflow-hidden">
+          <KnockoutTeamPanel
+            team={actualHomeTeam}
+            officialTeam={actualHomeTeam}
+            placeholderLabel={match.homeSourceLabel}
+            viewMode="official"
+            status={match.status}
+            isSelected={Boolean(actualHomeTeam?.id && actualWinnerTeamId === actualHomeTeam.id)}
+            isCorrectSelection={null}
+            slotComparisonState={null}
+            isDisabled
+            onClick={() => undefined}
+            density="compact"
+            side="left"
+            isReadOnly
+            canSelectByTap={false}
+            predictedScore={!pendingOnly && match.status === "final" ? match.homeScore : null}
+            onIncrement={() => undefined}
+            onDecrement={() => undefined}
+            showScoreArea={Boolean(actualHomeTeam && actualAwayTeam)}
+          />
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-[8px] font-bold uppercase text-gray-400">
+            VS
+          </span>
+          <KnockoutTeamPanel
+            team={actualAwayTeam}
+            officialTeam={actualAwayTeam}
+            placeholderLabel={match.awaySourceLabel}
+            viewMode="official"
+            status={match.status}
+            isSelected={Boolean(actualAwayTeam?.id && actualWinnerTeamId === actualAwayTeam.id)}
+            isCorrectSelection={null}
+            slotComparisonState={null}
+            isDisabled
+            onClick={() => undefined}
+            density="compact"
+            side="right"
+            isReadOnly
+            canSelectByTap={false}
+            predictedScore={!pendingOnly && match.status === "final" ? match.awayScore : null}
+            onIncrement={() => undefined}
+            onDecrement={() => undefined}
+            showScoreArea={Boolean(actualHomeTeam && actualAwayTeam)}
+          />
+        </div>
+      </div>
+
+      {match.status === "final" && hasActualFinalScores ? (
+        <div className="mt-1.5 border-t border-gray-300 px-1 pt-2 text-center">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">
+            Actual result finalized
+          </div>
+        </div>
+      ) : pendingOnly ? (
+        <div className="mt-1.5 border-t border-gray-100 bg-gray-50/60 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">
+          Official bracket pending
+        </div>
+      ) : actualHomeTeam && actualAwayTeam ? (
+        <div className="mt-1.5 border-t border-gray-100 bg-gray-50/60 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">
+          Result pending
+        </div>
+      ) : (
+        <div className="mt-1.5 border-t border-gray-100 bg-gray-50/60 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-400">
+          Official bracket pending
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComparisonPlaceholderCard({
+  tone,
+  title,
+  body
+}: {
+  tone: "projected" | "actual";
+  title: string;
+  body: string;
+}) {
+  return (
+    <div
+      className={`box-border w-full max-w-full rounded-lg border p-4 ${
+        tone === "projected"
+          ? "border-amber-200 bg-[linear-gradient(135deg,#fff9e6_0%,#fffef6_50%,#fff5cb_100%)]"
+          : "border-gray-200 bg-white"
+      }`}
+    >
+      <p className={`text-sm font-bold uppercase tracking-wide ${tone === "projected" ? "text-amber-800" : "text-gray-700"}`}>
+        {title}
+      </p>
+      <p className="mt-2 text-sm leading-6 text-gray-500">{body}</p>
+    </div>
+  );
+}
+
 function formatCompactKickoff(kickoffTime: string) {
   const formatted = new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -1952,6 +2347,41 @@ function formatCompactKickoff(kickoffTime: string) {
 
 function formatSavedTimestamp(savedAt: string | null) {
   return savedAt ? formatDateTimeWithZone(savedAt) : "";
+}
+
+function formatTeamToken(team: BracketTeamOption | null): MatchContextChip | null {
+  if (!team) {
+    return null;
+  }
+
+  return {
+    primary: team.flagEmoji ? `${team.flagEmoji} ${team.shortName}` : team.shortName
+  };
+}
+
+function buildMatchContextChips(match: KnockoutBracketMatchView) {
+  if (match.stage !== "r32" && match.status !== "final") {
+    return {
+      left: null,
+      right: null
+    };
+  }
+
+  if (match.viewMode === "projected") {
+    return {
+      left: formatTeamToken(match.seededHomeTeam) ?? (match.homeSourceLabel ? formatRoundOf32PlaceholderLabel(match.homeSourceLabel) : null),
+      right: formatTeamToken(match.seededAwayTeam) ?? (match.awaySourceLabel ? formatRoundOf32PlaceholderLabel(match.awaySourceLabel) : null)
+    };
+  }
+
+  return {
+    left: match.status === "final"
+      ? formatTeamToken(match.seededHomeTeam) ?? (match.homeSourceLabel ? formatRoundOf32PlaceholderLabel(match.homeSourceLabel) : null)
+      : null,
+    right: match.status === "final"
+      ? formatTeamToken(match.seededAwayTeam) ?? (match.awaySourceLabel ? formatRoundOf32PlaceholderLabel(match.awaySourceLabel) : null)
+      : null
+  };
 }
 
 function buildBracketSlides(view: KnockoutBracketEditorView): BracketSlideView[] {

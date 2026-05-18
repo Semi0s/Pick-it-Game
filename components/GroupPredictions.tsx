@@ -1458,7 +1458,7 @@ export function GroupPredictions({
         </div>
         {variant === "cockpit" && lastSavedFeedback ? (
           <div className="pt-1.5">
-            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-900">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-amber-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide leading-none text-amber-900">
               <span className="whitespace-nowrap">Last pick</span>
               <span className="min-w-0 text-center">{lastSavedFeedback.summary}</span>
               <span className="whitespace-nowrap text-right">{formatDateTimeWithZone(lastSavedFeedback.savedAt)}</span>

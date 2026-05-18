@@ -2,7 +2,6 @@
 
 import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  clearUserTestPredictionsAction,
   deactivateOrganizerAccessAction,
   demoteUserWithImpactResolutionAction,
   deleteUserAndStartOverAction,
@@ -89,15 +88,7 @@ export function AdminPlayersClient() {
     email: string;
     displayName: string;
   } | null>(null);
-  const [userResetConfirmation, setUserResetConfirmation] = useState<{
-    key: string;
-    userId: string;
-    email: string;
-    displayName: string;
-  } | null>(null);
   const [deleteConfirmationValue, setDeleteConfirmationValue] = useState("");
-  const [userResetConfirmationValue, setUserResetConfirmationValue] = useState("");
-  const [userResetReason, setUserResetReason] = useState("");
   const [legalEditor, setLegalEditor] = useState({
     documentType: "eula",
     language: "en",
@@ -539,76 +530,6 @@ export function AdminPlayersClient() {
         />
       ) : null}
 
-      {userResetConfirmation ? (
-        <div className="rounded-lg border border-rose-200 bg-rose-50/70 p-4">
-          <div className="space-y-2">
-            <p className="text-lg font-black text-gray-950">
-              Clear test predictions for {userResetConfirmation.displayName}?
-            </p>
-            <p className="text-sm font-semibold text-gray-700">
-              This clears this user&apos;s group predictions, knockout predictions, legacy bracket picks, saved score rows,
-              and derived leaderboard rows, then rebuilds the leaderboard. Their account, profile, memberships, and groups stay intact.
-            </p>
-          </div>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <label className="block">
-              <span className="text-sm font-bold text-gray-800">Typed confirmation</span>
-              <input
-                value={userResetConfirmationValue}
-                onChange={(event) => setUserResetConfirmationValue(event.target.value)}
-                placeholder={userResetConfirmation.email}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm font-bold text-gray-800">Reason</span>
-              <input
-                value={userResetReason}
-                onChange={(event) => setUserResetReason(event.target.value)}
-                placeholder="Explain why this recovery reset is needed"
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-              />
-            </label>
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <ActionButton
-              tone="danger"
-              disabled={activeActionKey === userResetConfirmation.key}
-              onClick={() => {
-                void withAction(userResetConfirmation.key, async () => {
-                  const result = await clearUserTestPredictionsAction({
-                    userId: userResetConfirmation.userId,
-                    expectedEmail: userResetConfirmationValue,
-                    reason: userResetReason
-                  });
-                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                  if (result.ok) {
-                    setUserResetConfirmation(null);
-                    setUserResetConfirmationValue("");
-                    setUserResetReason("");
-                    await loadPlayers();
-                  }
-                });
-              }}
-            >
-              {activeActionKey === userResetConfirmation.key ? "Clearing..." : "Clear User Test Predictions"}
-            </ActionButton>
-            <ActionButton
-              onClick={() => {
-                setUserResetConfirmation(null);
-                setUserResetConfirmationValue("");
-                setUserResetReason("");
-              }}
-              disabled={activeActionKey === userResetConfirmation.key}
-            >
-              Cancel
-            </ActionButton>
-          </div>
-        </div>
-      ) : null}
-
       <ManagementToolbar
         searchValue={searchValue}
         onSearchChange={setSearchValue}
@@ -701,21 +622,6 @@ export function AdminPlayersClient() {
                     });
                     setDeleteConfirmationValue("");
                   }}
-                  onOpenClearUserTestData={() => {
-                    if (!player.appUserId) {
-                      setMessage({ tone: "error", text: "This row does not have an app user profile to reset yet." });
-                      return;
-                    }
-
-                    setUserResetConfirmation({
-                      key: `clear-test-data-${player.email}`,
-                      userId: player.appUserId,
-                      email: player.email,
-                      displayName: player.displayName
-                    });
-                    setUserResetConfirmationValue("");
-                    setUserResetReason("");
-                  }}
                   onNotify={(tone, text) => setMessage({ tone, text })}
                   onReload={loadPlayers}
                   setManagerEditor={setManagerEditor}
@@ -780,7 +686,6 @@ function PlayerSummaryCard({
   onResetOnboarding,
   onRepairInvite,
   onOpenDelete,
-  onOpenClearUserTestData,
   onNotify,
   onReload,
   setManagerEditor,
@@ -802,7 +707,6 @@ function PlayerSummaryCard({
   onResetOnboarding: () => void;
   onRepairInvite: () => void;
   onOpenDelete: () => void;
-  onOpenClearUserTestData: () => void;
   onNotify: (tone: "success" | "error", text: string) => void;
   onReload: () => Promise<void>;
   setManagerEditor: Dispatch<
@@ -976,11 +880,6 @@ function PlayerSummaryCard({
             {showDemotionTools ? (
               <ActionButton tone="danger" onClick={() => setIsDemotionPanelOpen((current) => !current)}>
                 {isDemotionPanelOpen ? "Hide Demote / Remove Access" : "Demote / Remove Access"}
-              </ActionButton>
-            ) : null}
-            {player.appUserId ? (
-              <ActionButton tone="danger" onClick={onOpenClearUserTestData} disabled={activeActionKey === `clear-test-data-${player.email}`}>
-                {activeActionKey === `clear-test-data-${player.email}` ? "Clearing..." : "Clear User Test Predictions"}
               </ActionButton>
             ) : null}
           </div>

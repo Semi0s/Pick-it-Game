@@ -36,6 +36,8 @@ import {
 import {
   fetchActiveGroupRulesets,
   fetchSidePickPackageOptions,
+  normalizeFullMatchScoringVariant,
+  normalizeGroupBonusMode,
   normalizeManagedGroupRulesetStatus,
   rebuildGroupCustomBonusScores,
   resolveManagedGroupRulesetPreset,
@@ -43,18 +45,50 @@ import {
   type ManagedGroupRulesetSummary,
   type SidePickPackageOption
 } from "@/lib/scoped-scoring";
+import { normalizeGroupStageMode } from "@/lib/group-stage-modes";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
 import { DASHBOARD_UI_RESET_EPOCH_SETTING_KEY } from "@/lib/ui-storage-keys";
 
 const DEFAULT_GROUP_MEMBERSHIP_LIMIT = 15;
 const DEFAULT_INVITE_EXPIRY_DAYS = 14;
+const GROUP_INVITE_RESEND_COOLDOWN_MS = 60 * 1000;
+const GROUP_INVITE_RESEND_DAILY_LIMIT = 5;
+const GROUP_INVITE_MANAGER_DAILY_LIMIT = 50;
+const GROUP_SCORING_SETUP_GROUP_STAGE_MAX_DUE_DATE = "2026-06-13T00:00:00.000Z";
 const MAX_CUSTOM_TROPHIES_PER_GROUP = 10;
 const MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH = 280;
 const MAX_MANAGED_GROUP_INVITE_CODE_ATTEMPTS = 5;
 const MANAGED_GROUP_INVITE_CODE_PATTERN = /^[A-Z0-9-]{4,24}$/;
 const BASIC_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_GROUP_DESCRIPTION_LENGTH = 250;
+
+const GROUP_BONUS_MODE_PRESETS = {
+  classic: {
+    earlyGroupStageCompletionBonus: 0,
+    knockoutCompletionBonus: 0,
+    finalMatchupBonus: 0,
+    exactFinalScoreBonus: 0
+  },
+  early_bird: {
+    earlyGroupStageCompletionBonus: 10,
+    knockoutCompletionBonus: 10,
+    finalMatchupBonus: 5,
+    exactFinalScoreBonus: 5
+  },
+  high_stakes: {
+    earlyGroupStageCompletionBonus: 3,
+    knockoutCompletionBonus: 5,
+    finalMatchupBonus: 12,
+    exactFinalScoreBonus: 10
+  },
+  all_in: {
+    earlyGroupStageCompletionBonus: 0,
+    knockoutCompletionBonus: 0,
+    finalMatchupBonus: 10,
+    exactFinalScoreBonus: 20
+  }
+} as const;
 
 type GroupStatus = "active" | "archived";
 type GroupMemberRole = "manager" | "member";
@@ -111,9 +145,17 @@ type GroupInviteRow = {
   helper_language?: string | null;
   status: GroupInviteStatus;
   token_hash: string;
+  claim_token?: string | null;
   expires_at?: string | null;
   accepted_by_user_id?: string | null;
   accepted_at?: string | null;
+  email_status?: "pending" | "sent" | "failed" | null;
+  email_sent_at?: string | null;
+  email_provider_message_id?: string | null;
+  email_error?: string | null;
+  email_attempt_count?: number | null;
+  last_email_attempt_at?: string | null;
+  last_resent_by_user_id?: string | null;
   last_sent_at?: string | null;
   send_attempts?: number | null;
   last_error?: string | null;
@@ -130,9 +172,17 @@ type GroupInviteRecord = {
   language?: string | null;
   helper_language?: string | null;
   status: GroupInviteStatus;
+  claim_token?: string | null;
   expires_at?: string | null;
   accepted_by_user_id?: string | null;
   accepted_at?: string | null;
+  email_status?: "pending" | "sent" | "failed" | null;
+  email_sent_at?: string | null;
+  email_provider_message_id?: string | null;
+  email_error?: string | null;
+  email_attempt_count?: number | null;
+  last_email_attempt_at?: string | null;
+  last_resent_by_user_id?: string | null;
   last_sent_at?: string | null;
   send_attempts?: number | null;
   last_error?: string | null;
@@ -349,9 +399,16 @@ export type ManagedGroupInvite = {
   customMessage?: string;
   invitedByLabel?: string;
   status: GroupInviteStatus;
+  emailStatus: "pending" | "sent" | "failed";
   expiresAt?: string | null;
   acceptedAt?: string | null;
   acceptedByUserId?: string | null;
+  emailSentAt?: string | null;
+  emailProviderMessageId?: string | null;
+  emailError?: string | null;
+  emailAttemptCount: number;
+  lastEmailAttemptAt?: string | null;
+  lastResentByUserId?: string | null;
   lastSentAt?: string | null;
   sendAttempts: number;
   lastError?: string | null;
@@ -392,6 +449,16 @@ export type SaveManagedGroupRulesetInput = {
 };
 
 export type SaveManagedGroupRulesetResult = ResendGroupInviteResult;
+
+export type SaveLegacyGroupScoringSetupInput = {
+  groupId: string;
+  fullMatchScoringVariant?: "classic" | "goal_difference_bonus";
+  groupBonusMode: "classic" | "early_bird" | "high_stakes" | "all_in";
+  groupStagePicksDueAt: string;
+  knockoutPicksDueAt: string;
+};
+
+export type SaveLegacyGroupScoringSetupResult = ResendGroupInviteResult;
 
 export type SaveGroupSidePickEntryInput = {
   groupId: string;
@@ -643,7 +710,7 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
   let inviteCreationWarning: string | null = null;
   if (parsedInviteEmails.emails.length > 0) {
     try {
-      await createPendingGroupInvites(adminSupabase, {
+      const inviteCreationResult = await createPendingGroupInvites(adminSupabase, {
         groupId: data.id,
         groupName: data.name,
         normalizedEmails: parsedInviteEmails.emails,
@@ -651,6 +718,10 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
         inviteLanguage: currentUser.preferredLanguage,
         helperLanguage: currentUser.preferredLanguage
       });
+
+      if (inviteCreationResult.failedEmails.length > 0) {
+        inviteCreationWarning = `Emails could not be queued for: ${inviteCreationResult.failedEmails.join(", ")}.`;
+      }
     } catch (inviteCreationError) {
       inviteCreationWarning =
         inviteCreationError instanceof Error
@@ -815,7 +886,9 @@ export async function createGroupInviteAction(input: CreateGroupInviteInput): Pr
       language: inviteLanguage,
       helper_language: helperLanguage,
       status: "pending",
+      claim_token: token,
       token_hash: tokenHash,
+      email_status: "pending",
       expires_at: expiresAt
     })
     .select("id,group_id,email,status,expires_at")
@@ -1025,7 +1098,9 @@ export async function createGroupInviteShareLinkAction(
       language: inviteLanguage,
       helper_language: helperLanguage,
       status: "pending",
+      claim_token: token,
       token_hash: tokenHash,
+      email_status: "pending",
       expires_at: expiresAt
     })
     .select("id,group_id,email,status,expires_at")
@@ -1796,19 +1871,50 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
   }
 
   try {
+    const traceId = buildInviteTraceId();
     const adminSupabase = createAdminClient();
     const invite = await getManagedGroupInvite(adminSupabase, trimmedInviteId, currentUser);
     if (!invite) {
-      return { ok: false, message: "You do not manage that invite." };
-    }
-
-    if (invite.status === "accepted") {
-      return { ok: false, message: "That invite has already been accepted." };
+      console.warn("[group-invite:resend:unauthorized]", {
+        traceId,
+        managerUserId: currentUser.userId,
+        inviteId: trimmedInviteId
+      });
+      return { ok: false, message: "That invite could not be resent." };
     }
 
     const managedGroup = await getManagedGroup(adminSupabase, invite.group_id, currentUser);
     if (!managedGroup) {
-      return { ok: false, message: "You do not manage that group." };
+      console.warn("[group-invite:resend:forbidden-group]", {
+        traceId,
+        managerUserId: currentUser.userId,
+        inviteId: invite.id,
+        groupId: invite.group_id
+      });
+      return { ok: false, message: "That invite could not be resent." };
+    }
+
+    console.info("[group-invite:resend:start]", {
+      traceId,
+      managerUserId: currentUser.userId,
+      inviteId: invite.id,
+      groupId: invite.group_id,
+      inviteStatus: invite.status,
+      emailStatus: deriveGroupInviteEmailStatus(invite)
+    });
+
+    if (!canResendManagedGroupInvite(invite)) {
+      return {
+        ok: false,
+        message:
+          invite.status === "accepted"
+            ? "That invite has already been accepted."
+            : invite.status === "revoked"
+              ? "That invite has been canceled."
+              : invite.status === "expired"
+                ? "That invite has expired and cannot be resent."
+                : "That invite cannot be resent."
+      };
     }
 
     const seatCheck = await ensureGroupHasInviteCapacity(adminSupabase, managedGroup, currentUser, invite.id);
@@ -1816,32 +1922,67 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
       return seatCheck;
     }
 
-    const freshToken = randomBytes(24).toString("hex");
-    const freshTokenHash = hashInviteToken(freshToken);
+    const cooldownRemainingMs = getResendCooldownRemainingMs(invite.last_email_attempt_at ?? null);
+    if (cooldownRemainingMs > 0) {
+      return {
+        ok: false,
+        message: `That invite was just resent. Try again in ${Math.ceil(cooldownRemainingMs / 1000)} seconds.`
+      };
+    }
+
+    const rateCounts = await countGroupInviteEmailJobsToday(adminSupabase, {
+      inviteId: invite.id,
+      managerUserId: currentUser.userId
+    });
+    if (rateCounts.inviteCount >= GROUP_INVITE_RESEND_DAILY_LIMIT) {
+      return {
+        ok: false,
+        message: "That invite has reached its resend limit for today."
+      };
+    }
+
+    if (rateCounts.managerCount >= GROUP_INVITE_MANAGER_DAILY_LIMIT) {
+      return {
+        ok: false,
+        message: "You have reached the invite resend limit for today."
+      };
+    }
+
     const inviteLanguage = normalizeLanguage(invite.language ?? currentUser.preferredLanguage);
     const helperLanguage = normalizeExplainerLanguage(invite.helper_language ?? inviteLanguage);
     const existingUserId = await findUserIdByEmail(adminSupabase, normalizeEmail(invite.email));
-    const claimUrl = buildGroupInviteClaimUrl(
-      freshToken,
-      inviteLanguage,
-      helperLanguage,
-      existingUserId ? "login" : "signup"
-    );
-    const refreshedExpiry = new Date(Date.now() + DEFAULT_INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const inviterProfile = await getUserLabel(adminSupabase, invite.invited_by_user_id ?? currentUser.userId);
+    const activeToken = invite.claim_token?.trim() || randomBytes(24).toString("hex");
+    const tokenHash = hashInviteToken(activeToken);
+    const claimUrl = buildGroupInviteClaimUrl(activeToken, inviteLanguage, helperLanguage, existingUserId ? "login" : "signup");
+    const attemptStartedAt = new Date().toISOString();
+    const nextEmailAttemptCount = (invite.email_attempt_count ?? invite.send_attempts ?? 0) + 1;
 
-    const { error: updateInviteError } = await adminSupabase
+    const { data: updatedInvites, error: updateInviteError } = await adminSupabase
       .from("group_invites")
       .update({
-        status: "pending",
-        token_hash: freshTokenHash,
-        expires_at: refreshedExpiry,
+        claim_token: activeToken,
+        token_hash: tokenHash,
+        email_status: "pending",
+        email_error: null,
+        email_attempt_count: nextEmailAttemptCount,
+        last_email_attempt_at: attemptStartedAt,
+        last_resent_by_user_id: currentUser.userId,
         last_error: null
       })
-      .eq("id", invite.id);
+      .eq("id", invite.id)
+      .or(`last_email_attempt_at.is.null,last_email_attempt_at.lt.${new Date(Date.now() - GROUP_INVITE_RESEND_COOLDOWN_MS).toISOString()}`)
+      .select("id");
 
     if (updateInviteError) {
       return { ok: false, message: updateInviteError.message };
+    }
+
+    if (!updatedInvites || updatedInvites.length === 0) {
+      return {
+        ok: false,
+        message: "That invite was just resent. Wait a moment before trying again."
+      };
     }
 
     const enqueueResult = await enqueueGroupInviteEmail(adminSupabase, {
@@ -1857,16 +1998,26 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
       language: inviteLanguage,
       helperLanguage,
       existingAccount: Boolean(existingUserId),
-      claimUrl
+      claimUrl,
+      traceId,
+      attemptAlreadyRecorded: true
     });
 
     if (!enqueueResult.ok) {
       await markGroupInviteEmailFailure(adminSupabase, invite.id, enqueueResult.message);
-      return { ok: false, message: `Could not queue the group invite email: ${enqueueResult.message}` };
+      console.error("[group-invite:resend:queue-failed]", {
+        traceId,
+        managerUserId: currentUser.userId,
+        inviteId: invite.id,
+        groupId: invite.group_id,
+        message: enqueueResult.message
+      });
+      return { ok: false, message: "The invite email could not be resent right now." };
     }
 
     const workerTriggerResult = await triggerEmailWorkerNow();
-    console.info("Manager resend invite worker trigger result.", {
+    console.info("[group-invite:resend:worker-trigger]", {
+      traceId,
       managerUserId: currentUser.userId,
       groupInviteId: invite.id,
       groupId: invite.group_id,
@@ -1879,10 +2030,10 @@ export async function resendGroupInviteAction(inviteId: string): Promise<ResendG
       ok: true,
       message:
         !workerTriggerResult.ok
-          ? "Group invite email queued again. Automatic sending could not be triggered right away, so the worker cron will pick it up shortly."
+          ? "Invite resent. Automatic sending could not be triggered right away, so the worker cron will pick it up shortly."
           : enqueueResult.alreadyQueued
-            ? "A matching group invite email is already queued."
-            : "Group invite email queued again and sending started."
+            ? "Invite resent. A matching email was already queued."
+            : "Invite resent."
     };
   } catch (error) {
     return {
@@ -2158,7 +2309,7 @@ export async function saveManagedGroupRulesetAction(
 
     const { data: existingRulesets, error: existingRulesetsError } = await adminSupabase
       .from("group_rulesets")
-      .select("id,version,status")
+      .select("id,version,status,group_stage_mode")
       .eq("group_id", trimmedGroupId)
       .order("version", { ascending: false });
 
@@ -2166,12 +2317,17 @@ export async function saveManagedGroupRulesetAction(
       return { ok: false, message: existingRulesetsError.message };
     }
 
-    const latestRuleset = (((existingRulesets ?? []) as Array<{ version: number; status: string }>)[0] ?? null);
+    const latestRuleset = (((existingRulesets ?? []) as Array<{
+      version: number;
+      status: string;
+      group_stage_mode?: string | null;
+    }>)[0] ?? null);
     if (latestRuleset?.status === "locked" && currentUser.role !== "admin") {
       return { ok: false, message: "This group ruleset is locked. Ask a super admin if it needs to change." };
     }
 
     const nextVersion = (latestRuleset?.version ?? 0) + 1;
+    const legacyGroupStageMode = normalizeGroupStageMode(latestRuleset?.group_stage_mode);
     if (nextRuleset.status === "active") {
       const { error: supersedeError } = await adminSupabase
         .from("group_rulesets")
@@ -2193,6 +2349,7 @@ export async function saveManagedGroupRulesetAction(
         group_id: trimmedGroupId,
         version: nextVersion,
         status: nextRuleset.status,
+        group_stage_mode: legacyGroupStageMode,
         early_group_stage_completion_bonus: nextRuleset.earlyGroupStageCompletionBonus,
         knockout_completion_bonus: nextRuleset.knockoutCompletionBonus,
         final_matchup_bonus: nextRuleset.finalMatchupBonus,
@@ -2213,6 +2370,7 @@ export async function saveManagedGroupRulesetAction(
       groupId: trimmedGroupId,
       version: nextVersion,
       status: nextRuleset.status,
+      groupStageMode: legacyGroupStageMode,
       presetKey: nextRuleset.presetKey,
       sidePickPackageId: nextRuleset.sidePickPackageId
     });
@@ -2231,6 +2389,142 @@ export async function saveManagedGroupRulesetAction(
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not save that group ruleset."
+    };
+  }
+}
+
+export async function saveLegacyGroupScoringSetupAction(
+  input: SaveLegacyGroupScoringSetupInput
+): Promise<SaveLegacyGroupScoringSetupResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedGroupId = input.groupId.trim();
+  if (!trimmedGroupId) {
+    return { ok: false, message: "Group id is required." };
+  }
+
+  const fullMatchVariant = normalizeScoringSetupFullMatchVariant(input.fullMatchScoringVariant);
+  const groupBonusMode = normalizeScoringSetupGroupBonusMode(input.groupBonusMode);
+  const groupBonusPreset = GROUP_BONUS_MODE_PRESETS[groupBonusMode];
+
+  const parsedGroupStageDueAt = parseMidnightGmtDateKey(input.groupStagePicksDueAt);
+  const parsedKnockoutDueAt = parseMidnightGmtDateKey(input.knockoutPicksDueAt);
+  if (!parsedGroupStageDueAt || !parsedKnockoutDueAt) {
+    return { ok: false, message: "Choose valid due dates for both group and knockout picks." };
+  }
+
+  const now = Date.now();
+  if (parsedGroupStageDueAt.getTime() <= now || parsedKnockoutDueAt.getTime() <= now) {
+    return { ok: false, message: "Both due dates must be in the future." };
+  }
+
+  if (parsedKnockoutDueAt.getTime() <= parsedGroupStageDueAt.getTime()) {
+    return { ok: false, message: "Knockout picks due date must be after the group-stage due date." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    const { knockoutDeadline } = await fetchTournamentPickLockDeadlines(adminSupabase);
+    if (parsedGroupStageDueAt.getTime() > new Date(GROUP_SCORING_SETUP_GROUP_STAGE_MAX_DUE_DATE).getTime()) {
+      return { ok: false, message: "Group-stage picks due date must be on or before June 13." };
+    }
+
+    if (knockoutDeadline && parsedKnockoutDueAt.getTime() > new Date(knockoutDeadline).getTime()) {
+      return { ok: false, message: "Knockout picks due date must be on or before the start of the knockout phase." };
+    }
+
+    const { data: existingRulesets, error: existingRulesetsError } = await adminSupabase
+      .from("group_rulesets")
+      .select("id,version,status,group_stage_mode,scoring_settings_locked_at")
+      .eq("group_id", trimmedGroupId)
+      .order("version", { ascending: false });
+
+    if (existingRulesetsError) {
+      return { ok: false, message: existingRulesetsError.message };
+    }
+
+    const latestRuleset = (((existingRulesets ?? []) as Array<{
+      id: string;
+      version: number;
+      status: string;
+      group_stage_mode?: string | null;
+      scoring_settings_locked_at?: string | null;
+    }>)[0] ?? null);
+
+    if (latestRuleset?.scoring_settings_locked_at) {
+      return { ok: false, message: "This group’s scoring settings are already locked." };
+    }
+
+    const groupStageMode = normalizeGroupStageMode(latestRuleset?.group_stage_mode);
+    const nextVersion = (latestRuleset?.version ?? 0) + 1;
+    const lockedAt = new Date().toISOString();
+
+    const { error: supersedeError } = await adminSupabase
+      .from("group_rulesets")
+      .update({
+        status: "superseded",
+        updated_at: new Date().toISOString()
+      })
+      .eq("group_id", trimmedGroupId)
+      .in("status", ["active", "draft"]);
+
+    if (supersedeError) {
+      return { ok: false, message: supersedeError.message };
+    }
+
+    const { error: insertError } = await adminSupabase
+      .from("group_rulesets")
+      .insert({
+        group_id: trimmedGroupId,
+        version: nextVersion,
+        status: "locked",
+        group_stage_mode: groupStageMode,
+        group_stage_prediction_depth: "simple_results",
+        full_match_scoring_variant: fullMatchVariant,
+        group_bonus_mode: groupBonusMode,
+        group_stage_picks_due_at: parsedGroupStageDueAt.toISOString(),
+        knockout_picks_due_at: parsedKnockoutDueAt.toISOString(),
+        scoring_settings_locked_at: lockedAt,
+        early_group_stage_completion_bonus: groupBonusPreset.earlyGroupStageCompletionBonus,
+        knockout_completion_bonus: groupBonusPreset.knockoutCompletionBonus,
+        final_matchup_bonus: groupBonusPreset.finalMatchupBonus,
+        exact_final_score_bonus: groupBonusPreset.exactFinalScoreBonus,
+        side_pick_package_id: null,
+        created_by_user_id: currentUser.userId
+      });
+
+    if (insertError) {
+      if (insertError.code === "23505") {
+        return { ok: false, message: "This group’s scoring settings were already locked by another manager." };
+      }
+
+      return { ok: false, message: insertError.message };
+    }
+
+    await rebuildGroupCustomBonusScores(adminSupabase, [trimmedGroupId]);
+
+    revalidatePath("/dashboard");
+    revalidatePath("/groups");
+    revalidatePath("/groups/scoring-setup");
+    revalidatePath("/leaderboard");
+    revalidatePath("/my-groups");
+
+    return {
+      ok: true,
+      message: "Scoring settings saved and locked for this group."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not save this group’s scoring settings."
     };
   }
 }
@@ -2938,7 +3232,7 @@ async function fetchManagedGroupDetailRows(
     manageableGroupIds.length > 0
       ? adminSupabase
           .from("group_invites")
-          .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,language,helper_language,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
+          .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,language,helper_language,status,claim_token,expires_at,accepted_by_user_id,accepted_at,email_status,email_sent_at,email_provider_message_id,email_error,email_attempt_count,last_email_attempt_at,last_resent_by_user_id,last_sent_at,send_attempts,last_error,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
           .in("group_id", manageableGroupIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
@@ -3022,9 +3316,16 @@ async function fetchManagedGroupDetailRows(
       customMessage: row.custom_message ?? undefined,
       invitedByLabel: inviterRow?.name ?? inviterRow?.email ?? undefined,
       status: row.status,
+      emailStatus: deriveGroupInviteEmailStatus(row),
       expiresAt: row.expires_at ?? null,
       acceptedAt: row.accepted_at ?? null,
       acceptedByUserId: row.accepted_by_user_id ?? null,
+      emailSentAt: row.email_sent_at ?? null,
+      emailProviderMessageId: row.email_provider_message_id ?? null,
+      emailError: row.email_error ?? null,
+      emailAttemptCount: row.email_attempt_count ?? row.send_attempts ?? 0,
+      lastEmailAttemptAt: row.last_email_attempt_at ?? null,
+      lastResentByUserId: row.last_resent_by_user_id ?? null,
       lastSentAt: row.last_sent_at ?? null,
       sendAttempts: row.send_attempts ?? 0,
       lastError: row.last_error ?? null,
@@ -3602,7 +3903,7 @@ async function getManagedGroupInvite(
 ) {
   const { data, error } = await adminSupabase
     .from("group_invites")
-    .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,language,helper_language,status,expires_at,accepted_by_user_id,accepted_at,last_sent_at,send_attempts,last_error")
+    .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,language,helper_language,status,claim_token,expires_at,accepted_by_user_id,accepted_at,email_status,email_sent_at,email_provider_message_id,email_error,email_attempt_count,last_email_attempt_at,last_resent_by_user_id,last_sent_at,send_attempts,last_error")
     .eq("id", inviteId)
     .maybeSingle();
 
@@ -3635,6 +3936,92 @@ async function getUserLabel(adminSupabase: ReturnType<typeof createAdminClient>,
   };
 }
 
+function buildInviteTraceId() {
+  return `group-invite-${randomBytes(6).toString("hex")}`;
+}
+
+function summarizeEmailError(message: string) {
+  return message.trim().slice(0, 240);
+}
+
+function deriveGroupInviteEmailStatus(
+  invite:
+    | Pick<GroupInviteRow, "status" | "email_status" | "email_error" | "last_error" | "email_sent_at" | "last_sent_at">
+    | Pick<GroupInviteRecord, "status" | "email_status" | "email_error" | "last_error" | "email_sent_at" | "last_sent_at">
+): "pending" | "sent" | "failed" {
+  if (invite.status === "accepted") {
+    return "sent";
+  }
+
+  if (invite.email_status === "failed" || invite.email_error || invite.last_error) {
+    return "failed";
+  }
+
+  if (invite.email_status === "sent" || invite.email_sent_at || invite.last_sent_at) {
+    return "sent";
+  }
+
+  return "pending";
+}
+
+function canResendManagedGroupInvite(invite: GroupInviteRow) {
+  if (invite.status === "accepted" || invite.status === "revoked" || invite.status === "expired") {
+    return false;
+  }
+
+  const emailStatus = deriveGroupInviteEmailStatus(invite);
+  return emailStatus === "pending" || emailStatus === "sent" || emailStatus === "failed";
+}
+
+function getResendCooldownRemainingMs(lastAttemptAt?: string | null) {
+  if (!lastAttemptAt) {
+    return 0;
+  }
+
+  const elapsed = Date.now() - new Date(lastAttemptAt).getTime();
+  return Math.max(0, GROUP_INVITE_RESEND_COOLDOWN_MS - elapsed);
+}
+
+async function countGroupInviteEmailJobsToday(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    inviteId: string;
+    managerUserId: string;
+  }
+) {
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  const since = startOfDay.toISOString();
+
+  const [inviteJobsResult, managerJobsResult] = await Promise.all([
+    adminSupabase
+      .from("email_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("kind", "group_invite_email")
+      .contains("payload", { groupInviteId: input.inviteId })
+      .gte("created_at", since),
+    adminSupabase
+      .from("email_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("kind", "group_invite_email")
+      .eq("requested_by_admin_id", input.managerUserId)
+      .gte("created_at", since)
+  ]);
+
+  if (inviteJobsResult.error) {
+    throw new Error(inviteJobsResult.error.message);
+  }
+
+  if (managerJobsResult.error) {
+    throw new Error(managerJobsResult.error.message);
+  }
+
+  return {
+    inviteCount: inviteJobsResult.count ?? 0,
+    managerCount: managerJobsResult.count ?? 0
+  };
+}
+
 async function enqueueGroupInviteEmail(
   adminSupabase: ReturnType<typeof createAdminClient>,
   input: {
@@ -3651,6 +4038,8 @@ async function enqueueGroupInviteEmail(
     helperLanguage?: string | null;
     existingAccount?: boolean;
     claimUrl: string;
+    traceId?: string;
+    attemptAlreadyRecorded?: boolean;
   }
 ): Promise<EnqueueEmailJobResult> {
   const normalizedEmail = normalizeEmail(input.email);
@@ -3669,6 +4058,8 @@ async function enqueueGroupInviteEmail(
       customMessage: input.customMessage ?? undefined,
       existingAccount: input.existingAccount ?? undefined,
       claimUrl: input.claimUrl,
+      traceId: input.traceId ?? undefined,
+      attemptAlreadyRecorded: input.attemptAlreadyRecorded ?? undefined,
       language: preferredLanguage,
       helperLanguage: input.helperLanguage ? normalizeExplainerLanguage(input.helperLanguage) : undefined
     },
@@ -3751,10 +4142,13 @@ async function markGroupInviteEmailFailure(
   groupInviteId: string,
   message: string
 ) {
+  const safeMessage = summarizeEmailError(message);
   await adminSupabase
     .from("group_invites")
     .update({
-      last_error: message
+      email_status: "failed",
+      email_error: safeMessage,
+      last_error: safeMessage
     })
     .eq("id", groupInviteId);
 }
@@ -3809,6 +4203,55 @@ function normalizeRequestedMembershipLimit(value?: number) {
   return Math.max(1, Math.floor(value));
 }
 
+function normalizeScoringSetupGroupBonusMode(value?: string | null) {
+  return normalizeGroupBonusMode(value);
+}
+
+function normalizeScoringSetupFullMatchVariant(value?: string | null) {
+  return normalizeFullMatchScoringVariant(value);
+}
+
+function parseMidnightGmtDateKey(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
+  }
+
+  const parsedDate = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+}
+
+async function fetchTournamentPickLockDeadlines(adminSupabase: ReturnType<typeof createAdminClient>) {
+  const [groupDeadlineResult, knockoutDeadlineResult] = await Promise.all([
+    adminSupabase
+      .from("matches")
+      .select("kickoff_time")
+      .eq("stage", "group")
+      .order("kickoff_time", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    adminSupabase
+      .from("matches")
+      .select("kickoff_time")
+      .in("stage", ["r32", "round_of_32"])
+      .order("kickoff_time", { ascending: true })
+      .limit(1)
+      .maybeSingle()
+  ]);
+
+  if (groupDeadlineResult.error) {
+    throw new Error(groupDeadlineResult.error.message);
+  }
+
+  if (knockoutDeadlineResult.error) {
+    throw new Error(knockoutDeadlineResult.error.message);
+  }
+
+  return {
+    groupStageDeadline: (groupDeadlineResult.data as { kickoff_time?: string | null } | null)?.kickoff_time ?? null,
+    knockoutDeadline: (knockoutDeadlineResult.data as { kickoff_time?: string | null } | null)?.kickoff_time ?? null
+  };
+}
+
 function parseInviteEmailInput(value?: string | null):
   | { ok: true; emails: string[] }
   | { ok: false; message: string } {
@@ -3849,29 +4292,97 @@ async function createPendingGroupInvites(
   }
 ) {
   if (input.normalizedEmails.length === 0) {
-    return;
+    return { failedEmails: [] as string[] };
   }
 
   const expiresAt = new Date(Date.now() + DEFAULT_INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const existingUsersByEmail = await findUsersByNormalizedEmails(adminSupabase, input.normalizedEmails);
+  const inviterProfile = await getUserLabel(adminSupabase, input.invitedByUserId);
+  const inviteLanguage = normalizeLanguage(input.inviteLanguage);
+  const helperLanguage = normalizeExplainerLanguage(input.helperLanguage);
 
-  const rows = input.normalizedEmails.map((email) => ({
-    group_id: input.groupId,
-    email,
-    normalized_email: email,
-    invited_by_user_id: input.invitedByUserId,
-    suggested_display_name: null,
-    custom_message: null,
-    language: normalizeLanguage(input.inviteLanguage),
-    helper_language: normalizeExplainerLanguage(input.helperLanguage),
-    status: "pending" as const,
-    token_hash: hashInviteToken(randomBytes(24).toString("hex")),
-    expires_at: expiresAt
-  }));
+  const preparedInvites = input.normalizedEmails.map((email) => {
+    const token = randomBytes(24).toString("hex");
+    const existingAccount = existingUsersByEmail.has(email);
 
-  const { error } = await adminSupabase.from("group_invites").insert(rows);
+    return {
+      email,
+      existingAccount,
+      claimUrl: buildGroupInviteClaimUrl(
+        token,
+        inviteLanguage,
+        helperLanguage,
+        existingAccount ? "login" : "signup"
+      ),
+      row: {
+        group_id: input.groupId,
+        email,
+        normalized_email: email,
+        invited_by_user_id: input.invitedByUserId,
+        suggested_display_name: null,
+        custom_message: null,
+        language: inviteLanguage,
+        helper_language: helperLanguage,
+        status: "pending" as const,
+        claim_token: token,
+        token_hash: hashInviteToken(token),
+        email_status: "pending" as const,
+        expires_at: expiresAt
+      }
+    };
+  });
+
+  const { data, error } = await adminSupabase
+    .from("group_invites")
+    .insert(preparedInvites.map((invite) => invite.row))
+    .select("id,email,normalized_email");
   if (error) {
     throw new Error(error.message);
+  }
+
+  const inviteMetaByEmail = new Map(preparedInvites.map((invite) => [invite.email, invite]));
+  const failedEmails: string[] = [];
+  let hasQueuedDelivery = false;
+
+  for (const invite of (data ?? []) as Array<{ id: string; email: string; normalized_email: string }>) {
+    const preparedInvite = inviteMetaByEmail.get(normalizeEmail(invite.normalized_email || invite.email));
+    if (!preparedInvite) {
+      failedEmails.push(invite.email);
+      await markGroupInviteEmailFailure(
+        adminSupabase,
+        invite.id,
+        "Invite email metadata was missing before delivery could be queued."
+      );
+      continue;
+    }
+
+    const enqueueResult = await enqueueGroupInviteEmail(adminSupabase, {
+      email: preparedInvite.email,
+      groupInviteId: invite.id,
+      groupId: input.groupId,
+      groupName: input.groupName,
+      invitedByUserId: input.invitedByUserId,
+      inviterName: inviterProfile.name,
+      inviterEmail: inviterProfile.email,
+      language: inviteLanguage,
+      helperLanguage,
+      existingAccount: preparedInvite.existingAccount,
+      claimUrl: preparedInvite.claimUrl
+    });
+
+    if (!enqueueResult.ok) {
+      failedEmails.push(preparedInvite.email);
+      await markGroupInviteEmailFailure(adminSupabase, invite.id, enqueueResult.message);
+      continue;
+    }
+
+    if (enqueueResult.deliveryMethod === "queued") {
+      hasQueuedDelivery = true;
+    }
+  }
+
+  if (hasQueuedDelivery) {
+    await triggerEmailWorkerNow();
   }
 
   console.info("Group email allowlist invites created.", {
@@ -3879,8 +4390,13 @@ async function createPendingGroupInvites(
     groupId: input.groupId,
     groupName: input.groupName,
     inviteCount: input.normalizedEmails.length,
-    existingUserCount: input.normalizedEmails.filter((email) => existingUsersByEmail.has(email)).length
+    existingUserCount: input.normalizedEmails.filter((email) => existingUsersByEmail.has(email)).length,
+    failedEmailCount: failedEmails.length
   });
+
+  return {
+    failedEmails
+  };
 }
 
 function normalizeExpiryDays(value?: number) {

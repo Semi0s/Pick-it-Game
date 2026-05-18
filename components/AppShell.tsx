@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ChevronDown, CircleUserRound, Globe, ListOrdered, SquareCheckBig, UsersRound } from "lucide-react";
+import { ChevronDown, CircleUserRound, GitBranch, Globe, ListOrdered, SquareCheckBig, UsersRound } from "lucide-react";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TierIconBadge } from "@/components/TierIconBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
@@ -15,7 +15,6 @@ import {
   fetchCurrentUserTrophies,
   fetchPendingTrophyCelebrations,
   markTrophyCelebrationRead,
-  signOutCurrentUser,
   type PendingTrophyCelebration
 } from "@/lib/auth-client";
 import { getAccessLevel, shouldShowAccessBadge } from "@/lib/access-levels";
@@ -36,7 +35,6 @@ const TROPHY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_TOAST_DURATION_MS = 4200;
 const TIP_TOAST_DURATION_MS = 6200;
 const ERROR_TOAST_DURATION_MS = 7600;
-const DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-shown:";
 const HELPER_LANGUAGE_CHANGED_EVENT = "pickit:helper-language-changed";
 const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
   en: "English",
@@ -68,10 +66,10 @@ export function AppShell({ children }: AppShellProps) {
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const copy = getStrings(dockLanguage);
   const navItems = [
+    { href: "/bracket-builder", label: copy.myBracket, ariaLabel: copy.myBracket, icon: GitBranch },
     { href: "/groups", label: copy.myPicks, ariaLabel: copy.myPicks, icon: SquareCheckBig },
     { href: "/my-groups", label: copy.myGroups, ariaLabel: copy.myGroups, icon: UsersRound },
-    { href: "/leaderboard", label: copy.results, ariaLabel: copy.results, icon: ListOrdered },
-    { href: "/profile", label: copy.myProfile, ariaLabel: copy.myProfile, icon: CircleUserRound }
+    { href: "/leaderboard", label: copy.results, ariaLabel: copy.results, icon: ListOrdered }
   ];
   const [pendingCelebrationQueue, setPendingCelebrationQueue] = useState<PendingTrophyCelebration[]>([]);
   const [activeCelebration, setActiveCelebration] = useState<PendingTrophyCelebration | null>(null);
@@ -459,7 +457,7 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div
-      className="min-h-screen bg-white text-gray-950"
+      className="min-h-screen overflow-x-clip bg-white text-gray-950"
       style={
         {
           paddingBottom: "calc(4.85rem + env(safe-area-inset-bottom, 0px))",
@@ -525,34 +523,18 @@ export function AppShell({ children }: AppShellProps) {
                 </div>
               ) : null}
             </div>
-            <button
-              type="button"
-              onClick={async () => {
-                if (typeof window !== "undefined") {
-                  try {
-                    for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
-                      const key = window.sessionStorage.key(index);
-                      if (key?.startsWith(DASHBOARD_LOGO_HINT_STORAGE_KEY_PREFIX)) {
-                        window.sessionStorage.removeItem(key);
-                      }
-                    }
-                  } catch (error) {
-                    console.warn("Could not clear dashboard hint session state.", error);
-                  }
-                }
-                await signOutCurrentUser();
-                router.replace("/login");
-                router.refresh();
-              }}
-              className="rounded-md border border-gray-300 px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 sm:px-3"
+            <Link
+              href="/profile"
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1.5 text-[11px] font-semibold text-gray-700 sm:px-2.5"
             >
-              Sign out
-            </button>
+              <CircleUserRound aria-hidden className="h-4 w-4" />
+              <span>Account</span>
+            </Link>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-4 pb-5 pt-6">
+      <main className="mx-auto w-full max-w-4xl px-4 pb-5 pt-6">
         {readinessBanner ? (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
             {readinessBanner}
@@ -592,7 +574,7 @@ export function AppShell({ children }: AppShellProps) {
         className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-700 bg-neutral-900"
         style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
       >
-        <div className="relative grid w-full grid-cols-4 gap-0.5 px-2 pb-0.5 pt-1 md:mx-auto md:max-w-4xl">
+        <div className="relative mx-auto grid w-full max-w-4xl grid-cols-4 gap-0.5 px-2 pb-0.5 pt-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;

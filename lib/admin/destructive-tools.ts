@@ -229,6 +229,11 @@ export function getTestingResetAvailability(resetType: AdminRecoveryScope): Test
   };
 }
 
+export function isSelfServiceTestResetEnabled() {
+  // TODO(testing-cleanup): remove or minimize this temporary self-service testing tool before broader launch.
+  return process.env.ENABLE_SELF_SERVICE_TEST_RESETS === "true";
+}
+
 export function logTestingResetEnvDiagnostics(
   source:
     | "adminMatchesPage"
@@ -236,6 +241,7 @@ export function logTestingResetEnvDiagnostics(
     | "resetKnockoutTestingDataAction"
     | "resetGroupStageTestingDataAction"
     | "batchFinalizeMatchResultsAction"
+    | "batchClearMatchResultsAction"
     | "clearUserTestPredictionsAction"
     | "resetGroupLocalDerivedStateAction"
     | "resetMatchToOpenAction"

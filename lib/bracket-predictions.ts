@@ -13,8 +13,14 @@ import {
 } from "@/lib/match-stage";
 import {
   buildUserProjectedRoundOf32,
+  buildProjectedGroupStandingsFromSeedRankings,
+  buildQualifiedTeamSeedsFromManualThirdPlaceRanking,
+  getRequiredThirdPlaceQualifierCount,
   type ProjectedMatchScoreSource
 } from "@/lib/knockout-seeding";
+import {
+  fetchUserLightSeedBuilderSnapshot
+} from "@/lib/group-stage-modes";
 import type {
   BracketPrediction,
   BracketScore,
@@ -236,6 +242,15 @@ export type BracketScoreSummary = {
   correctPicks: number;
 };
 
+export type BracketPredictionSaveResult = {
+  prediction: BracketPrediction;
+  clearedDescendantCount: number;
+};
+
+export type BracketPredictionImpact = {
+  affectedCount: number;
+};
+
 export function safeFetchKnockoutStructureStatusFallback(): KnockoutStructureStatus {
   return {
     counts: {
@@ -291,8 +306,9 @@ export async function saveBracketPrediction(
     homeScore: number;
     awayScore: number;
     teamId?: string | null;
+    confirmClearDownstream?: boolean;
   }
-): Promise<BracketPrediction> {
+): Promise<BracketPredictionSaveResult> {
   const adminSupabase = createAdminClient();
   const editState = await getBracketEditState(adminSupabase);
   if (!editState.editable) {
@@ -329,6 +345,21 @@ export async function saveBracketPrediction(
     throw new Error("Choose who advances by tapping a team name or flag.");
   }
 
+  const downstreamImpact = await computeDownstreamImpactForProposedSave(adminSupabase, {
+    tableName: "bracket_predictions",
+    userId,
+    rootMatchId: input.matchId,
+    mode: "official",
+    proposedPrediction: {
+      predictedWinnerTeamId: inferredWinnerTeamId,
+      predictedHomeScore: homeScore,
+      predictedAwayScore: awayScore
+    }
+  });
+  if (downstreamImpact.affectedCount > 0 && !input.confirmClearDownstream) {
+    throw new DownstreamConfirmationRequiredError(downstreamImpact.affectedCount);
+  }
+
   const now = new Date().toISOString();
   const savedPrediction = await upsertBracketPrediction(adminSupabase, "bracket_predictions", userId, {
     matchId: input.matchId,
@@ -338,13 +369,16 @@ export async function saveBracketPrediction(
     now
   });
 
-  await clearInvalidDescendantPredictions(adminSupabase, {
+  const clearedDescendantCount = await clearInvalidDescendantPredictions(adminSupabase, {
     tableName: "bracket_predictions",
     userId,
     rootMatchId: input.matchId,
     mode: "official"
   });
-  return savedPrediction;
+  return {
+    prediction: savedPrediction,
+    clearedDescendantCount
+  };
 }
 
 export async function saveProjectedBracketPrediction(
@@ -354,8 +388,9 @@ export async function saveProjectedBracketPrediction(
     homeScore: number;
     awayScore: number;
     teamId?: string | null;
+    confirmClearDownstream?: boolean;
   }
-): Promise<BracketPrediction> {
+): Promise<BracketPredictionSaveResult> {
   const adminSupabase = createAdminClient();
   const projectedContext = await loadProjectedBracketContext(adminSupabase, userId);
   const matchRow = projectedContext.matchesById.get(input.matchId);
@@ -396,6 +431,22 @@ export async function saveProjectedBracketPrediction(
     throw new Error("Choose who advances by tapping a team name or flag.");
   }
 
+  const downstreamImpact = await computeDownstreamImpactForProposedSave(adminSupabase, {
+    tableName: "projected_bracket_predictions",
+    userId,
+    rootMatchId: input.matchId,
+    mode: "projected",
+    projectedTeamByMatchId: projectedContext.projectedTeamByMatchId,
+    proposedPrediction: {
+      predictedWinnerTeamId: inferredWinnerTeamId,
+      predictedHomeScore: homeScore,
+      predictedAwayScore: awayScore
+    }
+  });
+  if (downstreamImpact.affectedCount > 0 && !input.confirmClearDownstream) {
+    throw new DownstreamConfirmationRequiredError(downstreamImpact.affectedCount);
+  }
+
   const now = new Date().toISOString();
   const savedPrediction = await upsertBracketPrediction(adminSupabase, "projected_bracket_predictions", userId, {
     matchId: input.matchId,
@@ -405,7 +456,7 @@ export async function saveProjectedBracketPrediction(
     now
   });
 
-  await clearInvalidDescendantPredictions(adminSupabase, {
+  const clearedDescendantCount = await clearInvalidDescendantPredictions(adminSupabase, {
     tableName: "projected_bracket_predictions",
     userId,
     rootMatchId: input.matchId,
@@ -413,7 +464,110 @@ export async function saveProjectedBracketPrediction(
     projectedTeamByMatchId: projectedContext.projectedTeamByMatchId
   });
 
-  return savedPrediction;
+  return {
+    prediction: savedPrediction,
+    clearedDescendantCount
+  };
+}
+
+export async function previewBracketPredictionImpact(
+  userId: string,
+  input: {
+    matchId: string;
+    homeScore: number;
+    awayScore: number;
+    teamId?: string | null;
+    mode: "official" | "projected";
+  }
+): Promise<BracketPredictionImpact> {
+  const adminSupabase = createAdminClient();
+
+  if (input.mode === "projected") {
+    const projectedContext = await loadProjectedBracketContext(adminSupabase, userId);
+    const matchRow = projectedContext.matchesById.get(input.matchId);
+    if (!matchRow) {
+      throw new Error("That projected knockout match could not be found.");
+    }
+
+    const predictionsByMatchId = new Map(projectedContext.predictions.map((prediction) => [prediction.matchId, prediction]));
+    const availableTeamIds = getAvailableKnockoutTeamIdsForMatch(
+      matchRow,
+      projectedContext.previousMatchesByNextMatchId,
+      predictionsByMatchId,
+      "projected",
+      projectedContext.projectedTeamByMatchId
+    );
+    if (!availableTeamIds.homeTeamId || !availableTeamIds.awayTeamId) {
+      return { affectedCount: 0 };
+    }
+
+    const inferredWinnerTeamId = inferBracketWinnerTeamId({
+      homeScore: normalizeBracketScore(input.homeScore),
+      awayScore: normalizeBracketScore(input.awayScore),
+      homeTeamId: availableTeamIds.homeTeamId,
+      awayTeamId: availableTeamIds.awayTeamId,
+      explicitWinnerTeamId: input.teamId ?? null
+    });
+    if (!inferredWinnerTeamId) {
+      return { affectedCount: 0 };
+    }
+
+    return computeDownstreamImpactForProposedSave(adminSupabase, {
+      tableName: "projected_bracket_predictions",
+      userId,
+      rootMatchId: input.matchId,
+      mode: "projected",
+      projectedTeamByMatchId: projectedContext.projectedTeamByMatchId,
+      proposedPrediction: {
+        predictedWinnerTeamId: inferredWinnerTeamId,
+        predictedHomeScore: normalizeBracketScore(input.homeScore),
+        predictedAwayScore: normalizeBracketScore(input.awayScore)
+      }
+    });
+  }
+
+  const editState = await getBracketEditState(adminSupabase);
+  if (!editState.editable) {
+    return { affectedCount: 0 };
+  }
+  const { matchRow, previousMatchesByNextMatchId, predictionsByMatchId } = await loadPredictionSaveContext(
+    adminSupabase,
+    "bracket_predictions",
+    userId,
+    input.matchId
+  );
+  const availableTeamIds = getAvailableKnockoutTeamIdsForMatch(
+    matchRow,
+    previousMatchesByNextMatchId,
+    predictionsByMatchId,
+    "official"
+  );
+  if (!availableTeamIds.homeTeamId || !availableTeamIds.awayTeamId) {
+    return { affectedCount: 0 };
+  }
+
+  const inferredWinnerTeamId = inferBracketWinnerTeamId({
+    homeScore: normalizeBracketScore(input.homeScore),
+    awayScore: normalizeBracketScore(input.awayScore),
+    homeTeamId: availableTeamIds.homeTeamId,
+    awayTeamId: availableTeamIds.awayTeamId,
+    explicitWinnerTeamId: input.teamId ?? null
+  });
+  if (!inferredWinnerTeamId) {
+    return { affectedCount: 0 };
+  }
+
+  return computeDownstreamImpactForProposedSave(adminSupabase, {
+    tableName: "bracket_predictions",
+    userId,
+    rootMatchId: input.matchId,
+    mode: "official",
+    proposedPrediction: {
+      predictedWinnerTeamId: inferredWinnerTeamId,
+      predictedHomeScore: normalizeBracketScore(input.homeScore),
+      predictedAwayScore: normalizeBracketScore(input.awayScore)
+    }
+  });
 }
 
 export async function fetchKnockoutStructureStatus(): Promise<KnockoutStructureStatus> {
@@ -559,20 +713,31 @@ export async function fetchProjectedKnockoutBracketPreview(
   );
 
   const description = options.comparisonOnly
-    ? "Your saved projected knockout picks are shown separately from official seeded picks so you can compare them against the real bracket."
+    ? "Your saved projected knockout challenge stays visible as a read-only archived bracket so you can compare it against the real tournament."
     : "Built from your group-stage picks. Official knockout picks open after the real bracket is seeded.";
   const secondaryNote = visibleProjectedPredictions.invalidCount > 0
     ? "Some saved projected picks no longer fit your current group-stage picks and need review."
     : options.comparisonOnly
-      ? "Projected picks stay separate from official knockout picks."
+      ? "Archived projected side-pick submission. Official knockout picks and scoring remain separate."
       : "Official knockout picks open after the real bracket is seeded.";
   const championTeamId =
     stages.find((stage) => stage.stage === "final")?.matches[0]?.predictedWinnerTeamId ?? null;
+  const hasEditableProjectedMatches = stages.some((stage) =>
+    stage.matches.some(
+      (match) =>
+        match.canSelectWinner &&
+        match.status !== "final" &&
+        match.status !== "live" &&
+        match.status !== "locked"
+    )
+  );
+  const hasSavedProjectedPath =
+    visibleProjectedPredictions.predictions.length > 0 || Boolean(championTeamId);
 
   return {
     mode: "projected",
     isSeeded: false,
-    isLocked: options.comparisonOnly ? true : false,
+    isLocked: options.comparisonOnly ? true : hasSavedProjectedPath && !hasEditableProjectedMatches,
     lockReason: null,
     firstRoundOf32Kickoff: null,
     bracketPoints: 0,
@@ -581,7 +746,7 @@ export async function fetchProjectedKnockoutBracketPreview(
     champion: championTeamId ? projectedContext.teamsById.get(championTeamId) ?? null : null,
     thirdPlace: stages.find((stage) => stage.stage === "third")?.matches[0] ?? null,
     predictions: visibleProjectedPredictions.predictions,
-    title: options.comparisonOnly ? "Projected Bracket Comparison" : "Projected Bracket",
+    title: options.comparisonOnly ? "Archived Projected Bracket" : "Projected Bracket",
     description,
     secondaryNote
   };
@@ -1079,7 +1244,7 @@ async function clearInvalidDescendantPredictions(
   }
 
   if (invalidPredictionIds.length === 0) {
-    return;
+    return 0;
   }
 
   const { error } = await adminSupabase
@@ -1090,6 +1255,97 @@ async function clearInvalidDescendantPredictions(
   if (error) {
     throw error;
   }
+
+  return invalidPredictionIds.length;
+}
+
+async function computeDownstreamImpactForProposedSave(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    tableName: PredictionTableName;
+    userId: string;
+    rootMatchId: string;
+    mode: "official" | "projected";
+    projectedTeamByMatchId?: Map<string, { homeTeamId: string | null; awayTeamId: string | null }>;
+    proposedPrediction: {
+      predictedWinnerTeamId: string;
+      predictedHomeScore: number;
+      predictedAwayScore: number;
+    };
+  }
+): Promise<BracketPredictionImpact> {
+  const knockoutData = await fetchKnockoutData(adminSupabase);
+  const predictionRows = await fetchPredictionRowsForUser(adminSupabase, input.tableName, input.userId);
+  const predictionsByMatchId = new Map(predictionRows.map((prediction) => [prediction.match_id, prediction]));
+  const existingPrediction = predictionsByMatchId.get(input.rootMatchId);
+
+  if (
+    existingPrediction &&
+    existingPrediction.predicted_winner_team_id === input.proposedPrediction.predictedWinnerTeamId &&
+    existingPrediction.predicted_home_score === input.proposedPrediction.predictedHomeScore &&
+    existingPrediction.predicted_away_score === input.proposedPrediction.predictedAwayScore
+  ) {
+    return { affectedCount: 0 };
+  }
+
+  predictionsByMatchId.set(input.rootMatchId, {
+    id: existingPrediction?.id ?? "__preview__",
+    user_id: input.userId,
+    match_id: input.rootMatchId,
+    predicted_home_score: input.proposedPrediction.predictedHomeScore,
+    predicted_away_score: input.proposedPrediction.predictedAwayScore,
+    predicted_winner_team_id: input.proposedPrediction.predictedWinnerTeamId,
+    created_at: existingPrediction?.created_at ?? new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  });
+
+  const descendantIds = collectDescendantMatchIds(input.rootMatchId, knockoutData.matchesById);
+  const descendants = knockoutData.matches
+    .filter((match) => descendantIds.has(match.id))
+    .sort((left, right) => getStageOrder(normalizeKnockoutStage(left.stage)) - getStageOrder(normalizeKnockoutStage(right.stage)));
+
+  let affectedCount = 0;
+  for (const match of descendants) {
+    const prediction = predictionsByMatchId.get(match.id);
+    if (!prediction) {
+      continue;
+    }
+
+    const availableTeams = getAvailablePredictedTeamsForMatch(
+      match,
+      knockoutData.previousMatchesByNextMatchId,
+      predictionsByMatchId,
+      knockoutData.teamsById,
+      input.projectedTeamByMatchId,
+      input.mode
+    );
+    const validTeamIds = [availableTeams.homeTeam?.id ?? null, availableTeams.awayTeam?.id ?? null].filter(
+      (teamId): teamId is string => Boolean(teamId)
+    );
+
+    if (!validTeamIds.includes(prediction.predicted_winner_team_id)) {
+      affectedCount += 1;
+      predictionsByMatchId.delete(match.id);
+    }
+  }
+
+  return { affectedCount };
+}
+
+class DownstreamConfirmationRequiredError extends Error {
+  readonly affectedCount: number;
+
+  constructor(affectedCount: number) {
+    super("Changing this pick requires confirmation because it will clear future picks.");
+    this.name = "DownstreamConfirmationRequiredError";
+    this.affectedCount = affectedCount;
+  }
+}
+
+export function isDownstreamConfirmationRequiredError(
+  error: unknown
+): error is DownstreamConfirmationRequiredError {
+  return error instanceof DownstreamConfirmationRequiredError;
 }
 
 async function fetchKnockoutData(adminSupabase: ReturnType<typeof createAdminClient>) {
@@ -1197,6 +1453,55 @@ async function loadProjectedBracketContext(
   if (predictionError) throw predictionError;
   if (teamError) throw teamError;
 
+  const teams = ((teamRows ?? []) as TeamRow[]).map((team) => ({
+    id: team.id,
+    name: team.name,
+    shortName: team.short_name || team.name || team.id,
+    flagEmoji: team.flag_emoji || "",
+    groupName: team.group_name ?? "",
+    fifaRank: team.fifa_rank ?? 0
+  }));
+  const knockoutPlaceholders = ((knockoutRows ?? []) as MatchRow[]).map((match) => ({
+    id: match.id,
+    stage: match.stage,
+    homeSource: match.home_source ?? null,
+    awaySource: match.away_source ?? null,
+    homeTeamId: match.home_team_id ?? null,
+    awayTeamId: match.away_team_id ?? null,
+    status: match.status
+  }));
+  let standingsByGroupOverride = null;
+  let rankedThirdPlaceTeamIdsOverride: string[] | null = null;
+  const lightSeedSnapshot = await fetchUserLightSeedBuilderSnapshot(adminSupabase, userId).catch(() => null);
+  if (lightSeedSnapshot && lightSeedSnapshot.groupRankings.length > 0) {
+    try {
+      const projectedStandingsByGroup = buildProjectedGroupStandingsFromSeedRankings(
+        teams,
+        lightSeedSnapshot.groupRankings.map((ranking) => ({
+          groupName: ranking.groupName,
+          rankedTeamIds: ranking.rankedTeamIds
+        }))
+      );
+      const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(knockoutPlaceholders);
+      buildQualifiedTeamSeedsFromManualThirdPlaceRanking(
+        new Map(Array.from(projectedStandingsByGroup.entries()).map(([groupId, standings]) => [groupId, standings.rows])),
+        lightSeedSnapshot.thirdPlaceRankings
+          .sort((left, right) => left.rank - right.rank)
+          .map((entry) => entry.teamId),
+        requiredThirdPlaceQualifierCount
+      );
+      standingsByGroupOverride = projectedStandingsByGroup;
+      rankedThirdPlaceTeamIdsOverride = lightSeedSnapshot.thirdPlaceRankings
+        .sort((left, right) => left.rank - right.rank)
+        .map((entry) => entry.teamId);
+    } catch (error) {
+      logSafeSupabaseError("projected-light-seed-builder-context", error, {
+        userId,
+        recoverable: true
+      });
+    }
+  }
+
   const projectedSeeds = buildUserProjectedRoundOf32({
     groupMatches: ((groupRows ?? []) as Array<{
       id: string;
@@ -1217,28 +1522,15 @@ async function loadProjectedBracketContext(
       homeScore: match.home_score ?? null,
       awayScore: match.away_score ?? null
     })),
-    teams: ((teamRows ?? []) as TeamRow[]).map((team) => ({
-      id: team.id,
-      name: team.name,
-      shortName: team.short_name || team.name || team.id,
-      flagEmoji: team.flag_emoji || "",
-      groupName: team.group_name ?? "",
-      fifaRank: team.fifa_rank ?? 0
-    })),
+    teams,
     predictions: ((predictionRows ?? []) as GroupPredictionRow[]).map((prediction) => ({
       matchId: prediction.match_id,
       predictedHomeScore: prediction.predicted_home_score ?? null,
       predictedAwayScore: prediction.predicted_away_score ?? null
     })),
-    roundOf32Placeholders: ((knockoutRows ?? []) as MatchRow[]).map((match) => ({
-      id: match.id,
-      stage: match.stage,
-      homeSource: match.home_source ?? null,
-      awaySource: match.away_source ?? null,
-      homeTeamId: match.home_team_id ?? null,
-      awayTeamId: match.away_team_id ?? null,
-      status: match.status
-    }))
+    roundOf32Placeholders: knockoutPlaceholders,
+    standingsByGroupOverride,
+    rankedThirdPlaceTeamIdsOverride
   });
 
   const projectedSourceByMatchId = new Map(
@@ -1428,7 +1720,7 @@ function buildKnockoutBracketStages(
       actualWinnerTeamId: match.winner_team_id ?? null,
       awardedPoints: isProjectedComparison ? null : computedScoreBreakdown?.points ?? persistedScore?.points ?? null,
       exactScorePoints: isProjectedComparison
-        ? null
+        ? computedScoreBreakdown?.exactScorePoints ?? null
         : computedScoreBreakdown?.exactScorePoints ?? persistedScore?.exactScorePoints ?? null,
       isCorrectWinner: computedScoreBreakdown?.isCorrect ?? persistedScore?.isCorrect ?? null,
       isLocked: matchIsLocked,
@@ -1512,8 +1804,14 @@ function getAvailableKnockoutTeamIdsForMatch(
   const resolvedAway = resolveKnockoutSourceTeam(awaySource, predictionsByMatchId, mode);
 
   return {
-    homeTeamId: resolvedHome.teamId ?? projectedTeams?.homeTeamId ?? match.home_team_id ?? null,
-    awayTeamId: resolvedAway.teamId ?? projectedTeams?.awayTeamId ?? match.away_team_id ?? null,
+    homeTeamId:
+      mode === "projected"
+        ? resolvedHome.teamId ?? projectedTeams?.homeTeamId ?? null
+        : resolvedHome.teamId ?? projectedTeams?.homeTeamId ?? match.home_team_id ?? null,
+    awayTeamId:
+      mode === "projected"
+        ? resolvedAway.teamId ?? projectedTeams?.awayTeamId ?? null
+        : resolvedAway.teamId ?? projectedTeams?.awayTeamId ?? match.away_team_id ?? null,
     homeResolutionSource:
       resolvedHome.source ??
       ((projectedTeams?.homeTeamId ? "prediction" : match.home_team_id ? "actual" : "missing") as ProjectedMatchScoreSource),

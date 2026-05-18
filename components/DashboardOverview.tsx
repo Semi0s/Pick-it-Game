@@ -5,10 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { CalendarDays, Network, Sparkles, Trophy, X } from "lucide-react";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
-import {
-  GroupStandingsMiniTable,
-  type MiniGroupStandingsMovement
-} from "@/components/GroupStandingsMiniTable";
+import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
 import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
 import {
   DASHBOARD_ACTION_COPY,
@@ -28,7 +25,6 @@ import { clearStoredAutoPickDraft, fetchNextAutoPick, storeAutoPickDraft } from 
 import { clearGroupsEntryIntent, storeGroupsEntryIntent } from "@/lib/groups-entry-intent";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import {
-  buildFinalGroupStandings,
   getGroupShortLabel,
   normalizeGroupKey,
   resolvePreferredStandingsGroupSelection
@@ -46,10 +42,6 @@ import {
 import { fetchPlayerPredictions } from "@/lib/player-predictions";
 import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
-import {
-  DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY,
-  DASHBOARD_STANDINGS_RESET_EPOCH_STORAGE_KEY
-} from "@/lib/ui-storage-keys";
 import type { MatchWithTeams, Prediction } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
@@ -73,16 +65,6 @@ const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
   de: "Tippe auf das PICK-IT!-Logo, um hierher zurückzukehren."
 };
 const DASHBOARD_GROUP_MATCH_REFRESH_INTERVAL_MS = 15000;
-
-type PersistedStandingsHistory = Record<
-  string,
-  {
-    signature: string;
-    currentOrder: string[];
-    previousOrder: string[] | null;
-  }
->;
-
 type DashboardGroupAccessResponse = {
   ok: true;
   groupAccess: {
@@ -144,8 +126,6 @@ export function DashboardOverview() {
     DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY,
     true
   );
-  const [standingsHistoryByGroup, setStandingsHistoryByGroup] = useState<PersistedStandingsHistory>({});
-  const [hasHydratedStandingsHistory, setHasHydratedStandingsHistory] = useState(false);
   const refreshGroupAccess = useCallback(async () => {
     if (!user) {
       setGroupAccess(null);
@@ -427,139 +407,6 @@ export function DashboardOverview() {
       isPossibleQualifier: false
     }));
   }, [qualifyingThirdPlaceTeamIds, resolvedStandingsGroup, standingsByGroup, user?.homeTeamId]);
-  const standingsSnapshotByGroup = useMemo(
-    () =>
-      Object.fromEntries(
-        availableStandingsGroups.map((groupName) => {
-          const rows = standingsByGroup.get(groupName) ?? buildFinalGroupStandings(groupMatches, groupName);
-          const order = rows.map((row) => row.teamId);
-          const signature = rows
-            .map(
-              (row) =>
-                `${row.teamId}:${row.rank}:${row.played}:${row.points}:${row.goalDifference}:${row.goalsFor}:${row.goalsAgainst}`
-            )
-            .join("|");
-
-          return [
-            groupName,
-            {
-              order,
-              signature
-            }
-          ];
-        })
-      ),
-    [availableStandingsGroups, groupMatches, standingsByGroup]
-  );
-  const standingsMovementByTeamId = useMemo(() => {
-    if (!resolvedStandingsGroup) {
-      return {};
-    }
-
-    const history = standingsHistoryByGroup[resolvedStandingsGroup];
-    const currentSnapshot = standingsSnapshotByGroup[resolvedStandingsGroup];
-    if (!history?.previousOrder || !currentSnapshot) {
-      return {};
-    }
-
-    const previousRanks = new Map(history.previousOrder.map((teamId, index) => [teamId, index]));
-    const nextMovements: Record<string, MiniGroupStandingsMovement> = {};
-
-    for (const [index, teamId] of currentSnapshot.order.entries()) {
-      const previousRank = previousRanks.get(teamId);
-      if (previousRank === undefined || previousRank === index) {
-        continue;
-      }
-
-      nextMovements[teamId] = index < previousRank ? "up" : "down";
-    }
-
-    return nextMovements;
-  }, [resolvedStandingsGroup, standingsHistoryByGroup, standingsSnapshotByGroup]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    try {
-      const storedValue = window.localStorage.getItem(DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY);
-      if (storedValue) {
-        setStandingsHistoryByGroup(JSON.parse(storedValue) as PersistedStandingsHistory);
-      }
-    } catch (error) {
-      console.warn("Could not restore dashboard standings history.", error);
-    } finally {
-      setHasHydratedStandingsHistory(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!hasHydratedStandingsHistory) {
-      return;
-    }
-
-    setStandingsHistoryByGroup((current) => {
-      let didChange = false;
-      const nextHistory: PersistedStandingsHistory = {};
-
-      for (const groupName of availableStandingsGroups) {
-        const snapshot = standingsSnapshotByGroup[groupName];
-        if (!snapshot) {
-          continue;
-        }
-
-        const previousHistory = current[groupName];
-        if (!previousHistory) {
-          nextHistory[groupName] = {
-            signature: snapshot.signature,
-            currentOrder: snapshot.order,
-            previousOrder: null
-          };
-          didChange = true;
-          continue;
-        }
-
-        if (previousHistory.signature !== snapshot.signature) {
-          nextHistory[groupName] = {
-            signature: snapshot.signature,
-            currentOrder: snapshot.order,
-            previousOrder:
-              previousHistory.currentOrder.length === snapshot.order.length &&
-              previousHistory.currentOrder.some((teamId, index) => teamId !== snapshot.order[index])
-                ? previousHistory.currentOrder
-                : previousHistory.previousOrder
-          };
-          didChange = true;
-          continue;
-        }
-
-        nextHistory[groupName] = previousHistory;
-      }
-
-      if (!didChange && Object.keys(current).length === Object.keys(nextHistory).length) {
-        return current;
-      }
-
-      return nextHistory;
-    });
-  }, [availableStandingsGroups, hasHydratedStandingsHistory, standingsSnapshotByGroup]);
-
-  useEffect(() => {
-    if (!hasHydratedStandingsHistory || typeof window === "undefined") {
-      return;
-    }
-
-    try {
-      window.localStorage.setItem(
-        DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY,
-        JSON.stringify(standingsHistoryByGroup)
-      );
-    } catch (error) {
-      console.warn("Could not persist dashboard standings history.", error);
-    }
-  }, [hasHydratedStandingsHistory, standingsHistoryByGroup]);
-
   useEffect(() => {
     if (!availableStandingsGroups.length) {
       return;
@@ -579,30 +426,6 @@ export function DashboardOverview() {
     selectedStandingsGroupState.hasStoredValue,
     setSelectedStandingsGroup
   ]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !groupAccess) {
-      return;
-    }
-
-    const nextEpoch = String(groupAccess.dashboardUiResetEpoch);
-
-    try {
-      const lastSeenEpoch = window.localStorage.getItem(DASHBOARD_STANDINGS_RESET_EPOCH_STORAGE_KEY);
-      const shouldClearPersistedHistory =
-        groupAccess.dashboardUiResetEpoch > 0 &&
-        lastSeenEpoch !== nextEpoch;
-
-      if (shouldClearPersistedHistory) {
-        window.localStorage.removeItem(DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY);
-        setStandingsHistoryByGroup({});
-      }
-
-      window.localStorage.setItem(DASHBOARD_STANDINGS_RESET_EPOCH_STORAGE_KEY, nextEpoch);
-    } catch (error) {
-      console.warn("Could not reconcile dashboard standings reset epoch.", error);
-    }
-  }, [groupAccess]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !currentUserId) {
@@ -846,7 +669,6 @@ export function DashboardOverview() {
 
               <GroupStandingsMiniTable
                 rows={tournamentStandingsRows}
-                movementByTeamId={standingsMovementByTeamId}
                 emptyState="Standings will appear as group matches go final."
               />
               <p className="text-[11px] font-semibold text-gray-500">

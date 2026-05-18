@@ -198,7 +198,9 @@ export function WindowChoiceRail({
   prevLabel = "Show previous options",
   nextLabel = "Show more options",
   activeItemKey,
-  onActiveItemChange
+  onActiveItemChange,
+  motionMode = "floating",
+  allowAnchoredTouchScroll = true
 }: {
   children: ReactNode;
   className?: string;
@@ -208,6 +210,8 @@ export function WindowChoiceRail({
   nextLabel?: string;
   activeItemKey?: string;
   onActiveItemChange?: (key: string) => void;
+  motionMode?: "floating" | "anchored";
+  allowAnchoredTouchScroll?: boolean;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const beltRef = useRef<HTMLDivElement | null>(null);
@@ -225,6 +229,7 @@ export function WindowChoiceRail({
   const edgeControlWidth = 24;
   const beltGutterWidth = 40;
   const baseScrollerClassName = "flex min-w-max gap-1.5 px-0.5 pb-0.5";
+  const isAnchored = motionMode === "anchored";
 
   const clampUserOffset = useCallback((nextUserOffset: number) => {
     const minUserOffset = minTotalOffsetRef.current - centeredOffsetRef.current;
@@ -242,8 +247,15 @@ export function WindowChoiceRail({
   );
 
   useEffect(() => {
+    if (isAnchored) {
+      userOffsetRef.current = 0;
+      setUserOffsetX(0);
+      setDragOffsetX(0);
+      return;
+    }
+
     updateUserOffset(0);
-  }, [activeItemKey, updateUserOffset]);
+  }, [activeItemKey, isAnchored, updateUserOffset]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -267,6 +279,29 @@ export function WindowChoiceRail({
 
       const viewportWidth = viewport.clientWidth;
       const beltWidth = belt.scrollWidth;
+      setHasOverflow(beltWidth > viewportWidth + 1);
+      setCanScrollPrev(activeIndex > 0);
+      setCanScrollNext(activeIndex < items.length - 1);
+
+      if (isAnchored) {
+        minTotalOffsetRef.current = 0;
+        centeredOffsetRef.current = 0;
+        setOffsetX(0);
+        const viewportBounds = viewport.getBoundingClientRect();
+        const itemBounds = activeItem.getBoundingClientRect();
+        const itemNeedsReveal =
+          itemBounds.left < viewportBounds.left + 4 || itemBounds.right > viewportBounds.right - 4;
+
+        if (itemNeedsReveal) {
+          activeItem.scrollIntoView({
+            inline: "nearest",
+            block: "nearest",
+            behavior: "auto"
+          });
+        }
+        return;
+      }
+
       const minOffset = Math.min(0, viewportWidth - beltWidth);
       const desiredOffset = viewportWidth / 2 - (activeItem.offsetLeft + activeItem.offsetWidth / 2);
       const clampedOffset = Math.max(minOffset, Math.min(0, desiredOffset));
@@ -275,9 +310,6 @@ export function WindowChoiceRail({
 
       setOffsetX(clampedOffset);
       updateUserOffset(userOffsetRef.current);
-      setHasOverflow(beltWidth > viewportWidth + 1);
-      setCanScrollPrev(activeIndex > 0);
-      setCanScrollNext(activeIndex < items.length - 1);
     };
 
     updateLayout();
@@ -294,7 +326,7 @@ export function WindowChoiceRail({
       window.removeEventListener("resize", updateLayout);
       resizeObserver?.disconnect();
     };
-  }, [activeItemKey, children, updateUserOffset]);
+  }, [activeItemKey, children, isAnchored, updateUserOffset]);
 
   function nudge(direction: "prev" | "next") {
     const belt = beltRef.current;
@@ -315,6 +347,9 @@ export function WindowChoiceRail({
   }
 
   function handleTouchStart(event: React.TouchEvent<HTMLDivElement>) {
+    if (isAnchored) {
+      return;
+    }
     const touch = event.touches[0];
     if (!touch) {
       touchStartRef.current = null;
@@ -327,6 +362,9 @@ export function WindowChoiceRail({
   }
 
   function handleTouchMove(event: React.TouchEvent<HTMLDivElement>) {
+    if (isAnchored) {
+      return;
+    }
     const start = touchStartRef.current;
     if (!start) {
       return;
@@ -348,6 +386,9 @@ export function WindowChoiceRail({
   }
 
   function handleTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
+    if (isAnchored) {
+      return;
+    }
     const start = touchStartRef.current;
     touchStartRef.current = null;
     const wasDragging = isDraggingRef.current;
@@ -391,7 +432,13 @@ export function WindowChoiceRail({
         ) : null}
         <div
           ref={viewportRef}
-          className="min-w-0 overflow-hidden touch-pan-y select-none"
+          className={`min-w-0 select-none ${
+            isAnchored
+              ? allowAnchoredTouchScroll
+                ? "touch-pan-x overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch]"
+                : "overflow-x-hidden overflow-y-hidden"
+              : "touch-pan-y overflow-hidden"
+          }`}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
@@ -410,15 +457,19 @@ export function WindowChoiceRail({
           <div
             ref={beltRef}
             className={contentClassName ? `${baseScrollerClassName} ${contentClassName}` : baseScrollerClassName}
-            style={{
-              transform: `translateX(${offsetX + userOffsetX + dragOffsetX}px)`,
-              transition: hasOverflow ? (dragOffsetX !== 0 ? "none" : "transform 180ms ease-out") : undefined,
-              willChange: "transform"
-            }}
+            style={
+              isAnchored
+                ? undefined
+                : {
+                    transform: `translateX(${offsetX + userOffsetX + dragOffsetX}px)`,
+                    transition: hasOverflow ? (dragOffsetX !== 0 ? "none" : "transform 180ms ease-out") : undefined,
+                    willChange: "transform"
+                  }
+            }
           >
-            {showControls ? <div aria-hidden="true" className="shrink-0" style={{ width: beltGutterWidth }} /> : null}
+            {showControls && !isAnchored ? <div aria-hidden="true" className="shrink-0" style={{ width: beltGutterWidth }} /> : null}
             {children}
-            {showControls ? <div aria-hidden="true" className="shrink-0" style={{ width: beltGutterWidth }} /> : null}
+            {showControls && !isAnchored ? <div aria-hidden="true" className="shrink-0" style={{ width: beltGutterWidth }} /> : null}
           </div>
         </div>
         {showControls ? (

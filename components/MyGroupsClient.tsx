@@ -1821,7 +1821,21 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         ))}
 
                         {filteredInvites.map((invite) => {
-                          const inviteStatusLabel = invite.status === "revoked" ? "canceled" : invite.status;
+                          const inviteStatusLabel =
+                            invite.status === "accepted"
+                              ? "accepted"
+                              : invite.status === "revoked"
+                                ? "canceled"
+                                : invite.status === "expired"
+                                  ? "expired"
+                                  : invite.emailStatus === "failed"
+                                    ? "failed"
+                                    : invite.emailStatus === "sent"
+                                      ? "sent"
+                                      : "pending";
+                          const canResendInvite =
+                            invite.status === "pending" &&
+                            (invite.emailStatus === "pending" || invite.emailStatus === "sent" || invite.emailStatus === "failed");
                           const editValue = editingInviteNames[invite.id] ?? invite.suggestedDisplayName ?? "";
                           const isInviteEditorExpanded = expandedInviteEditorIds.includes(invite.id);
 
@@ -1836,30 +1850,32 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   </p>
                                   <p className="mt-1 text-xs font-semibold text-gray-500">
                                     {invite.invitedByLabel ? `Invited by ${invite.invitedByLabel}` : "Group invite"}
-                                    {invite.lastSentAt ? ` · Last sent ${formatDateOnly(invite.lastSentAt)}` : ""}
-                                    {` · Send attempts ${invite.sendAttempts}`}
+                                    {invite.emailSentAt ? ` · Last sent ${formatDateOnly(invite.emailSentAt)}` : ""}
+                                    {` · Send attempts ${invite.emailAttemptCount}`}
                                   </p>
-                                  {invite.lastError ? (
-                                    <p className="mt-1 text-xs font-semibold text-red-700">{invite.lastError}</p>
+                                  {invite.emailError ? (
+                                    <p className="mt-1 text-xs font-semibold text-red-700">Delivery failed. Try resend.</p>
                                   ) : null}
                                 </div>
                                 <div className="flex flex-col gap-2">
                                   {invite.status !== "accepted" ? (
                                     <>
-                                      <ActionButton
-                                        disabled={actionKey === `resend-invite-${invite.id}`}
-                                        onClick={() =>
-                                          void withAction(`resend-invite-${invite.id}`, async () => {
-                                            const result = await resendGroupInviteAction(invite.id);
-                                            setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                                            if (result.ok) {
-                                              await load();
-                                            }
-                                          })
-                                        }
-                                      >
-                                        Resend
-                                      </ActionButton>
+                                      {canResendInvite ? (
+                                        <ActionButton
+                                          disabled={actionKey === `resend-invite-${invite.id}`}
+                                          onClick={() =>
+                                            void withAction(`resend-invite-${invite.id}`, async () => {
+                                              const result = await resendGroupInviteAction(invite.id);
+                                              setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                              if (result.ok) {
+                                                await load();
+                                              }
+                                            })
+                                          }
+                                        >
+                                          Resend
+                                        </ActionButton>
+                                      ) : null}
                                       <ActionButton
                                         onClick={() => toggleExpandedInviteEditor(invite.id)}
                                       >

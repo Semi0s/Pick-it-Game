@@ -6,6 +6,7 @@ import {
   fetchProjectedKnockoutBracketPreview,
   fetchKnockoutStructureStatus
 } from "@/lib/bracket-predictions";
+import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -15,53 +16,73 @@ export default async function KnockoutPage() {
   const {
     data: { user }
   } = await supabase.auth.getUser();
+  if (user) {
+    await redirectIfLegacyScoringSetupRequired({ userId: user.id, pathname: "/knockout" });
+  }
   const knockoutStatus = await fetchKnockoutStructureStatus().catch(() => ({
     counts: { r32: 0, r16: 0, qf: 0, sf: 0, third: 0, final: 0 },
     isFullySeeded: false,
     firstRoundOf32Kickoff: null
   }));
-  const bracketEditorView = user
-    ? knockoutStatus.isFullySeeded
-      ? await fetchKnockoutBracketEditorView(user.id).catch(() => ({
-          mode: "official" as const,
-          isSeeded: false,
-          isLocked: true,
-          lockReason: "not_seeded" as const,
-          firstRoundOf32Kickoff: null,
-          bracketPoints: 0,
-          correctPicks: 0,
-          stages: [],
-          champion: null,
-          thirdPlace: null,
-          predictions: [],
-          title: "Official knockout bracket",
-          description: "The official knockout bracket is now available.",
-          secondaryNote: null
-        }))
-      : await fetchProjectedKnockoutBracketPreview(user.id).catch(() => null)
+  const isOfficialSeeded = knockoutStatus.isFullySeeded;
+  const officialBracketView = user && isOfficialSeeded
+    ? await fetchKnockoutBracketEditorView(user.id).catch(() => ({
+        mode: "official" as const,
+        isSeeded: false,
+        isLocked: true,
+        lockReason: "not_seeded" as const,
+        firstRoundOf32Kickoff: null,
+        bracketPoints: 0,
+        correctPicks: 0,
+        stages: [],
+        champion: null,
+        thirdPlace: null,
+        predictions: [],
+        title: "Official knockout bracket",
+        description: "The official knockout bracket is now available.",
+        secondaryNote: null
+      }))
     : null;
-  const projectedComparisonView = user && knockoutStatus.isFullySeeded
+  const projectedChallengeView = user && !isOfficialSeeded
+    ? await fetchProjectedKnockoutBracketPreview(user.id).catch(() => null)
+    : null;
+  const projectedComparisonView = user && isOfficialSeeded
     ? await fetchProjectedKnockoutBracketPreview(user.id, { comparisonOnly: true }).catch(() => null)
     : null;
-  const isSeeded = knockoutStatus.isFullySeeded;
   const phaseChip = getKnockoutPhaseChip(knockoutStatus.counts);
-  const isProjected = bracketEditorView?.mode === "projected";
-  const introEyebrow = isProjected ? "Projected Bracket" : isSeeded ? "Official knockout bracket" : "Knockout Picks";
-  const introTitle = isProjected
-    ? "Projected Bracket — built from your group-stage predictions"
-    : isSeeded
-      ? "Official knockout bracket"
+  const shouldShowEditableProjected = Boolean(projectedChallengeView && !projectedChallengeView.isLocked && !isOfficialSeeded);
+  const shouldShowLockedProjected = Boolean(projectedChallengeView && projectedChallengeView.isLocked && !isOfficialSeeded);
+  const shouldShowOfficialBracket = Boolean(officialBracketView && isOfficialSeeded);
+  const showingProjectedChallengeOnly = shouldShowEditableProjected || shouldShowLockedProjected;
+  const introEyebrow = showingProjectedChallengeOnly
+    ? shouldShowLockedProjected
+      ? "Locked Projected Challenge"
+      : "Projected Bracket Challenge"
+    : isOfficialSeeded
+      ? "Official Knockout Picks"
+      : "Knockout Picks";
+  const introTitle = (shouldShowEditableProjected || shouldShowLockedProjected)
+    ? shouldShowLockedProjected
+      ? "Locked Projected Challenge"
+      : "Projected Bracket Challenge"
+    : isOfficialSeeded
+      ? "Official Knockout Picks"
       : "Knockout picks coming soon";
-  const introDescription = isProjected
-    ? "Build your projected knockout bracket from your group-stage picks. Official knockout picks open after the real bracket is seeded."
-    : isSeeded
-      ? "The official knockout bracket is now available."
-      : "We will open knockout picks once the full Round of 32 through Final bracket has been seeded.";
-  const introSecondaryNote = isProjected
-    ? "Official knockout picks open after the real bracket is seeded."
-    : isSeeded
-      ? "Picks unlock as teams are confirmed"
+  const introDescription = (shouldShowEditableProjected || shouldShowLockedProjected)
+    ? shouldShowLockedProjected
+      ? "Your projected bracket challenge is locked for this phase. It will stay visible as its own archived side-pick once the official Round of 32 is seeded."
+      : "Build your projected bracket challenge from your group-stage picks. Official knockout picks open after the real Round of 32 is seeded."
+    : isOfficialSeeded
+      ? "Based on the real seeded teams."
+      : "We will open official knockout picks once the full group stage is complete and the real Round of 32 is seeded.";
+  const introSecondaryNote = (shouldShowEditableProjected || shouldShowLockedProjected)
+    ? shouldShowLockedProjected
+      ? "Projection status updates as matches become final."
+      : "Official knockout picks open after the real Round of 32 is seeded."
+    : isOfficialSeeded
+      ? "Official seeding remains phase-level. Your projected bracket is compared separately as real results come in."
       : null;
+  const primaryBracketView = shouldShowOfficialBracket ? officialBracketView : projectedChallengeView;
 
   return (
     <AppShell>
@@ -73,31 +94,17 @@ export default async function KnockoutPage() {
         statusChip={phaseChip}
       />
 
-      {bracketEditorView ? (
+      {primaryBracketView ? (
         <div className="mt-5">
-          <KnockoutBracketBuilder initialView={bracketEditorView} />
+          <KnockoutBracketBuilder
+            initialView={primaryBracketView}
+            projectedComparisonView={shouldShowOfficialBracket ? projectedComparisonView : null}
+          />
         </div>
-      ) : user && !isSeeded ? (
+      ) : user && !isOfficialSeeded ? (
         <div className="mt-5 rounded-lg border border-gray-200 bg-white px-4 py-4 text-sm font-semibold text-gray-600">
           Make more group-stage picks to build your projected bracket preview.
         </div>
-      ) : null}
-
-      {projectedComparisonView &&
-      (projectedComparisonView.predictions.length > 0 ||
-        Boolean(projectedComparisonView.secondaryNote?.includes("need review"))) ? (
-        <section className="mt-8">
-          <ManagementIntro
-            eyebrow="Projected Bracket"
-            title="Projected Bracket"
-            description="Built from your group-stage picks before the real bracket was seeded. This stays separate from your official knockout picks."
-            secondaryNote="Official knockout picks and scoring remain separate."
-            statusChip="Comparison"
-          />
-          <div className="mt-5">
-            <KnockoutBracketBuilder initialView={projectedComparisonView} />
-          </div>
-        </section>
       ) : null}
     </AppShell>
   );

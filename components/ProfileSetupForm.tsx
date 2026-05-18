@@ -96,7 +96,7 @@ export function ProfileSetupForm() {
       console.warn("Could not persist preferred language during profile setup.", error);
     }
 
-    router.replace("/dashboard");
+    router.replace("/start-playing");
     router.refresh();
   }
 

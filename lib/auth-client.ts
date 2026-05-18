@@ -869,6 +869,28 @@ export async function updateCurrentUserNotificationPreferences(enabled: boolean)
   };
 }
 
+export async function deleteCurrentUserAccount(confirmationText: string): Promise<AuthResult> {
+  const response = await fetch("/api/profile/delete-account", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ confirmationText })
+  });
+
+  const result = await parseJsonResponse<{ ok: boolean; message?: string }>(
+    response,
+    "Could not delete your account.",
+    "delete account"
+  );
+
+  if (!result.ok) {
+    return { ok: false, message: result.message ?? "Could not delete your account." };
+  }
+
+  return { ok: true, message: result.message ?? "Your account was deleted." };
+}
+
 export async function registerCurrentBrowserPushNotifications(): Promise<PushRegistrationResult> {
   if (!hasSupabaseConfig()) {
     return { ok: false, message: "Push notifications need a configured Supabase project." };

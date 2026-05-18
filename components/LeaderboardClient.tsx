@@ -127,6 +127,8 @@ function LeaderboardPlayerRow({
     : "bg-white text-gray-800";
   const socialTone = isCurrentUser ? "text-gray-600" : "text-gray-500";
   const showLeaderboardTrophies = scoreMode === "standard" && shouldShowPlayerSocialIndicators;
+  const standardPoints = profile.standardPoints ?? profile.totalPoints;
+  const groupCustomPoints = profile.groupCustomPoints ?? 0;
 
   return (
     <div
@@ -174,73 +176,74 @@ function LeaderboardPlayerRow({
             size="md"
             className="h-[3.75rem] w-[3.75rem] text-base"
           />
-          <span className="min-w-0 flex-1">
-            <span className="flex w-full items-center justify-between gap-3">
-              <span className="min-w-0 flex-1">
-                <span className="block min-w-0 truncate text-base font-black text-gray-950">
-                  {profile.name}
-                  {isCurrentUser ? " (You)" : ""}
-                </span>
-                <span className={`mt-1.5 flex flex-wrap items-center gap-2 text-xs font-semibold ${socialTone}`}>
-                  {shouldShowPlayerSocialIndicators && profile.hasPerfectPickHighlight ? (
-                    <span className="rounded-md bg-rose-100 px-2 py-1 text-[11px] font-black text-rose-700">
-                      🎯 Perfect Pick
-                    </span>
-                  ) : null}
-                  {showLeaderboardTrophies && profile.trophies && profile.trophies.length > 0 ? (
-                    <span className="inline-flex items-center gap-1">
-                      {profile.trophies.slice(0, 2).map((trophy) => (
-                        <TrophyBadge
-                          key={`${profile.id}-${trophy.id}`}
-                          icon={trophy.icon}
-                          tier={trophy.tier}
-                          size="sm"
-                          className={isCurrentUser ? "border-accent/40" : ""}
-                        />
-                      ))}
-                    </span>
-                  ) : null}
-                  {profile.homeTeamId ? (
-                    <HomeTeamBadge
-                      teamId={profile.homeTeamId}
-                      className={isCurrentUser ? "bg-white/85" : "bg-white/70"}
-                    />
-                  ) : null}
-                </span>
+          <span className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="min-w-0 flex-1 self-center">
+              <span className="block min-w-0 truncate text-base font-black text-gray-950">
+                {profile.name}
+                {isCurrentUser ? " (You)" : ""}
               </span>
-                <span className="ml-auto flex shrink-0 items-center gap-2">
-                <span className="flex flex-col items-end gap-1">
-                  <span className={`inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-semibold ${pointsTone}`}>
-                    {profile.totalPoints} pts
-                  </span>
-                  {profile.pointsDelta && profile.pointsDelta > 0 ? (
-                    <span className="text-xs font-black text-accent-dark">+{profile.pointsDelta} pts</span>
-                  ) : null}
-                  {profile.rankDelta ? (
-                    <span className={`text-xs font-black ${getMovementTone(profile.rankDelta)}`}>
-                      {formatRankMovement(profile.rankDelta)}
-                    </span>
-                  ) : null}
+              <span className={`mt-1.5 flex flex-wrap items-center gap-1.5 text-xs font-semibold ${socialTone}`}>
+                {profile.homeTeamId ? (
+                  <HomeTeamBadge
+                    teamId={profile.homeTeamId}
+                    label=""
+                    compact
+                    className={isCurrentUser ? "bg-white/85" : "bg-white/70"}
+                  />
+                ) : null}
+                <span className={`ui-chip-sm font-semibold ${pointsTone}`}>
+                  {scoreMode === "group" ? standardPoints : profile.totalPoints} pts
                 </span>
-                {canAwardManagedTrophies && (profile.id !== currentUserId || canSelfAwardTrophies) ? (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      if (!managedAwardGroup) {
-                        return;
-                      }
-                      onOpenTrophySheet(profile.id);
-                    }}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-base transition hover:border-accent hover:bg-accent-light"
-                    aria-label={`Award trophy to ${profile.name}`}
-                  >
-                    🏆
-                  </button>
+                {scoreMode === "group" ? (
+                  <span className="ui-chip-sm bg-white/80 font-bold uppercase tracking-wide text-gray-600">
+                    G: {groupCustomPoints >= 0 ? `+${groupCustomPoints}` : groupCustomPoints}
+                  </span>
+                ) : null}
+                {shouldShowPlayerSocialIndicators && profile.hasPerfectPickHighlight ? (
+                  <span className="ui-chip-sm bg-rose-100 font-black text-rose-700">
+                    🎯 Perfect Pick
+                  </span>
+                ) : null}
+                {showLeaderboardTrophies && profile.trophies && profile.trophies.length > 0 ? (
+                  <span className="inline-flex items-center gap-1">
+                    {profile.trophies.slice(0, 2).map((trophy) => (
+                      <TrophyBadge
+                        key={`${profile.id}-${trophy.id}`}
+                        icon={trophy.icon}
+                        tier={trophy.tier}
+                        size="sm"
+                        className={isCurrentUser ? "border-accent/40" : ""}
+                      />
+                    ))}
+                  </span>
+                ) : null}
+                {profile.pointsDelta && profile.pointsDelta > 0 ? (
+                  <span className="text-xs font-black text-accent-dark">+{profile.pointsDelta} pts</span>
+                ) : null}
+                {profile.rankDelta ? (
+                  <span className={`text-xs font-black ${getMovementTone(profile.rankDelta)}`}>
+                    {formatRankMovement(profile.rankDelta)}
+                  </span>
                 ) : null}
               </span>
             </span>
+            {canAwardManagedTrophies && (profile.id !== currentUserId || canSelfAwardTrophies) ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!managedAwardGroup) {
+                    return;
+                  }
+                  onOpenTrophySheet(profile.id);
+                }}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-base transition hover:border-accent hover:bg-accent-light"
+                aria-label={`Award trophy to ${profile.name}`}
+              >
+                🏆
+              </button>
+            ) : null}
           </span>
         </span>
       </Link>
@@ -1287,7 +1290,7 @@ export function LeaderboardClient() {
         <div className="flex items-start justify-between gap-3">
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Leaderboard</p>
           {globalStandingLabel ? (
-            <div className="shrink-0 rounded-md bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700">
+            <div className="ui-chip-sm shrink-0 bg-white font-bold uppercase tracking-wide text-gray-700">
               {globalStandingLabel}
             </div>
           ) : null}
@@ -1332,7 +1335,7 @@ export function LeaderboardClient() {
                 <div className="flex min-w-0 items-center gap-2">
                   <p className="text-sm font-bold uppercase tracking-wide text-amber-700">🏆 Daily Winner</p>
                   {dailyWinnerContextLabel ? (
-                    <span className="inline-flex items-center rounded-md border border-amber-200 bg-white/80 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                    <span className="ui-chip-sm border border-amber-200 bg-white/80 font-bold uppercase tracking-wide text-amber-800">
                       {dailyWinnerContextLabel}
                     </span>
                   ) : null}
@@ -1394,7 +1397,7 @@ export function LeaderboardClient() {
                           <p className="mt-1 text-sm font-semibold text-amber-800">{winner.points} pts today</p>
                           {winner.homeTeamId ? (
                             <div className="mt-2">
-                              <HomeTeamBadge teamId={winner.homeTeamId} className="border-amber-200 bg-amber-50/80" />
+                              <HomeTeamBadge teamId={winner.homeTeamId} label="" className="border-amber-200 bg-amber-50/80" />
                             </div>
                           ) : null}
                         </div>
@@ -1516,8 +1519,8 @@ export function LeaderboardClient() {
             </h3>
             <p className="mt-1 text-xs font-semibold text-gray-500">
               {activeView === "global"
-                ? "Global leaderboard uses standard scoring only."
-                : "Includes this group’s active bonus rules and custom picks."}
+                ? "Standard points only."
+                : "Group Total = Global + Group."}
             </p>
           </div>
           {isLoading ? (
@@ -1986,9 +1989,7 @@ function GroupStandingsSection({
           <div className="px-1 pt-1">
             <h3 className="text-base font-black text-gray-950">Average Group Points</h3>
             <p className="mt-1 text-xs font-semibold text-gray-500">
-              Ranked by average standard score.
-              <br />
-              Custom group bonuses and group-specific side picks are excluded.
+              Avg standard points only.
             </p>
           </div>
 

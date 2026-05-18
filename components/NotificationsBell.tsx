@@ -151,11 +151,7 @@ export function NotificationsBell() {
 
     try {
       const response = await fetch("/api/notifications", { cache: "no-store" });
-      const result = await parseJsonResponse<NotificationResponse>(
-        response,
-        "Could not load notifications.",
-        "notifications"
-      );
+      const result = await parseNotificationsResponse(response);
 
       if (!response.ok || !result.ok) {
         console.warn("Notifications are temporarily unavailable.", {
@@ -170,7 +166,7 @@ export function NotificationsBell() {
       setNotifications(result.notifications);
       setUnreadCount(result.unreadCount);
     } catch (error) {
-      console.error("Failed to load notifications.", error);
+      console.warn("Notifications are temporarily unavailable.", error);
       setNotifications([]);
       setUnreadCount(0);
     } finally {
@@ -221,6 +217,39 @@ export function NotificationsBell() {
     } catch (error) {
       console.error("Failed to mark notifications as read.", error);
     }
+  }
+}
+
+async function parseNotificationsResponse(response: Response): Promise<NotificationResponse> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const isJsonResponse = contentType.toLowerCase().includes("application/json");
+
+  if (!isJsonResponse) {
+    console.warn("Notifications endpoint returned a non-JSON response.", {
+      status: response.status,
+      contentType
+    });
+    return {
+      ok: false,
+      message: "Notifications are temporarily unavailable."
+    };
+  }
+
+  try {
+    return await parseJsonResponse<NotificationResponse>(
+      response,
+      "Could not load notifications.",
+      "notifications"
+    );
+  } catch (error) {
+    console.warn("Notifications endpoint returned an unreadable JSON response.", {
+      status: response.status,
+      error
+    });
+    return {
+      ok: false,
+      message: "Notifications are temporarily unavailable."
+    };
   }
 }
 

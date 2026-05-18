@@ -1,5 +1,7 @@
 import { AppShell } from "@/components/AppShell";
 import { ProfileSummary } from "@/components/ProfileSummary";
+import { isSelfServiceTestResetEnabled } from "@/lib/admin/destructive-tools";
+import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
 import { getLegalLanguageForUser } from "@/lib/i18n";
 import { DEFAULT_LEGAL_DOCUMENT_TYPE, getRequiredLegalDocument } from "@/lib/legal";
 import { isLikelySchemaDriftError, logSafeSupabaseError } from "@/lib/supabase-errors";
@@ -15,6 +17,7 @@ export default async function ProfilePage() {
   let initialLegalDocument = null;
 
   if (user) {
+    await redirectIfLegacyScoringSetupRequired({ userId: user.id, pathname: "/profile" });
     try {
       const { data: profile } = await supabase.from("users").select("preferred_language").eq("id", user.id).maybeSingle();
       preferredLanguage = getLegalLanguageForUser({
@@ -28,10 +31,16 @@ export default async function ProfilePage() {
       }
     }
   }
+  const selfServiceTestResetEnabled = isSelfServiceTestResetEnabled();
+  const showSelfServiceTestResetHint = process.env.NODE_ENV !== "production" && !selfServiceTestResetEnabled;
 
   return (
     <AppShell>
-      <ProfileSummary initialLegalDocument={initialLegalDocument} />
+      <ProfileSummary
+        initialLegalDocument={initialLegalDocument}
+        selfServiceTestResetEnabled={selfServiceTestResetEnabled}
+        showSelfServiceTestResetHint={showSelfServiceTestResetHint}
+      />
     </AppShell>
   );
 }
