@@ -1,26 +1,31 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import { TrophyBadge } from "@/components/TrophyBadge";
+import { clearCurrentUserTestPredictionsAction } from "@/app/admin/actions";
 import {
   clearCurrentUserAvatar,
+  deleteCurrentUserAccount,
   fetchCurrentLegalDocumentForProfile,
   fetchCurrentBracketScoreSummary,
   fetchCurrentUserTrophies,
   registerCurrentBrowserPushNotifications,
+  signOutCurrentUser,
   sendCurrentUserPasswordReset,
-  updateCurrentUserDisplayName,
   updateCurrentUserHomeTeam,
   updateCurrentUserPreferredLanguage,
   updateCurrentUserNotificationPreferences,
   uploadCurrentUserAvatar
 } from "@/lib/auth-client";
-import { getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-levels";
+import { getAccessLevel, getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-levels";
 import { showAppToast } from "@/lib/app-toast";
 import type { LegalDocument } from "@/lib/legal";
+import { redactEmailAddress } from "@/lib/redact-email";
 import { getStrings } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
 import type { UserTrophy } from "@/lib/types";
@@ -29,7 +34,16 @@ import { useCurrentUser } from "@/lib/use-current-user";
 
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 
-export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?: LegalDocument | null }) {
+export function ProfileSummary({
+  initialLegalDocument,
+  selfServiceTestResetEnabled = false,
+  showSelfServiceTestResetHint = false
+}: {
+  initialLegalDocument?: LegalDocument | null;
+  selfServiceTestResetEnabled?: boolean;
+  showSelfServiceTestResetHint?: boolean;
+}) {
+  const router = useRouter();
   const { user, isLoading, refresh } = useCurrentUser();
   const [passwordMessage, setPasswordMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [notificationMessage, setNotificationMessage] = useState<{ tone: "success" | "error"; text: string } | null>(
@@ -41,8 +55,15 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
   const [isRegisteringPush, setIsRegisteringPush] = useState(false);
   const [isUpdatingHomeTeam, setIsUpdatingHomeTeam] = useState(false);
   const [isUpdatingLanguage, setIsUpdatingLanguage] = useState(false);
-  const [isUpdatingDisplayName, setIsUpdatingDisplayName] = useState(false);
-  const [displayNameDraft, setDisplayNameDraft] = useState("");
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [deleteAccountConfirmation, setDeleteAccountConfirmation] = useState("");
+  const [deleteAccountMessage, setDeleteAccountMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [showDeleteAccountPrompt, setShowDeleteAccountPrompt] = useState(false);
+  const [isTestingToolsOpen, setIsTestingToolsOpen] = useSessionDisclosureState("profile-testing-tools-disclosure", false);
+  const [testingResetConfirmation, setTestingResetConfirmation] = useState("");
+  const [testingResetAcknowledged, setTestingResetAcknowledged] = useState(false);
+  const [testingResetReason, setTestingResetReason] = useState("");
+  const [isClearingTestPredictions, setIsClearingTestPredictions] = useState(false);
   const [trophies, setTrophies] = useState<UserTrophy[]>([]);
   const [isLoadingTrophies, setIsLoadingTrophies] = useState(true);
   const [currentLegalDocument, setCurrentLegalDocument] = useState<CurrentLegalDocument | null>(
@@ -105,10 +126,6 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
   }, [user?.id]);
 
   useEffect(() => {
-    setDisplayNameDraft(user?.name ?? "");
-  }, [user?.name]);
-
-  useEffect(() => {
     if (passwordMessage) {
       showAppToast(passwordMessage);
     }
@@ -119,6 +136,12 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
       showAppToast(notificationMessage);
     }
   }, [notificationMessage]);
+
+  useEffect(() => {
+    if (deleteAccountMessage) {
+      showAppToast(deleteAccountMessage);
+    }
+  }, [deleteAccountMessage]);
 
   useEffect(() => {
     let isMounted = true;
@@ -173,6 +196,10 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
   }
 
   const copy = getStrings(user.preferredLanguage);
+  const currentAccessLevel = getAccessLevel(user);
+  const canUseSelfServiceTestingReset = selfServiceTestResetEnabled && currentAccessLevel !== "player";
+  const canSeeSelfServiceTestingResetHint =
+    showSelfServiceTestResetHint && currentAccessLevel !== "player" && !selfServiceTestResetEnabled;
 
   return (
     <section className="space-y-5">
@@ -200,7 +227,7 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
                   {getAccessLevelLabel(user)}
                   {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
                 </p>
-                <p className="truncate text-sm text-gray-600">{user.email}</p>
+                <p className="truncate text-sm text-gray-600">{redactEmailAddress(user.email)}</p>
                 <div className="mt-2">
                   {user.homeTeamId ? (
                     <HomeTeamBadge teamId={user.homeTeamId} />
@@ -280,39 +307,6 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
       <div className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">Profile editing</h3>
         <label className="mt-4 block">
-          <span className="text-sm font-bold text-gray-800">Display name</span>
-          <p className="mt-1 text-sm font-semibold text-gray-500">
-            This is how other players will see you on leaderboards and in groups.
-          </p>
-          <div className="mt-2 flex flex-col gap-3 sm:flex-row">
-            <input
-              value={displayNameDraft}
-              onChange={(event) => setDisplayNameDraft(event.target.value)}
-              className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-            />
-            <button
-              type="button"
-              disabled={isUpdatingDisplayName}
-              onClick={async () => {
-                setIsUpdatingDisplayName(true);
-                setPasswordMessage(null);
-                const result = await updateCurrentUserDisplayName(displayNameDraft);
-                setPasswordMessage({
-                  tone: result.ok ? "success" : "error",
-                  text: result.message ?? "Something went wrong."
-                });
-                if (result.ok) {
-                  await refresh();
-                }
-                setIsUpdatingDisplayName(false);
-              }}
-              className="inline-flex items-center justify-center rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
-            >
-              {isUpdatingDisplayName ? "Saving..." : "Save Display Name"}
-            </button>
-          </div>
-        </label>
-        <label className="mt-4 block">
           <span className="text-sm font-bold text-gray-800">Home Team</span>
           <p className="mt-1 text-sm font-semibold text-gray-500">Choose the team you&apos;re backing.</p>
           <select
@@ -372,6 +366,78 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
           >
             Create and Manage Groups
           </Link>
+        </div>
+        <div className="mt-5 border-t border-gray-200 pt-4">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                await signOutCurrentUser();
+                router.replace("/login");
+                router.refresh();
+              }}
+              className="inline-flex rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
+            >
+              Sign out
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDeleteAccountPrompt((current) => !current)}
+              className="inline-flex rounded-md border border-rose-300 bg-white px-4 py-3 text-sm font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50"
+            >
+              Delete my account
+            </button>
+          </div>
+          {showDeleteAccountPrompt ? (
+            <div className="mt-3 rounded-md border border-rose-200 bg-rose-50/70 p-3">
+              <p className="text-sm font-semibold text-rose-800">
+                This permanently deletes your account. Type <span className="font-black">{user.email?.trim().toLowerCase()}</span> to confirm.
+              </p>
+              <input
+                type="text"
+                value={deleteAccountConfirmation}
+                onChange={(event) => setDeleteAccountConfirmation(event.target.value)}
+                placeholder={user.email?.trim().toLowerCase() ?? "your email"}
+                className="mt-3 w-full rounded-md border border-rose-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+              />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={isDeletingAccount || deleteAccountConfirmation.trim().toLowerCase() !== (user.email?.trim().toLowerCase() ?? "")}
+                  onClick={async () => {
+                    setIsDeletingAccount(true);
+                    setDeleteAccountMessage(null);
+                    const result = await deleteCurrentUserAccount(deleteAccountConfirmation);
+                    setDeleteAccountMessage({
+                      tone: result.ok ? "success" : "error",
+                      text: result.message ?? "Could not delete your account."
+                    });
+                    if (result.ok) {
+                      await signOutCurrentUser();
+                      router.replace("/login");
+                      router.refresh();
+                      return;
+                    }
+                    setIsDeletingAccount(false);
+                  }}
+                  className="inline-flex rounded-md border border-rose-600 bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600"
+                >
+                  {isDeletingAccount ? "Deleting..." : "Permanently delete account"}
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingAccount}
+                  onClick={() => {
+                    setShowDeleteAccountPrompt(false);
+                    setDeleteAccountConfirmation("");
+                  }}
+                  className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -495,6 +561,131 @@ export function ProfileSummary({ initialLegalDocument }: { initialLegalDocument?
           {isSendingReset ? "Sending..." : "Reset My Password"}
         </button>
       </div>
+
+      {canSeeSelfServiceTestingResetHint ? (
+        <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/50 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-bold text-gray-900">Testing Tools</h3>
+            <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">
+              Hidden
+            </span>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-gray-700">
+            The self-service testing reset is available for Captain tier and above, but it is currently disabled in this environment.
+          </p>
+          <p className="mt-2 text-xs font-semibold text-amber-900/80">
+            Set <code className="rounded bg-white/80 px-1 py-0.5 font-mono text-[11px]">ENABLE_SELF_SERVICE_TEST_RESETS=true</code>{" "}
+            and restart the app to show the <span className="font-bold">Clear My Test Predictions</span> panel on this page.
+          </p>
+        </div>
+      ) : null}
+
+      {canUseSelfServiceTestingReset ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-lg font-bold">Testing Tools</h3>
+                <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">
+                  Testing only
+                </span>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-gray-700">
+                Use this only while testing. It clears your saved picks so you can run through the experience again.
+              </p>
+              <p className="mt-1 text-xs font-semibold text-amber-900/80">
+                Visible only when <code className="rounded bg-white/80 px-1 py-0.5 font-mono text-[11px]">ENABLE_SELF_SERVICE_TEST_RESETS=true</code>.
+              </p>
+            </div>
+            <InlineDisclosureButton
+              isOpen={isTestingToolsOpen}
+              variant="chip"
+              onClick={() => setIsTestingToolsOpen((current) => !current)}
+            />
+          </div>
+
+          {!isTestingToolsOpen ? (
+            <div className="mt-4 rounded-md border border-amber-200 bg-white/80 px-4 py-3">
+              <p className="text-sm font-semibold text-gray-800">Clear My Test Predictions</p>
+              <p className="mt-1 text-sm text-gray-600">
+                Hidden by default. Open this section to clear your saved group-stage and knockout testing picks.
+              </p>
+            </div>
+          ) : null}
+
+          {isTestingToolsOpen ? (
+            <div className="mt-4 space-y-4">
+              <div className="rounded-md border border-amber-300 bg-white px-4 py-3 text-sm font-semibold text-gray-700">
+                This is for testing only. It will clear your saved prediction data so you can test the app again. This cannot be undone.
+              </div>
+
+              <div className="rounded-md bg-white px-4 py-4">
+                <p className="text-sm font-bold text-gray-900">Clear your test predictions?</p>
+                <p className="mt-2 text-sm leading-6 text-gray-700">
+                  This will clear your saved group-stage, knockout, and projected knockout picks. Your account, groups, profile, and invitations will remain.
+                </p>
+
+                <label className="mt-4 block">
+                  <span className="text-sm font-bold text-gray-800">Typed confirmation</span>
+                  <input
+                    value={testingResetConfirmation}
+                    onChange={(event) => setTestingResetConfirmation(event.target.value)}
+                    placeholder="RESET MY PICKS"
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  />
+                </label>
+
+                <label className="mt-4 block">
+                  <span className="text-sm font-bold text-gray-800">Reason</span>
+                  <input
+                    value={testingResetReason}
+                    onChange={(event) => setTestingResetReason(event.target.value)}
+                    placeholder="Testing reset reason"
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  />
+                </label>
+
+                <label className="mt-4 flex items-start gap-3 text-sm font-semibold text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={testingResetAcknowledged}
+                    onChange={(event) => setTestingResetAcknowledged(event.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent"
+                  />
+                  <span>I understand this will clear my saved test predictions.</span>
+                </label>
+
+                <button
+                  type="button"
+                  disabled={isClearingTestPredictions}
+                  onClick={async () => {
+                    setIsClearingTestPredictions(true);
+                    const result = await clearCurrentUserTestPredictionsAction({
+                      confirmationText: testingResetConfirmation,
+                      acknowledged: testingResetAcknowledged,
+                      reason: testingResetReason
+                    });
+                    showAppToast({
+                      tone: result.ok ? "success" : "error",
+                      text: result.ok ? "Your test predictions were cleared." : (result.message ?? "Could not clear your test predictions. Please try again.")
+                    });
+                    if (result.ok) {
+                      setTestingResetConfirmation("");
+                      setTestingResetAcknowledged(false);
+                      setTestingResetReason("");
+                      await refresh();
+                    }
+                    setIsClearingTestPredictions(false);
+                  }}
+                  className="mt-4 w-full rounded-md border border-rose-300 bg-rose-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+                >
+                  {isClearingTestPredictions ? "Clearing..." : "Clear My Test Predictions"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="rounded-lg border border-gray-200 p-4">
         <h3 className="text-lg font-bold">Trophies</h3>
