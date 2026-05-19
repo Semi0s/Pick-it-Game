@@ -56,14 +56,15 @@ export default async function BracketBuilderPage() {
   );
 
   let initialSnapshot: LightSeedBuilderSnapshot | null = null;
+  let hasSavedSnapshot = false;
   try {
     const savedSnapshot = await fetchUserLightSeedBuilderSnapshot(adminSupabase, authUser.id);
-    initialSnapshot = savedSnapshot.groupRankings.length > 0
-      ? savedSnapshot
-      : buildDefaultLightSeedBuilderSnapshot(localTeams);
+    hasSavedSnapshot = savedSnapshot.groupRankings.length > 0;
+    initialSnapshot = hasSavedSnapshot ? savedSnapshot : buildDefaultLightSeedBuilderSnapshot(localTeams);
   } catch (error) {
     logSafeSupabaseError("bracket-builder-snapshot-load", error, { userId: authUser.id, recoverable: true });
     initialSnapshot = buildDefaultLightSeedBuilderSnapshot(localTeams);
+    hasSavedSnapshot = false;
   }
 
   let knockoutStatus = safeFetchKnockoutStructureStatusFallback();
@@ -142,6 +143,7 @@ export default async function BracketBuilderPage() {
           initialMatches={localMatches}
           initialKnockoutSeeded={knockoutStatus.isFullySeeded}
           initialSnapshot={initialSnapshot}
+          hasSavedSnapshot={hasSavedSnapshot}
         requiredThirdPlaceQualifierCount={requiredThirdPlaceQualifierCount}
         roundOf32Placeholders={roundOf32Placeholders}
         groupStageDueAt={earliestGroupStageDueAt}

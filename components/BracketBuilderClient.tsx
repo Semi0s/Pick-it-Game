@@ -35,6 +35,7 @@ type BracketBuilderClientProps = {
   initialMatches?: MatchWithTeams[];
   initialKnockoutSeeded?: boolean;
   initialSnapshot?: LightSeedBuilderSnapshot | null;
+  hasSavedSnapshot?: boolean;
   requiredThirdPlaceQualifierCount?: number;
   roundOf32Placeholders: KnockoutPlaceholderMatch[];
   groupStageDueAt?: string | null;
@@ -134,6 +135,7 @@ export function BracketBuilderClient({
   initialMatches,
   initialKnockoutSeeded = false,
   initialSnapshot,
+  hasSavedSnapshot = false,
   requiredThirdPlaceQualifierCount = 0,
   roundOf32Placeholders,
   groupStageDueAt = null,
@@ -163,7 +165,6 @@ export function BracketBuilderClient({
     [matches]
   );
   const defaultSnapshot = useMemo(() => buildDefaultLightSeedBuilderSnapshot(teams), [teams]);
-  const hasSavedSnapshot = Boolean(initialSnapshot?.groupRankings?.length);
   const [groupRankings, setGroupRankings] = useState<LightSeedBuilderSnapshot["groupRankings"]>(
     initialSnapshot?.groupRankings?.length ? initialSnapshot.groupRankings : defaultSnapshot.groupRankings
   );
@@ -262,10 +263,14 @@ export function BracketBuilderClient({
       })),
     [groupRankings]
   );
+  const previewRankingsInput = useMemo<GroupSeedRankingInput[]>(
+    () => (hasSavedSnapshot || hasInteracted ? currentRankingsInput : []),
+    [currentRankingsInput, hasInteracted, hasSavedSnapshot]
+  );
 
   const projectedStandings = useMemo(
-    () => buildProjectedGroupStandingsFromSeedRankings(teams, currentRankingsInput),
-    [currentRankingsInput, teams]
+    () => buildProjectedGroupStandingsFromSeedRankings(teams, previewRankingsInput),
+    [previewRankingsInput, teams]
   );
 
   const projectedBracket = useMemo(
