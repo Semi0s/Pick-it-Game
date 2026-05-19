@@ -216,6 +216,7 @@ export function BracketBuilderClient({
   const [dragOverTeamId, setDragOverTeamId] = useState<string | null>(null);
   const [draggedThirdPlaceTeamId, setDraggedThirdPlaceTeamId] = useState<string | null>(null);
   const [dragOverThirdPlaceTeamId, setDragOverThirdPlaceTeamId] = useState<string | null>(null);
+  const [supportsNativeRowDrag, setSupportsNativeRowDrag] = useState(false);
   const [isThirdPlaceListOpen, setIsThirdPlaceListOpen] = useState(false);
   const [groupProjectionSources, setGroupProjectionSources] = useState<Record<string, UserGroupProjectionSource>>(initialGroupProjectionSources);
   const [isFinalizingBracket, setIsFinalizingBracket] = useState(false);
@@ -462,6 +463,23 @@ export function BracketBuilderClient({
     } catch {
       setHasSeenCompletionThisSession(false);
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const updateSupport = () => {
+      setSupportsNativeRowDrag(mediaQuery.matches);
+    };
+
+    updateSupport();
+    mediaQuery.addEventListener("change", updateSupport);
+    return () => {
+      mediaQuery.removeEventListener("change", updateSupport);
+    };
   }, []);
 
   useEffect(() => {
@@ -899,9 +917,9 @@ export function BracketBuilderClient({
                     previousGroupRowTopsRef.current.delete(team.id);
                   }
                 }}
-                draggable={!isReadOnly && !isActiveGroupScoreApplied}
+                draggable={!isReadOnly && !isActiveGroupScoreApplied && supportsNativeRowDrag}
                 onDragStart={(event) => {
-                  if (isReadOnly || isActiveGroupScoreApplied) {
+                  if (isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag) {
                     return;
                   }
                   event.dataTransfer.effectAllowed = "move";
@@ -928,7 +946,7 @@ export function BracketBuilderClient({
                   event.preventDefault();
                   handleDropReorder(team.id);
                 }}
-                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1.5 last:border-b-0 transition-shadow ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied ? "" : "cursor-grab active:cursor-grabbing"}`}
+                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1.5 last:border-b-0 transition-shadow ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <div className="flex justify-start">
                   <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
@@ -1025,9 +1043,9 @@ export function BracketBuilderClient({
                         previousThirdPlaceRowTopsRef.current.delete(team.id);
                       }
                     }}
-                    draggable={!isReadOnly}
+                    draggable={!isReadOnly && supportsNativeRowDrag}
                     onDragStart={(event) => {
-                      if (isReadOnly) {
+                      if (isReadOnly || !supportsNativeRowDrag) {
                         return;
                       }
                       event.dataTransfer.effectAllowed = "move";
@@ -1060,7 +1078,7 @@ export function BracketBuilderClient({
                         Cutoff
                       </div>
                     ) : null}
-                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-lg border px-2 py-1 transition-shadow ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-white"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly ? "" : "cursor-grab active:cursor-grabbing"}`}>
+                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-lg border px-2 py-1 transition-shadow ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-white"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
                       <div className="flex justify-start">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
                           {index + 1}
