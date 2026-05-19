@@ -2,6 +2,7 @@
 
 import { Check, CheckSquare, Trophy, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { previewBracketPredictionImpactAction, saveBracketPredictionAction } from "@/app/knockout/actions";
 import { WindowChoiceRail, useSessionJsonState } from "@/components/player-management/Shared";
 import { showAppToast } from "@/lib/app-toast";
@@ -41,6 +42,7 @@ const KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY = "knockout-active-country-filt
 const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
 
 export function KnockoutBracketBuilder({ initialView, projectedComparisonView = null }: KnockoutBracketBuilderProps) {
+  const searchParams = useSearchParams();
   const [baseView, setBaseView] = useState<KnockoutBracketEditorView>(initialView);
   const [predictions, setPredictions] = useState<BracketPrediction[]>(initialView.predictions);
   const [draftWinnerByMatchId, setDraftWinnerByMatchId] = useState<Record<string, string>>({});
@@ -62,6 +64,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
   const [transitionReady, setTransitionReady] = useState(true);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasAutoFocusedProjectedSlideRef = useRef(false);
+  const hasAppliedQueryFocusRef = useRef(false);
 
   const view = useMemo(
     () => deriveEditorView(baseView, predictions, draftWinnerByMatchId, draftScoreByMatchId),
@@ -126,6 +129,58 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
       setActiveSlideIndex(firstOpenProjectedSlideIndex);
     }
   }, [activeSlideIndex, baseView.mode, setActiveSlideIndex, slides]);
+
+  useEffect(() => {
+    if (hasAppliedQueryFocusRef.current || slides.length === 0) {
+      return;
+    }
+
+    const requestedStage = searchParams.get("stage");
+    const requestedMatchId = searchParams.get("matchId");
+    const requestedCompare = searchParams.get("compare");
+
+    if (requestedCompare === "projected") {
+      try {
+        window.sessionStorage.setItem(
+          KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY,
+          JSON.stringify({ hasInteracted: true, lastBias: 0 })
+        );
+      } catch {}
+    }
+
+    if (!requestedStage && !requestedMatchId) {
+      hasAppliedQueryFocusRef.current = true;
+      return;
+    }
+
+    const requestedStageKey = requestedStage?.toLowerCase() ?? null;
+    const nextIndex = slides.findIndex((slide) => {
+      if (requestedStageKey && slide.currentStage !== requestedStageKey) {
+        return false;
+      }
+      return requestedMatchId ? slide.currentMatches.some((match) => match.matchId === requestedMatchId) : true;
+    });
+
+    if (nextIndex >= 0 && nextIndex !== activeSlideIndex) {
+      setActiveSlideIndex(nextIndex);
+    }
+
+    hasAppliedQueryFocusRef.current = true;
+  }, [activeSlideIndex, searchParams, setActiveSlideIndex, slides]);
+
+  useEffect(() => {
+    const requestedMatchId = searchParams.get("matchId");
+    if (!requestedMatchId) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(`[data-knockout-match-id="${requestedMatchId}"]`);
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeSlideIndex, searchParams]);
 
   if (baseView.mode === "official" && !baseView.isSeeded) {
     return (
@@ -198,6 +253,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
             slide={slides[activeSlideIndex]}
             mode={baseView.mode}
             projectedComparisonView={projectedComparisonView}
+            forcedProjectedBias={searchParams.get("compare") === "projected" ? 0 : null}
             ready={transitionReady}
             pendingMatchId={pendingMatchId}
             pendingConfirmation={pendingConfirmation}
@@ -417,6 +473,7 @@ function BracketStageViewport({
   slide,
   mode,
   projectedComparisonView,
+  forcedProjectedBias,
   ready,
   pendingMatchId,
   pendingConfirmation,
@@ -428,6 +485,7 @@ function BracketStageViewport({
   slide: BracketSlideView;
   mode: KnockoutBracketEditorView["mode"];
   projectedComparisonView: KnockoutBracketEditorView | null;
+  forcedProjectedBias: number | null;
   ready: boolean;
   pendingMatchId: string | null;
   pendingConfirmation: {
@@ -519,6 +577,7 @@ function BracketStageViewport({
             officialMatches={filteredSlide.currentMatches}
             officialState="pending"
             isOfficialRound={false}
+            forcedProjectedBias={forcedProjectedBias}
             pendingMatchId={pendingMatchId}
             pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
@@ -531,6 +590,7 @@ function BracketStageViewport({
             officialMatches={filteredSlide.currentMatches}
             officialState="live"
             isOfficialRound
+            forcedProjectedBias={forcedProjectedBias}
             pendingMatchId={pendingMatchId}
             pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
@@ -655,6 +715,7 @@ function ProjectedAndOfficialRoundView({
   officialMatches,
   officialState,
   isOfficialRound,
+  forcedProjectedBias,
   pendingMatchId,
   pendingConfirmation,
   onSelect,
@@ -665,6 +726,7 @@ function ProjectedAndOfficialRoundView({
   officialMatches: KnockoutBracketMatchView[];
   officialState: "pending" | "live";
   isOfficialRound: boolean;
+  forcedProjectedBias: number | null;
   pendingMatchId: string | null;
   pendingConfirmation: {
     matchId: string;
@@ -691,7 +753,7 @@ function ProjectedAndOfficialRoundView({
   const mobilePeekInsetPx = 1.35 * 16;
   const mobileColumnGapPx = 48;
   const mobileSnapEdgeInsetPx = 35;
-  const [compareViewState, setCompareViewState] = useSessionJsonState<{
+  const [compareViewState, setCompareViewState, compareViewMeta] = useSessionJsonState<{
     hasInteracted: boolean;
     lastBias: number | null;
   }>(
@@ -701,10 +763,8 @@ function ProjectedAndOfficialRoundView({
       lastBias: null
     }
   );
-  const officialBias =
-    compareViewState.hasInteracted && typeof compareViewState.lastBias === "number"
-      ? compareViewState.lastBias
-      : defaultOfficialBias;
+  const [committedBias, setCommittedBias] = useState<number | null>(null);
+  const officialBias = committedBias ?? defaultOfficialBias;
   const snapTargets = useMemo(() => [0, 1], []);
   const [dragBias, setDragBias] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -716,6 +776,8 @@ function ProjectedAndOfficialRoundView({
     isNarrowViewport && narrowViewportWidth > 0
       ? Math.min(Math.max(0, narrowViewportWidth - mobilePeekInsetPx), maxMobileCardWidthPx)
       : 0;
+  const mobileDragTravelPx =
+    isNarrowViewport && mobileCardWidthPx > 0 ? Math.max(1, (mobileCardWidthPx + mobileColumnGapPx) * 0.68) : 0;
   const mobileCenterGutterPx =
     isNarrowViewport && narrowViewportWidth > 0 ? Math.max(0, (narrowViewportWidth - mobileCardWidthPx) / 2) : 0;
   const mobileMirrorSeamPx =
@@ -771,6 +833,31 @@ function ProjectedAndOfficialRoundView({
   }, []);
 
   useEffect(() => {
+    if (!compareViewMeta.hasHydrated) {
+      return;
+    }
+
+    if (compareViewState.hasInteracted && typeof compareViewState.lastBias === "number") {
+      setCommittedBias(compareViewState.lastBias);
+      return;
+    }
+
+    setCommittedBias(defaultOfficialBias);
+  }, [compareViewMeta.hasHydrated, compareViewState.hasInteracted, compareViewState.lastBias, defaultOfficialBias]);
+
+  useEffect(() => {
+    if (forcedProjectedBias == null) {
+      return;
+    }
+
+    setCommittedBias(forcedProjectedBias);
+    setCompareViewState({
+      hasInteracted: true,
+      lastBias: forcedProjectedBias
+    });
+  }, [forcedProjectedBias, setCompareViewState]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -797,6 +884,7 @@ function ProjectedAndOfficialRoundView({
     const snappedRatio = snapTargets.reduce((closest, candidate) =>
       Math.abs(candidate - currentBias) < Math.abs(closest - currentBias) ? candidate : closest
     );
+    setCommittedBias(snappedRatio);
     setCompareViewState({
       hasInteracted: true,
       lastBias: snappedRatio
@@ -835,7 +923,7 @@ function ProjectedAndOfficialRoundView({
     const deltaX = currentX - start.x;
     const deltaY = currentY - start.y;
     if (!gestureIntentRef.current) {
-      if (Math.abs(deltaX) < 6 && Math.abs(deltaY) < 6) {
+      if (Math.abs(deltaX) < 4 && Math.abs(deltaY) < 4) {
         return { intent: null, active: true as const };
       }
       gestureIntentRef.current = Math.abs(deltaX) > Math.abs(deltaY) ? "horizontal" : "vertical";
@@ -847,7 +935,7 @@ function ProjectedAndOfficialRoundView({
       return { intent: gestureIntentRef.current, active: false as const };
     }
 
-    const maxOffset = maxTrackOffset || getMaxTrackOffset(slotKey);
+    const maxOffset = mobileDragTravelPx || maxTrackOffset || getMaxTrackOffset(slotKey);
     if (maxOffset <= 0) {
       return { intent: gestureIntentRef.current, active: true as const };
     }
@@ -984,7 +1072,7 @@ function ProjectedAndOfficialRoundView({
                       ? {
                           columnGap: `${mobileColumnGapPx}px`,
                           transform: `translateX(${-(maxTrackOffset * effectiveBias) + mobileSnapTranslatePx}px)`,
-                          transition: isDragging ? "none" : "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)",
+                          transition: isDragging ? "none" : "transform 170ms cubic-bezier(0.22, 1, 0.36, 1)",
                           willChange: "transform"
                         }
                       : undefined
@@ -1308,6 +1396,7 @@ function CurrentRoundMatchCard({
 
   return (
     <div
+      data-knockout-match-id={match.matchId}
       className={
         isEmbeddedCenterCard
           ? `${isHero ? "p-1" : "p-0.5"}`

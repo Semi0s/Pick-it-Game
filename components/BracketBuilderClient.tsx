@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, ChevronUp, GripVertical, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, GripVertical, TriangleAlert, X } from "lucide-react";
 import { saveLightSeedBuilderAction } from "@/app/groups/actions";
 import { ActionButton, InlineDisclosureButton } from "@/components/player-management/Shared";
 import { showAppToast } from "@/lib/app-toast";
@@ -19,6 +19,7 @@ import {
   type GroupSeedRankingInput,
   type KnockoutPlaceholderMatch
 } from "@/lib/knockout-seeding";
+import type { KnockoutBracketEditorView } from "@/lib/bracket-predictions";
 import type { MatchWithTeams, Team } from "@/lib/types";
 import { getLocalGroupMatches } from "@/lib/group-matches";
 
@@ -37,13 +38,44 @@ type BracketBuilderClientProps = {
   requiredThirdPlaceQualifierCount?: number;
   roundOf32Placeholders: KnockoutPlaceholderMatch[];
   groupStageDueAt?: string | null;
+  knockoutProjectedPreview?: KnockoutBracketEditorView | null;
 };
+
+type BracketPreviewSide = {
+  teamId: string | null;
+  shortLabel: string;
+  flagEmoji: string | null;
+  slotComparisonState: "match" | "miss" | null;
+};
+
+type BracketPreviewMatch = {
+  matchId: string;
+  stage: string;
+  home: BracketPreviewSide;
+  away: BracketPreviewSide;
+};
+
+const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
 
 const SWIPE_THRESHOLD_PX = 42;
 const NEAR_DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
 const TEAM_NAME_CHIP_THRESHOLD = 12;
 const COMPACT_ICON_BUTTON_CLASS =
   "inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 transition hover:border-accent hover:text-accent-dark disabled:cursor-not-allowed disabled:opacity-40";
+
+function formatProjectedSeedLabel(sourceLabel: string | null | undefined) {
+  if (!sourceLabel) {
+    return "TBD";
+  }
+
+  const normalized = sourceLabel.trim();
+  const groupMatch = normalized.match(/^Group\s+([A-Z])\s+(Winner|Runner-up)$/i);
+  if (groupMatch) {
+    return `${groupMatch[1].toUpperCase()}-${groupMatch[2].toLowerCase() === "winner" ? "1st" : "2nd"}`;
+  }
+
+  return normalized;
+}
 
 function moveItem<T>(items: T[], index: number, direction: -1 | 1) {
   const nextIndex = index + direction;
@@ -104,7 +136,8 @@ export function BracketBuilderClient({
   initialSnapshot,
   requiredThirdPlaceQualifierCount = 0,
   roundOf32Placeholders,
-  groupStageDueAt = null
+  groupStageDueAt = null,
+  knockoutProjectedPreview = null
 }: BracketBuilderClientProps) {
   const router = useRouter();
   const touchStartXRef = useRef<number | null>(null);
@@ -249,6 +282,63 @@ export function BracketBuilderClient({
       }),
     [isThirdPlacePhase, normalizedThirdPlaceRankings, projectedStandings, requiredThirdPlaceQualifierCount, roundOf32Placeholders, teams]
   );
+  const projectedComparisonRound = useMemo(
+    () => knockoutProjectedPreview?.stages.find((stage) => stage.stage === "r32")?.matches ?? null,
+    [knockoutProjectedPreview]
+  );
+  const bracketPreviewMatches = useMemo<BracketPreviewMatch[]>(() => {
+    if (projectedComparisonRound?.length) {
+      return projectedComparisonRound.map((match) => ({
+        matchId: match.matchId,
+        stage: match.stage,
+        home: {
+          teamId: match.homeTeam?.id ?? null,
+          shortLabel: match.homeTeam?.shortName ?? formatProjectedSeedLabel(match.homeSourceLabel),
+          flagEmoji: match.homeTeam?.flagEmoji ?? null,
+          slotComparisonState: match.seededHomeTeam
+            ? match.homeTeam
+              ? match.homeTeam.id === match.seededHomeTeam.id
+                ? "match"
+                : "miss"
+              : null
+            : null
+        },
+        away: {
+          teamId: match.awayTeam?.id ?? null,
+          shortLabel: match.awayTeam?.shortName ?? formatProjectedSeedLabel(match.awaySourceLabel),
+          flagEmoji: match.awayTeam?.flagEmoji ?? null,
+          slotComparisonState: match.seededAwayTeam
+            ? match.awayTeam
+              ? match.awayTeam.id === match.seededAwayTeam.id
+                ? "match"
+                : "miss"
+              : null
+            : null
+        }
+      }));
+    }
+
+    return projectedBracket.matches.map((match) => {
+      const homeTeam = match.home.teamId ? teamsById.get(match.home.teamId) ?? null : null;
+      const awayTeam = match.away.teamId ? teamsById.get(match.away.teamId) ?? null : null;
+      return {
+        matchId: match.matchId,
+        stage: "r32",
+        home: {
+          teamId: homeTeam?.id ?? null,
+          shortLabel: homeTeam?.shortName ?? formatProjectedSeedLabel(match.home.sourceLabel),
+          flagEmoji: homeTeam?.flagEmoji ?? null,
+          slotComparisonState: null
+        },
+        away: {
+          teamId: awayTeam?.id ?? null,
+          shortLabel: awayTeam?.shortName ?? formatProjectedSeedLabel(match.away.sourceLabel),
+          flagEmoji: awayTeam?.flagEmoji ?? null,
+          slotComparisonState: null
+        }
+      };
+    });
+  }, [projectedBracket.matches, projectedComparisonRound, teamsById]);
 
   const isReadOnly = useMemo(() => {
     if (initialKnockoutSeeded) {
@@ -414,6 +504,17 @@ export function BracketBuilderClient({
     router.push("/groups");
   }
 
+  function primeKnockoutProjectedCompareView() {
+    try {
+      window.sessionStorage.setItem(
+        KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY,
+        JSON.stringify({ hasInteracted: true, lastBias: 0 })
+      );
+    } catch {
+      // Ignore storage failures and let the knockout page fall back to its remembered view.
+    }
+  }
+
   if (showCompletionScreen) {
     return (
       <div className="flex min-h-[calc(100vh-10rem)] items-center justify-center">
@@ -438,8 +539,8 @@ export function BracketBuilderClient({
     );
   }
 
-  const leftBracketMatches = projectedBracket.matches.slice(0, 8);
-  const rightBracketMatches = projectedBracket.matches.slice(8, 16);
+  const leftBracketMatches = bracketPreviewMatches.slice(0, 8);
+  const rightBracketMatches = bracketPreviewMatches.slice(8, 16);
   const activeGroupUsesCompactCode = activeGroupTeams.some((team) => shouldUseCompactCode(team));
   const leftBracketLayout = getBracketLayout(leftBracketMatches.length);
   const rightBracketLayout = getBracketLayout(rightBracketMatches.length);
@@ -459,6 +560,14 @@ export function BracketBuilderClient({
         <p className="text-[11px] font-black uppercase tracking-[0.16em] text-cyan-900">Pick the qualifying teams</p>
         <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-800">Saves automatically</p>
       </section>
+
+      {isReadOnly ? (
+        <section className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-center text-[11px] font-semibold text-gray-600">
+          {initialKnockoutSeeded
+            ? "Bracket Builder is locked because the knockout bracket has already been seeded."
+            : "Bracket Builder is locked because this group's picks deadline has passed."}
+        </section>
+      ) : null}
 
       <section
         className="space-y-3 px-0 py-0"
@@ -735,24 +844,29 @@ export function BracketBuilderClient({
               {leftBracketMatches.map((match, index) => (
                 <Link
                   key={match.matchId}
-                  href="/knockout"
+                  href={`/knockout?stage=${match.stage}&matchId=${match.matchId}&compare=projected`}
+                  onClick={primeKnockoutProjectedCompareView}
                   className="absolute left-0 right-0 block space-y-0 rounded-md px-1 py-0 transition hover:bg-gray-50"
                   style={{ top: `${index * leftBracketLayout.matchBlockHeight}px` }}
                 >
-                  {[match.home, match.away].map((side, sideIndex) => {
-                    const team = side.teamId ? teamsById.get(side.teamId) ?? null : null;
-                    return (
-                      <div
-                        key={`${match.matchId}-${sideIndex}`}
-                        className={`grid min-h-[16px] grid-cols-[1.15rem_minmax(0,1fr)] items-center gap-1.5 px-1 py-0 ${team ? "text-gray-900" : "text-gray-400"}`}
-                      >
-                        <span aria-hidden className="text-xs">{team?.flagEmoji ?? " "}</span>
+                  {[match.home, match.away].map((side, sideIndex) => (
+                    <div
+                      key={`${match.matchId}-${sideIndex}`}
+                      className={`grid min-h-[16px] grid-cols-[1.15rem_minmax(0,1fr)] items-center gap-1.5 px-1 py-0 ${side.teamId ? "text-gray-900" : "text-gray-400"}`}
+                    >
+                      <span aria-hidden className="text-xs">{side.flagEmoji ?? " "}</span>
+                      <span className="inline-flex min-w-0 items-center gap-1">
                         <span className="truncate text-[11px] font-black">
-                          {team?.shortName ?? side.sourceLabel ?? "TBD"}
+                          {side.shortLabel}
                         </span>
-                      </div>
-                    );
-                  })}
+                        {side.slotComparisonState === "match" ? (
+                          <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark" />
+                        ) : side.slotComparisonState === "miss" ? (
+                          <X aria-hidden className="h-3.5 w-3.5 shrink-0 text-rose-600" />
+                        ) : null}
+                      </span>
+                    </div>
+                  ))}
                 </Link>
               ))}
             </div>
@@ -789,24 +903,29 @@ export function BracketBuilderClient({
               {rightBracketMatches.map((match, index) => (
                 <Link
                   key={match.matchId}
-                  href="/knockout"
+                  href={`/knockout?stage=${match.stage}&matchId=${match.matchId}&compare=projected`}
+                  onClick={primeKnockoutProjectedCompareView}
                   className="absolute left-0 right-0 block space-y-0 rounded-md px-1 py-0 transition hover:bg-gray-50"
                   style={{ top: `${index * rightBracketLayout.matchBlockHeight}px` }}
                 >
-                  {[match.home, match.away].map((side, sideIndex) => {
-                    const team = side.teamId ? teamsById.get(side.teamId) ?? null : null;
-                    return (
-                      <div
-                        key={`${match.matchId}-${sideIndex}`}
-                        className={`grid min-h-[16px] grid-cols-[minmax(0,1fr)_1.15rem] items-center gap-1.5 px-1 py-0 text-right ${team ? "text-gray-900" : "text-gray-400"}`}
-                      >
+                  {[match.home, match.away].map((side, sideIndex) => (
+                    <div
+                      key={`${match.matchId}-${sideIndex}`}
+                      className={`grid min-h-[16px] grid-cols-[minmax(0,1fr)_1.15rem] items-center gap-1.5 px-1 py-0 text-right ${side.teamId ? "text-gray-900" : "text-gray-400"}`}
+                    >
+                      <span className="inline-flex min-w-0 items-center justify-end gap-1">
+                        {side.slotComparisonState === "match" ? (
+                          <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark" />
+                        ) : side.slotComparisonState === "miss" ? (
+                          <X aria-hidden className="h-3.5 w-3.5 shrink-0 text-rose-600" />
+                        ) : null}
                         <span className="truncate text-[11px] font-black">
-                          {team?.shortName ?? side.sourceLabel ?? "TBD"}
+                          {side.shortLabel}
                         </span>
-                        <span aria-hidden className="text-xs">{team?.flagEmoji ?? " "}</span>
-                      </div>
-                    );
-                  })}
+                      </span>
+                      <span aria-hidden className="text-xs">{side.flagEmoji ?? " "}</span>
+                    </div>
+                  ))}
                 </Link>
               ))}
             </div>

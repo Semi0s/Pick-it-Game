@@ -2,7 +2,11 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { BracketBuilderClient } from "@/components/BracketBuilderClient";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
-import { fetchKnockoutStructureStatus, safeFetchKnockoutStructureStatusFallback } from "@/lib/bracket-predictions";
+import {
+  fetchKnockoutStructureStatus,
+  fetchProjectedKnockoutBracketPreview,
+  safeFetchKnockoutStructureStatusFallback
+} from "@/lib/bracket-predictions";
 import {
   buildDefaultLightSeedBuilderSnapshot,
   fetchUserLightSeedBuilderSnapshot,
@@ -72,6 +76,10 @@ export default async function BracketBuilderPage() {
     });
   }
 
+  const projectedKnockoutComparisonView = knockoutStatus.isFullySeeded
+    ? await fetchProjectedKnockoutBracketPreview(authUser.id, { comparisonOnly: true }).catch(() => null)
+    : null;
+
   const { data: roundOf32Rows, error: roundOf32Error } = await adminSupabase
     .from("matches")
     .select("id,stage,status,home_source,away_source,home_team_id,away_team_id")
@@ -134,10 +142,11 @@ export default async function BracketBuilderPage() {
           initialMatches={localMatches}
           initialKnockoutSeeded={knockoutStatus.isFullySeeded}
           initialSnapshot={initialSnapshot}
-          requiredThirdPlaceQualifierCount={requiredThirdPlaceQualifierCount}
-          roundOf32Placeholders={roundOf32Placeholders}
-          groupStageDueAt={earliestGroupStageDueAt}
-        />
+        requiredThirdPlaceQualifierCount={requiredThirdPlaceQualifierCount}
+        roundOf32Placeholders={roundOf32Placeholders}
+        groupStageDueAt={earliestGroupStageDueAt}
+        knockoutProjectedPreview={projectedKnockoutComparisonView}
+      />
       </div>
     </AppShell>
   );

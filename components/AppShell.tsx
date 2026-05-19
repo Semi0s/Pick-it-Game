@@ -478,10 +478,10 @@ export function AppShell({ children }: AppShellProps) {
             />
           </Link>
           <div className="flex shrink-0 items-center gap-1.5 max-[399px]:gap-2.5">
-            <NotificationsBell />
             {shouldShowAccessBadge(user) ? (
               <TierIconBadge accessLevel={getAccessLevel(user)} size={24} />
             ) : null}
+            <NotificationsBell />
             <div ref={languageMenuRef} className="relative">
               <button
                 type="button"

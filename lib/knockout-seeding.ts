@@ -757,10 +757,11 @@ function resolveProjectedRoundOf32Side(
   }
 
   if (parsedSeed.kind === "group") {
+    const compactSourceLabel = formatCompactProjectedSeedLabel(parsedSeed);
     const groupState = standingsByGroup.get(normalizeGroupName(parsedSeed.groupName));
     if (!groupState?.isComplete) {
       return {
-        sourceLabel,
+        sourceLabel: compactSourceLabel,
         teamId: null,
         resolutionSource: "missing"
       };
@@ -768,25 +769,27 @@ function resolveProjectedRoundOf32Side(
 
     const qualifier = qualifiers.get(buildQualifierKey(parsedSeed.groupName, parsedSeed.finish)) ?? null;
     return {
-      sourceLabel,
+      sourceLabel: compactSourceLabel,
       teamId: qualifier?.teamId ?? null,
       resolutionSource: groupState.isFullyActual ? "actual" : qualifier ? "prediction" : "missing"
     };
   }
 
+  const thirdPlaceSeed = thirdPlaceByRank.get(parsedSeed.rank) ?? null;
+  const compactThirdPlaceLabel = formatCompactProjectedSeedLabel(parsedSeed, thirdPlaceSeed?.groupName ?? null);
+
   if (!allGroupsComplete) {
     return {
-      sourceLabel,
+      sourceLabel: compactThirdPlaceLabel,
       teamId: null,
       resolutionSource: "missing"
     };
   }
 
-  const thirdPlaceSeed = thirdPlaceByRank.get(parsedSeed.rank) ?? null;
   const source = thirdPlaceSeed ? getQualifierSourceForGroup(standingsByGroup, thirdPlaceSeed.groupName) : "missing";
 
   return {
-    sourceLabel,
+    sourceLabel: compactThirdPlaceLabel,
     teamId: thirdPlaceSeed?.teamId ?? null,
     resolutionSource: source
   };
@@ -807,4 +810,22 @@ function getQualifierSourceForGroup(
 function normalizeGroupName(value: string) {
   const trimmed = value.trim();
   return trimmed.startsWith("Group ") ? trimmed : `Group ${trimmed}`;
+}
+
+function formatCompactProjectedSeedLabel(
+  parsedSeed: ParsedSeedSource,
+  resolvedThirdPlaceGroupName?: string | null
+) {
+  if (parsedSeed.kind === "group") {
+    const groupLetter = extractGroupLetter(parsedSeed.groupName);
+    return `${groupLetter}-${parsedSeed.finish === 1 ? "1st" : "2nd"}`;
+  }
+
+  const groupLetter = resolvedThirdPlaceGroupName ? extractGroupLetter(resolvedThirdPlaceGroupName) : null;
+  return groupLetter ? `${groupLetter}-3rd` : "3rd";
+}
+
+function extractGroupLetter(groupName: string) {
+  const match = normalizeGroupName(groupName).match(/^Group\s+([A-Z])$/i);
+  return match ? match[1].toUpperCase() : groupName.trim().slice(-1).toUpperCase();
 }
