@@ -28,7 +28,7 @@ export function StartPlayingChoiceClient() {
             </div>
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-accent-dark">Option 1</p>
-              <h2 className="text-xl font-black text-gray-950">Bracket Builder</h2>
+              <h2 className="text-xl font-black text-gray-950">Easy Bracket</h2>
             </div>
           </div>
           <p className="mt-4 text-sm font-semibold leading-6 text-gray-600">

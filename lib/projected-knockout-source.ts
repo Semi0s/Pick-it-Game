@@ -107,18 +107,12 @@ export async function loadProjectedRoundOf32FromPreferredSource(
   adminSupabase: AdminSupabaseClient,
   userId: string
 ) {
-  const [source, inputs] = await Promise.all([
-    fetchUserProjectedKnockoutSource(adminSupabase, userId),
-    loadProjectedRoundOf32Inputs(adminSupabase, userId)
-  ]);
+  const inputs = await loadProjectedRoundOf32Inputs(adminSupabase, userId);
 
   return {
-    source,
+    source: "seed_builder" as const,
     inputs,
-    projectedSeeds:
-      source === "score_predictions"
-        ? buildScorePredictionProjectedRoundOf32(inputs)
-        : buildSeedBuilderProjectedRoundOf32(inputs)
+    projectedSeeds: buildSeedBuilderProjectedRoundOf32(inputs)
   };
 }
 

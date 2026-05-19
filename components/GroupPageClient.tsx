@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { GroupPredictions } from "@/components/GroupPredictions";
+import type { LightSeedBuilderSnapshot, UserGroupProjectionSource } from "@/lib/group-stage-modes";
 import { useCurrentUser } from "@/lib/use-current-user";
 import type { MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
 
@@ -11,10 +12,8 @@ type GroupPageClientProps = {
   initialPredictions?: Prediction[];
   initialKnockoutSeeded?: boolean;
   scoringSetupNotice?: string | null;
-  initialProjectionConflict?: {
-    currentSource: "seed_builder" | "score_predictions";
-    message: string;
-  } | null;
+  initialBracketBuilderSnapshot?: LightSeedBuilderSnapshot | null;
+  initialGroupProjectionSources?: Record<string, UserGroupProjectionSource>;
 };
 
 export function GroupPageClient({
@@ -23,7 +22,8 @@ export function GroupPageClient({
   initialPredictions,
   initialKnockoutSeeded,
   scoringSetupNotice = null,
-  initialProjectionConflict = null
+  initialBracketBuilderSnapshot = null,
+  initialGroupProjectionSources = {}
 }: GroupPageClientProps) {
   const shouldUseFallbackUserLoad = !initialUser;
   const { user: fallbackUser, isLoading } = useCurrentUser();
@@ -50,7 +50,7 @@ export function GroupPageClient({
           href="/bracket-builder"
           className="rounded-full border border-gray-300 px-4 py-2 text-sm font-black text-gray-800 transition hover:border-accent hover:text-accent-dark"
         >
-          Open Bracket Builder
+          Open Easy Bracket
         </Link>
       </div>
 
@@ -59,7 +59,8 @@ export function GroupPageClient({
         initialMatches={initialMatches}
         initialPredictions={initialPredictions}
         initialKnockoutSeeded={initialKnockoutSeeded}
-        initialProjectionConflict={initialProjectionConflict}
+        initialBracketBuilderSnapshot={initialBracketBuilderSnapshot}
+        initialGroupProjectionSources={initialGroupProjectionSources}
       />
     </div>
   );

@@ -604,6 +604,16 @@ create table public.user_best_third_rankings (
   unique (user_id, rank_position)
 );
 
+create table public.user_group_projection_sources (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  group_name text not null,
+  projection_source text not null check (projection_source in ('builder_manual', 'score_applied')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, group_name)
+);
+
 create table public.side_pick_entries (
   id uuid primary key default gen_random_uuid(),
   group_id uuid not null references public.groups(id) on delete cascade,
@@ -1644,6 +1654,10 @@ create trigger set_user_best_third_rankings_updated_at
 before update on public.user_best_third_rankings
 for each row execute function public.set_updated_at();
 
+create trigger set_user_group_projection_sources_updated_at
+before update on public.user_group_projection_sources
+for each row execute function public.set_updated_at();
+
 create trigger set_side_pick_entries_updated_at
 before update on public.side_pick_entries
 for each row execute function public.set_updated_at();
@@ -1673,6 +1687,7 @@ alter table public.side_pick_definitions enable row level security;
 alter table public.group_rulesets enable row level security;
 alter table public.user_group_seed_rankings enable row level security;
 alter table public.user_best_third_rankings enable row level security;
+alter table public.user_group_projection_sources enable row level security;
 alter table public.side_pick_entries enable row level security;
 alter table public.side_pick_scores enable row level security;
 alter table public.group_bonus_scores enable row level security;
@@ -2707,6 +2722,7 @@ revoke all on public.side_pick_definitions from anon, authenticated, public;
 revoke all on public.group_rulesets from anon, authenticated, public;
 revoke all on public.user_group_seed_rankings from anon, authenticated, public;
 revoke all on public.user_best_third_rankings from anon, authenticated, public;
+revoke all on public.user_group_projection_sources from anon, authenticated, public;
 revoke all on public.side_pick_entries from anon, authenticated, public;
 revoke all on public.side_pick_scores from anon, authenticated, public;
 revoke all on public.group_bonus_scores from anon, authenticated, public;
@@ -2777,6 +2793,7 @@ grant select, insert, update, delete on public.side_pick_definitions to service_
 grant select, insert, update, delete on public.group_rulesets to service_role;
 grant select, insert, update, delete on public.user_group_seed_rankings to service_role;
 grant select, insert, update, delete on public.user_best_third_rankings to service_role;
+grant select, insert, update, delete on public.user_group_projection_sources to service_role;
 grant select, insert, update, delete on public.side_pick_entries to service_role;
 grant select, insert, update, delete on public.side_pick_scores to service_role;
 grant select, insert, update, delete on public.group_bonus_scores to service_role;

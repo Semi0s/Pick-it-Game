@@ -56,7 +56,7 @@ const stageSortOrder: Record<MatchStage, number> = {
 
 const KNOCKOUT_RESET_CONFIRMATION_PHRASE = "RESET KNOCKOUT TEST DATA";
 const GROUP_RESET_CONFIRMATION_PHRASE = "RESET GROUP TEST DATA";
-const BRACKET_BUILDER_RESET_CONFIRMATION_PHRASE = "CLEAR BRACKET BUILDER SNAPSHOTS";
+const BRACKET_BUILDER_RESET_CONFIRMATION_PHRASE = "CLEAR EASY BRACKET SNAPSHOTS";
 const BATCH_FINALIZE_CONFIRMATION_PHRASE = "FINALIZE TEST MATCHES";
 const BATCH_CLEAR_CONFIRMATION_PHRASE = "CLEAR TEST MATCH RESULTS";
 const FULL_TEST_RESET_CONFIRMATION_PHRASE = "FULL PRE-LAUNCH TEST RESET";
@@ -633,7 +633,7 @@ export function AdminMatchesClient() {
     }
 
     const confirmed = window.confirm(
-      "You are about to clear Bracket Builder snapshot data across the app. This removes saved group seed rankings and best-third selections, which will blank projected bracket paths until players rebuild them. Match results, score predictions, knockout picks, and leaderboard totals stay intact. Continue?"
+      "You are about to clear Easy Bracket snapshot data across the app. This removes saved group seed rankings and best-third selections, which will blank projected bracket paths until players rebuild them. Match results, score predictions, knockout picks, and leaderboard totals stay intact. Continue?"
     );
 
     if (!confirmed) {
@@ -1566,9 +1566,9 @@ export function AdminMatchesClient() {
 
                 <section className="rounded-lg border border-rose-200 bg-white p-4">
                   <div className="space-y-1">
-                    <h4 className="text-base font-black text-gray-950">Clear Bracket Builder snapshots</h4>
+                    <h4 className="text-base font-black text-gray-950">Clear Easy Bracket snapshots</h4>
                     <p className="text-sm font-semibold text-gray-600">
-                      Clears saved Bracket Builder seed rankings and best-third selections across the app. This blanks projected bracket paths until players rebuild them, without changing score predictions, match results, knockout picks, or leaderboard totals.
+                      Clears saved Easy Bracket seed rankings and best-third selections across the app. This blanks projected bracket paths until players rebuild them, without changing score predictions, match results, knockout picks, or leaderboard totals.
                     </p>
                   </div>
 
@@ -1580,7 +1580,7 @@ export function AdminMatchesClient() {
                       className="mt-1 h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
                     />
                     <span className="text-sm font-semibold text-gray-700">
-                      I understand this will remove saved Bracket Builder snapshot data for all users.
+                      I understand this will remove saved Easy Bracket snapshot data for all users.
                     </span>
                   </label>
 
@@ -1592,7 +1592,7 @@ export function AdminMatchesClient() {
                       onChange={(event) =>
                         setResetReasonByScope((current) => ({ ...current, bracket_builder: event.target.value }))
                       }
-                      placeholder="Explain why this Bracket Builder snapshot reset is needed"
+                      placeholder="Explain why this Easy Bracket snapshot reset is needed"
                       className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
                     />
                   </label>
@@ -1618,7 +1618,7 @@ export function AdminMatchesClient() {
                     checkboxChecked: isBracketBuilderResetAcknowledged,
                     phraseMatches: isBracketBuilderResetPhraseValid,
                     productionBlockedMessage:
-                      "Production Bracket Builder snapshot reset is disabled. Enable ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
+                      "Production Easy Bracket snapshot reset is disabled. Enable ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
                   })}
 
                   <button
@@ -1627,7 +1627,7 @@ export function AdminMatchesClient() {
                     onClick={() => void handleResetBracketBuilderSnapshots()}
                     className="mt-4 rounded-md bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
                   >
-                    {isResettingBracketBuilder ? "Clearing Bracket Builder snapshots..." : "Clear Bracket Builder snapshots"}
+                    {isResettingBracketBuilder ? "Clearing Easy Bracket snapshots..." : "Clear Easy Bracket snapshots"}
                   </button>
                 </section>
 

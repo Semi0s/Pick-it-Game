@@ -26,6 +26,8 @@ export type LightSeedBuilderSnapshot = {
   thirdPlaceRankings: ThirdPlaceRankingRow[];
 };
 
+export type UserGroupProjectionSource = "builder_manual" | "score_applied";
+
 type AdminSupabaseClient = ReturnType<typeof createAdminClient>;
 
 type GroupMemberRow = {
@@ -45,6 +47,11 @@ type GroupSeedRankingRecord = {
 type ThirdPlaceRankingRecord = {
   team_id: string;
   rank_position: number;
+};
+
+type UserGroupProjectionSourceRecord = {
+  group_name: string;
+  projection_source: UserGroupProjectionSource;
 };
 
 export function normalizeGroupStageMode(value?: string | null): GroupStageMode {
@@ -154,6 +161,39 @@ export async function fetchUserLightSeedBuilderSnapshot(
       rank: row.rank_position
     }))
   };
+}
+
+export async function fetchUserGroupProjectionSourceMap(
+  adminSupabase: AdminSupabaseClient,
+  userId: string
+): Promise<Map<string, UserGroupProjectionSource>> {
+  const { data, error } = await adminSupabase
+    .from("user_group_projection_sources")
+    .select("group_name,projection_source")
+    .eq("user_id", userId);
+
+  if (error && !isMissingProjectionSourceTableError(error.message)) {
+    throw new Error(error.message);
+  }
+
+  return new Map(
+    (((data ?? []) as UserGroupProjectionSourceRecord[]) ?? []).map((row) => [
+      normalizeGroupKey(row.group_name) ?? row.group_name,
+      row.projection_source === "score_applied" ? "score_applied" : "builder_manual"
+    ])
+  );
+}
+
+function isMissingProjectionSourceTableError(message?: string | null) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("user_group_projection_sources") &&
+    (normalized.includes("does not exist") || normalized.includes("schema cache"))
+  );
 }
 
 export function buildDefaultLightSeedBuilderSnapshot(teams: Team[]): LightSeedBuilderSnapshot {

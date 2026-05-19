@@ -18,7 +18,7 @@ import {
   PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
   type ExplainerLanguage
 } from "@/lib/i18n";
-import { setProjectedKnockoutSourcePreferenceAction } from "@/app/groups/actions";
+import { applyGroupBracketFromScoresAction } from "@/app/groups/actions";
 import { fetchPlayerPredictions, savePlayerPrediction } from "@/lib/player-predictions";
 import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
@@ -33,6 +33,7 @@ import {
 import { buildQualifiedTeamSeeds } from "@/lib/knockout-seeding";
 import { getMatchDateKey } from "@/lib/tournament-calendar";
 import type { AutoPickDraft, MatchWithTeams, Prediction, Team, UserProfile } from "@/lib/types";
+import type { LightSeedBuilderSnapshot, UserGroupProjectionSource } from "@/lib/group-stage-modes";
 import { GroupPredictionCard } from "@/components/GroupPredictionCard";
 import {
   GroupStandingsMiniTable,
@@ -46,10 +47,8 @@ type GroupPredictionsProps = {
   initialMatches?: MatchWithTeams[];
   initialPredictions?: Prediction[];
   initialKnockoutSeeded?: boolean;
-  initialProjectionConflict?: {
-    currentSource: "seed_builder" | "score_predictions";
-    message: string;
-  } | null;
+  initialBracketBuilderSnapshot?: LightSeedBuilderSnapshot | null;
+  initialGroupProjectionSources?: Record<string, UserGroupProjectionSource>;
 };
 
 type DraftPredictionState = {
@@ -201,7 +200,8 @@ export function GroupPredictions({
   initialMatches,
   initialPredictions,
   initialKnockoutSeeded,
-  initialProjectionConflict = null
+  initialBracketBuilderSnapshot = null,
+  initialGroupProjectionSources = {}
 }: GroupPredictionsProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -231,8 +231,8 @@ export function GroupPredictions({
   const [autoPickDraft, setAutoPickDraft] = useState<AutoPickDraft | null>(null);
   const [activeAutoPickToken, setActiveAutoPickToken] = useState<string | null>(null);
   const [isAutoPicking, setIsAutoPicking] = useState(false);
-  const [projectionConflict, setProjectionConflict] = useState(initialProjectionConflict);
-  const [isUpdatingProjectedSource, setIsUpdatingProjectedSource] = useState(false);
+  const [groupProjectionSources, setGroupProjectionSources] = useState<Record<string, UserGroupProjectionSource>>(initialGroupProjectionSources);
+  const [isApplyingScoreGroup, setIsApplyingScoreGroup] = useState<string | null>(null);
   const [draftPredictionStateByMatchId, setDraftPredictionStateByMatchId] = useState<Record<string, DraftPredictionState>>({});
   const [explainerLanguage] = useState<ExplainerLanguage>(() => {
     if (typeof window !== "undefined") {
@@ -270,6 +270,7 @@ export function GroupPredictions({
   const [movementByGroup, setMovementByGroup] = useState<Record<string, Record<string, PredictedGroupRowMovement>>>(
     {}
   );
+  const [forceBlankMatchTokenById, setForceBlankMatchTokenById] = useState<Record<string, string>>({});
 
   const logGroupsEntryScroll = useCallback((event: string, details?: Record<string, unknown>) => {
     if (!DEBUG_GROUPS_ENTRY_SCROLL || typeof window === "undefined" || window.innerWidth < 1024) {
@@ -681,6 +682,86 @@ export function GroupPredictions({
     () => buildPredictedGroupStandings(groupStageMatches, allGroupTeams, projectedPredictions),
     [allGroupTeams, groupStageMatches, projectedPredictions]
   );
+  const bracketBuilderSnapshotByGroup = useMemo(
+    () =>
+      new Map(
+        (initialBracketBuilderSnapshot?.groupRankings ?? []).map((ranking) => [
+          normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+          ranking.rankedTeamIds
+        ])
+      ),
+    [initialBracketBuilderSnapshot]
+  );
+  const scoreAwareGroupStateByGroup = useMemo(() => {
+    const teamById = new Map(allGroupTeams.map((team) => [team.id, team]));
+    const startedScoreGroups = new Set(
+      groupStageMatches.flatMap((match) => {
+        const predicted = projectedPredictions.find((entry) => entry.matchId === match.id);
+        const groupName = normalizeGroupKey(match.groupName) ?? null;
+        return predicted && groupName ? [groupName] : [];
+      })
+    );
+    const result = new Map<
+      string,
+      {
+        state: "builder_manual" | "scores_in_progress" | "score_conflict" | "score_applied";
+        builderRows: Array<{ rank: number; teamId: string; label: string }>;
+        scoreRows: Array<{ rank: number; teamId: string; label: string }>;
+        mismatchTeamIds: Set<string>;
+      }
+    >();
+
+    for (const groupName of availableGroups) {
+      const builderIds = bracketBuilderSnapshotByGroup.get(groupName) ?? [];
+      const builderRows = builderIds.map((teamId, index) => ({
+        rank: index + 1,
+        teamId,
+        label: teamById.get(teamId)?.shortName || teamById.get(teamId)?.name || teamId
+      }));
+      const scoreRows =
+        projectedStandingsByGroup.get(groupName)?.map((row, index) => ({
+          rank: row.rank || index + 1,
+          teamId: row.teamId,
+          label: row.teamCode || row.teamName
+        })) ?? [];
+      const hasCompleteBuilder = builderRows.length > 0 && builderRows.length === scoreRows.length;
+      const hasScoreConflict =
+        hasCompleteBuilder &&
+        scoreRows.length > 0 &&
+        builderRows.some((row, index) => row.teamId !== scoreRows[index]?.teamId);
+      const mismatchTeamIds = new Set<string>();
+      if (hasScoreConflict) {
+        builderRows.forEach((row, index) => {
+          if (row.teamId !== scoreRows[index]?.teamId) {
+            mismatchTeamIds.add(row.teamId);
+            if (scoreRows[index]?.teamId) {
+              mismatchTeamIds.add(scoreRows[index].teamId);
+            }
+          }
+        });
+      }
+      const persistedSource = groupProjectionSources[groupName] ?? "builder_manual";
+      const state = hasScoreConflict
+        ? "score_conflict"
+        : persistedSource === "score_applied"
+          ? "score_applied"
+          : startedScoreGroups.has(groupName)
+            ? "scores_in_progress"
+            : "builder_manual";
+
+      result.set(groupName, {
+        state,
+        builderRows,
+        scoreRows,
+        mismatchTeamIds
+      });
+    }
+
+    return result;
+  }, [allGroupTeams, availableGroups, bracketBuilderSnapshotByGroup, groupProjectionSources, groupStageMatches, projectedPredictions, projectedStandingsByGroup]);
+  const selectedScoreAwareGroupState = miniTableGroup
+    ? scoreAwareGroupStateByGroup.get(miniTableGroup) ?? null
+    : null;
   const projectedQualification = useMemo(() => {
     const automaticQualifierTeamIds = new Set<string>();
     const automaticQualifierTeams: Array<{ teamId: string; teamCode: string; teamName: string; groupName: string }> = [];
@@ -1187,39 +1268,67 @@ export function GroupPredictions({
     }
 
     fetchPredictionsForMatches(filteredMatches.map((match) => match.id), user.id).then(setSocialPredictions);
-    if (saveResult.projectionConflict) {
-      setProjectionConflict(saveResult.projectionConflict);
-      const shouldUseScorePicks = window.confirm(
-        `${saveResult.projectionConflict.message}\n\nPress OK to make your score picks the projected knockout source. Press Cancel to keep your saved bracket.`
-      );
-
-      setIsUpdatingProjectedSource(true);
-      try {
-        const result = await setProjectedKnockoutSourcePreferenceAction({
-          source: shouldUseScorePicks ? "score_predictions" : "seed_builder"
-        });
-        showAppToast({
-          tone: result.ok ? "success" : "error",
-          text: result.message
-        });
-
-        if (result.ok) {
-          setProjectionConflict(
-            shouldUseScorePicks
-              ? null
-              : {
-                  currentSource: "seed_builder",
-                  message:
-                    "Your saved bracket is still controlling projected knockout. Your full score picks currently disagree with it."
-                }
-          );
-          router.refresh();
-        }
-      } finally {
-        setIsUpdatingProjectedSource(false);
-      }
-    }
     return savedPrediction;
+  }
+
+  async function handleApplyGroupFromScores(groupName: string) {
+    setIsApplyingScoreGroup(groupName);
+    try {
+      const result = await applyGroupBracketFromScoresAction({ groupName });
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        setGroupProjectionSources((current) => ({
+          ...current,
+          [groupName]: "score_applied"
+        }));
+        router.refresh();
+      }
+    } finally {
+      setIsApplyingScoreGroup(null);
+    }
+  }
+
+  function handleKeepBracketBuilder(groupName: string) {
+    const groupMatches = groupStageMatches
+      .filter((match) => normalizeGroupKey(match.groupName) === groupName && canEditPrediction(match.status))
+      .sort(sortMatchesByKickoff);
+
+    if (groupMatches.length === 0) {
+      showAppToast({ tone: "tip", text: "Your bracket stays in place. There are no open score picks left in this group." });
+      return;
+    }
+
+    const firstMatchToRescore =
+      groupMatches.find((match) => {
+        const draft = draftPredictionStateByMatchId[match.id];
+        const savedPrediction = predictionByMatchId.get(match.id);
+        return Boolean(savedPrediction || draft?.shouldCount);
+      }) ?? groupMatches[0];
+
+    prepareExplicitMatchNavigation();
+    setSelectedGroup(groupName);
+    setSelectedTeamId(TEAM_FILTER_ALL_KEY);
+    setIsPredictionTableOpen(true);
+    setFocusedMatchId(firstMatchToRescore.id);
+    const targetIndex = groupMatches.findIndex((match) => match.id === firstMatchToRescore.id);
+    const maxWindowStart = Math.max(groupMatches.length - GROUP_PREDICTIONS_PAGE_SIZE, 0);
+    setMatchWindowStart(
+      targetIndex >= 0 ? Math.max(0, Math.min(Math.max(0, targetIndex - 1), maxWindowStart)) : 0
+    );
+    setPendingScrollTarget({
+      matchId: firstMatchToRescore.id,
+      mode: "match",
+      extraOffset: INTENT_MATCH_SCROLL_EXTRA_GAP,
+      source: "local"
+    });
+    setForceBlankMatchTokenById((current) => ({
+      ...current,
+      [firstMatchToRescore.id]: `${Date.now()}-${firstMatchToRescore.id}`
+    }));
+    showAppToast({
+      tone: "tip",
+      text: `Easy Bracket kept. Start rescoring ${getGroupShortLabel(groupName)} from this match.`
+    });
   }
 
   async function handleAutoPickAction() {
@@ -1511,67 +1620,6 @@ export function GroupPredictions({
 
   return (
     <div className="space-y-6">
-      {projectionConflict ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-700">
-                Projected knockout mismatch
-              </p>
-              <p>{projectionConflict.message}</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={isUpdatingProjectedSource}
-                onClick={() => {
-                  setIsUpdatingProjectedSource(true);
-                  void setProjectedKnockoutSourcePreferenceAction({ source: "seed_builder" })
-                    .then((result) => {
-                      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
-                      if (result.ok) {
-                        setProjectionConflict({
-                          currentSource: "seed_builder",
-                          message:
-                            "Your saved bracket is still controlling projected knockout. Your full score picks currently disagree with it."
-                        });
-                        router.refresh();
-                      }
-                    })
-                    .finally(() => {
-                      setIsUpdatingProjectedSource(false);
-                    });
-                }}
-                className="rounded-full border border-amber-300 bg-white px-3 py-2 text-xs font-black text-amber-900 transition hover:border-amber-400"
-              >
-                Keep My Bracket
-              </button>
-              <button
-                type="button"
-                disabled={isUpdatingProjectedSource}
-                onClick={() => {
-                  setIsUpdatingProjectedSource(true);
-                  void setProjectedKnockoutSourcePreferenceAction({ source: "score_predictions" })
-                    .then((result) => {
-                      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
-                      if (result.ok) {
-                        setProjectionConflict(null);
-                        router.refresh();
-                      }
-                    })
-                    .finally(() => {
-                      setIsUpdatingProjectedSource(false);
-                    });
-                }}
-                className="rounded-full bg-amber-900 px-3 py-2 text-xs font-black text-white transition hover:bg-amber-800"
-              >
-                Use My Score Picks
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       <section className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -1795,7 +1843,7 @@ export function GroupPredictions({
                         : "text-accent-dark hover:text-accent"
                     }`}
                   >
-                    See How Your Predictions Affect The Tables
+                    See How Picks Affect Tables
                   </button>
                   {selectedTeamQualifierStatus ? (
                     <span
@@ -1805,8 +1853,8 @@ export function GroupPredictions({
                           : selectedTeamQualifierStatus === "best-third"
                             ? "bg-emerald-50 text-emerald-800"
                             : selectedTeamQualifierStatus === "eliminated"
-                              ? "bg-rose-50 text-rose-700"
-                              : "bg-gray-200 text-gray-700"
+                            ? "bg-rose-50 text-rose-700"
+                            : "bg-gray-200 text-gray-700"
                       }`}
                     >
                       {selectedTeamQualifierStatus === "projected-r32"
@@ -1816,6 +1864,15 @@ export function GroupPredictions({
                           : selectedTeamQualifierStatus === "eliminated"
                             ? "Eliminated"
                             : "Outside"}
+                    </span>
+                  ) : null}
+                  {selectedScoreAwareGroupState?.state === "score_applied" ? (
+                    <span className="inline-flex rounded-md bg-cyan-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-cyan-900">
+                      From Scores
+                    </span>
+                  ) : selectedScoreAwareGroupState?.state === "scores_in_progress" ? (
+                    <span className="inline-flex rounded-md bg-gray-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-700">
+                      Scores In Progress
                     </span>
                   ) : null}
                 </div>
@@ -1828,15 +1885,82 @@ export function GroupPredictions({
 
               {isPredictionTableOpen ? (
                 <>
-                  <p className="text-[9px] font-semibold text-gray-500">
-                    Top 2 + best 3rd-place teams advance
-                  </p>
-                  <GroupStandingsMiniTable
-                    rows={groupPredictionRows}
-                    movementByTeamId={movementByTeamId}
-                    showPlayedColumn={false}
-                    emptyState="Make picks in this group to build your projected table."
-                  />
+                  {selectedScoreAwareGroupState?.state === "score_conflict" ? (
+                    <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2">
+                      <p className="text-[10px] font-semibold text-amber-950">
+                        Easy Bracket and your current picks don&apos;t match.
+                      </p>
+                      <div className="grid grid-cols-2 gap-3 text-[10px] font-semibold text-gray-700">
+                        <div className="space-y-1">
+                          <p className="font-black uppercase tracking-wide text-gray-900">Easy Bracket</p>
+                          {selectedScoreAwareGroupState.builderRows.map((row) => (
+                            <div
+                              key={`builder-${row.teamId}`}
+                              className={`flex items-center justify-between rounded px-1.5 py-1 ${
+                                selectedScoreAwareGroupState.mismatchTeamIds.has(row.teamId) ? "bg-white text-amber-950" : ""
+                              }`}
+                            >
+                              <span>{row.rank}.</span>
+                              <span className="truncate pl-2">{row.label}</span>
+                            </div>
+                          ))}
+                          <div className="pt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (miniTableGroup) {
+                                  handleKeepBracketBuilder(miniTableGroup);
+                                }
+                              }}
+                              className="w-full rounded-full bg-emerald-700 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white transition hover:bg-emerald-600"
+                            >
+                              Keep Bracket
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="font-black uppercase tracking-wide text-gray-900">My Picks</p>
+                          {selectedScoreAwareGroupState.scoreRows.map((row) => (
+                            <div
+                              key={`score-${row.teamId}`}
+                              className={`flex items-center justify-between rounded px-1.5 py-1 ${
+                                selectedScoreAwareGroupState.mismatchTeamIds.has(row.teamId) ? "bg-white text-amber-950" : ""
+                              }`}
+                            >
+                              <span>{row.rank}.</span>
+                              <span className="truncate pl-2">{row.label}</span>
+                            </div>
+                          ))}
+                          <div className="pt-1">
+                            <button
+                              type="button"
+                              disabled={isApplyingScoreGroup === miniTableGroup}
+                              onClick={() => {
+                                if (miniTableGroup) {
+                                  void handleApplyGroupFromScores(miniTableGroup);
+                                }
+                              }}
+                              className="w-full rounded-full bg-emerald-700 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white transition hover:bg-emerald-600 disabled:opacity-60"
+                            >
+                              {isApplyingScoreGroup === miniTableGroup ? "Updating..." : "Keep My Picks"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-[9px] font-semibold text-gray-500">
+                        Top 2 + best 3rd-place teams advance
+                      </p>
+                      <GroupStandingsMiniTable
+                        rows={groupPredictionRows}
+                        movementByTeamId={movementByTeamId}
+                        showPlayedColumn={false}
+                        emptyState="Make picks in this group to build your projected table."
+                      />
+                    </>
+                  )}
                 </>
               ) : null}
             </section>
@@ -1935,6 +2059,7 @@ export function GroupPredictions({
                     }}
                     autoPickAgainDisabled={isAutoPicking}
                     highlightHomeTeamId={user.homeTeamId ?? null}
+                    forceBlankToken={forceBlankMatchTokenById[match.id] ?? null}
                     onDraftStateChange={handleDraftStateChange}
                     footerAnchorRef={(node) => {
                       matchFooterRefs.current[match.id] = node;

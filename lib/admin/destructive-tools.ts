@@ -72,7 +72,7 @@ export const ADMIN_RESET_TOOL_DEFINITIONS: Record<string, AdminRecoveryToolDefin
   clear_bracket_builder_snapshots: {
     actionKey: "clear_bracket_builder_snapshots",
     scope: "bracket_builder",
-    clears: ["user Bracket Builder seed rankings", "user best-third selections"],
+    clears: ["user Easy Bracket seed rankings", "user best-third selections"],
     preserves: ["match results", "group-stage score predictions", "knockout predictions", "leaderboard totals"],
     shouldAlsoClear: ["stale projected bracket previews based on saved bracket-builder state"],
     bumpsResetEpoch: true,

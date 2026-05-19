@@ -19,6 +19,7 @@ type GroupPredictionCardProps = {
     sourceText: string;
     probabilityText?: string;
   };
+  forceBlankToken?: string | null;
   onAutoPickAgain?: () => void;
   autoPickAgainDisabled?: boolean;
   highlightHomeTeamId?: string | null;
@@ -42,6 +43,7 @@ export function GroupPredictionCard({
   prediction,
   prefillSuggestion,
   autoPickHint,
+  forceBlankToken,
   onAutoPickAgain,
   autoPickAgainDisabled = false,
   highlightHomeTeamId,
@@ -126,6 +128,17 @@ export function GroupPredictionCard({
     setLastSavedAt(prediction?.updatedAt ?? null);
     setHasDraftActivity(Boolean(prediction));
   }, [prediction]);
+
+  useEffect(() => {
+    if (!forceBlankToken || !canEdit) {
+      return;
+    }
+
+    setHomeScore("");
+    setAwayScore("");
+    setHasDraftActivity(true);
+    setSaveError("");
+  }, [canEdit, forceBlankToken]);
 
   useEffect(() => {
     homeScoreRef.current = homeScore;

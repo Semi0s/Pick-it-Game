@@ -8,10 +8,6 @@ import type { Prediction } from "@/lib/types";
 
 export type SavePlayerPredictionResult = {
   prediction: Prediction;
-  projectionConflict?: {
-    currentSource: "seed_builder" | "score_predictions";
-    message: string;
-  };
 };
 
 export async function fetchPlayerPredictions(userId: string): Promise<Prediction[]> {
@@ -84,7 +80,6 @@ export async function savePlayerPrediction(prediction: Prediction): Promise<Save
   const savedPrediction = result.prediction;
   upsertStoredPrediction(savedPrediction);
   return {
-    prediction: savedPrediction,
-    projectionConflict: result.projectionConflict
+    prediction: savedPrediction
   };
 }

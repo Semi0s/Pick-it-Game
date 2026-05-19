@@ -10,7 +10,8 @@ import { showAppToast } from "@/lib/app-toast";
 import { storeGroupsEntryIntent } from "@/lib/groups-entry-intent";
 import {
   buildDefaultLightSeedBuilderSnapshot,
-  type LightSeedBuilderSnapshot
+  type LightSeedBuilderSnapshot,
+  type UserGroupProjectionSource
 } from "@/lib/group-stage-modes";
 import { formatGroupName, normalizeGroupKey } from "@/lib/group-standings";
 import {
@@ -20,7 +21,6 @@ import {
   type KnockoutPlaceholderMatch
 } from "@/lib/knockout-seeding";
 import type { KnockoutBracketEditorView } from "@/lib/bracket-predictions";
-import type { ProjectedKnockoutSource } from "@/lib/projected-knockout-source";
 import type { MatchWithTeams, Team } from "@/lib/types";
 import { getLocalGroupMatches } from "@/lib/group-matches";
 
@@ -37,7 +37,7 @@ type BracketBuilderClientProps = {
   initialKnockoutSeeded?: boolean;
   initialSnapshot?: LightSeedBuilderSnapshot | null;
   hasSavedSnapshot?: boolean;
-  projectedSource?: ProjectedKnockoutSource;
+  initialGroupProjectionSources?: Record<string, UserGroupProjectionSource>;
   requiredThirdPlaceQualifierCount?: number;
   roundOf32Placeholders: KnockoutPlaceholderMatch[];
   groupStageDueAt?: string | null;
@@ -78,6 +78,13 @@ function formatProjectedSeedLabel(sourceLabel: string | null | undefined) {
   }
 
   return normalized;
+}
+
+function formatSavedTimeLabel(timestamp: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date(timestamp));
 }
 
 function moveItem<T>(items: T[], index: number, direction: -1 | 1) {
@@ -134,7 +141,7 @@ export function BracketBuilderClient({
   initialKnockoutSeeded = false,
   initialSnapshot,
   hasSavedSnapshot = false,
-  projectedSource = "seed_builder",
+  initialGroupProjectionSources = {},
   requiredThirdPlaceQualifierCount = 0,
   roundOf32Placeholders,
   groupStageDueAt = null,
@@ -207,7 +214,12 @@ export function BracketBuilderClient({
   const [showCompletionScreen, setShowCompletionScreen] = useState(false);
   const [draggedTeamId, setDraggedTeamId] = useState<string | null>(null);
   const [dragOverTeamId, setDragOverTeamId] = useState<string | null>(null);
+  const [draggedThirdPlaceTeamId, setDraggedThirdPlaceTeamId] = useState<string | null>(null);
+  const [dragOverThirdPlaceTeamId, setDragOverThirdPlaceTeamId] = useState<string | null>(null);
   const [isThirdPlaceListOpen, setIsThirdPlaceListOpen] = useState(false);
+  const [groupProjectionSources, setGroupProjectionSources] = useState<Record<string, UserGroupProjectionSource>>(initialGroupProjectionSources);
+  const [isFinalizingBracket, setIsFinalizingBracket] = useState(false);
+  const [finalBracketSavedAt, setFinalBracketSavedAt] = useState<string | null>(null);
   const [hasTouchedThirdPlaceRanking, setHasTouchedThirdPlaceRanking] = useState(
     (initialSnapshot?.thirdPlaceRankings?.length ?? 0) >= requiredThirdPlaceQualifierCount &&
       requiredThirdPlaceQualifierCount > 0
@@ -292,7 +304,10 @@ export function BracketBuilderClient({
   const isComplete =
     isThirdPlacePhase &&
     committedThirdPlaceRankingIds.length >= requiredThirdPlaceQualifierCount;
+  const isFinishButtonQuiet =
+    Boolean(finalBracketSavedAt) && isComplete && !isFinalizingBracket;
   const activeGroupName = sortedGroupNames[activeGroupIndex] ?? null;
+  const isActiveGroupScoreApplied = activeGroupName ? groupProjectionSources[activeGroupName] === "score_applied" : false;
   const activeGroupTeams = useMemo(
     () =>
       activeGroupName
@@ -354,7 +369,7 @@ export function BracketBuilderClient({
     [knockoutProjectedPreview]
   );
   const bracketPreviewMatches = useMemo<BracketPreviewMatch[]>(() => {
-    if (projectedSource === "score_predictions" && projectedComparisonRound?.length) {
+    if (initialKnockoutSeeded && projectedComparisonRound?.length) {
       return projectedComparisonRound.map((match) => ({
         matchId: match.matchId,
         stage: match.stage,
@@ -405,7 +420,7 @@ export function BracketBuilderClient({
         }
       };
     });
-  }, [projectedBracket.matches, projectedComparisonRound, projectedSource, teamsById]);
+  }, [initialKnockoutSeeded, projectedBracket.matches, projectedComparisonRound, teamsById]);
 
   const isReadOnly = useMemo(() => {
     if (initialKnockoutSeeded) {
@@ -465,23 +480,13 @@ export function BracketBuilderClient({
     const timeout = window.setTimeout(async () => {
       const result = await saveLightSeedBuilderAction({
         groupRankings: touchedRankingsInput,
-        rankedThirdPlaceTeamIds: committedThirdPlaceRankingIds
+        rankedThirdPlaceTeamIds: committedThirdPlaceRankingIds,
+        commitThirdPlaceRankings: hasTouchedThirdPlaceRanking
       });
 
       if (result.ok) {
         setSaveState("saved");
         setSaveMessage("Saved automatically");
-        if (!completionWasValidRef.current && isComplete && !hasSeenCompletionThisSession) {
-          setShowCompletionScreen(true);
-          try {
-            window.sessionStorage.setItem(BRACKET_BUILDER_COMPLETION_SEEN_STORAGE_KEY, "1");
-            setHasSeenCompletionThisSession(true);
-          } catch {
-            // Ignore storage failures and just show the CTA for this pass.
-          }
-        } else if (!completionWasValidRef.current && isComplete) {
-          showAppToast({ tone: "tip", text: "Your bracket is complete." });
-        }
         completionWasValidRef.current = isComplete;
         return;
       }
@@ -495,6 +500,7 @@ export function BracketBuilderClient({
   }, [
     hasInteracted,
     hasSeenCompletionThisSession,
+    hasTouchedThirdPlaceRanking,
     isComplete,
     isReadOnly,
     committedThirdPlaceRankingIds,
@@ -503,9 +509,17 @@ export function BracketBuilderClient({
   ]);
 
   function updateGroupRanking(groupName: string, nextRankedTeamIds: string[]) {
+    if (groupProjectionSources[groupName] === "score_applied") {
+      return;
+    }
+    setFinalBracketSavedAt(null);
     setHasInteracted(true);
     setSaveState("saving");
     setSaveMessage("Saving automatically...");
+    setGroupProjectionSources((current) => ({
+      ...current,
+      [groupName]: "builder_manual"
+    }));
     setTouchedGroups((current) => {
       if (current.has(groupName)) {
         return current;
@@ -534,6 +548,7 @@ export function BracketBuilderClient({
   }
 
   function moveThirdPlaceTeam(index: number, direction: -1 | 1) {
+    setFinalBracketSavedAt(null);
     setHasInteracted(true);
     setHasTouchedThirdPlaceRanking(true);
     setSaveState("saving");
@@ -541,8 +556,33 @@ export function BracketBuilderClient({
     setThirdPlaceRankings(moveItem(normalizedThirdPlaceRankings, index, direction));
   }
 
+  function handleDropThirdPlaceReorder(targetTeamId: string) {
+    if (isReadOnly || !draggedThirdPlaceTeamId || draggedThirdPlaceTeamId === targetTeamId) {
+      setDraggedThirdPlaceTeamId(null);
+      setDragOverThirdPlaceTeamId(null);
+      return;
+    }
+
+    const fromIndex = normalizedThirdPlaceRankings.indexOf(draggedThirdPlaceTeamId);
+    const toIndex = normalizedThirdPlaceRankings.indexOf(targetTeamId);
+    if (fromIndex === -1 || toIndex === -1) {
+      setDraggedThirdPlaceTeamId(null);
+      setDragOverThirdPlaceTeamId(null);
+      return;
+    }
+
+    setFinalBracketSavedAt(null);
+    setHasInteracted(true);
+    setHasTouchedThirdPlaceRanking(true);
+    setSaveState("saving");
+    setSaveMessage("Saving automatically...");
+    setThirdPlaceRankings(reorderItems(normalizedThirdPlaceRankings, fromIndex, toIndex));
+    setDraggedThirdPlaceTeamId(null);
+    setDragOverThirdPlaceTeamId(null);
+  }
+
   function handleDropReorder(targetTeamId: string) {
-    if (isReadOnly || !activeGroupName || !draggedTeamId || draggedTeamId === targetTeamId) {
+    if (isReadOnly || !activeGroupName || isActiveGroupScoreApplied || !draggedTeamId || draggedTeamId === targetTeamId) {
       setDraggedTeamId(null);
       setDragOverTeamId(null);
       return;
@@ -604,6 +644,48 @@ export function BracketBuilderClient({
     } catch {
       // Ignore storage failures and let the knockout page fall back to its remembered view.
     }
+  }
+
+  async function handleFinalizeBracket() {
+    if (isReadOnly || !isComplete || isFinalizingBracket) {
+      return;
+    }
+
+    setIsFinalizingBracket(true);
+    setSaveState("saving");
+    setSaveMessage("Saving automatically...");
+
+    const result = await saveLightSeedBuilderAction({
+      groupRankings: touchedRankingsInput,
+      rankedThirdPlaceTeamIds: committedThirdPlaceRankingIds,
+      commitThirdPlaceRankings: true
+    });
+
+    setIsFinalizingBracket(false);
+
+    if (!result.ok) {
+      setSaveState("error");
+      setSaveMessage(result.message);
+      showAppToast({ tone: "error", text: result.message });
+      return;
+    }
+
+    setSaveState("saved");
+    setSaveMessage("Saved automatically");
+    setFinalBracketSavedAt(new Date().toISOString());
+
+    if (!hasSeenCompletionThisSession) {
+      setShowCompletionScreen(true);
+      try {
+        window.sessionStorage.setItem(BRACKET_BUILDER_COMPLETION_SEEN_STORAGE_KEY, "1");
+        setHasSeenCompletionThisSession(true);
+      } catch {
+        // Ignore storage failures and just show the CTA for this pass.
+      }
+      return;
+    }
+
+    showAppToast({ tone: "tip", text: "Your bracket is complete." });
   }
 
   const leftBracketMatches = bracketPreviewMatches.slice(0, 8);
@@ -680,14 +762,14 @@ export function BracketBuilderClient({
           </div>
           <h1 className="mt-5 text-3xl font-black text-gray-950">Your bracket is complete.</h1>
           <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">
-            Your base predictions are saved. You can check the dashboard for more information or start scoring matches for more points.
+            Your base predictions are saved. You can go home for more information or start scoring matches for more points.
           </p>
           <div className="mt-8 grid grid-cols-3 gap-3">
             <ActionButton fullWidth onClick={() => setShowCompletionScreen(false)}>
               Stay Here
             </ActionButton>
             <ActionButton fullWidth tone="accent" onClick={() => router.push("/dashboard")}>
-              Dashboard
+              <span className="block w-full text-center">Home</span>
             </ActionButton>
             <ActionButton fullWidth tone="accent" onClick={handleGoToFullScoring}>
               Pick Full Scores
@@ -712,8 +794,8 @@ export function BracketBuilderClient({
       {isReadOnly ? (
         <section className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-center text-[11px] font-semibold text-gray-600">
           {initialKnockoutSeeded
-            ? "Bracket Builder is locked because the knockout bracket has already been seeded."
-            : "Bracket Builder is locked because this group's picks deadline has passed."}
+            ? "Easy Bracket is locked because the knockout bracket has already been seeded."
+            : "Easy Bracket is locked because this group's picks deadline has passed."}
         </section>
       ) : null}
 
@@ -727,15 +809,25 @@ export function BracketBuilderClient({
         }}
       >
         <div className="pb-0.5 text-center">
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-cyan-900">Pick the qualifying teams</p>
-          <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-800">Saves automatically</p>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-cyan-900">Easy Bracket</p>
+          <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-800">Pick qualifying teams only</p>
         </div>
 
         <div className="space-y-2">
           <div className="flex items-start justify-between gap-2">
-            <h1 className="truncate text-[2rem] font-black leading-none text-gray-950 text-left">
-              {activeGroupName ? formatGroupName(activeGroupName) : "Group"}
-            </h1>
+            <div className="min-w-0">
+              <h1 className="truncate text-[2rem] font-black leading-none text-gray-950 text-left">
+                {activeGroupName ? formatGroupName(activeGroupName) : "Group"}
+              </h1>
+              {isActiveGroupScoreApplied ? (
+                <div className="mt-1 space-y-1">
+                  <span className="inline-flex rounded-md bg-cyan-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.12em] text-cyan-900">
+                    From Scores
+                  </span>
+                  <p className="text-[10px] font-semibold text-gray-500">Update this group through score picks.</p>
+                </div>
+              ) : null}
+            </div>
             <div className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.12em] ${isReadOnly ? "bg-gray-100 text-gray-600" : "bg-cyan-50 text-accent-dark"}`}>
               {isReadOnly ? "Locked" : "Open"}
             </div>
@@ -765,22 +857,37 @@ export function BracketBuilderClient({
               <ArrowRight className="h-5 w-5" />
             </button>
           </div>
+          <div className={`rounded-md border px-3 py-2 text-center text-xs font-black uppercase tracking-[0.08em] ${isThirdPlacePhase ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
+            {isComplete
+              ? "TOP TWO TEAMS QUALIFY PER GROUP"
+              : isThirdPlacePhase
+                ? `PICK ${requiredThirdPlaceQualifierCount} THIRD-PLACE QUALIFIERS TO FINISH THE BRACKET`
+                : "TOP TWO TEAMS QUALIFY PER GROUP"}
+          </div>
         </div>
 
         <div className="overflow-hidden rounded-lg border border-gray-200">
           {activeGroupTeams.map((team, index) => {
             const isTopTwo = index < 2;
             const isThirdPlaceTeam = index === 2;
+            const isGroupCommitted = activeGroupName ? touchedGroups.has(activeGroupName) : false;
             const canAcceptCurrentQualifyingOrder =
-              !isReadOnly && Boolean(activeGroupName) && isTopTwo && !touchedGroups.has(activeGroupName);
+              !isReadOnly && !isActiveGroupScoreApplied && Boolean(activeGroupName) && isTopTwo && !touchedGroups.has(activeGroupName);
             const isThirdPlaceQualified =
               isThirdPlacePhase &&
+              hasCommittedThirdPlaceSelection &&
               isThirdPlaceTeam &&
               normalizedThirdPlaceRankings.slice(0, requiredThirdPlaceQualifierCount).includes(team.id);
-            const highlightClass = isTopTwo || isThirdPlaceQualified ? "bg-emerald-50" : "bg-white";
+            const highlightClass = isThirdPlaceQualified
+              ? "bg-emerald-50"
+              : isTopTwo
+                ? isGroupCommitted
+                  ? "bg-emerald-50"
+                  : "bg-gray-100"
+                : "bg-white";
             const teamOrder = activeGroupName ? groupRankingsByGroup.get(activeGroupName) ?? [] : [];
-            const canMoveUp = !isReadOnly && index > 0;
-            const canMoveDown = !isReadOnly && index < activeGroupTeams.length - 1;
+            const canMoveUp = !isReadOnly && !isActiveGroupScoreApplied && index > 0;
+            const canMoveDown = !isReadOnly && !isActiveGroupScoreApplied && index < activeGroupTeams.length - 1;
             return (
               <div
                 key={team.id}
@@ -792,9 +899,9 @@ export function BracketBuilderClient({
                     previousGroupRowTopsRef.current.delete(team.id);
                   }
                 }}
-                draggable={!isReadOnly}
+                draggable={!isReadOnly && !isActiveGroupScoreApplied}
                 onDragStart={(event) => {
-                  if (isReadOnly) {
+                  if (isReadOnly || isActiveGroupScoreApplied) {
                     return;
                   }
                   event.dataTransfer.effectAllowed = "move";
@@ -821,7 +928,7 @@ export function BracketBuilderClient({
                   event.preventDefault();
                   handleDropReorder(team.id);
                 }}
-                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1.5 last:border-b-0 transition-shadow ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly ? "" : "cursor-grab active:cursor-grabbing"}`}
+                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1.5 last:border-b-0 transition-shadow ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied ? "" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <div className="flex justify-start">
                   <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
@@ -889,14 +996,6 @@ export function BracketBuilderClient({
           })}
         </div>
 
-        <div className={`rounded-md border px-3 py-2 text-center text-xs font-black uppercase tracking-[0.08em] ${isThirdPlacePhase ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
-          {isComplete
-            ? "TOP TWO TEAMS QUALIFY PER GROUP"
-            : isThirdPlacePhase
-              ? "PICK 8 THIRD-PLACE QUALIFIERS"
-              : "TOP TWO TEAMS QUALIFY PER GROUP"}
-        </div>
-
         {isThirdPlacePhase ? (
           <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
             <div className="flex items-center justify-between gap-3">
@@ -914,7 +1013,7 @@ export function BracketBuilderClient({
                   return null;
                 }
 
-                const isAboveCutoff = index < requiredThirdPlaceQualifierCount;
+                const isAboveCutoff = hasCommittedThirdPlaceSelection && index < requiredThirdPlaceQualifierCount;
                 return (
                   <div
                     key={team.id}
@@ -926,13 +1025,42 @@ export function BracketBuilderClient({
                         previousThirdPlaceRowTopsRef.current.delete(team.id);
                       }
                     }}
+                    draggable={!isReadOnly}
+                    onDragStart={(event) => {
+                      if (isReadOnly) {
+                        return;
+                      }
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", team.id);
+                      setDraggedThirdPlaceTeamId(team.id);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedThirdPlaceTeamId(null);
+                      setDragOverThirdPlaceTeamId(null);
+                    }}
+                    onDragOver={(event) => {
+                      if (isReadOnly || !draggedThirdPlaceTeamId) {
+                        return;
+                      }
+                      event.preventDefault();
+                      setDragOverThirdPlaceTeamId(team.id);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverThirdPlaceTeamId === team.id) {
+                        setDragOverThirdPlaceTeamId(null);
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      handleDropThirdPlaceReorder(team.id);
+                    }}
                   >
                     {index === requiredThirdPlaceQualifierCount ? (
                       <div className="pb-1 pt-1 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-rose-600">
                         Cutoff
                       </div>
                     ) : null}
-                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_auto] items-center gap-1 rounded-lg border px-2 py-1 ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-white"}`}>
+                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-lg border px-2 py-1 transition-shadow ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-white"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly ? "" : "cursor-grab active:cursor-grabbing"}`}>
                       <div className="flex justify-start">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
                           {index + 1}
@@ -947,6 +1075,7 @@ export function BracketBuilderClient({
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
+                          draggable={false}
                           disabled={isReadOnly || index === 0}
                           onClick={() => moveThirdPlaceTeam(index, -1)}
                           className={COMPACT_ICON_BUTTON_CLASS}
@@ -956,6 +1085,7 @@ export function BracketBuilderClient({
                         </button>
                         <button
                           type="button"
+                          draggable={false}
                           disabled={isReadOnly || index === normalizedThirdPlaceRankings.length - 1}
                           onClick={() => moveThirdPlaceTeam(index, 1)}
                           className={COMPACT_ICON_BUTTON_CLASS}
@@ -964,11 +1094,33 @@ export function BracketBuilderClient({
                           <ChevronDown className="h-5 w-5" />
                         </button>
                       </div>
+                      <div className="flex justify-center">
+                        <span
+                          aria-hidden
+                          className={`inline-flex h-8 w-8 items-center justify-center text-gray-400 ${isReadOnly ? "opacity-60" : ""}`}
+                        >
+                          <GripVertical className="h-4 w-4" />
+                        </span>
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div> : null}
+            <div className="mt-3">
+              <ActionButton
+                fullWidth
+                tone={isFinishButtonQuiet ? "neutral" : isComplete ? "accent" : "neutral"}
+                disabled={isReadOnly || !isComplete || isFinalizingBracket || isFinishButtonQuiet}
+                onClick={handleFinalizeBracket}
+              >
+                {isFinalizingBracket
+                  ? "Finishing Bracket..."
+                  : isFinishButtonQuiet && finalBracketSavedAt
+                    ? `Saved ${formatSavedTimeLabel(finalBracketSavedAt)}`
+                    : "Finish Bracket"}
+              </ActionButton>
+            </div>
           </div>
         ) : null}
       </section>

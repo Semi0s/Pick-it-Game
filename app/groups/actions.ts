@@ -5,6 +5,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { normalizeGroupKey } from "@/lib/group-standings";
 import {
+  fetchUserGroupProjectionSourceMap,
+  fetchUserLightSeedBuilderSnapshot,
+  type LightSeedBuilderSnapshot,
+  type UserGroupProjectionSource
+} from "@/lib/group-stage-modes";
+import {
+  buildProjectedGroupStandings,
   buildProjectedGroupStandingsFromSeedRankings,
   buildQualifiedTeamSeeds,
   buildQualifiedTeamSeedsFromManualThirdPlaceRanking,
@@ -12,12 +19,6 @@ import {
   resolveRoundOf32SeedAssignments,
   type GroupSeedRankingInput
 } from "@/lib/knockout-seeding";
-import {
-  fetchProjectedKnockoutConflictStatus,
-  fetchUserProjectedKnockoutSource,
-  setUserProjectedKnockoutSource,
-  type ProjectedKnockoutSource
-} from "@/lib/projected-knockout-source";
 import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
 import type { Prediction } from "@/lib/types";
 
@@ -31,8 +32,14 @@ type MatchRow = {
   id: string;
   home_team_id?: string | null;
   away_team_id?: string | null;
-  kickoff_time: string;
+  group_name?: string | null;
+  kickoff_time?: string;
   status: "scheduled" | "locked" | "live" | "final";
+  stage?: string;
+  home_score?: number | null;
+  away_score?: number | null;
+  home_source?: string | null;
+  away_source?: string | null;
 };
 
 type KnockoutPlaceholderRow = {
@@ -56,10 +63,6 @@ export type SavePredictionResult =
   | {
       ok: true;
       prediction: Prediction;
-      projectionConflict?: {
-        currentSource: ProjectedKnockoutSource;
-        message: string;
-      };
     }
   | {
       ok: false;
@@ -72,6 +75,7 @@ export type SaveLightSeedBuilderInput = {
     rankedTeamIds: string[];
   }>;
   rankedThirdPlaceTeamIds: string[];
+  commitThirdPlaceRankings?: boolean;
 };
 
 export type SaveLightSeedBuilderResult =
@@ -108,7 +112,7 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
 
   const { data: match, error: matchError } = await adminSupabase
     .from("matches")
-    .select("id,home_team_id,away_team_id,kickoff_time,status")
+    .select("id,home_team_id,away_team_id,group_name,kickoff_time,status")
     .eq("id", input.matchId)
     .single();
 
@@ -183,14 +187,6 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
     savedUpdatedAt: data.updated_at ?? null
   });
 
-  const currentProjectedSource = await fetchUserProjectedKnockoutSource(adminSupabase, userResult.userId).catch(
-    () => "seed_builder" as const
-  );
-  const projectedConflict =
-    currentProjectedSource === "seed_builder"
-      ? await fetchProjectedKnockoutConflictStatus(adminSupabase, userResult.userId).catch(() => null)
-      : null;
-
   return {
     ok: true,
     prediction: {
@@ -203,15 +199,7 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
       predictedAwayScore: data.predicted_away_score ?? undefined,
       pointsAwarded: data.points_awarded ?? 0,
       updatedAt: data.updated_at ?? undefined
-    },
-    projectionConflict:
-      projectedConflict?.hasConflict && projectedConflict.hasSavedSnapshot && projectedConflict.hasScorePredictions
-        ? {
-            currentSource: currentProjectedSource,
-            message:
-              "Your saved bracket and full score picks now point to different knockout teams. Keep your bracket, or switch projected knockout to use your score picks."
-          }
-        : undefined
+    }
   };
 }
 
@@ -242,6 +230,16 @@ export async function saveLightSeedBuilderAction(
   }
 
   try {
+    const [existingSnapshot, existingSourceMap] = await Promise.all([
+      fetchUserLightSeedBuilderSnapshot(adminSupabase, userResult.userId).catch(
+        () =>
+          ({
+            groupRankings: [],
+            thirdPlaceRankings: []
+          }) satisfies LightSeedBuilderSnapshot
+      ),
+      fetchUserGroupProjectionSourceMap(adminSupabase, userResult.userId).catch(() => new Map<string, UserGroupProjectionSource>())
+    ]);
     const teams = ((teamRows ?? []) as TeamRow[]).map((team) => ({
       id: team.id,
       name: team.name,
@@ -250,10 +248,22 @@ export async function saveLightSeedBuilderAction(
       fifaRank: team.fifa_rank ?? 0,
       flagEmoji: team.flag_emoji ?? ""
     }));
-    const rankings: GroupSeedRankingInput[] = input.groupRankings.map((ranking) => ({
+    const incomingRankings: GroupSeedRankingInput[] = input.groupRankings.map((ranking) => ({
       groupName: normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
       rankedTeamIds: ranking.rankedTeamIds
     }));
+    const mergedRankingsByGroup = new Map(
+      existingSnapshot.groupRankings.map((ranking) => [
+        normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+        ranking.rankedTeamIds
+      ])
+    );
+    for (const ranking of incomingRankings) {
+      mergedRankingsByGroup.set(ranking.groupName, ranking.rankedTeamIds);
+    }
+    const rankings: GroupSeedRankingInput[] = Array.from(mergedRankingsByGroup.entries())
+      .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
+      .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
     const standingsByGroup = buildProjectedGroupStandingsFromSeedRankings(teams, rankings);
     const requiredThirdPlaceCount = getRequiredThirdPlaceQualifierCount(
       ((roundOf32Rows ?? []) as KnockoutPlaceholderRow[]).map((match) => ({
@@ -267,17 +277,27 @@ export async function saveLightSeedBuilderAction(
       }))
     );
     const completeRowsByGroup = new Map(
-      Array.from(standingsByGroup.entries()).map(([groupId, standings]) => [groupId, standings.rows])
+      Array.from(standingsByGroup.entries())
+        .filter(([, standings]) => standings.isComplete)
+        .map(([groupId, standings]) => [groupId, standings.rows])
     );
     const availableThirdPlacePool = buildQualifiedTeamSeeds(completeRowsByGroup, completeRowsByGroup.size).rankedThirdPlaceTeams;
     const availableThirdPlaceTeamIds = new Set(availableThirdPlacePool.map((team) => team.teamId));
-    const requestedThirdPlaceIds = Array.from(new Set(input.rankedThirdPlaceTeamIds));
+    const baseThirdPlaceIds = input.commitThirdPlaceRankings
+      ? input.rankedThirdPlaceTeamIds
+      : existingSnapshot.thirdPlaceRankings
+          .slice()
+          .sort((left, right) => left.rank - right.rank)
+          .map((row) => row.teamId);
+    const requestedThirdPlaceIds = Array.from(
+      new Set(baseThirdPlaceIds.filter((teamId) => availableThirdPlaceTeamIds.has(teamId)))
+    );
 
-    if (requestedThirdPlaceIds.length !== input.rankedThirdPlaceTeamIds.length) {
+    if (input.commitThirdPlaceRankings && requestedThirdPlaceIds.length !== input.rankedThirdPlaceTeamIds.length) {
       return { ok: false, message: "Each third-place qualifier can only be ranked once." };
     }
 
-    if (requestedThirdPlaceIds.some((teamId) => !availableThirdPlaceTeamIds.has(teamId))) {
+    if (input.commitThirdPlaceRankings && requestedThirdPlaceIds.some((teamId) => !availableThirdPlaceTeamIds.has(teamId))) {
       return { ok: false, message: "Only teams ranked 3rd in their group can be selected as third-place qualifiers." };
     }
 
@@ -339,8 +359,23 @@ export async function saveLightSeedBuilderAction(
         return { ok: false, message: insertThirdPlaceError.message };
       }
     }
-
-    await setUserProjectedKnockoutSource(adminSupabase, userResult.userId, "seed_builder").catch(() => null);
+    const touchedGroupNames = new Set(incomingRankings.map((ranking) => ranking.groupName));
+    if (touchedGroupNames.size > 0) {
+      const preservedScoreAppliedRows = Array.from(existingSourceMap.entries())
+        .filter(([groupName, source]) => !touchedGroupNames.has(groupName) && source === "score_applied")
+        .map(([groupName, source]) => ({
+          user_id: userResult.userId,
+          group_name: groupName,
+          projection_source: source
+        }));
+      await adminSupabase.from("user_group_projection_sources").delete().eq("user_id", userResult.userId);
+      if (preservedScoreAppliedRows.length > 0) {
+        const { error: sourceError } = await adminSupabase.from("user_group_projection_sources").insert(preservedScoreAppliedRows);
+        if (sourceError) {
+          return { ok: false, message: sourceError.message };
+        }
+      }
+    }
 
     revalidatePath("/groups");
     revalidatePath("/bracket-builder");
@@ -361,9 +396,9 @@ export async function saveLightSeedBuilderAction(
   }
 }
 
-export async function setProjectedKnockoutSourcePreferenceAction(input: {
-  source: ProjectedKnockoutSource;
-}): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
+export async function applyGroupBracketFromScoresAction(input: {
+  groupName: string;
+}): Promise<{ ok: true; message: string; invalidatedThirdPlaceCount: number } | { ok: false; message: string }> {
   const userResult = await getCurrentUserId();
   if (!userResult.ok) {
     return userResult;
@@ -372,21 +407,181 @@ export async function setProjectedKnockoutSourcePreferenceAction(input: {
   const adminSupabase = createAdminClient();
 
   try {
-    await setUserProjectedKnockoutSource(adminSupabase, userResult.userId, input.source);
+    const normalizedGroupName = normalizeGroupKey(input.groupName) ?? input.groupName;
+    const [{ data: teamRows, error: teamError }, { data: matchRows, error: matchError }, { data: predictionRows, error: predictionError }, existingSnapshot, existingSourceMap] =
+      await Promise.all([
+        adminSupabase.from("teams").select("id,name,short_name,group_name,fifa_rank,flag_emoji"),
+        adminSupabase
+          .from("matches")
+          .select("id,stage,group_name,status,home_team_id,away_team_id,home_score,away_score,home_source,away_source"),
+        adminSupabase
+          .from("predictions")
+          .select("match_id,predicted_home_score,predicted_away_score")
+          .eq("user_id", userResult.userId),
+        fetchUserLightSeedBuilderSnapshot(adminSupabase, userResult.userId).catch(
+          () =>
+            ({
+              groupRankings: [],
+              thirdPlaceRankings: []
+            }) satisfies LightSeedBuilderSnapshot
+        ),
+        fetchUserGroupProjectionSourceMap(adminSupabase, userResult.userId).catch(() => new Map<string, UserGroupProjectionSource>())
+      ]);
+
+    if (teamError || matchError || predictionError) {
+      return {
+        ok: false,
+        message: teamError?.message ?? matchError?.message ?? predictionError?.message ?? "Could not update this group from scores."
+      };
+    }
+
+    const teams = ((teamRows ?? []) as TeamRow[]).map((team) => ({
+      id: team.id,
+      name: team.name,
+      shortName: team.short_name,
+      groupName: team.group_name,
+      fifaRank: team.fifa_rank ?? 0,
+      flagEmoji: team.flag_emoji ?? ""
+    }));
+    const scoreStandingsByGroup = buildProjectedGroupStandings(
+      ((matchRows ?? []) as MatchRow[])
+        .filter((match) => match.stage === "group")
+        .map((match) => ({
+          id: match.id,
+          stage: match.stage ?? "group",
+          groupName: match.group_name ?? null,
+          status: match.status,
+          homeTeamId: match.home_team_id ?? null,
+          awayTeamId: match.away_team_id ?? null,
+          homeScore: match.home_score ?? null,
+          awayScore: match.away_score ?? null
+        })),
+      teams,
+      ((predictionRows ?? []) as Array<{ match_id: string; predicted_home_score?: number | null; predicted_away_score?: number | null }>).map((row) => ({
+        matchId: row.match_id,
+        predictedHomeScore: row.predicted_home_score ?? null,
+        predictedAwayScore: row.predicted_away_score ?? null
+      }))
+    );
+    const targetGroup = scoreStandingsByGroup.get(normalizedGroupName);
+    if (!targetGroup || !targetGroup.isComplete) {
+      return { ok: false, message: `Save enough scores in ${normalizedGroupName} before updating that group from scores.` };
+    }
+
+    const mergedRankingsByGroup = new Map(
+      existingSnapshot.groupRankings.map((ranking) => [
+        normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+        ranking.rankedTeamIds
+      ])
+    );
+    mergedRankingsByGroup.set(
+      normalizedGroupName,
+      targetGroup.rows.slice().sort((left, right) => left.rank - right.rank).map((row) => row.teamId)
+    );
+
+    const rankings: GroupSeedRankingInput[] = Array.from(mergedRankingsByGroup.entries())
+      .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
+      .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
+    const roundOf32Placeholders = ((matchRows ?? []) as MatchRow[])
+      .filter((match) => match.stage === "r32" || match.stage === "round_of_32")
+      .map((match) => ({
+        id: match.id,
+        stage: match.stage ?? "r32",
+        status: match.status,
+        homeSource: match.home_source ?? null,
+        awaySource: match.away_source ?? null,
+        homeTeamId: match.home_team_id ?? null,
+        awayTeamId: match.away_team_id ?? null
+      }));
+    const snapshotStandingsByGroup = buildProjectedGroupStandingsFromSeedRankings(teams, rankings);
+    const completeRowsByGroup = new Map(
+      Array.from(snapshotStandingsByGroup.entries())
+        .filter(([, standings]) => standings.isComplete)
+        .map(([groupId, standings]) => [groupId, standings.rows])
+    );
+    const requiredThirdPlaceCount = getRequiredThirdPlaceQualifierCount(roundOf32Placeholders);
+    const availableThirdPlacePool = buildQualifiedTeamSeeds(completeRowsByGroup, completeRowsByGroup.size).rankedThirdPlaceTeams;
+    const availableThirdPlaceTeamIds = new Set(availableThirdPlacePool.map((team) => team.teamId));
+    const previousThirdPlaceIds = existingSnapshot.thirdPlaceRankings
+      .slice()
+      .sort((left, right) => left.rank - right.rank)
+      .map((row) => row.teamId);
+    const preservedThirdPlaceIds = previousThirdPlaceIds.filter((teamId) => availableThirdPlaceTeamIds.has(teamId));
+    const invalidatedThirdPlaceCount = previousThirdPlaceIds.length - preservedThirdPlaceIds.length;
+
+    if (preservedThirdPlaceIds.length >= requiredThirdPlaceCount) {
+      const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeedsFromManualThirdPlaceRanking(
+        completeRowsByGroup,
+        preservedThirdPlaceIds.slice(0, requiredThirdPlaceCount),
+        requiredThirdPlaceCount
+      );
+      resolveRoundOf32SeedAssignments(roundOf32Placeholders, automaticQualifiers, rankedThirdPlaceTeams);
+    }
+
+    await adminSupabase.from("user_group_seed_rankings").delete().eq("user_id", userResult.userId);
+    await adminSupabase.from("user_best_third_rankings").delete().eq("user_id", userResult.userId);
+
+    const rankingRows = rankings.flatMap((ranking) =>
+      ranking.rankedTeamIds.map((teamId, index) => ({
+        user_id: userResult.userId,
+        group_name: ranking.groupName,
+        team_id: teamId,
+        rank_position: index + 1,
+        updated_at: new Date().toISOString()
+      }))
+    );
+    const thirdPlaceRows = preservedThirdPlaceIds.slice(0, requiredThirdPlaceCount).map((teamId, index) => ({
+      user_id: userResult.userId,
+      team_id: teamId,
+      rank_position: index + 1,
+      updated_at: new Date().toISOString()
+    }));
+
+    if (rankingRows.length > 0) {
+      const { error: rankingError } = await adminSupabase.from("user_group_seed_rankings").insert(rankingRows);
+      if (rankingError) {
+        return { ok: false, message: rankingError.message };
+      }
+    }
+    if (thirdPlaceRows.length > 0) {
+      const { error: thirdPlaceError } = await adminSupabase.from("user_best_third_rankings").insert(thirdPlaceRows);
+      if (thirdPlaceError) {
+        return { ok: false, message: thirdPlaceError.message };
+      }
+    }
+
+    const nextSourceMap = new Map(existingSourceMap);
+    nextSourceMap.set(normalizedGroupName, "score_applied");
+    const sourceRows = Array.from(nextSourceMap.entries())
+      .filter(([, source]) => source === "score_applied")
+      .map(([groupName, source]) => ({
+        user_id: userResult.userId,
+        group_name: groupName,
+        projection_source: source
+      }));
+    await adminSupabase.from("user_group_projection_sources").delete().eq("user_id", userResult.userId);
+    if (sourceRows.length > 0) {
+      const { error: sourceError } = await adminSupabase.from("user_group_projection_sources").insert(sourceRows);
+      if (sourceError) {
+        return { ok: false, message: sourceError.message };
+      }
+    }
+
     revalidatePath("/groups");
     revalidatePath("/bracket-builder");
     revalidatePath("/knockout");
     return {
       ok: true,
       message:
-        input.source === "score_predictions"
-          ? "Projected knockout now follows your score picks."
-          : "Projected knockout now follows your saved bracket."
+        invalidatedThirdPlaceCount > 0
+          ? `${normalizedGroupName} now follows your saved scores. Revisit third-place qualifiers to finish the bracket.`
+          : `${normalizedGroupName} now follows your saved scores.`,
+      invalidatedThirdPlaceCount
     };
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "Could not update your projected knockout source right now."
+      message: error instanceof Error ? error.message : "Could not update this group from scores right now."
     };
   }
 }

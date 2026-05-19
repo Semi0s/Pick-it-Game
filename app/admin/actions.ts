@@ -2372,12 +2372,12 @@ export async function clearBracketBuilderSnapshotsAction(
     return superAdminCheck;
   }
 
-  if (input.confirmationText !== "CLEAR BRACKET BUILDER SNAPSHOTS" || input.scope !== "bracket-builder-only") {
-    return { ok: false, message: "Bracket Builder snapshot reset confirmation did not match. No data was changed." };
+  if (input.confirmationText !== "CLEAR EASY BRACKET SNAPSHOTS" || input.scope !== "bracket-builder-only") {
+    return { ok: false, message: "Easy Bracket snapshot reset confirmation did not match. No data was changed." };
   }
 
   try {
-    buildRequiredResetReason(input.reason ?? "Clear Bracket Builder snapshot data");
+    buildRequiredResetReason(input.reason ?? "Clear Easy Bracket snapshot data");
     ensureRecoveryActionAllowed("bracket_builder", "clearBracketBuilderSnapshotsAction", {
       adminUserId: superAdminCheck.userId,
       adminEmail: superAdminCheck.email
@@ -2385,7 +2385,7 @@ export async function clearBracketBuilderSnapshotsAction(
   } catch (error) {
     return {
       ok: false,
-      message: buildAdminActionErrorMessage(error, "Bracket Builder snapshot reset is disabled in this environment.")
+      message: buildAdminActionErrorMessage(error, "Easy Bracket snapshot reset is disabled in this environment.")
     };
   }
 
@@ -2407,14 +2407,14 @@ export async function clearBracketBuilderSnapshotsAction(
       return { ok: false, message: failedDeletion.error.message };
     }
 
-    const resetMarkerWarning = await bumpDashboardUiResetEpoch("bracket builder snapshot reset");
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("easy bracket snapshot reset");
 
     await writeAdminResetAuditLog(adminSupabase, {
       actorUserId: superAdminCheck.userId,
       actorEmail: superAdminCheck.email,
       actionKey: "clear_bracket_builder_snapshots",
       scope: "bracket_builder",
-      reason: input.reason?.trim() || "Clear Bracket Builder snapshot data",
+      reason: input.reason?.trim() || "Clear Easy Bracket snapshot data",
       success: true,
       targetIds: [],
       affectedCounts: {
@@ -2437,7 +2437,7 @@ export async function clearBracketBuilderSnapshotsAction(
       deletedGroupSeedRankings: groupSeedRankingsResult.count ?? 0,
       deletedBestThirdRankings: bestThirdRankingsResult.count ?? 0,
       message: [
-        `Bracket Builder snapshots were cleared. Removed ${groupSeedRankingsResult.count ?? 0} group seed rankings and ${bestThirdRankingsResult.count ?? 0} best-third selections.`,
+        `Easy Bracket snapshots were cleared. Removed ${groupSeedRankingsResult.count ?? 0} group seed rankings and ${bestThirdRankingsResult.count ?? 0} best-third selections.`,
         resetMarkerWarning
       ]
         .filter(Boolean)

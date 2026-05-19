@@ -8,13 +8,14 @@ import {
   safeFetchKnockoutStructureStatusFallback
 } from "@/lib/bracket-predictions";
 import {
+  fetchUserGroupProjectionSourceMap,
   fetchUserLightSeedBuilderSnapshot,
-  type LightSeedBuilderSnapshot
+  type LightSeedBuilderSnapshot,
+  type UserGroupProjectionSource
 } from "@/lib/group-stage-modes";
 import { fetchActiveGroupRulesets } from "@/lib/scoped-scoring";
 import { getRequiredThirdPlaceQualifierCount, type KnockoutPlaceholderMatch } from "@/lib/knockout-seeding";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
-import { fetchUserProjectedKnockoutSource, type ProjectedKnockoutSource } from "@/lib/projected-knockout-source";
 import { logSafeSupabaseError } from "@/lib/supabase-errors";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
@@ -42,21 +43,20 @@ export default async function BracketBuilderPage() {
   })) as MatchWithTeams[];
   let initialSnapshot: LightSeedBuilderSnapshot | null = null;
   let hasSavedSnapshot = false;
-  let projectedSource: ProjectedKnockoutSource = "seed_builder";
+  let initialGroupProjectionSources: Record<string, UserGroupProjectionSource> = {};
   try {
-    const savedSnapshot = await fetchUserLightSeedBuilderSnapshot(adminSupabase, authUser.id);
+    const [savedSnapshot, sourceMap] = await Promise.all([
+      fetchUserLightSeedBuilderSnapshot(adminSupabase, authUser.id),
+      fetchUserGroupProjectionSourceMap(adminSupabase, authUser.id)
+    ]);
     hasSavedSnapshot = savedSnapshot.groupRankings.length > 0;
     initialSnapshot = hasSavedSnapshot ? savedSnapshot : null;
+    initialGroupProjectionSources = Object.fromEntries(sourceMap.entries());
   } catch (error) {
     logSafeSupabaseError("bracket-builder-snapshot-load", error, { userId: authUser.id, recoverable: true });
     initialSnapshot = null;
     hasSavedSnapshot = false;
-  }
-  try {
-    projectedSource = await fetchUserProjectedKnockoutSource(adminSupabase, authUser.id);
-  } catch (error) {
-    logSafeSupabaseError("bracket-builder-projected-source-load", error, { userId: authUser.id, recoverable: true });
-    projectedSource = "seed_builder";
+    initialGroupProjectionSources = {};
   }
 
   let knockoutStatus = safeFetchKnockoutStructureStatusFallback();
@@ -137,7 +137,7 @@ export default async function BracketBuilderPage() {
           initialKnockoutSeeded={knockoutStatus.isFullySeeded}
           initialSnapshot={initialSnapshot}
           hasSavedSnapshot={hasSavedSnapshot}
-          projectedSource={projectedSource}
+          initialGroupProjectionSources={initialGroupProjectionSources}
         requiredThirdPlaceQualifierCount={requiredThirdPlaceQualifierCount}
         roundOf32Placeholders={roundOf32Placeholders}
         groupStageDueAt={earliestGroupStageDueAt}
