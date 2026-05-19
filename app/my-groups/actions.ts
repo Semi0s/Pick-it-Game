@@ -38,6 +38,7 @@ import {
   fetchSidePickPackageOptions,
   normalizeFullMatchScoringVariant,
   normalizeGroupBonusMode,
+  normalizeGroupStagePredictionDepth,
   normalizeManagedGroupRulesetStatus,
   rebuildGroupCustomBonusScores,
   resolveManagedGroupRulesetPreset,
@@ -452,6 +453,7 @@ export type SaveManagedGroupRulesetResult = ResendGroupInviteResult;
 
 export type SaveLegacyGroupScoringSetupInput = {
   groupId: string;
+  groupStagePredictionDepth: "simple_results" | "full_match_scores";
   fullMatchScoringVariant?: "classic" | "goal_difference_bonus";
   groupBonusMode: "classic" | "early_bird" | "high_stakes" | "all_in";
   groupStagePicksDueAt: string;
@@ -2406,6 +2408,7 @@ export async function saveLegacyGroupScoringSetupAction(
     return { ok: false, message: "Group id is required." };
   }
 
+  const groupStagePredictionDepth = normalizeScoringSetupGroupStagePredictionDepth(input.groupStagePredictionDepth);
   const fullMatchVariant = normalizeScoringSetupFullMatchVariant(input.fullMatchScoringVariant);
   const groupBonusMode = normalizeScoringSetupGroupBonusMode(input.groupBonusMode);
   const groupBonusPreset = GROUP_BONUS_MODE_PRESETS[groupBonusMode];
@@ -2487,8 +2490,9 @@ export async function saveLegacyGroupScoringSetupAction(
         version: nextVersion,
         status: "locked",
         group_stage_mode: groupStageMode,
-        group_stage_prediction_depth: "simple_results",
-        full_match_scoring_variant: fullMatchVariant,
+        group_stage_prediction_depth: groupStagePredictionDepth,
+        full_match_scoring_variant:
+          groupStagePredictionDepth === "full_match_scores" ? fullMatchVariant : null,
         group_bonus_mode: groupBonusMode,
         group_stage_picks_due_at: parsedGroupStageDueAt.toISOString(),
         knockout_picks_due_at: parsedKnockoutDueAt.toISOString(),
@@ -4205,6 +4209,10 @@ function normalizeRequestedMembershipLimit(value?: number) {
 
 function normalizeScoringSetupGroupBonusMode(value?: string | null) {
   return normalizeGroupBonusMode(value);
+}
+
+function normalizeScoringSetupGroupStagePredictionDepth(value?: string | null) {
+  return normalizeGroupStagePredictionDepth(value);
 }
 
 function normalizeScoringSetupFullMatchVariant(value?: string | null) {

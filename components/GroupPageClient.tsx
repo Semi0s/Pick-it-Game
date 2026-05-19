@@ -11,6 +11,10 @@ type GroupPageClientProps = {
   initialPredictions?: Prediction[];
   initialKnockoutSeeded?: boolean;
   scoringSetupNotice?: string | null;
+  initialProjectionConflict?: {
+    currentSource: "seed_builder" | "score_predictions";
+    message: string;
+  } | null;
 };
 
 export function GroupPageClient({
@@ -18,7 +22,8 @@ export function GroupPageClient({
   initialMatches,
   initialPredictions,
   initialKnockoutSeeded,
-  scoringSetupNotice = null
+  scoringSetupNotice = null,
+  initialProjectionConflict = null
 }: GroupPageClientProps) {
   const shouldUseFallbackUserLoad = !initialUser;
   const { user: fallbackUser, isLoading } = useCurrentUser();
@@ -54,6 +59,7 @@ export function GroupPageClient({
         initialMatches={initialMatches}
         initialPredictions={initialPredictions}
         initialKnockoutSeeded={initialKnockoutSeeded}
+        initialProjectionConflict={initialProjectionConflict}
       />
     </div>
   );

@@ -19,6 +19,7 @@ type Props = {
 };
 
 type FormState = {
+  groupStagePredictionDepth: "simple_results" | "full_match_scores";
   fullMatchScoringVariant: "classic" | "goal_difference_bonus";
   groupBonusMode: "classic" | "early_bird" | "high_stakes" | "all_in";
   groupStagePicksDueAt: string;
@@ -41,6 +42,7 @@ export function GroupScoringSetupClient({
     availableKnockoutDates[0]?.value ??
     "";
   const [formState, setFormState] = useState<FormState>({
+    groupStagePredictionDepth: "simple_results",
     fullMatchScoringVariant: "classic",
     groupBonusMode: "classic",
     groupStagePicksDueAt: defaultGroupStageDate,
@@ -103,6 +105,7 @@ export function GroupScoringSetupClient({
             setMessage(null);
             void saveLegacyGroupScoringSetupAction({
               groupId: activeGroup.groupId,
+              groupStagePredictionDepth: formState.groupStagePredictionDepth,
               fullMatchScoringVariant: formState.fullMatchScoringVariant,
               groupBonusMode: formState.groupBonusMode,
               groupStagePicksDueAt: formState.groupStagePicksDueAt,
@@ -131,7 +134,24 @@ export function GroupScoringSetupClient({
 
           <div className="mt-5 space-y-4">
             <label className="block">
-              <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Optional Match Score Overlay</span>
+              <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Scoring Format</span>
+              <select
+                value={formState.groupStagePredictionDepth}
+                onChange={(event) =>
+                  setFormState((current) => ({
+                    ...current,
+                    groupStagePredictionDepth: event.target.value as FormState["groupStagePredictionDepth"]
+                  }))
+                }
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+              >
+                <option value="simple_results">Simple Results</option>
+                <option value="full_match_scores">Full Match Scores</option>
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Match Score Grading</span>
               <select
                 value={formState.fullMatchScoringVariant}
                 onChange={(event) =>
@@ -141,6 +161,7 @@ export function GroupScoringSetupClient({
                   }))
                 }
                 className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                disabled={formState.groupStagePredictionDepth !== "full_match_scores"}
               >
                 <option value="classic">Classic</option>
                 <option value="goal_difference_bonus">Goal Difference Bonus</option>

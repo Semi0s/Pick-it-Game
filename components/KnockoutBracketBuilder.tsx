@@ -1654,9 +1654,9 @@ function CurrentRoundMatchCard({
               {`This will clear ${pendingConfirmation.affectedCount} future ${pendingConfirmation.affectedCount === 1 ? "pick" : "picks"}`}
             </div>
           ) : requiresWinnerSelection && !localWinnerTeamId ? (
-            <div className="mt-1 flex min-h-[22px] items-center justify-center overflow-hidden border-t border-amber-300 bg-amber-200/80 px-1.5 pb-0.5 pt-0 text-center text-amber-900">
-              <span className="block w-full min-w-0 truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
-                Knockout Only: Select a winner to save
+            <div className="mt-1 flex min-h-[22px] items-center justify-center overflow-hidden border-t border-emerald-300 bg-emerald-100/90 px-1.5 py-0 text-center text-emerald-900">
+              <span className="flex min-h-[22px] w-full min-w-0 items-center justify-center truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
+                You picked these teams
               </span>
             </div>
           ) : null}
@@ -1685,19 +1685,19 @@ function CurrentRoundMatchCard({
         <div
           className={`mt-1.5 border-t px-1 pt-2 text-center ${
             requiresWinnerSelection && !localWinnerTeamId
-              ? "border-amber-300 bg-amber-200/80"
-              : "border-amber-200/70 bg-amber-50/60"
+              ? "border-emerald-300 bg-emerald-100/90"
+              : "border-emerald-200/80 bg-emerald-50/80"
           }`}
         >
-          <div className="text-xs font-bold uppercase tracking-wide text-amber-800">
+          <div className="flex min-h-[22px] items-center justify-center text-xs font-bold uppercase tracking-wide text-emerald-800">
             {requiresWinnerSelection && !localWinnerTeamId ? (
-              <span className="flex min-h-[22px] w-full min-w-0 items-center justify-center overflow-hidden px-1.5 pb-0.5 pt-0">
-                <span className="block w-full min-w-0 truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] text-amber-900 [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
-                  Knockout Only: Select a winner to save
+              <span className="flex min-h-[22px] w-full min-w-0 items-center justify-center overflow-hidden px-1.5 py-0">
+                <span className="block w-full min-w-0 truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] text-emerald-900 [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
+                  You picked these teams
                 </span>
               </span>
             ) : !hasValidPrediction ? (
-              "Complete this prediction to save the match"
+              "You picked these teams"
             ) : (
               "Adjust the score or winner to save this projected match"
             )}

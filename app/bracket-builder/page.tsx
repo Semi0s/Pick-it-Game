@@ -8,13 +8,13 @@ import {
   safeFetchKnockoutStructureStatusFallback
 } from "@/lib/bracket-predictions";
 import {
-  buildDefaultLightSeedBuilderSnapshot,
   fetchUserLightSeedBuilderSnapshot,
   type LightSeedBuilderSnapshot
 } from "@/lib/group-stage-modes";
 import { fetchActiveGroupRulesets } from "@/lib/scoped-scoring";
 import { getRequiredThirdPlaceQualifierCount, type KnockoutPlaceholderMatch } from "@/lib/knockout-seeding";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
+import { fetchUserProjectedKnockoutSource, type ProjectedKnockoutSource } from "@/lib/projected-knockout-source";
 import { logSafeSupabaseError } from "@/lib/supabase-errors";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
@@ -40,31 +40,23 @@ export default async function BracketBuilderPage() {
     homeTeam: getTeam(match.homeTeamId),
     awayTeam: getTeam(match.awayTeamId)
   })) as MatchWithTeams[];
-  const localTeams = Array.from(
-    new Map(
-      localMatches.flatMap((match) => {
-        const entries: Array<[string, NonNullable<MatchWithTeams["homeTeam"]>]> = [];
-        if (match.homeTeam?.id) {
-          entries.push([match.homeTeam.id, match.homeTeam]);
-        }
-        if (match.awayTeam?.id) {
-          entries.push([match.awayTeam.id, match.awayTeam]);
-        }
-        return entries;
-      })
-    ).values()
-  );
-
   let initialSnapshot: LightSeedBuilderSnapshot | null = null;
   let hasSavedSnapshot = false;
+  let projectedSource: ProjectedKnockoutSource = "seed_builder";
   try {
     const savedSnapshot = await fetchUserLightSeedBuilderSnapshot(adminSupabase, authUser.id);
     hasSavedSnapshot = savedSnapshot.groupRankings.length > 0;
-    initialSnapshot = hasSavedSnapshot ? savedSnapshot : buildDefaultLightSeedBuilderSnapshot(localTeams);
+    initialSnapshot = hasSavedSnapshot ? savedSnapshot : null;
   } catch (error) {
     logSafeSupabaseError("bracket-builder-snapshot-load", error, { userId: authUser.id, recoverable: true });
-    initialSnapshot = buildDefaultLightSeedBuilderSnapshot(localTeams);
+    initialSnapshot = null;
     hasSavedSnapshot = false;
+  }
+  try {
+    projectedSource = await fetchUserProjectedKnockoutSource(adminSupabase, authUser.id);
+  } catch (error) {
+    logSafeSupabaseError("bracket-builder-projected-source-load", error, { userId: authUser.id, recoverable: true });
+    projectedSource = "seed_builder";
   }
 
   let knockoutStatus = safeFetchKnockoutStructureStatusFallback();
@@ -77,9 +69,10 @@ export default async function BracketBuilderPage() {
     });
   }
 
-  const projectedKnockoutComparisonView = knockoutStatus.isFullySeeded
-    ? await fetchProjectedKnockoutBracketPreview(authUser.id, { comparisonOnly: true }).catch(() => null)
-    : null;
+  const projectedKnockoutComparisonView = await fetchProjectedKnockoutBracketPreview(
+    authUser.id,
+    knockoutStatus.isFullySeeded ? { comparisonOnly: true } : undefined
+  ).catch(() => null);
 
   const { data: roundOf32Rows, error: roundOf32Error } = await adminSupabase
     .from("matches")
@@ -138,12 +131,13 @@ export default async function BracketBuilderPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-3xl py-4">
+      <div className="mx-auto max-w-3xl pb-4 pt-0">
         <BracketBuilderClient
           initialMatches={localMatches}
           initialKnockoutSeeded={knockoutStatus.isFullySeeded}
           initialSnapshot={initialSnapshot}
           hasSavedSnapshot={hasSavedSnapshot}
+          projectedSource={projectedSource}
         requiredThirdPlaceQualifierCount={requiredThirdPlaceQualifierCount}
         roundOf32Placeholders={roundOf32Placeholders}
         groupStageDueAt={earliestGroupStageDueAt}

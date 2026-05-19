@@ -28,6 +28,7 @@ import type { LegalDocument } from "@/lib/legal";
 import { redactEmailAddress } from "@/lib/redact-email";
 import { getStrings } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
+import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import type { UserTrophy } from "@/lib/types";
 import type { CurrentLegalDocument } from "@/lib/auth-client";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -36,10 +37,12 @@ const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 
 export function ProfileSummary({
   initialLegalDocument,
+  managedGroupCount = 0,
   selfServiceTestResetEnabled = false,
   showSelfServiceTestResetHint = false
 }: {
   initialLegalDocument?: LegalDocument | null;
+  managedGroupCount?: number;
   selfServiceTestResetEnabled?: boolean;
   showSelfServiceTestResetHint?: boolean;
 }) {
@@ -113,14 +116,22 @@ export function ProfileSummary({
       }
     };
 
+    const handleAdminResetSignal = (event: StorageEvent) => {
+      if (event.key === ADMIN_UI_RESET_SIGNAL_STORAGE_KEY) {
+        refreshTrophies();
+      }
+    };
+
     window.addEventListener(TROPHY_STATE_CHANGED_EVENT, refreshTrophies as EventListener);
     window.addEventListener("focus", refreshWhenVisible);
+    window.addEventListener("storage", handleAdminResetSignal);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       isMounted = false;
       window.removeEventListener(TROPHY_STATE_CHANGED_EVENT, refreshTrophies as EventListener);
       window.removeEventListener("focus", refreshWhenVisible);
+      window.removeEventListener("storage", handleAdminResetSignal);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [user?.id]);
@@ -197,9 +208,10 @@ export function ProfileSummary({
 
   const copy = getStrings(user.preferredLanguage);
   const currentAccessLevel = getAccessLevel(user);
-  const canUseSelfServiceTestingReset = selfServiceTestResetEnabled && currentAccessLevel !== "player";
+  const hasOrganizerResetAccess = currentAccessLevel !== "player" || managedGroupCount > 0;
+  const canUseSelfServiceTestingReset = selfServiceTestResetEnabled && hasOrganizerResetAccess;
   const canSeeSelfServiceTestingResetHint =
-    showSelfServiceTestResetHint && currentAccessLevel !== "player" && !selfServiceTestResetEnabled;
+    showSelfServiceTestResetHint && hasOrganizerResetAccess && !selfServiceTestResetEnabled;
 
   return (
     <section className="space-y-5">

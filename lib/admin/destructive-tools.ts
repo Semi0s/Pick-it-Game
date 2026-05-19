@@ -5,6 +5,7 @@ export type AdminRecoveryScope =
   | "group"
   | "match"
   | "group_stage"
+  | "bracket_builder"
   | "knockout"
   | "leaderboard"
   | "social"
@@ -63,6 +64,17 @@ export const ADMIN_RESET_TOOL_DEFINITIONS: Record<string, AdminRecoveryToolDefin
     clears: ["group match results", "group predictions", "group prediction_scores", "derived knockout seeds"],
     preserves: ["official schedule", "group match team assignments"],
     shouldAlsoClear: ["legacy bracket artifacts", "stale dashboard history", "stale leaderboard snapshots"],
+    bumpsResetEpoch: true,
+    writesAuditLog: true,
+    superAdminOnly: true,
+    safeInProduction: false
+  },
+  clear_bracket_builder_snapshots: {
+    actionKey: "clear_bracket_builder_snapshots",
+    scope: "bracket_builder",
+    clears: ["user Bracket Builder seed rankings", "user best-third selections"],
+    preserves: ["match results", "group-stage score predictions", "knockout predictions", "leaderboard totals"],
+    shouldAlsoClear: ["stale projected bracket previews based on saved bracket-builder state"],
     bumpsResetEpoch: true,
     writesAuditLog: true,
     superAdminOnly: true,
@@ -130,6 +142,7 @@ const PRODUCTION_SCOPE_ENV_KEYS: Record<AdminRecoveryScope, string[]> = {
   group: ["ALLOW_PRODUCTION_ADMIN_RESETS"],
   match: ["ALLOW_PRODUCTION_ADMIN_RESETS"],
   group_stage: ["ALLOW_PRODUCTION_GROUP_RESET", "ALLOW_PRODUCTION_ADMIN_RESETS"],
+  bracket_builder: ["ALLOW_PRODUCTION_ADMIN_RESETS"],
   knockout: ["ALLOW_PRODUCTION_KNOCKOUT_RESET", "ALLOW_PRODUCTION_ADMIN_RESETS"],
   leaderboard: ["ALLOW_PRODUCTION_ADMIN_RESETS"],
   social: ["ALLOW_PRODUCTION_ADMIN_RESETS"],
@@ -240,6 +253,7 @@ export function logTestingResetEnvDiagnostics(
     | "getDestructiveAdminToolStatusAction"
     | "resetKnockoutTestingDataAction"
     | "resetGroupStageTestingDataAction"
+    | "clearBracketBuilderSnapshotsAction"
     | "batchFinalizeMatchResultsAction"
     | "batchClearMatchResultsAction"
     | "clearUserTestPredictionsAction"

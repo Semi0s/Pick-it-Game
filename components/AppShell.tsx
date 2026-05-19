@@ -19,6 +19,7 @@ import {
 } from "@/lib/auth-client";
 import { getAccessLevel, shouldShowAccessBadge } from "@/lib/access-levels";
 import { getStartupReadinessSummary, type SystemReadinessReport } from "@/lib/system-readiness";
+import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import { parseJsonResponse } from "@/lib/fetch-json";
 import { createClient } from "@/lib/supabase/client";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
@@ -329,6 +330,16 @@ export function AppShell({ children }: AppShellProps) {
       }
     };
 
+    const handleAdminResetSignal = (event: StorageEvent) => {
+      if (event.key !== ADMIN_UI_RESET_SIGNAL_STORAGE_KEY) {
+        return;
+      }
+
+      setActiveCelebration(null);
+      setPendingCelebrationQueue([]);
+      void refreshTrophyState();
+    };
+
     const pollWhenVisible = window.setInterval(() => {
       if (document.visibilityState === "visible") {
         void refreshTrophyState();
@@ -336,12 +347,14 @@ export function AppShell({ children }: AppShellProps) {
     }, TROPHY_POLL_INTERVAL_MS);
 
     window.addEventListener("focus", refreshWhenVisible);
+    window.addEventListener("storage", handleAdminResetSignal);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       isMounted = false;
       window.clearInterval(pollWhenVisible);
       window.removeEventListener("focus", refreshWhenVisible);
+      window.removeEventListener("storage", handleAdminResetSignal);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [

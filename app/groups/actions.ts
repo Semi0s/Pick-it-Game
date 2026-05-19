@@ -12,6 +12,12 @@ import {
   resolveRoundOf32SeedAssignments,
   type GroupSeedRankingInput
 } from "@/lib/knockout-seeding";
+import {
+  fetchProjectedKnockoutConflictStatus,
+  fetchUserProjectedKnockoutSource,
+  setUserProjectedKnockoutSource,
+  type ProjectedKnockoutSource
+} from "@/lib/projected-knockout-source";
 import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
 import type { Prediction } from "@/lib/types";
 
@@ -50,6 +56,10 @@ export type SavePredictionResult =
   | {
       ok: true;
       prediction: Prediction;
+      projectionConflict?: {
+        currentSource: ProjectedKnockoutSource;
+        message: string;
+      };
     }
   | {
       ok: false;
@@ -173,6 +183,14 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
     savedUpdatedAt: data.updated_at ?? null
   });
 
+  const currentProjectedSource = await fetchUserProjectedKnockoutSource(adminSupabase, userResult.userId).catch(
+    () => "seed_builder" as const
+  );
+  const projectedConflict =
+    currentProjectedSource === "seed_builder"
+      ? await fetchProjectedKnockoutConflictStatus(adminSupabase, userResult.userId).catch(() => null)
+      : null;
+
   return {
     ok: true,
     prediction: {
@@ -185,7 +203,15 @@ export async function saveGroupPredictionAction(input: SavePredictionInput): Pro
       predictedAwayScore: data.predicted_away_score ?? undefined,
       pointsAwarded: data.points_awarded ?? 0,
       updatedAt: data.updated_at ?? undefined
-    }
+    },
+    projectionConflict:
+      projectedConflict?.hasConflict && projectedConflict.hasSavedSnapshot && projectedConflict.hasScorePredictions
+        ? {
+            currentSource: currentProjectedSource,
+            message:
+              "Your saved bracket and full score picks now point to different knockout teams. Keep your bracket, or switch projected knockout to use your score picks."
+          }
+        : undefined
   };
 }
 
@@ -314,6 +340,8 @@ export async function saveLightSeedBuilderAction(
       }
     }
 
+    await setUserProjectedKnockoutSource(adminSupabase, userResult.userId, "seed_builder").catch(() => null);
+
     revalidatePath("/groups");
     revalidatePath("/bracket-builder");
     revalidatePath("/knockout");
@@ -329,6 +357,36 @@ export async function saveLightSeedBuilderAction(
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not save your Simple Results rankings."
+    };
+  }
+}
+
+export async function setProjectedKnockoutSourcePreferenceAction(input: {
+  source: ProjectedKnockoutSource;
+}): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
+  const userResult = await getCurrentUserId();
+  if (!userResult.ok) {
+    return userResult;
+  }
+
+  const adminSupabase = createAdminClient();
+
+  try {
+    await setUserProjectedKnockoutSource(adminSupabase, userResult.userId, input.source);
+    revalidatePath("/groups");
+    revalidatePath("/bracket-builder");
+    revalidatePath("/knockout");
+    return {
+      ok: true,
+      message:
+        input.source === "score_predictions"
+          ? "Projected knockout now follows your score picks."
+          : "Projected knockout now follows your saved bracket."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update your projected knockout source right now."
     };
   }
 }

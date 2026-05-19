@@ -66,7 +66,10 @@ import {
 import {
   rebuildScopedLeaderboardState
 } from "@/lib/scoped-scoring";
-import { DASHBOARD_UI_RESET_EPOCH_SETTING_KEY } from "@/lib/ui-storage-keys";
+import {
+  DASHBOARD_UI_RESET_EPOCH_SETTING_KEY,
+  LEADERBOARD_SOCIAL_RESET_AT_SETTING_KEY
+} from "@/lib/ui-storage-keys";
 import type { MatchNextSlot, MatchStage, UserRole } from "@/lib/types";
 
 type MatchRow = {
@@ -409,6 +412,18 @@ export type ResetGroupStageTestingDataResult =
       };
       message: string;
     })
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type ClearBracketBuilderSnapshotDataResult =
+  | {
+      ok: true;
+      deletedGroupSeedRankings: number;
+      deletedBestThirdRankings: number;
+      message: string;
+    }
   | {
       ok: false;
       message: string;
@@ -2315,6 +2330,7 @@ export async function resetTestingSocialStateAction(): Promise<ResetTestingSocia
   const adminSupabase = createAdminClient();
   const clearedCounts = await clearTestingSocialStateWithClient(adminSupabase);
   const resetMarkerWarning = await bumpDashboardUiResetEpoch("testing social reset");
+  const socialResetMarkerWarning = await bumpLeaderboardSocialResetTimestamp("testing social reset");
   await writeAdminResetAuditLog(adminSupabase, {
     actorUserId: adminCheck.userId,
     actorEmail: null,
@@ -2338,10 +2354,98 @@ export async function resetTestingSocialStateAction(): Promise<ResetTestingSocia
 
   return {
     ok: true,
-    message: resetMarkerWarning
-      ? `Testing notifications, leaderboard events, trophies, and movement history were cleared. ${resetMarkerWarning}`
-      : "Testing notifications, leaderboard events, trophies, and movement history were cleared."
+    message:
+      [resetMarkerWarning, socialResetMarkerWarning]
+        .filter(Boolean)
+        .reduce<string>(
+          (message, warning) => `${message} ${warning}`,
+          "Testing notifications, leaderboard events, trophies, perfect-pick activity, and movement history were cleared."
+        )
   };
+}
+
+export async function clearBracketBuilderSnapshotsAction(
+  input: ResetTestingDataInput
+): Promise<ClearBracketBuilderSnapshotDataResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  if (input.confirmationText !== "CLEAR BRACKET BUILDER SNAPSHOTS" || input.scope !== "bracket-builder-only") {
+    return { ok: false, message: "Bracket Builder snapshot reset confirmation did not match. No data was changed." };
+  }
+
+  try {
+    buildRequiredResetReason(input.reason ?? "Clear Bracket Builder snapshot data");
+    ensureRecoveryActionAllowed("bracket_builder", "clearBracketBuilderSnapshotsAction", {
+      adminUserId: superAdminCheck.userId,
+      adminEmail: superAdminCheck.email
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      message: buildAdminActionErrorMessage(error, "Bracket Builder snapshot reset is disabled in this environment.")
+    };
+  }
+
+  const adminSupabase = createAdminClient();
+
+  try {
+    const [groupSeedRankingsResult, bestThirdRankingsResult] = await Promise.all([
+      countWholeTableRows(adminSupabase, "user_group_seed_rankings"),
+      countWholeTableRows(adminSupabase, "user_best_third_rankings")
+    ]);
+
+    const [deleteGroupSeedRankingsResult, deleteBestThirdRankingsResult] = await Promise.all([
+      deleteWholeTableRowsOptional(adminSupabase, "user_group_seed_rankings"),
+      deleteWholeTableRowsOptional(adminSupabase, "user_best_third_rankings")
+    ]);
+
+    const failedDeletion = [deleteGroupSeedRankingsResult, deleteBestThirdRankingsResult].find((result) => result.error);
+    if (failedDeletion?.error) {
+      return { ok: false, message: failedDeletion.error.message };
+    }
+
+    const resetMarkerWarning = await bumpDashboardUiResetEpoch("bracket builder snapshot reset");
+
+    await writeAdminResetAuditLog(adminSupabase, {
+      actorUserId: superAdminCheck.userId,
+      actorEmail: superAdminCheck.email,
+      actionKey: "clear_bracket_builder_snapshots",
+      scope: "bracket_builder",
+      reason: input.reason?.trim() || "Clear Bracket Builder snapshot data",
+      success: true,
+      targetIds: [],
+      affectedCounts: {
+        groupSeedRankings: groupSeedRankingsResult.count ?? 0,
+        bestThirdRankings: bestThirdRankingsResult.count ?? 0
+      },
+      details: {
+        preserves: ADMIN_RESET_TOOL_DEFINITIONS.clear_bracket_builder_snapshots.preserves
+      }
+    });
+
+    revalidatePath("/bracket-builder");
+    revalidatePath("/knockout");
+    revalidatePath("/dashboard");
+    revalidatePath("/groups");
+    revalidatePath("/admin/matches");
+
+    return {
+      ok: true,
+      deletedGroupSeedRankings: groupSeedRankingsResult.count ?? 0,
+      deletedBestThirdRankings: bestThirdRankingsResult.count ?? 0,
+      message: [
+        `Bracket Builder snapshots were cleared. Removed ${groupSeedRankingsResult.count ?? 0} group seed rankings and ${bestThirdRankingsResult.count ?? 0} best-third selections.`,
+        resetMarkerWarning
+      ]
+        .filter(Boolean)
+        .join(" ")
+    };
+  } catch (error) {
+    return { ok: false, message: (error as Error).message };
+  }
 }
 
 async function clearTestingSocialStateWithClient(
@@ -2445,6 +2549,8 @@ async function performClearUserPredictionReset(
         message: string;
         affectedCounts: {
           predictions: number;
+          groupSeedRankings: number;
+          bestThirdRankings: number;
           bracketPredictions: number;
           projectedBracketPredictions: number;
           legacyBracketPicks: number;
@@ -2477,6 +2583,8 @@ async function performClearUserPredictionReset(
 
   const [
     predictionsResult,
+    groupSeedRankingsResult,
+    bestThirdRankingsResult,
     bracketPredictionsResult,
     projectedBracketPredictionsResult,
     legacyBracketPicksResult,
@@ -2486,6 +2594,8 @@ async function performClearUserPredictionReset(
     leaderboardSnapshotsResult
   ] = await Promise.all([
     adminSupabase.from("predictions").select("id", { count: "exact", head: true }).eq("user_id", input.targetUserId),
+    countOptionalGameplayRows(adminSupabase, "user_group_seed_rankings", input.targetUserId),
+    countOptionalGameplayRows(adminSupabase, "user_best_third_rankings", input.targetUserId),
     countOptionalGameplayRows(adminSupabase, "bracket_predictions", input.targetUserId),
     countOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", input.targetUserId),
     countOptionalGameplayRows(adminSupabase, "bracket_picks", input.targetUserId),
@@ -2497,6 +2607,8 @@ async function performClearUserPredictionReset(
 
   const deletionResults = await Promise.all([
     adminSupabase.from("predictions").delete().eq("user_id", input.targetUserId),
+    deleteOptionalGameplayRows(adminSupabase, "user_group_seed_rankings", input.targetUserId),
+    deleteOptionalGameplayRows(adminSupabase, "user_best_third_rankings", input.targetUserId),
     deleteOptionalGameplayRows(adminSupabase, "bracket_predictions", input.targetUserId),
     deleteOptionalGameplayRows(adminSupabase, "projected_bracket_predictions", input.targetUserId),
     deleteOptionalGameplayRows(adminSupabase, "bracket_picks", input.targetUserId),
@@ -2519,6 +2631,8 @@ async function performClearUserPredictionReset(
   const resetMarkerWarning = await bumpDashboardUiResetEpoch(input.actionKey);
   const affectedCounts = {
     predictions: predictionsResult.count ?? 0,
+    groupSeedRankings: groupSeedRankingsResult.count ?? 0,
+    bestThirdRankings: bestThirdRankingsResult.count ?? 0,
     bracketPredictions: bracketPredictionsResult.count ?? 0,
     projectedBracketPredictions: projectedBracketPredictionsResult.count ?? 0,
     legacyBracketPicks: legacyBracketPicksResult.count ?? 0,
@@ -2560,6 +2674,16 @@ async function bumpDashboardUiResetEpoch(reason: string) {
   } catch (error) {
     console.warn(`Could not update dashboard reset epoch during ${reason}.`, error);
     return error instanceof Error ? error.message : "Dashboard reset marker could not be updated.";
+  }
+}
+
+async function bumpLeaderboardSocialResetTimestamp(reason: string) {
+  try {
+    await updateIntegerAppSetting(LEADERBOARD_SOCIAL_RESET_AT_SETTING_KEY, Math.floor(Date.now() / 1000));
+    return null;
+  } catch (error) {
+    console.warn(`Could not update leaderboard social reset timestamp during ${reason}.`, error);
+    return error instanceof Error ? error.message : "Leaderboard social reset marker could not be updated.";
   }
 }
 
@@ -4163,6 +4287,7 @@ export async function fullPreLaunchTestResetAction(
     }
 
     const resetMarkerWarning = await bumpDashboardUiResetEpoch("full pre-launch reset");
+    const socialResetMarkerWarning = await bumpLeaderboardSocialResetTimestamp("full pre-launch reset");
     await writeAdminResetAuditLog(adminSupabase, {
       actorUserId: superAdminCheck.userId,
       actorEmail: superAdminCheck.email,
@@ -4200,9 +4325,12 @@ export async function fullPreLaunchTestResetAction(
       ok: true,
       groupResetMatchCount: groupSummary.resetMatchCount,
       knockoutResetMatchCount: knockoutSummary.reset_match_count,
-      message: resetMarkerWarning
-        ? `Full pre-launch test reset completed. Group-stage, knockout, social, and derived leaderboard state were cleared. ${resetMarkerWarning}`
-        : "Full pre-launch test reset completed. Group-stage, knockout, social, and derived leaderboard state were cleared."
+      message: [resetMarkerWarning, socialResetMarkerWarning]
+        .filter(Boolean)
+        .reduce<string>(
+          (message, warning) => `${message} ${warning}`,
+          "Full pre-launch test reset completed. Group-stage, knockout, social, and derived leaderboard state were cleared."
+        )
     };
   } catch (error) {
     return { ok: false, message: buildAdminActionErrorMessage(error, "Could not complete the full pre-launch test reset.") };
@@ -4227,6 +4355,7 @@ export async function getDestructiveAdminToolStatusAction(): Promise<Destructive
       group: getTestingResetAvailability("group"),
       match: getTestingResetAvailability("match"),
       group_stage: getTestingResetAvailability("group_stage"),
+      bracket_builder: getTestingResetAvailability("bracket_builder"),
       knockout: getTestingResetAvailability("knockout"),
       leaderboard: getTestingResetAvailability("leaderboard"),
       social: getTestingResetAvailability("social"),
@@ -4483,7 +4612,9 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
     leaderboardEventsResult,
     leaderboardSnapshotsResult,
     userNotificationsResult,
-    knockoutSeedArtifactCountResult
+    knockoutSeedArtifactCountResult,
+    userGroupSeedRankingsResult,
+    userBestThirdRankingsResult
   ] = await Promise.all([
     adminSupabase.from("predictions").select("id", { count: "exact", head: true }).in("match_id", groupMatchIds),
     countOptionalMatchRows(adminSupabase, "prediction_scores", groupMatchIds),
@@ -4492,7 +4623,9 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
     allAffectedEventIds.length > 0
       ? countOptionalEventNotificationRows(adminSupabase, allAffectedEventIds)
       : Promise.resolve({ count: 0, error: null } as { count: number; error: null }),
-    Promise.resolve({ count: 0, error: null } as { count: number; error: null })
+    Promise.resolve({ count: 0, error: null } as { count: number; error: null }),
+    countWholeTableRows(adminSupabase, "user_group_seed_rankings"),
+    countWholeTableRows(adminSupabase, "user_best_third_rankings")
   ]);
 
   const inspectionResults = [
@@ -4501,7 +4634,9 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
     { label: "leaderboard_events", result: leaderboardEventsResult, optional: true },
     { label: "leaderboard_snapshots", result: leaderboardSnapshotsResult, optional: true },
     { label: "user_notifications", result: userNotificationsResult, optional: true },
-    { label: "knockout_seed_artifacts", result: knockoutSeedArtifactCountResult, optional: true }
+    { label: "knockout_seed_artifacts", result: knockoutSeedArtifactCountResult, optional: true },
+    { label: "user_group_seed_rankings", result: userGroupSeedRankingsResult, optional: true },
+    { label: "user_best_third_rankings", result: userBestThirdRankingsResult, optional: true }
   ] as const;
 
   for (const { label, result, optional } of inspectionResults) {
@@ -4534,6 +4669,8 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
       ? adminSupabase.from("user_notifications").delete().in("event_id", leaderboardEventIds)
       : Promise.resolve({ error: null }),
     adminSupabase.from("predictions").delete().in("match_id", groupMatchIds),
+    deleteWholeTableRowsOptional(adminSupabase, "user_group_seed_rankings"),
+    deleteWholeTableRowsOptional(adminSupabase, "user_best_third_rankings"),
     deleteOptionalMatchRows(adminSupabase, "prediction_scores", groupMatchIds),
     deleteOptionalMatchRows(adminSupabase, "leaderboard_snapshots", groupMatchIds),
     deleteOptionalMatchRows(adminSupabase, "leaderboard_events", groupMatchIds)
@@ -4753,10 +4890,32 @@ async function countWholeTableRows(
     | "leaderboard_events"
     | "user_trophies"
     | "leaderboard_snapshots"
+    | "user_group_seed_rankings"
+    | "user_best_third_rankings"
 ) {
   const result = await adminSupabase.from(tableName).select("id", { count: "exact", head: true });
   if (result.error && isMissingSocialResetTableError(result.error.message)) {
     return { count: 0, error: null };
+  }
+
+  return result;
+}
+
+async function deleteWholeTableRowsOptional(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  tableName:
+    | "leaderboard_event_comments"
+    | "leaderboard_event_reactions"
+    | "user_notifications"
+    | "leaderboard_events"
+    | "user_trophies"
+    | "leaderboard_snapshots"
+    | "user_group_seed_rankings"
+    | "user_best_third_rankings"
+) {
+  const result = await adminSupabase.from(tableName).delete().not("id", "is", null);
+  if (result.error && isMissingSocialResetTableError(result.error.message)) {
+    return { error: null };
   }
 
   return result;
@@ -5331,6 +5490,7 @@ async function awardPerfectPickFirstTrophy(
   adminSupabase: ReturnType<typeof createAdminClient>,
   scoredPredictions: ScoredPrediction[]
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  const socialResetCutoffIso = await fetchLeaderboardSocialResetCutoffIso();
   const qualifyingUserIds = Array.from(
     new Set(
       scoredPredictions
@@ -5365,7 +5525,8 @@ async function awardPerfectPickFirstTrophy(
     .from("prediction_scores")
     .select("user_id")
     .in("user_id", qualifyingUserIds)
-    .gt("exact_score_points", 0);
+    .gt("exact_score_points", 0)
+    .gte("scored_at", socialResetCutoffIso ?? "1970-01-01T00:00:00.000Z");
 
   if (exactScoreRowsError) {
     if (isMissingTrophiesError(exactScoreRowsError.message)) {
@@ -5438,6 +5599,16 @@ async function awardPerfectPickFirstTrophy(
   });
 
   return { ok: true };
+}
+
+async function fetchLeaderboardSocialResetCutoffIso() {
+  const resetAtValue = await fetchIntegerAppSetting(LEADERBOARD_SOCIAL_RESET_AT_SETTING_KEY, 0);
+  if (resetAtValue <= 0) {
+    return null;
+  }
+
+  const resetAtMs = resetAtValue >= 100_000_000_000 ? resetAtValue : resetAtValue * 1000;
+  return new Date(resetAtMs).toISOString();
 }
 
 async function assertCurrentUserIsAdmin(): Promise<{ ok: true; userId: string } | { ok: false; message: string }> {
@@ -6948,7 +7119,12 @@ async function countOptionalLegacyBracketPickRows(
 
 async function countOptionalGameplayRows(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  tableName: "bracket_predictions" | "projected_bracket_predictions" | "bracket_picks",
+  tableName:
+    | "bracket_predictions"
+    | "projected_bracket_predictions"
+    | "bracket_picks"
+    | "user_group_seed_rankings"
+    | "user_best_third_rankings",
   userId: string
 ) {
   const result = await adminSupabase.from(tableName).select("id", { count: "exact", head: true }).eq("user_id", userId);
@@ -6961,7 +7137,12 @@ async function countOptionalGameplayRows(
 
 async function deleteOptionalGameplayRows(
   adminSupabase: ReturnType<typeof createAdminClient>,
-  tableName: "bracket_predictions" | "projected_bracket_predictions" | "bracket_picks",
+  tableName:
+    | "bracket_predictions"
+    | "projected_bracket_predictions"
+    | "bracket_picks"
+    | "user_group_seed_rankings"
+    | "user_best_third_rankings",
   userId: string
 ) {
   const result = await adminSupabase.from(tableName).delete().eq("user_id", userId);

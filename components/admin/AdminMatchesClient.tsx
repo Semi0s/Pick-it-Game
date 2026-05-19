@@ -6,6 +6,7 @@ import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
 import {
   batchClearMatchResultsAction,
   batchFinalizeMatchResultsAction,
+  clearBracketBuilderSnapshotsAction,
   fullPreLaunchTestResetAction,
   fetchKnockoutSeedingStatusAction,
   type BatchFinalizeMatchOverwriteMode,
@@ -17,6 +18,7 @@ import {
   resetMatchToOpenAction,
   resetGroupStageTestingDataAction,
   resetKnockoutTestingDataAction,
+  resetTestingSocialStateAction,
   rescoreKnockoutScoresAction,
   scoreFinalizedGroupMatch,
   syncMatchesNowAction,
@@ -28,8 +30,14 @@ import { showAppToast } from "@/lib/app-toast";
 import { getAccessLevel } from "@/lib/access-levels";
 import { formatMatchStage } from "@/lib/match-stage";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
+import {
+  ADMIN_UI_RESET_SIGNAL_STORAGE_KEY,
+  DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY,
+  LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY
+} from "@/lib/ui-storage-keys";
 import type { MatchStage, MatchStatus } from "@/lib/types";
 import { AdminHeader } from "@/components/admin/AdminInvitesClient";
+import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 const stageSortOrder: Record<MatchStage, number> = {
@@ -48,9 +56,13 @@ const stageSortOrder: Record<MatchStage, number> = {
 
 const KNOCKOUT_RESET_CONFIRMATION_PHRASE = "RESET KNOCKOUT TEST DATA";
 const GROUP_RESET_CONFIRMATION_PHRASE = "RESET GROUP TEST DATA";
+const BRACKET_BUILDER_RESET_CONFIRMATION_PHRASE = "CLEAR BRACKET BUILDER SNAPSHOTS";
 const BATCH_FINALIZE_CONFIRMATION_PHRASE = "FINALIZE TEST MATCHES";
 const BATCH_CLEAR_CONFIRMATION_PHRASE = "CLEAR TEST MATCH RESULTS";
 const FULL_TEST_RESET_CONFIRMATION_PHRASE = "FULL PRE-LAUNCH TEST RESET";
+const ADMIN_MATCH_FILTERS_DISCLOSURE_KEY = "admin-matches-filters-open";
+const ADMIN_TOURNAMENT_PROGRESS_DISCLOSURE_KEY = "admin-matches-tournament-progress-open";
+const ADMIN_DANGER_ZONE_DISCLOSURE_KEY = "admin-matches-danger-zone-open";
 
 export function AdminMatchesClient() {
   const expectedGroupMatchCount = 72;
@@ -65,13 +77,22 @@ export function AdminMatchesClient() {
   const [isRescoringKnockout, setIsRescoringKnockout] = useState(false);
   const [isRepairingKnockout, setIsRepairingKnockout] = useState(false);
   const [isSyncingMatches, setIsSyncingMatches] = useState(false);
-  const [isDangerZoneOpen, setIsDangerZoneOpen] = useState(false);
+  const [isFiltersOpen, setIsFiltersOpen] = useSessionDisclosureState(ADMIN_MATCH_FILTERS_DISCLOSURE_KEY, false);
+  const [isTournamentProgressOpen, setIsTournamentProgressOpen] = useSessionDisclosureState(
+    ADMIN_TOURNAMENT_PROGRESS_DISCLOSURE_KEY,
+    false
+  );
+  const [isDangerZoneOpen, setIsDangerZoneOpen] = useSessionDisclosureState(ADMIN_DANGER_ZONE_DISCLOSURE_KEY, false);
   const [isKnockoutResetAcknowledged, setIsKnockoutResetAcknowledged] = useState(false);
   const [knockoutResetConfirmationText, setKnockoutResetConfirmationText] = useState("");
   const [isResettingKnockout, setIsResettingKnockout] = useState(false);
   const [isGroupResetAcknowledged, setIsGroupResetAcknowledged] = useState(false);
   const [groupResetConfirmationText, setGroupResetConfirmationText] = useState("");
   const [isResettingGroup, setIsResettingGroup] = useState(false);
+  const [isBracketBuilderResetAcknowledged, setIsBracketBuilderResetAcknowledged] = useState(false);
+  const [bracketBuilderResetConfirmationText, setBracketBuilderResetConfirmationText] = useState("");
+  const [isResettingBracketBuilder, setIsResettingBracketBuilder] = useState(false);
+  const [isResettingTestingSocial, setIsResettingTestingSocial] = useState(false);
   const [batchFinalizeFromDate, setBatchFinalizeFromDate] = useState("");
   const [batchFinalizeToDate, setBatchFinalizeToDate] = useState("");
   const [batchFinalizeScope, setBatchFinalizeScope] = useState<BatchFinalizeMatchScope>("group-only");
@@ -90,6 +111,7 @@ export function AdminMatchesClient() {
   const [resetReasonByScope, setResetReasonByScope] = useState<Record<string, string>>({
     knockout: "",
     group_stage: "",
+    bracket_builder: "",
     match: "",
     leaderboard: "",
     full_test: ""
@@ -235,8 +257,10 @@ export function AdminMatchesClient() {
   const scopeAvailability = destructiveToolStatus?.ok ? destructiveToolStatus.scopes : null;
   const knockoutAvailability = scopeAvailability?.knockout ?? null;
   const groupAvailability = scopeAvailability?.group_stage ?? null;
+  const bracketBuilderAvailability = scopeAvailability?.bracket_builder ?? null;
   const matchAvailability = scopeAvailability?.match ?? null;
   const leaderboardAvailability = scopeAvailability?.leaderboard ?? null;
+  const socialAvailability = scopeAvailability?.social ?? null;
   const fullResetAvailability = scopeAvailability?.full_test ?? null;
   const batchFinalizeAvailability = scopeAvailability?.batch_finalize ?? null;
   const diagnostics = destructiveToolStatus?.ok ? destructiveToolStatus.diagnostics : null;
@@ -251,6 +275,13 @@ export function AdminMatchesClient() {
     !isGroupResetPhraseValid &&
     groupResetConfirmationText.trim().length > 0 &&
     groupResetConfirmationText.replace(/\s+/g, "").toUpperCase() === GROUP_RESET_CONFIRMATION_PHRASE.replace(/\s+/g, "");
+  const isBracketBuilderResetPhraseValid =
+    bracketBuilderResetConfirmationText === BRACKET_BUILDER_RESET_CONFIRMATION_PHRASE;
+  const isBracketBuilderResetPhraseClose =
+    !isBracketBuilderResetPhraseValid &&
+    bracketBuilderResetConfirmationText.trim().length > 0 &&
+    bracketBuilderResetConfirmationText.replace(/\s+/g, "").toUpperCase() ===
+      BRACKET_BUILDER_RESET_CONFIRMATION_PHRASE.replace(/\s+/g, "");
   const isBatchFinalizePhraseValid = batchFinalizeConfirmationText === BATCH_FINALIZE_CONFIRMATION_PHRASE;
   const isBatchFinalizePhraseClose =
     !isBatchFinalizePhraseValid &&
@@ -277,6 +308,13 @@ export function AdminMatchesClient() {
     isGroupResetAcknowledged &&
     isGroupResetPhraseValid &&
     !isResettingGroup;
+  const canSubmitBracketBuilderReset =
+    canUseDangerZone &&
+    Boolean(bracketBuilderAvailability?.environmentResetAllowed) &&
+    Boolean(resetReasonByScope.bracket_builder.trim()) &&
+    isBracketBuilderResetAcknowledged &&
+    isBracketBuilderResetPhraseValid &&
+    !isResettingBracketBuilder;
   const canSubmitBatchFinalize =
     canUseDangerZone &&
     Boolean(batchFinalizeAvailability?.environmentResetAllowed) &&
@@ -545,6 +583,86 @@ export function AdminMatchesClient() {
     }
   }
 
+  function emitTestingUiResetSignal(type: "social" | "bracket_builder" | "full_test") {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (type === "social" || type === "full_test") {
+      window.localStorage.removeItem(DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY);
+      window.localStorage.removeItem(LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY);
+    }
+
+    window.localStorage.setItem(
+      ADMIN_UI_RESET_SIGNAL_STORAGE_KEY,
+      JSON.stringify({ type, at: Date.now() })
+    );
+  }
+
+  async function handleResetTestingSocialData() {
+    if (!socialAvailability?.environmentResetAllowed || isResettingTestingSocial) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "You are about to clear testing social and movement data. This removes trophies, perfect-pick and daily-winner activity, comments, reactions, notifications, leaderboard events, and leaderboard movement history. Scoring, predictions, and match results stay intact. Continue?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsResettingTestingSocial(true);
+    try {
+      const result = await resetTestingSocialStateAction();
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        emitTestingUiResetSignal("social");
+        router.refresh();
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsResettingTestingSocial(false);
+    }
+  }
+
+  async function handleResetBracketBuilderSnapshots() {
+    if (!canSubmitBracketBuilderReset) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "You are about to clear Bracket Builder snapshot data across the app. This removes saved group seed rankings and best-third selections, which will blank projected bracket paths until players rebuild them. Match results, score predictions, knockout picks, and leaderboard totals stay intact. Continue?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsResettingBracketBuilder(true);
+    try {
+      const result = await clearBracketBuilderSnapshotsAction({
+        confirmationText: bracketBuilderResetConfirmationText,
+        scope: "bracket-builder-only",
+        reason: resetReasonByScope.bracket_builder
+      });
+
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        setIsBracketBuilderResetAcknowledged(false);
+        setBracketBuilderResetConfirmationText("");
+        setResetReasonByScope((current) => ({ ...current, bracket_builder: "" }));
+        emitTestingUiResetSignal("bracket_builder");
+        router.refresh();
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsResettingBracketBuilder(false);
+    }
+  }
+
   async function handleBatchFinalizeMatches() {
     if (!canSubmitBatchFinalize) {
       return;
@@ -720,6 +838,7 @@ export function AdminMatchesClient() {
         setIsFullResetAcknowledged(false);
         setResetReasonByScope((current) => ({ ...current, full_test: "" }));
         await loadMatches();
+        emitTestingUiResetSignal("full_test");
         router.refresh();
       }
     } catch (error) {
@@ -820,96 +939,113 @@ export function AdminMatchesClient() {
       <AdminHeader eyebrow="Matches" title="Update match results." />
 
       <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-        <div className="space-y-1">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Match filters and search</p>
-          <h3 className="text-lg font-black text-gray-950">Find the matches you want to manage</h3>
-          <p className="text-sm font-semibold text-gray-600">
-            Narrow the list by stage or date, then update scores and statuses below.
-          </p>
-        </div>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-3">
+        <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
-            <p className="text-sm font-bold text-gray-900">
-              {latestSyncedAt ? `Results synced ${formatRelativeMinutes(latestSyncedAt)}` : "Waiting for results"}
-            </p>
-            <p className={`text-xs font-semibold ${hasSyncErrors ? "text-rose-700" : "text-gray-500"}`}>
-              {hasSyncErrors ? "One or more synced matches reported errors." : "Automatic locking and result sync share the same safe-mode pipeline."}
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Match filters and search</p>
+            <h3 className="text-lg font-black text-gray-950">Find the matches you want to manage</h3>
+            <p className="text-sm font-semibold text-gray-600">
+              Narrow the list by stage or date, then update scores and statuses below.
             </p>
           </div>
-          <button
-            type="button"
-            disabled={isSyncingMatches}
-            onClick={() => void handleSyncMatchesNow()}
-            className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
-          >
-            {isSyncingMatches ? "Syncing..." : "Sync Now"}
-          </button>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <label>
-            <span className="text-sm font-bold text-gray-700">Stage</span>
-            <select
-              value={stageFilter}
-              onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
-            >
-              {stageOptions.map((stage) => (
-                <option key={stage} value={stage}>
-                  {stage === "all" ? "All stages" : formatStage(stage)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="text-sm font-bold text-gray-700">Date</span>
-            <select
-              value={dateFilter}
-              onChange={(event) => setDateFilter(event.target.value)}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
-            >
-              <option value="all">All dates</option>
-              {dateOptions.map((date) => (
-                <option key={date} value={date}>
-                  {formatDateTime(`${date}T12:00:00Z`, false)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </section>
-
-      {isLoading ? <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold">Loading matches...</p> : null}
-
-      <section className="space-y-3">
-        <div className="space-y-1">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Match list / match editing</p>
-          <h3 className="text-lg font-black text-gray-950">Update statuses, scores, and final results</h3>
-        </div>
-        {filteredMatches.map((match) => (
-          <MatchResultCard
-            key={match.id}
-            match={match}
-            onSaved={(updatedMatch) => {
-              setMatches((currentMatches) =>
-                currentMatches.map((currentMatch) => (currentMatch.id === updatedMatch.id ? updatedMatch : currentMatch))
-              );
-              showAppToast({ tone: "success", text: "Match updated." });
-            }}
-            onScored={(text) => showAppToast({ tone: "success", text })}
-            onError={(text) => showAppToast({ tone: "error", text })}
+          <InlineDisclosureButton
+            isOpen={isFiltersOpen}
+            variant="subtle"
+            onClick={() => setIsFiltersOpen((current) => !current)}
           />
-        ))}
+        </div>
+        {isFiltersOpen ? (
+          <>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-3">
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-gray-900">
+                  {latestSyncedAt ? `Results synced ${formatRelativeMinutes(latestSyncedAt)}` : "Waiting for results"}
+                </p>
+                <p className={`text-xs font-semibold ${hasSyncErrors ? "text-rose-700" : "text-gray-500"}`}>
+                  {hasSyncErrors ? "One or more synced matches reported errors." : "Automatic locking and result sync share the same safe-mode pipeline."}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isSyncingMatches}
+                onClick={() => void handleSyncMatchesNow()}
+                className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+              >
+                {isSyncingMatches ? "Syncing..." : "Sync Now"}
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label>
+                <span className="text-sm font-bold text-gray-700">Stage</span>
+                <select
+                  value={stageFilter}
+                  onChange={(event) => setStageFilter(event.target.value as "all" | MatchStage)}
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+                >
+                  {stageOptions.map((stage) => (
+                    <option key={stage} value={stage}>
+                      {stage === "all" ? "All stages" : formatStage(stage)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="text-sm font-bold text-gray-700">Date</span>
+                <select
+                  value={dateFilter}
+                  onChange={(event) => setDateFilter(event.target.value)}
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base"
+                >
+                  <option value="all">All dates</option>
+                  {dateOptions.map((date) => (
+                    <option key={date} value={date}>
+                      {formatDateTime(`${date}T12:00:00Z`, false)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {isLoading ? <p className="mt-4 rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold">Loading matches...</p> : null}
+
+            <div className="mt-5 space-y-3">
+              <div className="space-y-1">
+                <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Match list / match editing</p>
+                <h3 className="text-lg font-black text-gray-950">Update statuses, scores, and final results</h3>
+              </div>
+              {filteredMatches.map((match) => (
+                <MatchResultCard
+                  key={match.id}
+                  match={match}
+                  onSaved={(updatedMatch) => {
+                    setMatches((currentMatches) =>
+                      currentMatches.map((currentMatch) => (currentMatch.id === updatedMatch.id ? updatedMatch : currentMatch))
+                    );
+                    showAppToast({ tone: "success", text: "Match updated." });
+                  }}
+                  onScored={(text) => showAppToast({ tone: "success", text })}
+                  onError={(text) => showAppToast({ tone: "error", text })}
+                />
+              ))}
+            </div>
+          </>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-        <div className="space-y-1">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Tournament progression</p>
-          <h3 className="text-lg font-black text-gray-950">Knockout seeding, repair, and rescoring</h3>
-          <p className="text-sm font-semibold text-gray-600">
-            Use these tools after group-stage results are complete or when repairing knockout advancement during testing.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Tournament progression</p>
+            <h3 className="text-lg font-black text-gray-950">Knockout seeding, repair, and rescoring</h3>
+            <p className="text-sm font-semibold text-gray-600">
+              Use these tools after group-stage results are complete or when repairing knockout advancement during testing.
+            </p>
+          </div>
+          <InlineDisclosureButton
+            isOpen={isTournamentProgressOpen}
+            variant="subtle"
+            onClick={() => setIsTournamentProgressOpen((current) => !current)}
+          />
         </div>
-
+        {isTournamentProgressOpen ? (
         <div className="mt-4 space-y-3">
           <section className="rounded-lg border border-gray-200 bg-white p-4">
             <div className="flex items-start justify-between gap-4">
@@ -1020,6 +1156,7 @@ export function AdminMatchesClient() {
             </div>
           </section>
         </div>
+        ) : null}
       </section>
 
       {canUseDangerZone ? (
@@ -1036,13 +1173,11 @@ export function AdminMatchesClient() {
                 Production deployments require explicit reset environment variables before either action can run.
               </p>
             </div>
-            <button
-              type="button"
+            <InlineDisclosureButton
+              isOpen={isDangerZoneOpen}
+              variant="subtle"
               onClick={() => setIsDangerZoneOpen((current) => !current)}
-              className="rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-bold text-rose-700"
-            >
-              {isDangerZoneOpen ? "Hide danger tools" : "Show danger tools"}
-            </button>
+            />
           </div>
 
           {isDangerZoneOpen ? (
@@ -1426,6 +1561,99 @@ export function AdminMatchesClient() {
                     className="mt-4 rounded-md bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
                   >
                     {isResettingGroup ? "Resetting group-stage test data..." : "Reset group-stage test data"}
+                  </button>
+                </section>
+
+                <section className="rounded-lg border border-rose-200 bg-white p-4">
+                  <div className="space-y-1">
+                    <h4 className="text-base font-black text-gray-950">Clear Bracket Builder snapshots</h4>
+                    <p className="text-sm font-semibold text-gray-600">
+                      Clears saved Bracket Builder seed rankings and best-third selections across the app. This blanks projected bracket paths until players rebuild them, without changing score predictions, match results, knockout picks, or leaderboard totals.
+                    </p>
+                  </div>
+
+                  <label className="mt-4 flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isBracketBuilderResetAcknowledged}
+                      onChange={(event) => setIsBracketBuilderResetAcknowledged(event.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+                    />
+                    <span className="text-sm font-semibold text-gray-700">
+                      I understand this will remove saved Bracket Builder snapshot data for all users.
+                    </span>
+                  </label>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Reason</span>
+                    <input
+                      type="text"
+                      value={resetReasonByScope.bracket_builder}
+                      onChange={(event) =>
+                        setResetReasonByScope((current) => ({ ...current, bracket_builder: event.target.value }))
+                      }
+                      placeholder="Explain why this Bracket Builder snapshot reset is needed"
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                  </label>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Type confirmation exactly</span>
+                    <input
+                      type="text"
+                      value={bracketBuilderResetConfirmationText}
+                      onChange={(event) => setBracketBuilderResetConfirmationText(event.target.value)}
+                      placeholder={BRACKET_BUILDER_RESET_CONFIRMATION_PHRASE}
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                    {isBracketBuilderResetPhraseClose ? (
+                      <p className="mt-2 text-sm font-semibold text-rose-700">
+                        Type exactly: {BRACKET_BUILDER_RESET_CONFIRMATION_PHRASE}
+                      </p>
+                    ) : null}
+                  </label>
+
+                  {renderResetReadiness({
+                    availability: bracketBuilderAvailability,
+                    checkboxChecked: isBracketBuilderResetAcknowledged,
+                    phraseMatches: isBracketBuilderResetPhraseValid,
+                    productionBlockedMessage:
+                      "Production Bracket Builder snapshot reset is disabled. Enable ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
+                  })}
+
+                  <button
+                    type="button"
+                    disabled={!canSubmitBracketBuilderReset}
+                    onClick={() => void handleResetBracketBuilderSnapshots()}
+                    className="mt-4 rounded-md bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                  >
+                    {isResettingBracketBuilder ? "Clearing Bracket Builder snapshots..." : "Clear Bracket Builder snapshots"}
+                  </button>
+                </section>
+
+                <section className="rounded-lg border border-rose-200 bg-white p-4">
+                  <div className="space-y-1">
+                    <h4 className="text-base font-black text-gray-950">Clear testing social + movement data</h4>
+                    <p className="text-sm font-semibold text-gray-600">
+                      Clears trophies, perfect-pick and daily-winner activity, comments, reactions, notifications, leaderboard events, and movement history created during testing. Scoring, predictions, and match results stay untouched.
+                    </p>
+                  </div>
+
+                  {renderResetReadiness({
+                    availability: socialAvailability,
+                    checkboxChecked: true,
+                    phraseMatches: true,
+                    productionBlockedMessage:
+                      "Production social/activity reset is disabled. Enable ALLOW_PRODUCTION_ADMIN_RESETS=true and redeploy."
+                  })}
+
+                  <button
+                    type="button"
+                    disabled={!socialAvailability?.environmentResetAllowed || isResettingTestingSocial}
+                    onClick={() => void handleResetTestingSocialData()}
+                    className="mt-4 rounded-md border border-rose-300 bg-white px-4 py-3 text-sm font-bold text-rose-700 disabled:border-gray-300 disabled:bg-gray-100 disabled:text-gray-600"
+                  >
+                    {isResettingTestingSocial ? "Clearing testing social data..." : "Clear Testing Social + Movement Data"}
                   </button>
                 </section>
 

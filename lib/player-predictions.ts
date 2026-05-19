@@ -6,6 +6,14 @@ import { parseJsonResponse } from "@/lib/fetch-json";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import type { Prediction } from "@/lib/types";
 
+export type SavePlayerPredictionResult = {
+  prediction: Prediction;
+  projectionConflict?: {
+    currentSource: "seed_builder" | "score_predictions";
+    message: string;
+  };
+};
+
 export async function fetchPlayerPredictions(userId: string): Promise<Prediction[]> {
   const localPredictions = getStoredPredictions(userId);
 
@@ -49,11 +57,13 @@ export async function fetchPlayerPredictions(userId: string): Promise<Prediction
   }
 }
 
-export async function savePlayerPrediction(prediction: Prediction): Promise<Prediction> {
+export async function savePlayerPrediction(prediction: Prediction): Promise<SavePlayerPredictionResult> {
   if (!hasSupabaseConfig()) {
     const localPrediction = { ...prediction, updatedAt: new Date().toISOString() };
     upsertStoredPrediction(localPrediction);
-    return localPrediction;
+    return {
+      prediction: localPrediction
+    };
   }
 
   const result = await saveGroupPredictionAction({
@@ -73,5 +83,8 @@ export async function savePlayerPrediction(prediction: Prediction): Promise<Pred
 
   const savedPrediction = result.prediction;
   upsertStoredPrediction(savedPrediction);
-  return savedPrediction;
+  return {
+    prediction: savedPrediction,
+    projectionConflict: result.projectionConflict
+  };
 }

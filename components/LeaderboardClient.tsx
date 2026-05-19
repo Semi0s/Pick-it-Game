@@ -43,6 +43,7 @@ import { fetchPlayerPredictions } from "@/lib/player-predictions";
 import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
 import { hasDirectorAccess } from "@/lib/tier-access";
+import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY, LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import type { MatchWithTeams, Prediction } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
@@ -68,7 +69,6 @@ const LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY = "leaderboard-activity-disclo
 const LEADERBOARD_ACTIVITY_MORE_STORAGE_KEY = "leaderboard-activity-more";
 const LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY = "leaderboard-leader-summary-state";
 const LEADERBOARD_SUBSELECTION_STORAGE_KEY = "leaderboard-subselection-state";
-const LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY = "leaderboard-daily-winner-dismissed";
 const LEADERBOARD_TIME_ZONE = "America/New_York";
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const LEADERBOARD_STABLE_CONTENT_MIN_HEIGHT = "clamp(24rem, 54vh, 38rem)";
@@ -528,6 +528,26 @@ export function LeaderboardClient() {
       setHasRestoredDailyWinnerDismissal(true);
     }
   }, [dailyWinnerDismissOwnerKey]);
+
+  useEffect(() => {
+    const handleAdminResetSignal = (event: StorageEvent) => {
+      if (event.key !== ADMIN_UI_RESET_SIGNAL_STORAGE_KEY) {
+        return;
+      }
+
+      setDismissedDailyWinnerKeys([]);
+      try {
+        window.localStorage.removeItem(LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY);
+      } catch (caughtError) {
+        console.warn("Could not clear Daily Winner dismissal state after admin reset.", caughtError);
+      }
+    };
+
+    window.addEventListener("storage", handleAdminResetSignal);
+    return () => {
+      window.removeEventListener("storage", handleAdminResetSignal);
+    };
+  }, []);
 
   useEffect(() => {
     if (!hasRestoredDailyWinnerDismissal || restoredDailyWinnerDismissOwnerKey !== dailyWinnerDismissOwnerKey) {

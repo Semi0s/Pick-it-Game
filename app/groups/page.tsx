@@ -7,7 +7,9 @@ import {
 } from "@/lib/group-scoring-setup-gate";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { normalizeLanguage } from "@/lib/i18n";
+import { fetchProjectedKnockoutConflictStatus } from "@/lib/projected-knockout-source";
 import { getSafeSupabaseErrorInfo, isLikelySchemaDriftError, logSafeSupabaseError } from "@/lib/supabase-errors";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import type { MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
 
@@ -55,6 +57,10 @@ export default async function GroupsPage() {
   let initialPredictions: Prediction[] | undefined;
   let initialKnockoutSeeded: boolean | undefined;
   let scoringSetupNotice: string | null = null;
+  let initialProjectionConflict: {
+    currentSource: "seed_builder" | "score_predictions";
+    message: string;
+  } | null = null;
 
   if (authUser) {
     await redirectIfLegacyScoringSetupRequired({ userId: authUser.id, pathname: "/groups" });
@@ -86,6 +92,22 @@ export default async function GroupsPage() {
       scoringSetupNotice = await fetchUnconfiguredMemberScoringGroupNotice(authUser.id);
     } catch (error) {
       logSafeSupabaseError("groups-page-scoring-notice", error, { userId: authUser.id, recoverable: true });
+    }
+
+    try {
+      const projectionConflict = await fetchProjectedKnockoutConflictStatus(createAdminClient(), authUser.id);
+      if (projectionConflict.hasConflict && projectionConflict.currentSource === "seed_builder") {
+        initialProjectionConflict = {
+          currentSource: "seed_builder",
+          message:
+            "Your saved bracket is still controlling projected knockout. Your full score picks currently disagree with it."
+        };
+      }
+    } catch (error) {
+      logSafeSupabaseError("groups-page-projected-knockout-conflict", error, {
+        userId: authUser.id,
+        recoverable: true
+      });
     }
 
     let matchesResult;
@@ -197,6 +219,7 @@ export default async function GroupsPage() {
         initialPredictions={initialPredictions}
         initialKnockoutSeeded={initialKnockoutSeeded}
         scoringSetupNotice={scoringSetupNotice}
+        initialProjectionConflict={initialProjectionConflict}
       />
     </AppShell>
   );

@@ -307,6 +307,9 @@ create index match_probability_snapshots_match_id_fetched_at_idx
 create table public.user_settings (
   user_id uuid primary key references public.users(id) on delete cascade,
   notifications_enabled boolean not null default false,
+  projected_knockout_source text not null default 'seed_builder'
+    constraint user_settings_projected_knockout_source_check
+    check (projected_knockout_source in ('seed_builder', 'score_predictions')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

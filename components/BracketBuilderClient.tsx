@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, GripVertical, TriangleAlert, X } from "lucide-react";
 import { saveLightSeedBuilderAction } from "@/app/groups/actions";
@@ -20,6 +20,7 @@ import {
   type KnockoutPlaceholderMatch
 } from "@/lib/knockout-seeding";
 import type { KnockoutBracketEditorView } from "@/lib/bracket-predictions";
+import type { ProjectedKnockoutSource } from "@/lib/projected-knockout-source";
 import type { MatchWithTeams, Team } from "@/lib/types";
 import { getLocalGroupMatches } from "@/lib/group-matches";
 
@@ -36,6 +37,7 @@ type BracketBuilderClientProps = {
   initialKnockoutSeeded?: boolean;
   initialSnapshot?: LightSeedBuilderSnapshot | null;
   hasSavedSnapshot?: boolean;
+  projectedSource?: ProjectedKnockoutSource;
   requiredThirdPlaceQualifierCount?: number;
   roundOf32Placeholders: KnockoutPlaceholderMatch[];
   groupStageDueAt?: string | null;
@@ -57,10 +59,10 @@ type BracketPreviewMatch = {
 };
 
 const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
+const BRACKET_BUILDER_COMPLETION_SEEN_STORAGE_KEY = "bracket-builder-completion-seen";
 
 const SWIPE_THRESHOLD_PX = 42;
 const NEAR_DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
-const TEAM_NAME_CHIP_THRESHOLD = 12;
 const COMPACT_ICON_BUTTON_CLASS =
   "inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 transition hover:border-accent hover:text-accent-dark disabled:cursor-not-allowed disabled:opacity-40";
 
@@ -100,10 +102,6 @@ function reorderItems<T>(items: T[], fromIndex: number, toIndex: number) {
   return nextItems;
 }
 
-function shouldUseCompactCode(team: RankedTeam) {
-  return team.name.length > TEAM_NAME_CHIP_THRESHOLD;
-}
-
 function getBracketLayout(matchCount: number) {
   const rowHeight = 16;
   const teamGap = 0;
@@ -136,6 +134,7 @@ export function BracketBuilderClient({
   initialKnockoutSeeded = false,
   initialSnapshot,
   hasSavedSnapshot = false,
+  projectedSource = "seed_builder",
   requiredThirdPlaceQualifierCount = 0,
   roundOf32Placeholders,
   groupStageDueAt = null,
@@ -145,6 +144,10 @@ export function BracketBuilderClient({
   const touchStartXRef = useRef<number | null>(null);
   const hasMountedRef = useRef(false);
   const completionWasValidRef = useRef(false);
+  const groupRowRefs = useRef(new Map<string, HTMLDivElement>());
+  const previousGroupRowTopsRef = useRef(new Map<string, number>());
+  const thirdPlaceRowRefs = useRef(new Map<string, HTMLDivElement>());
+  const previousThirdPlaceRowTopsRef = useRef(new Map<string, number>());
   const matches = initialMatches ?? getLocalGroupMatches();
   const teams = useMemo(
     () =>
@@ -165,8 +168,31 @@ export function BracketBuilderClient({
     [matches]
   );
   const defaultSnapshot = useMemo(() => buildDefaultLightSeedBuilderSnapshot(teams), [teams]);
+  const persistedGroupKeys = useMemo(
+    () =>
+      new Set(
+        (initialSnapshot?.groupRankings ?? []).map((ranking) => normalizeGroupKey(ranking.groupName) ?? ranking.groupName)
+      ),
+    [initialSnapshot]
+  );
+  const initialDisplayGroupRankings = useMemo(() => {
+    const savedRankingsByGroup = new Map(
+      (initialSnapshot?.groupRankings ?? []).map((ranking) => [
+        normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+        ranking.rankedTeamIds
+      ])
+    );
+
+    return defaultSnapshot.groupRankings.map((ranking) => {
+      const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
+      const savedRankedTeamIds = savedRankingsByGroup.get(groupName);
+      return savedRankedTeamIds?.length
+        ? { ...ranking, rankedTeamIds: savedRankedTeamIds }
+        : ranking;
+    });
+  }, [defaultSnapshot.groupRankings, initialSnapshot]);
   const [groupRankings, setGroupRankings] = useState<LightSeedBuilderSnapshot["groupRankings"]>(
-    initialSnapshot?.groupRankings?.length ? initialSnapshot.groupRankings : defaultSnapshot.groupRankings
+    initialDisplayGroupRankings
   );
   const [thirdPlaceRankings, setThirdPlaceRankings] = useState<string[]>(
     initialSnapshot?.thirdPlaceRankings?.length
@@ -174,16 +200,19 @@ export function BracketBuilderClient({
       : []
   );
   const [activeGroupIndex, setActiveGroupIndex] = useState(0);
-  const [visitedGroups, setVisitedGroups] = useState<Set<string>>(
-    hasSavedSnapshot ? new Set(defaultSnapshot.groupRankings.map((ranking) => normalizeGroupKey(ranking.groupName) ?? ranking.groupName)) : new Set()
-  );
+  const [touchedGroups, setTouchedGroups] = useState<Set<string>>(persistedGroupKeys);
   const [hasInteracted, setHasInteracted] = useState(false);
   const [, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [, setSaveMessage] = useState("Saves automatically");
   const [showCompletionScreen, setShowCompletionScreen] = useState(false);
   const [draggedTeamId, setDraggedTeamId] = useState<string | null>(null);
   const [dragOverTeamId, setDragOverTeamId] = useState<string | null>(null);
-  const [isThirdPlaceListOpen, setIsThirdPlaceListOpen] = useState(true);
+  const [isThirdPlaceListOpen, setIsThirdPlaceListOpen] = useState(false);
+  const [hasTouchedThirdPlaceRanking, setHasTouchedThirdPlaceRanking] = useState(
+    (initialSnapshot?.thirdPlaceRankings?.length ?? 0) >= requiredThirdPlaceQualifierCount &&
+      requiredThirdPlaceQualifierCount > 0
+  );
+  const [hasSeenCompletionThisSession, setHasSeenCompletionThisSession] = useState(false);
 
   const teamsById = useMemo(
     () =>
@@ -225,12 +254,15 @@ export function BracketBuilderClient({
     () =>
       sortedGroupNames
         .map((groupName) => {
+          if (!touchedGroups.has(groupName)) {
+            return null;
+          }
           const rankedTeamIds = groupRankingsByGroup.get(groupName) ?? [];
           const thirdPlaceTeamId = rankedTeamIds[2] ?? null;
           return thirdPlaceTeamId ? teamsById.get(thirdPlaceTeamId) ?? null : null;
         })
         .filter((team): team is RankedTeam => Boolean(team)),
-    [groupRankingsByGroup, sortedGroupNames, teamsById]
+    [groupRankingsByGroup, sortedGroupNames, teamsById, touchedGroups]
   );
 
   const normalizedThirdPlaceRankings = useMemo(() => {
@@ -242,18 +274,34 @@ export function BracketBuilderClient({
 
   const areTopTwoQualifiersEstablished =
     sortedGroupNames.length > 0 &&
-    groupRankings.every((ranking) => ranking.rankedTeamIds.filter(Boolean).length >= 2);
+    touchedGroups.size >= sortedGroupNames.length &&
+    sortedGroupNames.every((groupName) => (groupRankingsByGroup.get(groupName) ?? []).filter(Boolean).length >= 2);
   const hasUnlockedThirdPlacePhase =
-    areTopTwoQualifiersEstablished &&
-    (hasSavedSnapshot || visitedGroups.size >= sortedGroupNames.length);
+    areTopTwoQualifiersEstablished && touchedGroups.size >= sortedGroupNames.length;
   const isThirdPlacePhase = hasUnlockedThirdPlacePhase && requiredThirdPlaceQualifierCount > 0;
-  const isComplete = isThirdPlacePhase && normalizedThirdPlaceRankings.length >= requiredThirdPlaceQualifierCount;
+  const hasCommittedThirdPlaceSelection =
+    requiredThirdPlaceQualifierCount > 0 &&
+    ((initialSnapshot?.thirdPlaceRankings?.length ?? 0) >= requiredThirdPlaceQualifierCount || hasTouchedThirdPlaceRanking);
+  const committedThirdPlaceRankingIds = useMemo(
+    () =>
+      hasCommittedThirdPlaceSelection
+        ? normalizedThirdPlaceRankings.slice(0, requiredThirdPlaceQualifierCount)
+        : [],
+    [hasCommittedThirdPlaceSelection, normalizedThirdPlaceRankings, requiredThirdPlaceQualifierCount]
+  );
+  const isComplete =
+    isThirdPlacePhase &&
+    committedThirdPlaceRankingIds.length >= requiredThirdPlaceQualifierCount;
   const activeGroupName = sortedGroupNames[activeGroupIndex] ?? null;
-  const activeGroupTeams = activeGroupName
-    ? (groupRankingsByGroup.get(activeGroupName) ?? [])
-        .map((teamId) => teamsById.get(teamId) ?? null)
-        .filter((team): team is RankedTeam => Boolean(team))
-    : [];
+  const activeGroupTeams = useMemo(
+    () =>
+      activeGroupName
+        ? (groupRankingsByGroup.get(activeGroupName) ?? [])
+            .map((teamId) => teamsById.get(teamId) ?? null)
+            .filter((team): team is RankedTeam => Boolean(team))
+        : [],
+    [activeGroupName, groupRankingsByGroup, teamsById]
+  );
 
   const currentRankingsInput = useMemo<GroupSeedRankingInput[]>(
     () =>
@@ -263,9 +311,16 @@ export function BracketBuilderClient({
       })),
     [groupRankings]
   );
+  const touchedRankingsInput = useMemo<GroupSeedRankingInput[]>(
+    () =>
+      currentRankingsInput.filter((ranking) =>
+        touchedGroups.has(normalizeGroupKey(ranking.groupName) ?? ranking.groupName)
+      ),
+    [currentRankingsInput, touchedGroups]
+  );
   const previewRankingsInput = useMemo<GroupSeedRankingInput[]>(
-    () => (hasSavedSnapshot || hasInteracted ? currentRankingsInput : []),
-    [currentRankingsInput, hasInteracted, hasSavedSnapshot]
+    () => (hasSavedSnapshot || hasInteracted ? touchedRankingsInput : []),
+    [hasInteracted, hasSavedSnapshot, touchedRankingsInput]
   );
 
   const projectedStandings = useMemo(
@@ -281,18 +336,25 @@ export function BracketBuilderClient({
         predictions: [],
         roundOf32Placeholders,
         standingsByGroupOverride: projectedStandings,
-        rankedThirdPlaceTeamIdsOverride: isThirdPlacePhase
-          ? normalizedThirdPlaceRankings.slice(0, requiredThirdPlaceQualifierCount)
+        rankedThirdPlaceTeamIdsOverride: isThirdPlacePhase && hasCommittedThirdPlaceSelection
+          ? committedThirdPlaceRankingIds
           : null
       }),
-    [isThirdPlacePhase, normalizedThirdPlaceRankings, projectedStandings, requiredThirdPlaceQualifierCount, roundOf32Placeholders, teams]
+    [
+      committedThirdPlaceRankingIds,
+      hasCommittedThirdPlaceSelection,
+      isThirdPlacePhase,
+      projectedStandings,
+      roundOf32Placeholders,
+      teams
+    ]
   );
   const projectedComparisonRound = useMemo(
     () => knockoutProjectedPreview?.stages.find((stage) => stage.stage === "r32")?.matches ?? null,
     [knockoutProjectedPreview]
   );
   const bracketPreviewMatches = useMemo<BracketPreviewMatch[]>(() => {
-    if (projectedComparisonRound?.length) {
+    if (projectedSource === "score_predictions" && projectedComparisonRound?.length) {
       return projectedComparisonRound.map((match) => ({
         matchId: match.matchId,
         stage: match.stage,
@@ -343,7 +405,7 @@ export function BracketBuilderClient({
         }
       };
     });
-  }, [projectedBracket.matches, projectedComparisonRound, teamsById]);
+  }, [projectedBracket.matches, projectedComparisonRound, projectedSource, teamsById]);
 
   const isReadOnly = useMemo(() => {
     if (initialKnockoutSeeded) {
@@ -376,20 +438,16 @@ export function BracketBuilderClient({
   }, [groupStageDueAt, isComplete, isReadOnly]);
 
   useEffect(() => {
-    if (!activeGroupName) {
+    if (typeof window === "undefined") {
       return;
     }
 
-    setVisitedGroups((current) => {
-      if (current.has(activeGroupName)) {
-        return current;
-      }
-
-      const next = new Set(current);
-      next.add(activeGroupName);
-      return next;
-    });
-  }, [activeGroupName]);
+    try {
+      setHasSeenCompletionThisSession(window.sessionStorage.getItem(BRACKET_BUILDER_COMPLETION_SEEN_STORAGE_KEY) === "1");
+    } catch {
+      setHasSeenCompletionThisSession(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!hasMountedRef.current) {
@@ -406,15 +464,23 @@ export function BracketBuilderClient({
     setSaveMessage("Saving automatically...");
     const timeout = window.setTimeout(async () => {
       const result = await saveLightSeedBuilderAction({
-        groupRankings: currentRankingsInput,
-        rankedThirdPlaceTeamIds: normalizedThirdPlaceRankings.slice(0, requiredThirdPlaceQualifierCount)
+        groupRankings: touchedRankingsInput,
+        rankedThirdPlaceTeamIds: committedThirdPlaceRankingIds
       });
 
       if (result.ok) {
         setSaveState("saved");
         setSaveMessage("Saved automatically");
-        if (!completionWasValidRef.current && isComplete) {
+        if (!completionWasValidRef.current && isComplete && !hasSeenCompletionThisSession) {
           setShowCompletionScreen(true);
+          try {
+            window.sessionStorage.setItem(BRACKET_BUILDER_COMPLETION_SEEN_STORAGE_KEY, "1");
+            setHasSeenCompletionThisSession(true);
+          } catch {
+            // Ignore storage failures and just show the CTA for this pass.
+          }
+        } else if (!completionWasValidRef.current && isComplete) {
+          showAppToast({ tone: "tip", text: "Your bracket is complete." });
         }
         completionWasValidRef.current = isComplete;
         return;
@@ -427,18 +493,28 @@ export function BracketBuilderClient({
 
     return () => window.clearTimeout(timeout);
   }, [
-    currentRankingsInput,
     hasInteracted,
+    hasSeenCompletionThisSession,
     isComplete,
     isReadOnly,
-    normalizedThirdPlaceRankings,
-    requiredThirdPlaceQualifierCount
+    committedThirdPlaceRankingIds,
+    requiredThirdPlaceQualifierCount,
+    touchedRankingsInput
   ]);
 
   function updateGroupRanking(groupName: string, nextRankedTeamIds: string[]) {
     setHasInteracted(true);
     setSaveState("saving");
     setSaveMessage("Saving automatically...");
+    setTouchedGroups((current) => {
+      if (current.has(groupName)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.add(groupName);
+      return next;
+    });
     setGroupRankings((current) =>
       current.map((ranking) =>
         (normalizeGroupKey(ranking.groupName) ?? ranking.groupName) === groupName
@@ -448,8 +524,18 @@ export function BracketBuilderClient({
     );
   }
 
+  function acceptCurrentGroupRanking(groupName: string) {
+    const currentOrder = groupRankingsByGroup.get(groupName) ?? [];
+    if (currentOrder.length === 0) {
+      return;
+    }
+
+    updateGroupRanking(groupName, currentOrder);
+  }
+
   function moveThirdPlaceTeam(index: number, direction: -1 | 1) {
     setHasInteracted(true);
+    setHasTouchedThirdPlaceRanking(true);
     setSaveState("saving");
     setSaveMessage("Saving automatically...");
     setThirdPlaceRankings(moveItem(normalizedThirdPlaceRankings, index, direction));
@@ -520,10 +606,75 @@ export function BracketBuilderClient({
     }
   }
 
+  const leftBracketMatches = bracketPreviewMatches.slice(0, 8);
+  const rightBracketMatches = bracketPreviewMatches.slice(8, 16);
+  const leftBracketLayout = getBracketLayout(leftBracketMatches.length);
+  const rightBracketLayout = getBracketLayout(rightBracketMatches.length);
+
+  useLayoutEffect(() => {
+    const nextTops = new Map<string, number>();
+
+    activeGroupTeams.forEach((team) => {
+      const row = groupRowRefs.current.get(team.id);
+      if (!row) {
+        return;
+      }
+
+      const nextTop = row.getBoundingClientRect().top;
+      const previousTop = previousGroupRowTopsRef.current.get(team.id);
+      nextTops.set(team.id, nextTop);
+
+      if (previousTop === undefined || previousTop === nextTop) {
+        return;
+      }
+
+      const deltaY = previousTop - nextTop;
+      row.style.transition = "none";
+      row.style.transform = `translateY(${deltaY}px)`;
+      row.getBoundingClientRect();
+      requestAnimationFrame(() => {
+        row.style.transition = "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)";
+        row.style.transform = "translateY(0)";
+      });
+    });
+
+    previousGroupRowTopsRef.current = nextTops;
+  }, [activeGroupTeams]);
+
+  useLayoutEffect(() => {
+    const nextTops = new Map<string, number>();
+
+    normalizedThirdPlaceRankings.forEach((teamId) => {
+      const row = thirdPlaceRowRefs.current.get(teamId);
+      if (!row) {
+        return;
+      }
+
+      const nextTop = row.getBoundingClientRect().top;
+      const previousTop = previousThirdPlaceRowTopsRef.current.get(teamId);
+      nextTops.set(teamId, nextTop);
+
+      if (previousTop === undefined || previousTop === nextTop) {
+        return;
+      }
+
+      const deltaY = previousTop - nextTop;
+      row.style.transition = "none";
+      row.style.transform = `translateY(${deltaY}px)`;
+      row.getBoundingClientRect();
+      requestAnimationFrame(() => {
+        row.style.transition = "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)";
+        row.style.transform = "translateY(0)";
+      });
+    });
+
+    previousThirdPlaceRowTopsRef.current = nextTops;
+  }, [normalizedThirdPlaceRankings]);
+
   if (showCompletionScreen) {
     return (
-      <div className="flex min-h-[calc(100vh-10rem)] items-center justify-center">
-        <section className="w-full max-w-xl rounded-[2rem] border border-emerald-200 bg-white px-6 py-10 text-center shadow-soft">
+      <div className="pb-6 pt-3">
+        <section className="mx-auto w-full max-w-xl rounded-[2rem] border border-emerald-200 bg-white px-6 py-10 text-center shadow-soft">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
             <CheckCircle2 className="h-8 w-8" />
           </div>
@@ -531,12 +682,15 @@ export function BracketBuilderClient({
           <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">
             Your base predictions are saved. You can check the dashboard for more information or start scoring matches for more points.
           </p>
-          <div className="mt-8 grid grid-cols-2 gap-3">
+          <div className="mt-8 grid grid-cols-3 gap-3">
+            <ActionButton fullWidth onClick={() => setShowCompletionScreen(false)}>
+              Stay Here
+            </ActionButton>
             <ActionButton fullWidth tone="accent" onClick={() => router.push("/dashboard")}>
               Dashboard
             </ActionButton>
             <ActionButton fullWidth tone="accent" onClick={handleGoToFullScoring}>
-              Full Scoring
+              Pick Full Scores
             </ActionButton>
           </div>
         </section>
@@ -544,14 +698,8 @@ export function BracketBuilderClient({
     );
   }
 
-  const leftBracketMatches = bracketPreviewMatches.slice(0, 8);
-  const rightBracketMatches = bracketPreviewMatches.slice(8, 16);
-  const activeGroupUsesCompactCode = activeGroupTeams.some((team) => shouldUseCompactCode(team));
-  const leftBracketLayout = getBracketLayout(leftBracketMatches.length);
-  const rightBracketLayout = getBracketLayout(rightBracketMatches.length);
-
   return (
-    <div className="space-y-2 pb-4">
+    <div className="space-y-1.5 pb-4">
       {nearDeadlineMessage ? (
         <section className="rounded-[1.5rem] border border-amber-200 bg-amber-50 px-4 py-4 text-center text-amber-950">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
@@ -560,11 +708,6 @@ export function BracketBuilderClient({
           <p className="mt-3 text-xl font-black leading-tight">FINISH BUILDING YOUR BRACKET PREDICTIONS BEFORE: {nearDeadlineMessage}</p>
         </section>
       ) : null}
-
-      <section className="px-0 py-0.5 text-center">
-        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-cyan-900">Pick the qualifying teams</p>
-        <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-800">Saves automatically</p>
-      </section>
 
       {isReadOnly ? (
         <section className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-center text-[11px] font-semibold text-gray-600">
@@ -575,7 +718,7 @@ export function BracketBuilderClient({
       ) : null}
 
       <section
-        className="space-y-3 px-0 py-0"
+        className="space-y-2.5 px-0 py-0"
         onTouchStart={(event) => {
           touchStartXRef.current = event.changedTouches[0]?.clientX ?? null;
         }}
@@ -583,6 +726,11 @@ export function BracketBuilderClient({
           handleSwipeEnd(event.changedTouches[0]?.clientX ?? 0);
         }}
       >
+        <div className="pb-0.5 text-center">
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-cyan-900">Pick the qualifying teams</p>
+          <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-800">Saves automatically</p>
+        </div>
+
         <div className="space-y-2">
           <div className="flex items-start justify-between gap-2">
             <h1 className="truncate text-[2rem] font-black leading-none text-gray-950 text-left">
@@ -623,6 +771,8 @@ export function BracketBuilderClient({
           {activeGroupTeams.map((team, index) => {
             const isTopTwo = index < 2;
             const isThirdPlaceTeam = index === 2;
+            const canAcceptCurrentQualifyingOrder =
+              !isReadOnly && Boolean(activeGroupName) && isTopTwo && !touchedGroups.has(activeGroupName);
             const isThirdPlaceQualified =
               isThirdPlacePhase &&
               isThirdPlaceTeam &&
@@ -634,6 +784,27 @@ export function BracketBuilderClient({
             return (
               <div
                 key={team.id}
+                ref={(node) => {
+                  if (node) {
+                    groupRowRefs.current.set(team.id, node);
+                  } else {
+                    groupRowRefs.current.delete(team.id);
+                    previousGroupRowTopsRef.current.delete(team.id);
+                  }
+                }}
+                draggable={!isReadOnly}
+                onDragStart={(event) => {
+                  if (isReadOnly) {
+                    return;
+                  }
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", team.id);
+                  setDraggedTeamId(team.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedTeamId(null);
+                  setDragOverTeamId(null);
+                }}
                 onDragOver={(event) => {
                   if (isReadOnly || !draggedTeamId) {
                     return;
@@ -650,7 +821,7 @@ export function BracketBuilderClient({
                   event.preventDefault();
                   handleDropReorder(team.id);
                 }}
-                className={`grid grid-cols-[1.55rem_0.55rem_1.95rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1.5 last:border-b-0 ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""}`}
+                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1.5 last:border-b-0 transition-shadow ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly ? "" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <div className="flex justify-start">
                   <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
@@ -664,14 +835,19 @@ export function BracketBuilderClient({
                     <span className="h-4 w-4 rounded-full border border-transparent" aria-hidden />
                   )}
                 </div>
-                <div className="flex items-center justify-center px-1">
+                <div className="flex items-center justify-center px-1.5">
                   <span aria-hidden className="text-[1.6rem] leading-none">{team.flagEmoji}</span>
                 </div>
                 <div className="min-w-0">
-                  {activeGroupUsesCompactCode ? (
-                    <span className="ui-chip-sm-pill max-w-full border border-gray-200 bg-white py-0.5 font-black uppercase tracking-[0.08em] text-gray-700">
-                      <span className="truncate">{team.shortName}</span>
-                    </span>
+                  {canAcceptCurrentQualifyingOrder && activeGroupName ? (
+                    <button
+                      type="button"
+                      onClick={() => acceptCurrentGroupRanking(activeGroupName)}
+                      className="block w-full truncate text-left text-[11px] font-black text-gray-950"
+                      aria-label={`Accept ${team.name} in ${index + 1}${index === 0 ? "st" : "nd"} place`}
+                    >
+                      {team.name}
+                    </button>
                   ) : (
                     <span className="block truncate text-[11px] font-black text-gray-950">{team.name}</span>
                   )}
@@ -680,6 +856,7 @@ export function BracketBuilderClient({
                   <div className="grid grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-white">
                     <button
                       type="button"
+                      draggable={false}
                       aria-label={`Move ${team.name} up`}
                       disabled={!canMoveUp}
                       onClick={() => activeGroupName && updateGroupRanking(activeGroupName, moveItem(teamOrder, index, -1))}
@@ -689,6 +866,7 @@ export function BracketBuilderClient({
                     </button>
                     <button
                       type="button"
+                      draggable={false}
                       aria-label={`Move ${team.name} down`}
                       disabled={!canMoveDown}
                       onClick={() => activeGroupName && updateGroupRanking(activeGroupName, moveItem(teamOrder, index, 1))}
@@ -699,22 +877,12 @@ export function BracketBuilderClient({
                   </div>
                 </div>
                 <div className="flex justify-center">
-                  <button
-                    type="button"
-                    draggable={!isReadOnly}
-                    onDragStart={() => {
-                      setDraggedTeamId(team.id);
-                      setHasInteracted(true);
-                    }}
-                    onDragEnd={() => {
-                      setDraggedTeamId(null);
-                      setDragOverTeamId(null);
-                    }}
-                    aria-label={`Drag to reorder ${team.name}`}
-                    className={`inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-400 ${isReadOnly ? "cursor-not-allowed opacity-60" : "cursor-grab active:cursor-grabbing"}`}
+                  <span
+                    aria-hidden
+                    className={`inline-flex h-8 w-8 items-center justify-center text-gray-400 ${isReadOnly ? "opacity-60" : ""}`}
                   >
                     <GripVertical className="h-4 w-4" />
-                  </button>
+                  </span>
                 </div>
               </div>
             );
@@ -723,10 +891,10 @@ export function BracketBuilderClient({
 
         <div className={`rounded-md border px-3 py-2 text-center text-xs font-black uppercase tracking-[0.08em] ${isThirdPlacePhase ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
           {isComplete
-            ? "TOP TWO TEAMS QUALIFY"
+            ? "TOP TWO TEAMS QUALIFY PER GROUP"
             : isThirdPlacePhase
               ? "PICK 8 THIRD-PLACE QUALIFIERS"
-              : "TOP TWO TEAMS QUALIFY"}
+              : "TOP TWO TEAMS QUALIFY PER GROUP"}
         </div>
 
         {isThirdPlacePhase ? (
@@ -748,7 +916,17 @@ export function BracketBuilderClient({
 
                 const isAboveCutoff = index < requiredThirdPlaceQualifierCount;
                 return (
-                  <div key={team.id}>
+                  <div
+                    key={team.id}
+                    ref={(node) => {
+                      if (node) {
+                        thirdPlaceRowRefs.current.set(team.id, node);
+                      } else {
+                        thirdPlaceRowRefs.current.delete(team.id);
+                        previousThirdPlaceRowTopsRef.current.delete(team.id);
+                      }
+                    }}
+                  >
                     {index === requiredThirdPlaceQualifierCount ? (
                       <div className="pb-1 pt-1 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-rose-600">
                         Cutoff
@@ -763,13 +941,7 @@ export function BracketBuilderClient({
                       <div className="min-w-0">
                         <div className="flex items-center gap-3">
                           <span aria-hidden className="text-[1.6rem] leading-none">{team.flagEmoji}</span>
-                          {shouldUseCompactCode(team) ? (
-                            <span className="ui-chip-sm-pill border border-gray-200 bg-white py-0.5 font-black uppercase tracking-[0.08em] text-gray-700">
-                              {team.shortName}
-                            </span>
-                          ) : (
-                            <span className="truncate text-xs font-black text-gray-950">{team.name}</span>
-                          )}
+                          <span className="truncate text-xs font-black text-gray-950">{team.name}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
@@ -798,23 +970,13 @@ export function BracketBuilderClient({
               })}
             </div> : null}
           </div>
-        ) : (
-          <div className="rounded-[1.1rem] border border-dashed border-gray-200 bg-gray-50/70 px-3 py-3 text-center">
-            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-gray-500">
-              Third-place qualifiers unlock after you set the top two finishers in each group.
-            </p>
-          </div>
-        )}
+        ) : null}
       </section>
 
-      <section className="px-0 py-0">
-        <div className="mb-1 text-right">
+      <section className="px-0 pt-3 pb-0">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500">Projected bracket</p>
           <p className="text-xs font-semibold text-gray-600">Updates live</p>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500">Projected bracket</p>
-          </div>
         </div>
 
         <div className="mt-2 px-0 py-2">
@@ -944,7 +1106,7 @@ export function BracketBuilderClient({
             Dashboard
           </ActionButton>
           <ActionButton fullWidth tone="accent" onClick={handleGoToFullScoring}>
-            Full Scoring
+            Pick Full Scores
           </ActionButton>
           </div>
         </div>

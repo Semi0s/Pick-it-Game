@@ -18,6 +18,7 @@ import {
   PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
   type ExplainerLanguage
 } from "@/lib/i18n";
+import { setProjectedKnockoutSourcePreferenceAction } from "@/app/groups/actions";
 import { fetchPlayerPredictions, savePlayerPrediction } from "@/lib/player-predictions";
 import { canEditPrediction } from "@/lib/prediction-state";
 import { getStoredPredictions } from "@/lib/prediction-store";
@@ -45,6 +46,10 @@ type GroupPredictionsProps = {
   initialMatches?: MatchWithTeams[];
   initialPredictions?: Prediction[];
   initialKnockoutSeeded?: boolean;
+  initialProjectionConflict?: {
+    currentSource: "seed_builder" | "score_predictions";
+    message: string;
+  } | null;
 };
 
 type DraftPredictionState = {
@@ -195,7 +200,8 @@ export function GroupPredictions({
   user,
   initialMatches,
   initialPredictions,
-  initialKnockoutSeeded
+  initialKnockoutSeeded,
+  initialProjectionConflict = null
 }: GroupPredictionsProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -225,6 +231,8 @@ export function GroupPredictions({
   const [autoPickDraft, setAutoPickDraft] = useState<AutoPickDraft | null>(null);
   const [activeAutoPickToken, setActiveAutoPickToken] = useState<string | null>(null);
   const [isAutoPicking, setIsAutoPicking] = useState(false);
+  const [projectionConflict, setProjectionConflict] = useState(initialProjectionConflict);
+  const [isUpdatingProjectedSource, setIsUpdatingProjectedSource] = useState(false);
   const [draftPredictionStateByMatchId, setDraftPredictionStateByMatchId] = useState<Record<string, DraftPredictionState>>({});
   const [explainerLanguage] = useState<ExplainerLanguage>(() => {
     if (typeof window !== "undefined") {
@@ -1107,7 +1115,8 @@ export function GroupPredictions({
   }, [logGroupsEntryScroll, pendingScrollTarget, visibleMatches]);
 
   async function handleSave(prediction: Prediction) {
-    const savedPrediction = await savePlayerPrediction(prediction);
+    const saveResult = await savePlayerPrediction(prediction);
+    const savedPrediction = saveResult.prediction;
     if (autoPickDraft?.matchId === savedPrediction.matchId) {
       setAutoPickDraft(null);
       setActiveAutoPickToken(null);
@@ -1178,6 +1187,38 @@ export function GroupPredictions({
     }
 
     fetchPredictionsForMatches(filteredMatches.map((match) => match.id), user.id).then(setSocialPredictions);
+    if (saveResult.projectionConflict) {
+      setProjectionConflict(saveResult.projectionConflict);
+      const shouldUseScorePicks = window.confirm(
+        `${saveResult.projectionConflict.message}\n\nPress OK to make your score picks the projected knockout source. Press Cancel to keep your saved bracket.`
+      );
+
+      setIsUpdatingProjectedSource(true);
+      try {
+        const result = await setProjectedKnockoutSourcePreferenceAction({
+          source: shouldUseScorePicks ? "score_predictions" : "seed_builder"
+        });
+        showAppToast({
+          tone: result.ok ? "success" : "error",
+          text: result.message
+        });
+
+        if (result.ok) {
+          setProjectionConflict(
+            shouldUseScorePicks
+              ? null
+              : {
+                  currentSource: "seed_builder",
+                  message:
+                    "Your saved bracket is still controlling projected knockout. Your full score picks currently disagree with it."
+                }
+          );
+          router.refresh();
+        }
+      } finally {
+        setIsUpdatingProjectedSource(false);
+      }
+    }
     return savedPrediction;
   }
 
@@ -1470,6 +1511,67 @@ export function GroupPredictions({
 
   return (
     <div className="space-y-6">
+      {projectionConflict ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-700">
+                Projected knockout mismatch
+              </p>
+              <p>{projectionConflict.message}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={isUpdatingProjectedSource}
+                onClick={() => {
+                  setIsUpdatingProjectedSource(true);
+                  void setProjectedKnockoutSourcePreferenceAction({ source: "seed_builder" })
+                    .then((result) => {
+                      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        setProjectionConflict({
+                          currentSource: "seed_builder",
+                          message:
+                            "Your saved bracket is still controlling projected knockout. Your full score picks currently disagree with it."
+                        });
+                        router.refresh();
+                      }
+                    })
+                    .finally(() => {
+                      setIsUpdatingProjectedSource(false);
+                    });
+                }}
+                className="rounded-full border border-amber-300 bg-white px-3 py-2 text-xs font-black text-amber-900 transition hover:border-amber-400"
+              >
+                Keep My Bracket
+              </button>
+              <button
+                type="button"
+                disabled={isUpdatingProjectedSource}
+                onClick={() => {
+                  setIsUpdatingProjectedSource(true);
+                  void setProjectedKnockoutSourcePreferenceAction({ source: "score_predictions" })
+                    .then((result) => {
+                      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        setProjectionConflict(null);
+                        router.refresh();
+                      }
+                    })
+                    .finally(() => {
+                      setIsUpdatingProjectedSource(false);
+                    });
+                }}
+                className="rounded-full bg-amber-900 px-3 py-2 text-xs font-black text-white transition hover:bg-amber-800"
+              >
+                Use My Score Picks
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <section className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">

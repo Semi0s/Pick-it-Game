@@ -1774,7 +1774,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
                                   <p className="truncate text-sm font-semibold text-gray-600">
-                                    {redactEmailAddress(member.email)}
+                                    {isSuperAdmin ? member.email : redactEmailAddress(member.email)}
                                   </p>
                                   {member.homeTeamId ? (
                                     <div className="mt-2">
@@ -2197,6 +2197,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 <Avatar name={member.name} avatarUrl={member.avatarUrl} size="sm" />
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-black text-gray-950">{member.name}</p>
+                                  <p className="truncate text-sm font-semibold text-gray-600">
+                                    {isSuperAdmin ? member.email : redactEmailAddress(member.email)}
+                                  </p>
                                   {member.homeTeamId ? (
                                     <div className="mt-2">
                                       <HomeTeamBadge teamId={member.homeTeamId} compact />

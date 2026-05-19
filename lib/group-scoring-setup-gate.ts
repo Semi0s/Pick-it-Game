@@ -184,6 +184,7 @@ async function fetchLegacyGroupsByIds(groupIds: string[]) {
 function getMissingScoringSetupFields(ruleset: GroupRulesetGateRow | null) {
   if (!ruleset) {
     return [
+      "group_stage_prediction_depth",
       "group_bonus_mode",
       "group_stage_picks_due_at",
       "knockout_picks_due_at",
@@ -193,6 +194,15 @@ function getMissingScoringSetupFields(ruleset: GroupRulesetGateRow | null) {
 
   const missingFields: string[] = [];
   const groupBonusMode = normalizeGroupBonusMode(ruleset.group_bonus_mode);
+  const groupStagePredictionDepth = ruleset.group_stage_prediction_depth;
+
+  if (!groupStagePredictionDepth) {
+    missingFields.push("group_stage_prediction_depth");
+  }
+
+  if (groupStagePredictionDepth === "full_match_scores" && !ruleset.full_match_scoring_variant) {
+    missingFields.push("full_match_scoring_variant");
+  }
 
   if (!ruleset.group_bonus_mode || !groupBonusMode) {
     missingFields.push("group_bonus_mode");

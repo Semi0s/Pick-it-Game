@@ -11,7 +11,6 @@ import {
   fetchRequiredLegalDocumentAction,
   forceLegalReacceptanceAction,
   repairPendingInviteAction,
-  resetTestingSocialStateAction,
   resendConfirmationOrOnboardingNudgeAction,
   resetOnboardingStateAction,
   resetUserAccess,
@@ -27,7 +26,6 @@ import { getRoleBadgeLabel } from "@/lib/access-levels";
 import { parseJsonResponse } from "@/lib/fetch-json";
 import type { LegalDocument } from "@/lib/legal";
 import type { SystemReadinessReport } from "@/lib/system-readiness";
-import { DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import { showAppToast } from "@/lib/app-toast";
 import { ADMIN_ASSIGNABLE_ACCESS_LEVELS, compareAccessLevels, getAccessLevelDisplayLabel, type AccessLevel } from "@/lib/tier-access";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
@@ -447,45 +445,6 @@ export function AdminPlayersClient() {
               }}
             />
           </div>
-        </div>
-      </ManagementCard>
-      <ManagementCard
-        title="Testing reset"
-        subtitle="Clear social/testing artifacts, notifications, and leaderboard movement history without touching scoring or predictions."
-      >
-        <div className="space-y-4">
-          <p className="text-sm font-semibold text-gray-600">
-            This clears leaderboard comments, reactions, congratulates, notifications, leaderboard events, manually
-            awarded trophies, and leaderboard snapshot history created during testing. Match scores, predictions, and
-            leaderboard totals stay untouched.
-          </p>
-          <ActionButton
-            tone="danger"
-            disabled={activeActionKey === "reset-testing-social-state"}
-            onClick={() =>
-              setConfirmation({
-                key: "reset-testing-social-state",
-                title: "Reset testing social data?",
-                description:
-                  "This will remove comments, reactions, congratulates, notifications, leaderboard events, manually awarded trophies, and leaderboard movement history across the app. Scoring and predictions will not change.",
-                confirmLabel: "Clear Testing Social + Movement Data",
-                onConfirm: () => {
-                  void withAction("reset-testing-social-state", async () => {
-                    const result = await resetTestingSocialStateAction();
-                    setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                    if (result.ok) {
-                      if (typeof window !== "undefined") {
-                        window.localStorage.removeItem(DASHBOARD_STANDINGS_HISTORY_STORAGE_KEY);
-                      }
-                      setConfirmation(null);
-                    }
-                  });
-                }
-              })
-            }
-          >
-            {activeActionKey === "reset-testing-social-state" ? "Clearing..." : "Clear Testing Social + Movement Data"}
-          </ActionButton>
         </div>
       </ManagementCard>
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}

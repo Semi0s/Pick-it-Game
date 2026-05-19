@@ -1,7 +1,9 @@
+import { fetchIntegerAppSetting } from "@/lib/app-settings";
 import { createNotificationsForLeaderboardEvents, createTrophyEarnedNotifications } from "@/lib/notifications";
 import { fetchLeaderboardEventReactions } from "@/lib/leaderboard-reactions";
 import { isMissingAnyRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { LEADERBOARD_SOCIAL_RESET_AT_SETTING_KEY } from "@/lib/ui-storage-keys";
 
 type SnapshotMatchRow = {
   match_id: string;
@@ -115,12 +117,17 @@ export async function fetchDailyWinners(groupId?: string): Promise<DailyWinner[]
   const adminSupabase = createAdminClient();
   const { startIso, endIso, dateKey } = getCurrentDayBoundsInTimeZone(LEADERBOARD_HIGHLIGHT_TIME_ZONE);
   const trimmedGroupId = groupId?.trim();
+  const socialResetCutoffIso = await fetchLeaderboardSocialResetCutoffIso(startIso, endIso);
 
   let dailyWinnerQuery = adminSupabase
     .from("prediction_scores")
     .select("user_id,points")
     .gte("scored_at", startIso)
     .lt("scored_at", endIso);
+
+  if (socialResetCutoffIso) {
+    dailyWinnerQuery = dailyWinnerQuery.gte("scored_at", socialResetCutoffIso);
+  }
 
   if (trimmedGroupId) {
     const { data: memberships, error: membershipsError } = await adminSupabase
@@ -501,6 +508,21 @@ async function awardDailyWinnerTrophy(
       awardedAt
     }))
   });
+}
+
+async function fetchLeaderboardSocialResetCutoffIso(startIso: string, endIso: string) {
+  const resetAtValue = await fetchIntegerAppSetting(LEADERBOARD_SOCIAL_RESET_AT_SETTING_KEY, 0);
+  if (resetAtValue <= 0) {
+    return null;
+  }
+
+  const resetAtMs = resetAtValue >= 100_000_000_000 ? resetAtValue : resetAtValue * 1000;
+  const resetAtIso = new Date(resetAtMs).toISOString();
+  if (resetAtIso < startIso || resetAtIso >= endIso) {
+    return null;
+  }
+
+  return resetAtIso;
 }
 
 function isMissingTrophiesTableError(message?: string) {
