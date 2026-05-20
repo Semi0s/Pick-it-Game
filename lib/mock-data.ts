@@ -1,4 +1,4 @@
-import type { Invite, Match, Team, UserProfile } from "@/lib/types";
+import type { Invite, Match, Team, UserProfile } from "./types.ts";
 
 export const demoInvites: Invite[] = [
   {

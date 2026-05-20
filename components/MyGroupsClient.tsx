@@ -59,6 +59,7 @@ import {
   normalizeInviteTokenInput,
   useSessionDisclosureState
 } from "@/components/player-management/Shared";
+import type { GroupBaseMode } from "@/lib/play-mode";
 import { redactEmailAddress } from "@/lib/redact-email";
 import type { AccessLevel } from "@/lib/tier-access";
 
@@ -66,6 +67,7 @@ type MyGroupsClientProps = {
   inviteToken?: string;
   inviteLanguage?: string;
   inviteHelperLanguage?: string;
+  forceCreateGroupOpen?: boolean;
 };
 
 type ToastState = { tone: "success" | "error" | "tip"; text: string } | null;
@@ -97,7 +99,7 @@ function getGroupCardTierAccessLevel(group: MyManagedGroup): AccessLevel {
   return "player";
 }
 
-export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLanguage }: MyGroupsClientProps) {
+export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLanguage, forceCreateGroupOpen }: MyGroupsClientProps) {
   const router = useRouter();
   const [summary, setSummary] = useState<FetchMyGroupsResult | null>(null);
   const [message, setMessage] = useState<ToastState>(null);
@@ -109,6 +111,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [groupDescription, setGroupDescription] = useState("");
+  const [groupBaseMode, setGroupBaseMode] = useState<GroupBaseMode>("my_picks");
+  const [homeTeamAdvantageEnabled, setHomeTeamAdvantageEnabled] = useState(false);
   const [membershipLimit, setMembershipLimit] = useState("");
   const [createGroupInviteEmails, setCreateGroupInviteEmails] = useState("");
   const [groupLimitForms, setGroupLimitForms] = useState<Record<string, string>>({});
@@ -159,6 +163,12 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [expandedTrophyIds, setExpandedTrophyIds] = useState<string[]>([]);
   const [expandedGroupInfoIds, setExpandedGroupInfoIds] = useState<string[]>([]);
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useSessionDisclosureState(CREATE_GROUP_DISCLOSURE_STORAGE_KEY, false);
+
+  useEffect(() => {
+    if (forceCreateGroupOpen) {
+      setIsCreateGroupOpen(true);
+    }
+  }, [forceCreateGroupOpen, setIsCreateGroupOpen]);
   const confirmationRef = useRef<HTMLDivElement | null>(null);
   const [hasRestoredGroupDisclosureState, setHasRestoredGroupDisclosureState] = useState(false);
   const [hasRestoredGroupLimitState, setHasRestoredGroupLimitState] = useState(false);
@@ -604,6 +614,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     const result = await createGroupAction({
       name: groupName,
       description: groupDescription,
+      basePredictionMode: groupBaseMode,
+      homeTeamAdvantageEnabled,
       membershipLimit: membershipLimit ? Number(membershipLimit) : undefined,
       inviteEmailsText: createGroupInviteEmails
     });
@@ -612,6 +624,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     if (result.ok) {
       setGroupName("");
       setGroupDescription("");
+      setGroupBaseMode("my_picks");
+      setHomeTeamAdvantageEnabled(false);
       setMembershipLimit("");
       setCreateGroupInviteEmails("");
       await load();
@@ -1245,6 +1259,47 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   ) : null}
                 </label>
                 <label className="block">
+                  <span className="text-sm font-bold text-gray-800">Base mode</span>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    {(
+                      [
+                        ["my_picks", "My Picks"],
+                        ["easy_bracket", "Easy Bracket"],
+                        ["strategy_mode", "Strategy Mode"]
+                      ] as Array<[GroupBaseMode, string]>
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setGroupBaseMode(value)}
+                        className={`rounded-md border px-3 py-3 text-sm font-bold transition ${
+                          groupBaseMode === value
+                            ? "border-accent bg-accent-light text-accent-dark"
+                            : "border-gray-300 bg-white text-gray-700 hover:border-accent"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </label>
+                <label className="block rounded-lg border border-gray-200 bg-white px-3 py-3">
+                  <span className="flex items-start justify-between gap-3">
+                    <span>
+                      <span className="block text-sm font-bold text-gray-800">Home Team Advantage</span>
+                      <span className="mt-1 block text-xs font-semibold leading-5 text-gray-600">
+                        Each group member can add their home team to this group leaderboard only.
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={homeTeamAdvantageEnabled}
+                      onChange={(event) => setHomeTeamAdvantageEnabled(event.target.checked)}
+                      className="mt-1 h-4 w-4 accent-accent"
+                    />
+                  </span>
+                </label>
+                <label className="block">
                   <span className="text-sm font-bold text-gray-800">Invite specific players by email</span>
                   <textarea
                     value={createGroupInviteEmails}
@@ -1366,6 +1421,19 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                 badges={
                   <>
                     <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
+                    <ManagementBadge
+                      label={
+                        group.basePredictionMode === "easy_bracket"
+                          ? "Easy Bracket"
+                          : group.basePredictionMode === "strategy_mode"
+                            ? "Strategy Mode"
+                            : "My Picks"
+                      }
+                      tone="neutral"
+                    />
+                    {group.homeTeamAdvantageEnabled ? (
+                      <ManagementBadge label="Home Team Advantage" tone="success" />
+                    ) : null}
                     <ManagementBadge label={`Cap ${group.membershipLimit}`} tone="neutral" />
                   </>
                 }

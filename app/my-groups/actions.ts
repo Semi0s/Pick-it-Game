@@ -46,6 +46,7 @@ import {
   type ManagedGroupRulesetSummary,
   type SidePickPackageOption
 } from "@/lib/scoped-scoring";
+import { normalizeGroupBaseMode, type GroupBaseMode } from "@/lib/play-mode";
 import { normalizeGroupStageMode } from "@/lib/group-stage-modes";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { getPublicSiteUrl, getSiteUrl } from "@/lib/site-url";
@@ -241,6 +242,8 @@ export type CreateGroupInput = {
   description?: string;
   membershipLimit?: number;
   inviteEmailsText?: string;
+  basePredictionMode?: GroupBaseMode;
+  homeTeamAdvantageEnabled?: boolean;
 };
 
 export type CreateGroupResult =
@@ -250,6 +253,8 @@ export type CreateGroupResult =
         id: string;
         name: string;
         description: string | null;
+        basePredictionMode: GroupBaseMode;
+        homeTeamAdvantageEnabled: boolean;
         membershipLimit: number;
         status: GroupStatus;
       };
@@ -367,6 +372,8 @@ export type MyManagedGroup = {
   id: string;
   name: string;
   description?: string | null;
+  basePredictionMode: GroupBaseMode;
+  homeTeamAdvantageEnabled: boolean;
   membershipLimit: number;
   status: GroupStatus;
   memberCount?: number;
@@ -626,6 +633,8 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
   if (!parsedInviteEmails.ok) {
     return { ok: false, message: parsedInviteEmails.message };
   }
+  const basePredictionMode = normalizeGroupBaseMode(input.basePredictionMode);
+  const homeTeamAdvantageEnabled = Boolean(input.homeTeamAdvantageEnabled);
 
   const adminSupabase = createAdminClient();
   if (currentUser.role !== "admin" && !currentUser.tierAccess.capabilities.canCreateGroup) {
@@ -697,12 +706,14 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
     .insert({
       name,
       description: description || null,
+      base_prediction_mode: basePredictionMode,
+      home_team_advantage_enabled: homeTeamAdvantageEnabled,
       owner_user_id: currentUser.userId,
       created_by_user_id: currentUser.userId,
       membership_limit: membershipLimit,
       status: "active"
     })
-    .select("id,name,description,membership_limit,status")
+    .select("id,name,description,base_prediction_mode,home_team_advantage_enabled,membership_limit,status")
     .single();
 
   if (error) {
@@ -741,6 +752,8 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
         id: data.id,
         name: data.name,
         description: data.description ?? null,
+        basePredictionMode: normalizeGroupBaseMode(data.base_prediction_mode),
+        homeTeamAdvantageEnabled: Boolean(data.home_team_advantage_enabled),
         membershipLimit: data.membership_limit,
         status: data.status
       },
@@ -3625,11 +3638,11 @@ async function fetchVisibleGroups(
   const { data: groups, error: groupsError } = role === "admin"
     ? await adminSupabase
         .from("groups")
-        .select("id,name,description,membership_limit,status,owner_user_id")
+        .select("id,name,description,base_prediction_mode,home_team_advantage_enabled,membership_limit,status,owner_user_id")
         .order("created_at", { ascending: false })
     : await adminSupabase
         .from("groups")
-        .select("id,name,description,membership_limit,status,owner_user_id")
+        .select("id,name,description,base_prediction_mode,home_team_advantage_enabled,membership_limit,status,owner_user_id")
         .or(`owner_user_id.eq.${userId},id.in.(${membershipGroupIds.length > 0 ? membershipGroupIds.join(",") : "00000000-0000-0000-0000-000000000000"})`)
         .order("created_at", { ascending: false });
 
@@ -3641,6 +3654,8 @@ async function fetchVisibleGroups(
     id: string;
     name: string;
     description?: string | null;
+    base_prediction_mode?: string | null;
+    home_team_advantage_enabled?: boolean | null;
     membership_limit: number;
     status: GroupStatus;
     owner_user_id?: string | null;
@@ -3662,6 +3677,8 @@ async function fetchVisibleGroups(
       id: group.id,
       name: group.name,
       description: group.description ?? null,
+      basePredictionMode: normalizeGroupBaseMode(group.base_prediction_mode),
+      homeTeamAdvantageEnabled: Boolean(group.home_team_advantage_enabled),
       membershipLimit: group.membership_limit,
       status: group.status,
       canManage,

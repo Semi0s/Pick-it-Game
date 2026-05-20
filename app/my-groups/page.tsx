@@ -6,7 +6,7 @@ import { createClient as createServerSupabaseClient } from "@/lib/supabase/serve
 export default async function MyGroupsPage({
   searchParams
 }: {
-  searchParams?: Promise<{ invite?: string; lang?: string; helperLang?: string }>;
+  searchParams?: Promise<{ invite?: string; lang?: string; helperLang?: string; create?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
   const supabase = await createServerSupabaseClient();
@@ -30,6 +30,7 @@ export default async function MyGroupsPage({
         inviteToken={resolvedSearchParams?.invite}
         inviteLanguage={resolvedSearchParams?.lang}
         inviteHelperLanguage={resolvedSearchParams?.helperLang}
+        forceCreateGroupOpen={resolvedSearchParams?.create === "1"}
       />
     </AppShell>
   );

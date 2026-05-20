@@ -1,12 +1,14 @@
 import { AppShell } from "@/components/AppShell";
 import { GroupPageClient } from "@/components/GroupPageClient";
 import { fetchKnockoutStructureStatus, safeFetchKnockoutStructureStatusFallback } from "@/lib/bracket-predictions";
+import { fetchMyPicksGateState, resolveMyPicksGateState } from "@/lib/easy-bracket-gate";
 import {
   fetchUnconfiguredMemberScoringGroupNotice,
   redirectIfLegacyScoringSetupRequired
 } from "@/lib/group-scoring-setup-gate";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { normalizeLanguage } from "@/lib/i18n";
+import type { PredictionStartMode } from "@/lib/play-mode";
 import { fetchUserGroupProjectionSourceMap, fetchUserLightSeedBuilderSnapshot, type LightSeedBuilderSnapshot, type UserGroupProjectionSource } from "@/lib/group-stage-modes";
 import { getSafeSupabaseErrorInfo, isLikelySchemaDriftError, logSafeSupabaseError } from "@/lib/supabase-errors";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -59,6 +61,10 @@ export default async function GroupsPage() {
   let scoringSetupNotice: string | null = null;
   let initialBracketBuilderSnapshot: LightSeedBuilderSnapshot | null = null;
   let initialGroupProjectionSources: Record<string, UserGroupProjectionSource> = {};
+  let predictionStartMode: PredictionStartMode | null = null;
+  let myPicksAcknowledgedAt: string | null = null;
+  let shouldGateMyPicks = false;
+  let groupStageMatchCount = 72;
 
   if (authUser) {
     await redirectIfLegacyScoringSetupRequired({ userId: authUser.id, pathname: "/groups" });
@@ -67,6 +73,7 @@ export default async function GroupsPage() {
       homeTeam: getTeam(match.homeTeamId),
       awayTeam: getTeam(match.awayTeamId)
     }));
+    groupStageMatchCount = localMatches.filter((match) => match.stage === "group").length || 72;
 
     const [fullUserResult, fallbackUserResult] = await Promise.all([
       supabase
@@ -93,12 +100,15 @@ export default async function GroupsPage() {
     }
 
     try {
-      const [snapshot, sourceMap] = await Promise.all([
+      const [snapshot, sourceMap, myPicksGateState] = await Promise.all([
         fetchUserLightSeedBuilderSnapshot(createAdminClient(), authUser.id),
-        fetchUserGroupProjectionSourceMap(createAdminClient(), authUser.id)
+        fetchUserGroupProjectionSourceMap(createAdminClient(), authUser.id),
+        fetchMyPicksGateState(createAdminClient(), authUser.id)
       ]);
       initialBracketBuilderSnapshot = snapshot;
       initialGroupProjectionSources = Object.fromEntries(sourceMap.entries());
+      predictionStartMode = myPicksGateState.predictionStartMode;
+      myPicksAcknowledgedAt = myPicksGateState.myPicksAcknowledgedAt;
     } catch (error) {
       logSafeSupabaseError("groups-page-bracket-builder-context", error, {
         userId: authUser.id,
@@ -201,6 +211,14 @@ export default async function GroupsPage() {
         pointsAwarded: row.points_awarded ?? 0,
         updatedAt: row.updated_at ?? undefined
       }));
+      shouldGateMyPicks = resolveMyPicksGateState({
+        predictionStartMode,
+        myPicksAcknowledgedAt,
+        hasEasyBracketSnapshot:
+          ((initialBracketBuilderSnapshot?.groupRankings?.length ?? 0) > 0) ||
+          ((initialBracketBuilderSnapshot?.thirdPlaceRankings?.length ?? 0) > 0),
+        hasAnyGroupScorePredictions: initialPredictions.length > 0
+      }).shouldGateMyPicks;
 
       initialKnockoutSeeded = knockoutStatusResult.isFullySeeded;
     }
@@ -217,6 +235,9 @@ export default async function GroupsPage() {
         scoringSetupNotice={scoringSetupNotice}
         initialBracketBuilderSnapshot={initialBracketBuilderSnapshot}
         initialGroupProjectionSources={initialGroupProjectionSources}
+        myPicksAcknowledgedAt={myPicksAcknowledgedAt}
+        shouldGateMyPicks={shouldGateMyPicks}
+        groupStageMatchCount={groupStageMatchCount}
       />
     </AppShell>
   );

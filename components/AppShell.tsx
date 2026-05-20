@@ -11,6 +11,7 @@ import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { APP_TOAST_EVENT, markAppToastsReady, type AppToastDetail } from "@/lib/app-toast";
 import { getStrings } from "@/lib/strings";
 import { PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, normalizeExplainerLanguage, type ExplainerLanguage, type SupportedLanguage } from "@/lib/i18n";
+import { shouldHideDockForPath } from "@/lib/play-mode";
 import {
   fetchCurrentUserTrophies,
   fetchPendingTrophyCelebrations,
@@ -49,6 +50,7 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading } = useCurrentUser();
+  const [onboardingFlag, setOnboardingFlag] = useState<string | null>(null);
   const [dockLanguage, setDockLanguage] = useState<SupportedLanguage>(user?.preferredLanguage === "es" ? "es" : "en");
   const [displayLanguage, setDisplayLanguage] = useState<ExplainerLanguage>(() => {
     if (typeof window !== "undefined") {
@@ -80,6 +82,31 @@ export function AppShell({ children }: AppShellProps) {
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
   const [headerHeight, setHeaderHeight] = useState(72);
+  const isOnboardingExperience = shouldHideDockForPath(pathname, onboardingFlag);
+  const onboardingExitHref = pathname === "/start-playing" ? "/dashboard" : "/start-playing";
+  const onboardingExitLabel = pathname === "/start-playing" ? "Exit" : "Back";
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const syncOnboardingFlag = () => {
+      try {
+        const nextFlag = new URLSearchParams(window.location.search).get("onboarding");
+        setOnboardingFlag(nextFlag);
+      } catch {
+        setOnboardingFlag(null);
+      }
+    };
+
+    syncOnboardingFlag();
+    window.addEventListener("popstate", syncOnboardingFlag);
+
+    return () => {
+      window.removeEventListener("popstate", syncOnboardingFlag);
+    };
+  }, [pathname]);
 
   useEffect(() => {
     if (!isLanguageMenuOpen) {
@@ -473,7 +500,7 @@ export function AppShell({ children }: AppShellProps) {
       className="min-h-screen overflow-x-clip bg-white text-gray-950"
       style={
         {
-          paddingBottom: "calc(4.85rem + env(safe-area-inset-bottom, 0px))",
+          paddingBottom: isOnboardingExperience ? "0px" : "calc(4.85rem + env(safe-area-inset-bottom, 0px))",
           "--app-header-height": `${headerHeight}px`
         } as CSSProperties
       }
@@ -491,6 +518,14 @@ export function AppShell({ children }: AppShellProps) {
             />
           </Link>
           <div className="flex shrink-0 items-center gap-1.5 max-[399px]:gap-2.5">
+            {isOnboardingExperience ? (
+              <Link
+                href={onboardingExitHref}
+                className="inline-flex h-8 items-center rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light max-[399px]:px-2.5 max-[399px]:text-[10px] sm:h-9 sm:px-3"
+              >
+                {onboardingExitLabel}
+              </Link>
+            ) : null}
             {shouldShowAccessBadge(user) ? (
               <TierIconBadge accessLevel={getAccessLevel(user)} size={24} />
             ) : null}
@@ -583,43 +618,45 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       ) : null}
 
-      <nav
-        className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-700 bg-neutral-900"
-        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
-      >
-        <div className="relative mx-auto grid w-full max-w-4xl grid-cols-4 gap-0.5 px-2 pb-0.5 pt-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href;
+      {isOnboardingExperience ? null : (
+        <nav
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-700 bg-neutral-900"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        >
+          <div className="relative mx-auto grid w-full max-w-4xl grid-cols-4 gap-0.5 px-2 pb-0.5 pt-1">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = pathname === item.href;
 
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-label={item.ariaLabel}
-                className={`relative flex min-h-[3.35rem] w-full min-w-0 touch-manipulation select-none flex-col items-center justify-center gap-0.5 rounded-md px-1.5 py-1.5 text-[10px] font-semibold leading-none transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-100/20 active:scale-[0.985] sm:text-[11px] ${
-                  isActive
-                    ? "bg-neutral-800 text-neutral-50"
-                    : "text-neutral-400 hover:text-neutral-200"
-                }`}
-                style={{ WebkitTapHighlightColor: "transparent" }}
-              >
-                {isActive ? (
-                  <span
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-label={item.ariaLabel}
+                  className={`relative flex min-h-[3.35rem] w-full min-w-0 touch-manipulation select-none flex-col items-center justify-center gap-0.5 rounded-md px-1.5 py-1.5 text-[10px] font-semibold leading-none transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-100/20 active:scale-[0.985] sm:text-[11px] ${
+                    isActive
+                      ? "bg-neutral-800 text-neutral-50"
+                      : "text-neutral-400 hover:text-neutral-200"
+                  }`}
+                  style={{ WebkitTapHighlightColor: "transparent" }}
+                >
+                  {isActive ? (
+                    <span
+                      aria-hidden
+                      className="absolute inset-x-4 top-0.5 h-0.5 rounded-full bg-emerald-300/85"
+                    />
+                  ) : null}
+                  <Icon
                     aria-hidden
-                    className="absolute inset-x-4 top-0.5 h-0.5 rounded-full bg-emerald-300/85"
+                    className={`h-4 w-4 shrink-0 ${isActive ? "text-emerald-200" : ""}`}
                   />
-                ) : null}
-                <Icon
-                  aria-hidden
-                  className={`h-4 w-4 shrink-0 ${isActive ? "text-emerald-200" : ""}`}
-                />
-                <span className="truncate text-center leading-tight">{item.label}</span>
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
+                  <span className="truncate text-center leading-tight">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </nav>
+      )}
     </div>
   );
 }

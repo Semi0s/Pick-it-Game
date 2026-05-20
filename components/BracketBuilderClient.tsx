@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, GripVertical, TriangleAlert, X } from "lucide-react";
 import { saveLightSeedBuilderAction } from "@/app/groups/actions";
 import { ActionButton, InlineDisclosureButton } from "@/components/player-management/Shared";
@@ -63,6 +63,8 @@ const BRACKET_BUILDER_COMPLETION_SEEN_STORAGE_KEY = "bracket-builder-completion-
 
 const SWIPE_THRESHOLD_PX = 42;
 const NEAR_DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
+const CUSTOM_TOUCH_DRAG_HOLD_MS = 140;
+const CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX = 8;
 const COMPACT_ICON_BUTTON_CLASS =
   "inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 transition hover:border-accent hover:text-accent-dark disabled:cursor-not-allowed disabled:opacity-40";
 
@@ -148,7 +150,18 @@ export function BracketBuilderClient({
   knockoutProjectedPreview = null
 }: BracketBuilderClientProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const touchStartXRef = useRef<number | null>(null);
+  const customDragHoldTimeoutRef = useRef<number | null>(null);
+  const customDragStateRef = useRef<{
+    kind: "group" | "third";
+    teamId: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    isDragging: boolean;
+    targetId: string;
+  } | null>(null);
   const hasMountedRef = useRef(false);
   const completionWasValidRef = useRef(false);
   const groupRowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -226,6 +239,7 @@ export function BracketBuilderClient({
       requiredThirdPlaceQualifierCount > 0
   );
   const [hasSeenCompletionThisSession, setHasSeenCompletionThisSession] = useState(false);
+  const onboardingQuery = searchParams.get("onboarding") === "1" ? "&onboarding=1" : "";
 
   const teamsById = useMemo(
     () =>
@@ -307,6 +321,8 @@ export function BracketBuilderClient({
     committedThirdPlaceRankingIds.length >= requiredThirdPlaceQualifierCount;
   const isFinishButtonQuiet =
     Boolean(finalBracketSavedAt) && isComplete && !isFinalizingBracket;
+  const canOpenProjectedKnockoutMatches = hasSavedSnapshot || Boolean(finalBracketSavedAt);
+  const canAdvanceFromEasyBracket = hasSavedSnapshot || Boolean(finalBracketSavedAt);
   const activeGroupName = sortedGroupNames[activeGroupIndex] ?? null;
   const isActiveGroupScoreApplied = activeGroupName ? groupProjectionSources[activeGroupName] === "score_applied" : false;
   const activeGroupTeams = useMemo(
@@ -466,6 +482,12 @@ export function BracketBuilderClient({
   }, []);
 
   useEffect(() => {
+    if (isThirdPlacePhase) {
+      setIsThirdPlaceListOpen(true);
+    }
+  }, [isThirdPlacePhase]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
       return;
     }
@@ -478,9 +500,122 @@ export function BracketBuilderClient({
     updateSupport();
     mediaQuery.addEventListener("change", updateSupport);
     return () => {
+      if (customDragHoldTimeoutRef.current !== null) {
+        window.clearTimeout(customDragHoldTimeoutRef.current);
+      }
       mediaQuery.removeEventListener("change", updateSupport);
     };
   }, []);
+
+  function clearCustomTouchDragState() {
+    if (customDragHoldTimeoutRef.current !== null) {
+      window.clearTimeout(customDragHoldTimeoutRef.current);
+      customDragHoldTimeoutRef.current = null;
+    }
+    customDragStateRef.current = null;
+    setDraggedTeamId(null);
+    setDragOverTeamId(null);
+    setDraggedThirdPlaceTeamId(null);
+    setDragOverThirdPlaceTeamId(null);
+  }
+
+  function beginCustomTouchDrag(
+    event: React.PointerEvent<HTMLDivElement>,
+    kind: "group" | "third",
+    teamId: string,
+    disabled: boolean
+  ) {
+    if (supportsNativeRowDrag || disabled || event.pointerType === "mouse") {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("[data-no-row-drag='true']")) {
+      return;
+    }
+
+    clearCustomTouchDragState();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    customDragStateRef.current = {
+      kind,
+      teamId,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      isDragging: false,
+      targetId: teamId
+    };
+
+    customDragHoldTimeoutRef.current = window.setTimeout(() => {
+      const state = customDragStateRef.current;
+      if (!state || state.pointerId !== event.pointerId || state.teamId !== teamId || state.kind !== kind) {
+        return;
+      }
+
+      state.isDragging = true;
+      if (kind === "group") {
+        setDraggedTeamId(teamId);
+      } else {
+        setDraggedThirdPlaceTeamId(teamId);
+      }
+    }, CUSTOM_TOUCH_DRAG_HOLD_MS);
+  }
+
+  function handleCustomTouchDragMove(event: React.PointerEvent<HTMLDivElement>) {
+    const state = customDragStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (!state.isDragging) {
+      const deltaX = Math.abs(event.clientX - state.startX);
+      const deltaY = Math.abs(event.clientY - state.startY);
+      if (deltaX > CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX || deltaY > CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX) {
+        clearCustomTouchDragState();
+      }
+      return;
+    }
+
+    event.preventDefault();
+    const element = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+    if (!element) {
+      return;
+    }
+
+    if (state.kind === "group") {
+      const targetRow = element.closest<HTMLElement>("[data-group-team-id]");
+      const targetId = targetRow?.dataset.groupTeamId ?? state.teamId;
+      state.targetId = targetId;
+      setDragOverTeamId(targetId);
+      return;
+    }
+
+    const targetRow = element.closest<HTMLElement>("[data-third-team-id]");
+    const targetId = targetRow?.dataset.thirdTeamId ?? state.teamId;
+    state.targetId = targetId;
+    setDragOverThirdPlaceTeamId(targetId);
+  }
+
+  function handleCustomTouchDragEnd(event: React.PointerEvent<HTMLDivElement>) {
+    const state = customDragStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const { isDragging, kind, targetId } = state;
+    if (!isDragging) {
+      clearCustomTouchDragState();
+      return;
+    }
+
+    if (kind === "group") {
+      handleDropReorder(targetId);
+    } else {
+      handleDropThirdPlaceReorder(targetId);
+    }
+
+    clearCustomTouchDragState();
+  }
 
   useEffect(() => {
     if (!hasMountedRef.current) {
@@ -650,7 +785,7 @@ export function BracketBuilderClient({
       source: "dashboard",
       target: "next-pick"
     });
-    router.push("/groups");
+    router.push(`/groups${onboardingQuery ? `?${onboardingQuery.slice(1)}` : ""}`);
   }
 
   function primeKnockoutProjectedCompareView() {
@@ -676,7 +811,8 @@ export function BracketBuilderClient({
     const result = await saveLightSeedBuilderAction({
       groupRankings: touchedRankingsInput,
       rankedThirdPlaceTeamIds: committedThirdPlaceRankingIds,
-      commitThirdPlaceRankings: true
+      commitThirdPlaceRankings: true,
+      finalizeTournamentEntry: true
     });
 
     setIsFinalizingBracket(false);
@@ -907,17 +1043,24 @@ export function BracketBuilderClient({
             const canMoveUp = !isReadOnly && !isActiveGroupScoreApplied && index > 0;
             const canMoveDown = !isReadOnly && !isActiveGroupScoreApplied && index < activeGroupTeams.length - 1;
             return (
-              <div
-                key={team.id}
-                ref={(node) => {
-                  if (node) {
-                    groupRowRefs.current.set(team.id, node);
+                <div
+                  data-group-team-id={team.id}
+                  key={team.id}
+                  ref={(node) => {
+                    if (node) {
+                      groupRowRefs.current.set(team.id, node);
                   } else {
                     groupRowRefs.current.delete(team.id);
                     previousGroupRowTopsRef.current.delete(team.id);
                   }
                 }}
                 draggable={!isReadOnly && !isActiveGroupScoreApplied && supportsNativeRowDrag}
+                onPointerDown={(event) =>
+                  beginCustomTouchDrag(event, "group", team.id, isReadOnly || isActiveGroupScoreApplied)
+                }
+                onPointerMove={handleCustomTouchDragMove}
+                onPointerUp={handleCustomTouchDragEnd}
+                onPointerCancel={clearCustomTouchDragState}
                 onDragStart={(event) => {
                   if (isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag) {
                     return;
@@ -946,7 +1089,7 @@ export function BracketBuilderClient({
                   event.preventDefault();
                   handleDropReorder(team.id);
                 }}
-                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1.5 last:border-b-0 transition-shadow ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
+                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_3.6rem_2rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1 last:border-b-0 transition-shadow ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <div className="flex justify-start">
                   <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
@@ -968,6 +1111,7 @@ export function BracketBuilderClient({
                     <button
                       type="button"
                       onClick={() => acceptCurrentGroupRanking(activeGroupName)}
+                      data-no-row-drag="true"
                       className="block w-full truncate text-left text-[11px] font-black text-gray-950"
                       aria-label={`Accept ${team.name} in ${index + 1}${index === 0 ? "st" : "nd"} place`}
                     >
@@ -977,38 +1121,40 @@ export function BracketBuilderClient({
                     <span className="block truncate text-[11px] font-black text-gray-950">{team.name}</span>
                   )}
                 </div>
-                <div className="flex items-center justify-end">
-                  <div className="grid grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-white">
-                    <button
-                      type="button"
-                      draggable={false}
+                  <div className="flex items-center justify-end">
+                    <div className="grid grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-white">
+                      <button
+                        type="button"
+                        draggable={false}
+                      data-no-row-drag="true"
                       aria-label={`Move ${team.name} up`}
                       disabled={!canMoveUp}
                       onClick={() => activeGroupName && updateGroupRanking(activeGroupName, moveItem(teamOrder, index, -1))}
-                      className="inline-flex h-8 w-8 items-center justify-center border-r border-gray-200 text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
-                    >
-                      <ChevronUp className="h-5 w-5" />
-                    </button>
-                    <button
-                      type="button"
-                      draggable={false}
+                        className="inline-flex h-7 w-7 items-center justify-center border-r border-gray-200 text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
+                      >
+                        <ChevronUp className="h-4.5 w-4.5" />
+                      </button>
+                      <button
+                        type="button"
+                        draggable={false}
+                        data-no-row-drag="true"
                       aria-label={`Move ${team.name} down`}
                       disabled={!canMoveDown}
                       onClick={() => activeGroupName && updateGroupRanking(activeGroupName, moveItem(teamOrder, index, 1))}
-                      className="inline-flex h-8 w-8 items-center justify-center text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
-                    >
-                      <ChevronDown className="h-5 w-5" />
-                    </button>
+                        className="inline-flex h-7 w-7 items-center justify-center text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
+                      >
+                        <ChevronDown className="h-4.5 w-4.5" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-                <div className="flex justify-center">
-                  <span
-                    aria-hidden
-                    className={`inline-flex h-8 w-8 items-center justify-center text-gray-400 ${isReadOnly ? "opacity-60" : ""}`}
-                  >
-                    <GripVertical className="h-4 w-4" />
-                  </span>
-                </div>
+                  <div className="flex justify-center">
+                    <span
+                      aria-hidden
+                      className={`inline-flex h-7 w-7 items-center justify-center text-gray-400 ${isReadOnly ? "opacity-60" : ""}`}
+                    >
+                      <GripVertical className="h-4 w-4" />
+                    </span>
+                  </div>
               </div>
             );
           })}
@@ -1034,6 +1180,7 @@ export function BracketBuilderClient({
                 const isAboveCutoff = hasCommittedThirdPlaceSelection && index < requiredThirdPlaceQualifierCount;
                 return (
                   <div
+                    data-third-team-id={team.id}
                     key={team.id}
                     ref={(node) => {
                       if (node) {
@@ -1044,6 +1191,10 @@ export function BracketBuilderClient({
                       }
                     }}
                     draggable={!isReadOnly && supportsNativeRowDrag}
+                    onPointerDown={(event) => beginCustomTouchDrag(event, "third", team.id, isReadOnly)}
+                    onPointerMove={handleCustomTouchDragMove}
+                    onPointerUp={handleCustomTouchDragEnd}
+                    onPointerCancel={clearCustomTouchDragState}
                     onDragStart={(event) => {
                       if (isReadOnly || !supportsNativeRowDrag) {
                         return;
@@ -1078,7 +1229,7 @@ export function BracketBuilderClient({
                         Cutoff
                       </div>
                     ) : null}
-                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-lg border px-2 py-1 transition-shadow ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-white"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
+                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-lg border px-2 py-1 transition-shadow ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
                       <div className="flex justify-start">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
                           {index + 1}
@@ -1094,6 +1245,7 @@ export function BracketBuilderClient({
                         <button
                           type="button"
                           draggable={false}
+                          data-no-row-drag="true"
                           disabled={isReadOnly || index === 0}
                           onClick={() => moveThirdPlaceTeam(index, -1)}
                           className={COMPACT_ICON_BUTTON_CLASS}
@@ -1104,6 +1256,7 @@ export function BracketBuilderClient({
                         <button
                           type="button"
                           draggable={false}
+                          data-no-row-drag="true"
                           disabled={isReadOnly || index === normalizedThirdPlaceRankings.length - 1}
                           onClick={() => moveThirdPlaceTeam(index, 1)}
                           className={COMPACT_ICON_BUTTON_CLASS}
@@ -1178,34 +1331,53 @@ export function BracketBuilderClient({
                   });
                 })}
               </svg>
-              {leftBracketMatches.map((match, index) => (
-                <Link
-                  key={match.matchId}
-                  href={`/knockout?stage=${match.stage}&matchId=${match.matchId}&compare=projected`}
-                  onClick={primeKnockoutProjectedCompareView}
-                  className="absolute left-0 right-0 block space-y-0 rounded-md px-1 py-0 transition hover:bg-gray-50"
-                  style={{ top: `${index * leftBracketLayout.matchBlockHeight}px` }}
-                >
-                  {[match.home, match.away].map((side, sideIndex) => (
-                    <div
-                      key={`${match.matchId}-${sideIndex}`}
-                      className={`grid min-h-[16px] grid-cols-[1.15rem_minmax(0,1fr)] items-center gap-1.5 px-1 py-0 ${side.teamId ? "text-gray-900" : "text-gray-400"}`}
-                    >
-                      <span aria-hidden className="text-xs">{side.flagEmoji ?? " "}</span>
-                      <span className="inline-flex min-w-0 items-center gap-1">
-                        <span className="truncate text-[11px] font-black">
-                          {side.shortLabel}
+              {leftBracketMatches.map((match, index) => {
+                const content = (
+                  <>
+                    {[match.home, match.away].map((side, sideIndex) => (
+                      <div
+                        key={`${match.matchId}-${sideIndex}`}
+                        className={`grid min-h-[16px] grid-cols-[1.15rem_minmax(0,1fr)] items-center gap-1.5 px-1 py-0 ${side.teamId ? "text-gray-900" : "text-gray-400"}`}
+                      >
+                        <span aria-hidden className="text-xs">{side.flagEmoji ?? " "}</span>
+                        <span className="inline-flex min-w-0 items-center gap-1">
+                          <span className="truncate text-[11px] font-black">
+                            {side.shortLabel}
+                          </span>
+                          {side.slotComparisonState === "match" ? (
+                            <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark" />
+                          ) : side.slotComparisonState === "miss" ? (
+                            <X aria-hidden className="h-3.5 w-3.5 shrink-0 text-rose-600" />
+                          ) : null}
                         </span>
-                        {side.slotComparisonState === "match" ? (
-                          <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark" />
-                        ) : side.slotComparisonState === "miss" ? (
-                          <X aria-hidden className="h-3.5 w-3.5 shrink-0 text-rose-600" />
-                        ) : null}
-                      </span>
+                      </div>
+                    ))}
+                  </>
+                );
+
+                const sharedClassName = `absolute left-0 right-0 block space-y-0 rounded-md px-1 py-0 transition ${canOpenProjectedKnockoutMatches ? "hover:bg-gray-50" : ""}`;
+                const sharedStyle = { top: `${index * leftBracketLayout.matchBlockHeight}px` };
+
+                if (!canOpenProjectedKnockoutMatches) {
+                  return (
+                    <div key={match.matchId} className={sharedClassName} style={sharedStyle}>
+                      {content}
                     </div>
-                  ))}
-                </Link>
-              ))}
+                  );
+                }
+
+                return (
+                  <Link
+                    key={match.matchId}
+                    href={`/knockout?stage=${match.stage}&matchId=${match.matchId}&compare=projected${onboardingQuery}`}
+                    onClick={primeKnockoutProjectedCompareView}
+                    className={sharedClassName}
+                    style={sharedStyle}
+                  >
+                    {content}
+                  </Link>
+                );
+              })}
             </div>
 
             <div aria-hidden />
@@ -1237,34 +1409,53 @@ export function BracketBuilderClient({
                   });
                 })}
               </svg>
-              {rightBracketMatches.map((match, index) => (
-                <Link
-                  key={match.matchId}
-                  href={`/knockout?stage=${match.stage}&matchId=${match.matchId}&compare=projected`}
-                  onClick={primeKnockoutProjectedCompareView}
-                  className="absolute left-0 right-0 block space-y-0 rounded-md px-1 py-0 transition hover:bg-gray-50"
-                  style={{ top: `${index * rightBracketLayout.matchBlockHeight}px` }}
-                >
-                  {[match.home, match.away].map((side, sideIndex) => (
-                    <div
-                      key={`${match.matchId}-${sideIndex}`}
-                      className={`grid min-h-[16px] grid-cols-[minmax(0,1fr)_1.15rem] items-center gap-1.5 px-1 py-0 text-right ${side.teamId ? "text-gray-900" : "text-gray-400"}`}
-                    >
-                      <span className="inline-flex min-w-0 items-center justify-end gap-1">
-                        {side.slotComparisonState === "match" ? (
-                          <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark" />
-                        ) : side.slotComparisonState === "miss" ? (
-                          <X aria-hidden className="h-3.5 w-3.5 shrink-0 text-rose-600" />
-                        ) : null}
-                        <span className="truncate text-[11px] font-black">
-                          {side.shortLabel}
+              {rightBracketMatches.map((match, index) => {
+                const content = (
+                  <>
+                    {[match.home, match.away].map((side, sideIndex) => (
+                      <div
+                        key={`${match.matchId}-${sideIndex}`}
+                        className={`grid min-h-[16px] grid-cols-[minmax(0,1fr)_1.15rem] items-center gap-1.5 px-1 py-0 text-right ${side.teamId ? "text-gray-900" : "text-gray-400"}`}
+                      >
+                        <span className="inline-flex min-w-0 items-center justify-end gap-1">
+                          {side.slotComparisonState === "match" ? (
+                            <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-accent-dark" />
+                          ) : side.slotComparisonState === "miss" ? (
+                            <X aria-hidden className="h-3.5 w-3.5 shrink-0 text-rose-600" />
+                          ) : null}
+                          <span className="truncate text-[11px] font-black">
+                            {side.shortLabel}
+                          </span>
                         </span>
-                      </span>
-                      <span aria-hidden className="text-xs">{side.flagEmoji ?? " "}</span>
+                        <span aria-hidden className="text-xs">{side.flagEmoji ?? " "}</span>
+                      </div>
+                    ))}
+                  </>
+                );
+
+                const sharedClassName = `absolute left-0 right-0 block space-y-0 rounded-md px-1 py-0 transition ${canOpenProjectedKnockoutMatches ? "hover:bg-gray-50" : ""}`;
+                const sharedStyle = { top: `${index * rightBracketLayout.matchBlockHeight}px` };
+
+                if (!canOpenProjectedKnockoutMatches) {
+                  return (
+                    <div key={match.matchId} className={sharedClassName} style={sharedStyle}>
+                      {content}
                     </div>
-                  ))}
-                </Link>
-              ))}
+                  );
+                }
+
+                return (
+                  <Link
+                    key={match.matchId}
+                    href={`/knockout?stage=${match.stage}&matchId=${match.matchId}&compare=projected${onboardingQuery}`}
+                    onClick={primeKnockoutProjectedCompareView}
+                    className={sharedClassName}
+                    style={sharedStyle}
+                  >
+                    {content}
+                  </Link>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1272,10 +1463,10 @@ export function BracketBuilderClient({
         <div className="mt-3">
           <p className="mb-2 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">Pick scores, earn more points</p>
           <div className="grid grid-cols-2 gap-3">
-          <ActionButton fullWidth onClick={() => router.push("/dashboard")}>
+          <ActionButton fullWidth disabled={!canAdvanceFromEasyBracket} onClick={() => router.push("/dashboard")}>
             Dashboard
           </ActionButton>
-          <ActionButton fullWidth tone="accent" onClick={handleGoToFullScoring}>
+          <ActionButton fullWidth tone="accent" disabled={!canAdvanceFromEasyBracket} onClick={handleGoToFullScoring}>
             Pick Full Scores
           </ActionButton>
           </div>

@@ -1173,8 +1173,9 @@ async function fetchCurrentUserProfileRow(
 
   const missingPreferredLanguage = isMissingPreferredLanguageColumnError(fullProfileQuery.error.message);
   const missingPlanTier = isMissingPlanTierColumnError(fullProfileQuery.error.message);
+  const missingOtherUsersColumn = isLikelyMissingUsersProfileColumnError(fullProfileQuery.error.message);
 
-  if (!missingPreferredLanguage && !missingPlanTier) {
+  if (!missingPreferredLanguage && !missingPlanTier && !missingOtherUsersColumn) {
     return { data: null, error: { message: fullProfileQuery.error.message } };
   }
 
@@ -1194,11 +1195,21 @@ async function fetchCurrentUserProfileRow(
     );
   }
 
-  const fallbackSelect = missingPreferredLanguage && missingPlanTier
-    ? "id,name,email,avatar_url,home_team_id,role,username,username_set_at,needs_profile_setup,total_points"
-    : missingPreferredLanguage
-      ? "id,name,email,avatar_url,home_team_id,role,plan_tier,username,username_set_at,needs_profile_setup,total_points"
-      : "id,name,email,avatar_url,home_team_id,preferred_language,role,username,username_set_at,needs_profile_setup,total_points";
+  if (missingOtherUsersColumn && !missingPreferredLanguage && !missingPlanTier) {
+    warnOptionalFeatureOnce(
+      "current-user-profile-other-columns-missing",
+      "Current-user profile is loading with a reduced public.users field set because the live schema is behind the app.",
+      fullProfileQuery.error.message
+    );
+  }
+
+  const fallbackSelect = missingOtherUsersColumn
+    ? "id,name,email,role,total_points"
+    : missingPreferredLanguage && missingPlanTier
+      ? "id,name,email,avatar_url,home_team_id,role,username,username_set_at,needs_profile_setup,total_points"
+      : missingPreferredLanguage
+        ? "id,name,email,avatar_url,home_team_id,role,plan_tier,username,username_set_at,needs_profile_setup,total_points"
+        : "id,name,email,avatar_url,home_team_id,preferred_language,role,username,username_set_at,needs_profile_setup,total_points";
   const fallbackProfileQuery = await supabase
     .from("users")
     .select(fallbackSelect)
@@ -1233,6 +1244,15 @@ function isMissingUserSettingsTableError(message?: string) {
 
 function isMissingPlanTierColumnError(message: string) {
   return isMissingColumnError(message, "users", "plan_tier");
+}
+
+function isLikelyMissingUsersProfileColumnError(message?: string) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return normalized.includes("users") && normalized.includes("column");
 }
 
 function isMissingPushTokensTableError(message?: string) {

@@ -48,6 +48,10 @@ export function LoginForm({
   } | null>(null);
   const isDemoFallback = isUsingDemoAuthFallback();
   const emailBoundInviteFlow = inviteFlow && Boolean(inviteToken);
+  const isEmailConfirmationNotice =
+    mode === "login" &&
+    Boolean(notice) &&
+    notice?.toLowerCase().includes("confirm your account") === true;
 
   useEffect(() => {
     if (!inviteToken) {
@@ -106,6 +110,7 @@ export function LoginForm({
     }
 
     if (result.needsEmailConfirmation) {
+      setMode("login");
       setNotice(result.message ?? "Check your email to confirm your account, then sign in.");
       return;
     }
@@ -154,6 +159,16 @@ export function LoginForm({
         <ModeButton label="Sign up" isActive={mode === "signup"} onClick={() => setMode("signup")} />
       </div>
 
+      {isEmailConfirmationNotice ? (
+        <div className="rounded-xl border-2 border-green-300 bg-green-100 px-4 py-4 text-center shadow-soft">
+          <p className="text-[11px] font-black uppercase tracking-[0.24em] text-green-700">Almost there</p>
+          <p className="mt-2 text-lg font-black leading-tight text-green-900">
+            Check your email to confirm your account.
+          </p>
+          <p className="mt-2 text-sm font-semibold text-green-800">Then come back here and sign in.</p>
+        </div>
+      ) : null}
+
       {confirmed ? (
         <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700">
           Your email has been confirmed. Sign in below.
@@ -166,7 +181,7 @@ export function LoginForm({
         </p>
       ) : null}
 
-      {emailBoundInviteFlow && inviteContext ? (
+      {!isEmailConfirmationNotice && emailBoundInviteFlow && inviteContext ? (
         <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
           {inviteContext.status !== "pending"
             ? "This invite is no longer active. Ask the organizer for a fresh link if you still need access."
@@ -176,7 +191,7 @@ export function LoginForm({
                 ? `You've been invited to join ${inviteContext.groupName}. Sign in with ${inviteContext.email} to continue.`
                 : `You've been invited to join ${inviteContext.groupName}. Create an account with ${inviteContext.email} to continue.`}
         </p>
-      ) : !confirmed && (inviteFlow || signupContext) ? (
+      ) : !isEmailConfirmationNotice && !confirmed && (inviteFlow || signupContext) ? (
         <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
           {inviteFlow && mode === "login"
             ? "Use the invited email to sign in and complete your group join."
@@ -256,7 +271,7 @@ export function LoginForm({
         </p>
       ) : null}
 
-      {notice ? (
+      {notice && !isEmailConfirmationNotice ? (
         <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
           {notice}
         </p>

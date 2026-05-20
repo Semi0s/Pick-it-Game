@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { acknowledgeMyPicksForEasyBracketPlayer } from "@/lib/easy-bracket-gate";
+import { canActivateTournamentEntry } from "@/lib/play-mode";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { normalizeGroupKey } from "@/lib/group-standings";
@@ -20,6 +22,7 @@ import {
   type GroupSeedRankingInput
 } from "@/lib/knockout-seeding";
 import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
+import { fetchTournamentEntrySettings, saveTournamentEntrySettings } from "@/lib/tournament-entry";
 import type { Prediction } from "@/lib/types";
 
 type SavePredictionInput = {
@@ -76,6 +79,7 @@ export type SaveLightSeedBuilderInput = {
   }>;
   rankedThirdPlaceTeamIds: string[];
   commitThirdPlaceRankings?: boolean;
+  finalizeTournamentEntry?: boolean;
 };
 
 export type SaveLightSeedBuilderResult =
@@ -377,16 +381,41 @@ export async function saveLightSeedBuilderAction(
       }
     }
 
+    const existingTournamentSettings = await fetchTournamentEntrySettings(adminSupabase, userResult.userId).catch(() => null);
+    if (input.finalizeTournamentEntry) {
+      if (!canActivateTournamentEntry()) {
+        return { ok: false, message: "Tournament entries are locked. You can still preview this mode, but it will not count." };
+      }
+
+      await saveTournamentEntrySettings(adminSupabase, userResult.userId, {
+        tournamentEntryMode: "easy_bracket",
+        tournamentEntryState: "active",
+        tournamentEntrySubmittedAt: new Date().toISOString()
+      });
+    } else if (!existingTournamentSettings?.tournamentEntryMode || existingTournamentSettings.tournamentEntryMode === "easy_bracket") {
+      await saveTournamentEntrySettings(adminSupabase, userResult.userId, {
+        tournamentEntryMode: "easy_bracket",
+        tournamentEntryState: existingTournamentSettings?.tournamentEntryState === "active" ? "active" : "draft",
+        tournamentEntrySubmittedAt:
+          existingTournamentSettings?.tournamentEntryState === "active"
+            ? existingTournamentSettings.tournamentEntrySubmittedAt
+            : null
+      });
+    }
+
     revalidatePath("/groups");
     revalidatePath("/bracket-builder");
     revalidatePath("/knockout");
+    revalidatePath("/strategy");
 
     return {
       ok: true,
       message:
-        requestedThirdPlaceIds.length === requiredThirdPlaceCount
-          ? "Your bracket build is saved."
-          : "Your bracket build progress is saved."
+        input.finalizeTournamentEntry
+          ? "Your Easy Bracket is active."
+          : requestedThirdPlaceIds.length === requiredThirdPlaceCount
+            ? "Your bracket build is saved."
+            : "Your bracket build progress is saved."
     };
   } catch (error) {
     return {
@@ -586,7 +615,28 @@ export async function applyGroupBracketFromScoresAction(input: {
   }
 }
 
-async function getCurrentUserId(): Promise<{ ok: true; userId: string } | { ok: false; message: string }> {
+export async function acknowledgeEasyBracketMyPicksGateAction(): Promise<
+  | { ok: true }
+  | { ok: false; message: string }
+> {
+  const userResult = await getCurrentUserId();
+  if (!userResult.ok) {
+    return userResult;
+  }
+
+  try {
+    await acknowledgeMyPicksForEasyBracketPlayer(createAdminClient(), userResult.userId);
+    revalidatePath("/groups");
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not unlock My Picks right now."
+    };
+  }
+}
+
+export async function getCurrentUserId(): Promise<{ ok: true; userId: string } | { ok: false; message: string }> {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },

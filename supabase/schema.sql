@@ -307,6 +307,19 @@ create index match_probability_snapshots_match_id_fetched_at_idx
 create table public.user_settings (
   user_id uuid primary key references public.users(id) on delete cascade,
   notifications_enabled boolean not null default false,
+  prediction_start_mode text
+    constraint user_settings_prediction_start_mode_check
+    check (prediction_start_mode in ('easy_bracket', 'full_scoring', 'strategy_mode', 'groups')),
+  my_picks_acknowledged_at timestamptz,
+  tournament_entry_mode text
+    constraint user_settings_tournament_entry_mode_check
+    check (tournament_entry_mode in ('easy_bracket', 'strategy_mode')),
+  tournament_entry_state text
+    constraint user_settings_tournament_entry_state_check
+    check (tournament_entry_state in ('draft', 'active', 'locked', 'inactive', 'archived')),
+  tournament_entry_submitted_at timestamptz,
+  strategy_mode_preset_key text,
+  strategy_mode_levers jsonb,
   projected_knockout_source text not null default 'seed_builder'
     constraint user_settings_projected_knockout_source_check
     check (projected_knockout_source in ('seed_builder', 'score_predictions')),
@@ -347,6 +360,10 @@ create table public.groups (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   description text,
+  base_prediction_mode text not null default 'my_picks'
+    constraint groups_base_prediction_mode_check
+    check (base_prediction_mode in ('my_picks', 'easy_bracket', 'strategy_mode')),
+  home_team_advantage_enabled boolean not null default false,
   owner_user_id uuid references public.users(id) on delete set null,
   created_by_user_id uuid references public.users(id) on delete set null,
   membership_limit integer not null default 15,
