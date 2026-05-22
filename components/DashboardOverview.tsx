@@ -99,7 +99,17 @@ function logDashboardNextPick(event: string, details?: Record<string, unknown>) 
   });
 }
 
-export function DashboardOverview() {
+export function DashboardOverview({
+  initialGlobalChallengeSummary
+}: {
+  initialGlobalChallengeSummary?: {
+    groupStrategy: { points: number | null; maxPoints: number; status: string };
+    knockout: { points: number | null; maxPoints: number; status: string };
+    totalPoints: number | null;
+    totalMaxPoints: number;
+    prompt: string | null;
+  } | null;
+}) {
   const router = useRouter();
   const { user } = useCurrentUser();
   const currentUserId = user?.id ?? null;
@@ -581,6 +591,55 @@ export function DashboardOverview() {
       />
 
       <AppUpdatesCard />
+
+      {initialGlobalChallengeSummary ? (
+        <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-emerald-800">Global Challenge</p>
+              <h2 className="mt-2 text-xl font-black text-gray-950">Group Strategy + Knockout Picks</h2>
+              <p className="mt-2 text-sm font-semibold leading-6 text-gray-700">
+                {initialGlobalChallengeSummary.prompt ?? "Build a Group Strategy before kickoff, then score the knockout phase match by match."}
+              </p>
+            </div>
+            <Link
+              href="/strategy"
+              className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2.5 text-sm font-black text-white transition hover:bg-accent/95"
+            >
+              {initialGlobalChallengeSummary.groupStrategy.status === "draft" ? "Build Group Strategy" : "Open Group Strategy"}
+            </Link>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-white/70 bg-white/80 px-4 py-3">
+              <p className="text-xs font-black uppercase tracking-wide text-gray-500">Group Strategy</p>
+              <p className="mt-2 text-2xl font-black text-gray-950">
+                {initialGlobalChallengeSummary.groupStrategy.points !== null
+                  ? `${initialGlobalChallengeSummary.groupStrategy.points} / ${initialGlobalChallengeSummary.groupStrategy.maxPoints}`
+                  : initialGlobalChallengeSummary.groupStrategy.status === "draft"
+                    ? "Draft"
+                    : "Pending"}
+              </p>
+            </div>
+            <div className="rounded-xl border border-white/70 bg-white/80 px-4 py-3">
+              <p className="text-xs font-black uppercase tracking-wide text-gray-500">Knockout Picks</p>
+              <p className="mt-2 text-2xl font-black text-gray-950">
+                {initialGlobalChallengeSummary.knockout.points !== null
+                  ? `${initialGlobalChallengeSummary.knockout.points} / ${initialGlobalChallengeSummary.knockout.maxPoints}`
+                  : "Pending"}
+              </p>
+            </div>
+            <div className="rounded-xl border border-white/70 bg-white/80 px-4 py-3">
+              <p className="text-xs font-black uppercase tracking-wide text-gray-500">Global Score</p>
+              <p className="mt-2 text-2xl font-black text-gray-950">
+                {initialGlobalChallengeSummary.totalPoints !== null
+                  ? `${initialGlobalChallengeSummary.totalPoints} / ${initialGlobalChallengeSummary.totalMaxPoints}`
+                  : "Pending"}
+              </p>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {user?.role === "admin" ? (
         <DashboardAdminPanel

@@ -41,9 +41,9 @@ const START_MODE_CARDS: StartModeCard[] = [
   },
   {
     key: "strategy_mode",
-    title: "Strategy Mode",
-    description: "Choose outcomes from probabilities.",
-    cta: "Use Probabilities",
+    title: "Global Challenge",
+    description: "Build a Group Strategy before kickoff, then predict knockout matches once the bracket is set.",
+    cta: "Start Global Challenge",
     nextPath: "/strategy?onboarding=1",
     previewPath: "/play-preview?mode=strategy_mode&onboarding=1",
     icon: Dices,
@@ -99,7 +99,14 @@ export function StartPlayingChoiceClient() {
                   <Icon className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-black text-gray-950">{card.title}</h2>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-xl font-black text-gray-950">{card.title}</h2>
+                    {card.key === "strategy_mode" ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-emerald-700">
+                        Recommended
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="mt-1 text-sm font-semibold text-gray-600">{card.description}</p>
                 </div>
               </div>

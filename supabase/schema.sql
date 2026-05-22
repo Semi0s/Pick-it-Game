@@ -320,11 +320,43 @@ create table public.user_settings (
   tournament_entry_submitted_at timestamptz,
   strategy_mode_preset_key text,
   strategy_mode_levers jsonb,
+  group_strategy_adjustments jsonb,
+  group_strategy_heart_pick_team_id text,
   projected_knockout_source text not null default 'seed_builder'
     constraint user_settings_projected_knockout_source_check
     check (projected_knockout_source in ('seed_builder', 'score_predictions')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table public.team_strength_ratings (
+  id uuid primary key default gen_random_uuid(),
+  tournament_id text,
+  team_id text not null references public.teams(id) on delete cascade,
+  rating numeric not null,
+  source text,
+  updated_at timestamptz not null default now()
+);
+
+create table public.team_stage_probabilities (
+  id uuid primary key default gen_random_uuid(),
+  tournament_id text,
+  team_id text not null references public.teams(id) on delete cascade,
+  stage text not null
+    constraint team_stage_probabilities_stage_check
+    check (stage in ('r32', 'r16', 'qf', 'sf', 'final', 'champion')),
+  baseline_probability numeric not null,
+  source text,
+  updated_at timestamptz not null default now()
+);
+
+create table public.probability_model_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  tournament_id text,
+  snapshot_kind text not null,
+  source text,
+  generated_at timestamptz not null default now(),
+  metadata jsonb
 );
 
 create table public.email_jobs (

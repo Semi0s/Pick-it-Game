@@ -4,17 +4,15 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   canActivateTournamentEntry,
-  normalizeStrategyLevers,
-  normalizeStrategyPresetKey,
-  STRATEGY_PRESETS,
-  type StrategyLeverState
+  type TournamentEntryState
 } from "@/lib/play-mode";
+import { clampGroupStrategyAdjustments, normalizeGroupStrategyAdjustments, type GroupStrategyAdjustmentMap } from "@/lib/global-challenge";
 import { fetchTournamentEntrySettings, saveTournamentEntrySettings } from "@/lib/tournament-entry";
 import { getCurrentUserId } from "@/app/groups/actions";
 
 export async function saveStrategyModeEntryAction(input: {
-  presetKey: string;
-  levers: StrategyLeverState;
+  adjustments: GroupStrategyAdjustmentMap;
+  heartPickTeamId?: string | null;
   activate: boolean;
 }): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
   const userResult = await getCurrentUserId();
@@ -23,8 +21,10 @@ export async function saveStrategyModeEntryAction(input: {
   }
 
   const adminSupabase = createAdminClient();
-  const presetKey = normalizeStrategyPresetKey(input.presetKey);
-  const levers = normalizeStrategyLevers(input.levers);
+  const adjustments = clampGroupStrategyAdjustments(normalizeGroupStrategyAdjustments(input.adjustments));
+  const heartPickTeamId = typeof input.heartPickTeamId === "string" && input.heartPickTeamId.trim().length > 0
+    ? input.heartPickTeamId.trim()
+    : null;
 
   try {
     const existingSettings = await fetchTournamentEntrySettings(adminSupabase, userResult.userId);
@@ -34,36 +34,35 @@ export async function saveStrategyModeEntryAction(input: {
     }
 
     await saveTournamentEntrySettings(adminSupabase, userResult.userId, {
-      strategyModePresetKey: presetKey,
-      strategyModeLevers: levers,
+      groupStrategyAdjustments: adjustments,
+      groupStrategyHeartPickTeamId: heartPickTeamId,
       tournamentEntryMode: input.activate
         ? "strategy_mode"
         : existingSettings.tournamentEntryMode === "strategy_mode" || !existingSettings.tournamentEntryMode
           ? "strategy_mode"
           : existingSettings.tournamentEntryMode,
-      tournamentEntryState: input.activate
+      tournamentEntryState: (input.activate
         ? "active"
         : existingSettings.tournamentEntryMode === "strategy_mode" || !existingSettings.tournamentEntryMode
           ? "draft"
-          : existingSettings.tournamentEntryState,
+          : existingSettings.tournamentEntryState) as TournamentEntryState | null,
       tournamentEntrySubmittedAt: input.activate ? new Date().toISOString() : existingSettings.tournamentEntrySubmittedAt
     });
 
     revalidatePath("/strategy");
     revalidatePath("/dashboard");
-
-    const preset = STRATEGY_PRESETS.find((entry) => entry.key === presetKey) ?? STRATEGY_PRESETS[0];
+    revalidatePath("/leaderboard");
 
     return {
       ok: true,
       message: input.activate
-        ? `Strategy Mode is active with ${preset.title}.`
-        : `Strategy Mode draft saved with ${preset.title}.`
+        ? "Group Strategy submitted. This will count on the Global Leaderboard."
+        : "Group Strategy draft saved."
     };
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "Could not save Strategy Mode right now."
+      message: error instanceof Error ? error.message : "Could not save Group Strategy right now."
     };
   }
 }

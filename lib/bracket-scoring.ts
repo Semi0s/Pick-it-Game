@@ -23,6 +23,15 @@ const BRACKET_EXACT_SCORE_BONUS: Record<CanonicalKnockoutStage, number> = {
   final: 10
 };
 
+export function getKnockoutMatchMaxPoints(stage: MatchStage) {
+  const normalizedStage = normalizeKnockoutStage(stage);
+  if (!normalizedStage) {
+    return 0;
+  }
+
+  return BRACKET_WINNER_POINTS[normalizedStage] + BRACKET_EXACT_SCORE_BONUS[normalizedStage];
+}
+
 export type ScorableKnockoutMatch = {
   stage: MatchStage;
   status: MatchStatus;

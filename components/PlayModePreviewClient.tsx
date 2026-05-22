@@ -34,9 +34,9 @@ const PREVIEW_CONTENT: Record<
     accentClass: "bg-emerald-100 text-emerald-700"
   },
   strategy_mode: {
-    title: "Strategy Mode",
-    description: "Choose outcomes from probabilities.",
-    detail: "Best if you want a tournament-level view and the math to do the heavy lifting.",
+    title: "Global Challenge",
+    description: "Build your Group Strategy before kickoff, then predict knockout matches when the bracket opens.",
+    detail: "You choose outcomes from probabilities rather than predicting scores.",
     nextPath: "/strategy",
     icon: Dices,
     accentClass: "bg-amber-100 text-amber-700"

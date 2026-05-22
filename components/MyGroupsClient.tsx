@@ -1265,7 +1265,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       [
                         ["my_picks", "My Picks"],
                         ["easy_bracket", "Easy Bracket"],
-                        ["strategy_mode", "Strategy Mode"]
+                        ["strategy_mode", "Global Challenge"]
                       ] as Array<[GroupBaseMode, string]>
                     ).map(([value, label]) => (
                       <button
@@ -1426,7 +1426,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         group.basePredictionMode === "easy_bracket"
                           ? "Easy Bracket"
                           : group.basePredictionMode === "strategy_mode"
-                            ? "Strategy Mode"
+                            ? "Global Challenge"
                             : "My Picks"
                       }
                       tone="neutral"

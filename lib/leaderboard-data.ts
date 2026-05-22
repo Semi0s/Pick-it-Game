@@ -4,7 +4,7 @@ import {
   fetchRecentGlobalLeaderboardActivity,
   type LeaderboardActivityItem
 } from "@/lib/leaderboard-activity";
-import { fetchGlobalLeaderboardRankMovement, fetchGroupLeaderboardRankMovement } from "@/lib/leaderboard-movement";
+import { fetchGroupLeaderboardRankMovement } from "@/lib/leaderboard-movement";
 import { demoUsers } from "@/lib/mock-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
@@ -15,6 +15,7 @@ import {
   fetchPerfectPickUserIdsForLatestFinalizedMatch,
   type DailyWinner
 } from "@/lib/leaderboard-highlights";
+import { fetchGlobalChallengeSummaries } from "@/lib/global-challenge-data";
 import { isMissingAnyRelationError, isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { hasOrganizerAccess, normalizeCommercialTier, resolveAccessLevel, type AccessLevel } from "@/lib/tier-access";
 import type { UserProfile, UserTrophy } from "@/lib/types";
@@ -98,6 +99,9 @@ export type LeaderboardListItem = UserProfile & {
   hasPerfectPickHighlight: boolean;
   standardPoints?: number;
   groupCustomPoints?: number;
+  groupStrategyPoints?: number | null;
+  knockoutGlobalPoints?: number | null;
+  globalChallengePoints?: number | null;
 };
 
 export type LeaderboardSwitcherView = "global" | "my_groups" | "managed_groups" | "groups" | "managers";
@@ -393,68 +397,64 @@ async function fetchGroupStandingsForAccessibleGroups(
 
 async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<LeaderboardListItem[]> {
   const adminSupabase = createAdminClient();
-  const { data: leaderboardData, error: leaderboardError } = await adminSupabase
-    .from("leaderboard_entries")
-    .select("user_id,total_points,rank")
-    .order("rank", { ascending: true })
-    .order("total_points", { ascending: false });
+  const { data: usersData, error: usersError } = await adminSupabase
+    .from("users")
+    .select("id,name,email,avatar_url,home_team_id,role,plan_tier,total_points")
+    .order("name", { ascending: true });
 
-  if (leaderboardError) {
-    throw new Error(leaderboardError.message);
+  if (usersError) {
+    throw new Error(usersError.message);
   }
 
-  const leaderboardEntries = (leaderboardData as LeaderboardEntryRow[] | null) ?? [];
-  if (leaderboardEntries.length === 0) {
+  const users = (usersData as UserRow[] | null) ?? [];
+  if (users.length === 0) {
     return [];
   }
 
-  const latestMatchId = await fetchLatestGlobalSnapshotMatchId(adminSupabase);
-  const [usersById, movementByUserId, perfectPickUserIds, trophiesByUserId] = await Promise.all([
-    fetchUsersByIds(
-      adminSupabase,
-      leaderboardEntries.map((entry) => entry.user_id)
-    ),
-    latestMatchId
-      ? Promise.resolve(
-          new Map(
-            (await fetchGlobalLeaderboardRankMovement(latestMatchId)).map((row) => [
-              row.user_id,
-              { rankDelta: row.rank_delta, pointsDelta: row.points_delta }
-            ])
-          )
-        )
-      : Promise.resolve(new Map<string, { rankDelta: number | null; pointsDelta: number | null }>()),
+  const userIds = users.map((user) => user.id);
+  const [globalChallengeSummaries, perfectPickUserIds, trophiesByUserId] = await Promise.all([
+    fetchGlobalChallengeSummaries(userIds),
     perfectPickEnabled ? fetchPerfectPickUserIdsForLatestFinalizedMatch() : Promise.resolve(new Set<string>()),
-    fetchTrophiesByUserIds(
-      adminSupabase,
-      leaderboardEntries.map((entry) => entry.user_id)
-    )
+    fetchTrophiesByUserIds(adminSupabase, userIds)
   ]);
 
-  return leaderboardEntries
+  const rankedEntries = users
+    .map((user) => {
+      const summary = globalChallengeSummaries.get(user.id);
+      const totalPoints = summary?.totalPoints ?? 0;
+      return {
+        user_id: user.id,
+        total_points: totalPoints
+      };
+    })
+    .sort((left, right) => right.total_points - left.total_points || left.user_id.localeCompare(right.user_id));
+
+  const ranks = assignRanks(rankedEntries);
+
+  return ranks
     .map((entry) => {
-      const joinedUser = usersById.get(entry.user_id);
+      const joinedUser = users.find((user) => user.id === entry.user_id);
       if (!joinedUser) {
         return null;
       }
 
-      const movement = movementByUserId.get(entry.user_id) ?? {
-        rankDelta: null,
-        pointsDelta: null
-      };
+      const summary = globalChallengeSummaries.get(entry.user_id) ?? null;
 
-        return {
-          ...mapUserRow(joinedUser),
-          trophies: trophiesByUserId.get(entry.user_id) ?? [],
-          totalPoints: entry.total_points,
-          standardPoints: entry.total_points,
-          groupCustomPoints: 0,
-          rank: entry.rank,
-          rankDelta: movement.rankDelta,
-          pointsDelta: movement.pointsDelta,
-          hasPerfectPickHighlight: perfectPickUserIds.has(entry.user_id)
-        };
-      })
+      return {
+        ...mapUserRow(joinedUser),
+        trophies: trophiesByUserId.get(entry.user_id) ?? [],
+        totalPoints: entry.total_points,
+        standardPoints: entry.total_points,
+        groupCustomPoints: 0,
+        groupStrategyPoints: summary?.groupStrategy.points ?? null,
+        knockoutGlobalPoints: summary?.knockout.points ?? null,
+        globalChallengePoints: summary?.totalPoints ?? null,
+        rank: entry.rank,
+        rankDelta: null,
+        pointsDelta: null,
+        hasPerfectPickHighlight: perfectPickUserIds.has(entry.user_id)
+      };
+    })
     .filter(Boolean) as LeaderboardListItem[];
 }
 
@@ -1022,10 +1022,6 @@ async function fetchLatestSnapshotMatchId(
   }
 
   return (data as LatestSnapshotRow | null)?.match_id ?? null;
-}
-
-async function fetchLatestGlobalSnapshotMatchId(adminSupabase: ReturnType<typeof createAdminClient>) {
-  return fetchLatestSnapshotMatchId(adminSupabase, { scopeType: "global" });
 }
 
 async function fetchUsersByIds(

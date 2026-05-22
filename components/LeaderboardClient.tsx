@@ -129,6 +129,10 @@ function LeaderboardPlayerRow({
   const showLeaderboardTrophies = scoreMode === "standard" && shouldShowPlayerSocialIndicators;
   const standardPoints = profile.standardPoints ?? profile.totalPoints;
   const groupCustomPoints = profile.groupCustomPoints ?? 0;
+  const shouldShowGlobalChallengeBreakdown =
+    scoreMode === "standard" &&
+    (profile.groupStrategyPoints !== null && profile.groupStrategyPoints !== undefined ||
+      profile.knockoutGlobalPoints !== null && profile.knockoutGlobalPoints !== undefined);
 
   return (
     <div
@@ -194,6 +198,16 @@ function LeaderboardPlayerRow({
                 <span className={`ui-chip-sm font-semibold ${pointsTone}`}>
                   {scoreMode === "group" ? standardPoints : profile.totalPoints} pts
                 </span>
+                {shouldShowGlobalChallengeBreakdown ? (
+                  <span className="ui-chip-sm bg-white/80 font-bold uppercase tracking-wide text-gray-600">
+                    GS: {profile.groupStrategyPoints ?? "Pending"}
+                  </span>
+                ) : null}
+                {shouldShowGlobalChallengeBreakdown ? (
+                  <span className="ui-chip-sm bg-white/80 font-bold uppercase tracking-wide text-gray-600">
+                    KO: {profile.knockoutGlobalPoints ?? "Pending"}
+                  </span>
+                ) : null}
                 {scoreMode === "group" ? (
                   <span className="ui-chip-sm bg-white/80 font-bold uppercase tracking-wide text-gray-600">
                     G: {groupCustomPoints >= 0 ? `+${groupCustomPoints}` : groupCustomPoints}

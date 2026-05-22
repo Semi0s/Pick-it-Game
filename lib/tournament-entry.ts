@@ -1,13 +1,10 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { normalizeGroupStrategyAdjustments, type GroupStrategyAdjustmentMap } from "@/lib/global-challenge";
 import {
-  normalizeStrategyLevers,
-  normalizeStrategyPresetKey,
   normalizeTournamentEntryMode,
   normalizeTournamentEntryState,
-  type StrategyLeverState,
-  type StrategyPresetKey,
   type TournamentEntryMode,
   type TournamentEntryState
 } from "@/lib/play-mode";
@@ -20,14 +17,16 @@ type UserSettingsTournamentRow = {
   tournament_entry_submitted_at?: string | null;
   strategy_mode_preset_key?: string | null;
   strategy_mode_levers?: unknown;
+  group_strategy_adjustments?: unknown;
+  group_strategy_heart_pick_team_id?: string | null;
 };
 
 export type TournamentEntrySettings = {
   tournamentEntryMode: TournamentEntryMode | null;
   tournamentEntryState: TournamentEntryState | null;
   tournamentEntrySubmittedAt: string | null;
-  strategyModePresetKey: StrategyPresetKey;
-  strategyModeLevers: StrategyLeverState;
+  groupStrategyAdjustments: GroupStrategyAdjustmentMap;
+  groupStrategyHeartPickTeamId: string | null;
 };
 
 export async function fetchTournamentEntrySettings(
@@ -37,7 +36,7 @@ export async function fetchTournamentEntrySettings(
   const { data, error } = await adminSupabase
     .from("user_settings")
     .select(
-      "tournament_entry_mode,tournament_entry_state,tournament_entry_submitted_at,strategy_mode_preset_key,strategy_mode_levers"
+      "tournament_entry_mode,tournament_entry_state,tournament_entry_submitted_at,strategy_mode_preset_key,strategy_mode_levers,group_strategy_adjustments,group_strategy_heart_pick_team_id"
     )
     .eq("user_id", userId)
     .maybeSingle();
@@ -52,8 +51,8 @@ export async function fetchTournamentEntrySettings(
     tournamentEntryMode: normalizeTournamentEntryMode(row?.tournament_entry_mode),
     tournamentEntryState: normalizeTournamentEntryState(row?.tournament_entry_state),
     tournamentEntrySubmittedAt: row?.tournament_entry_submitted_at ?? null,
-    strategyModePresetKey: normalizeStrategyPresetKey(row?.strategy_mode_preset_key),
-    strategyModeLevers: normalizeStrategyLevers(row?.strategy_mode_levers)
+    groupStrategyAdjustments: normalizeGroupStrategyAdjustments(row?.group_strategy_adjustments),
+    groupStrategyHeartPickTeamId: row?.group_strategy_heart_pick_team_id ?? null
   };
 }
 
@@ -64,8 +63,8 @@ export async function saveTournamentEntrySettings(
     tournamentEntryMode?: TournamentEntryMode | null;
     tournamentEntryState?: TournamentEntryState | null;
     tournamentEntrySubmittedAt?: string | null;
-    strategyModePresetKey?: StrategyPresetKey | null;
-    strategyModeLevers?: StrategyLeverState | null;
+    groupStrategyAdjustments?: GroupStrategyAdjustmentMap | null;
+    groupStrategyHeartPickTeamId?: string | null;
   }
 ): Promise<void> {
   const payload: Record<string, unknown> = {
@@ -84,12 +83,12 @@ export async function saveTournamentEntrySettings(
     payload.tournament_entry_submitted_at = input.tournamentEntrySubmittedAt ?? null;
   }
 
-  if ("strategyModePresetKey" in input) {
-    payload.strategy_mode_preset_key = input.strategyModePresetKey ?? null;
+  if ("groupStrategyAdjustments" in input) {
+    payload.group_strategy_adjustments = input.groupStrategyAdjustments ?? null;
   }
 
-  if ("strategyModeLevers" in input) {
-    payload.strategy_mode_levers = input.strategyModeLevers ?? null;
+  if ("groupStrategyHeartPickTeamId" in input) {
+    payload.group_strategy_heart_pick_team_id = input.groupStrategyHeartPickTeamId ?? null;
   }
 
   const { error } = await adminSupabase.from("user_settings").upsert(payload, { onConflict: "user_id" });
@@ -109,6 +108,8 @@ function isMissingTournamentModeSchemaError(message: string) {
     normalized.includes("column \"tournament_entry_state\" does not exist") ||
     normalized.includes("column \"tournament_entry_submitted_at\" does not exist") ||
     normalized.includes("column \"strategy_mode_preset_key\" does not exist") ||
-    normalized.includes("column \"strategy_mode_levers\" does not exist")
+    normalized.includes("column \"strategy_mode_levers\" does not exist") ||
+    normalized.includes("column \"group_strategy_adjustments\" does not exist") ||
+    normalized.includes("column \"group_strategy_heart_pick_team_id\" does not exist")
   );
 }
