@@ -412,7 +412,7 @@ export async function saveLightSeedBuilderAction(
       ok: true,
       message:
         input.finalizeTournamentEntry
-          ? "Your Easy Bracket is active."
+          ? "Your Group Stage entry is active."
           : requestedThirdPlaceIds.length === requiredThirdPlaceCount
             ? "Your bracket build is saved."
             : "Your bracket build progress is saved."

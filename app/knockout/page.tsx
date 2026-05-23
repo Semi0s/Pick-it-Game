@@ -53,26 +53,16 @@ export default async function KnockoutPage() {
   const shouldShowLockedProjected = Boolean(projectedChallengeView && projectedChallengeView.isLocked && !isOfficialSeeded);
   const shouldShowOfficialBracket = Boolean(officialBracketView && isOfficialSeeded);
   const showingProjectedChallengeOnly = shouldShowEditableProjected || shouldShowLockedProjected;
-  const introEyebrow = showingProjectedChallengeOnly
-    ? shouldShowLockedProjected
-      ? "Locked Projected Challenge"
-      : "Projected Bracket Challenge"
-    : isOfficialSeeded
-      ? "Knockout Stage"
-      : "Knockout Picks";
-  const introTitle = (shouldShowEditableProjected || shouldShowLockedProjected)
-    ? shouldShowLockedProjected
-      ? "Locked Projected Challenge"
-      : "Projected Bracket Challenge"
-    : isOfficialSeeded
-      ? "Pick a Winner"
-      : "Knockout picks coming soon";
+  const introEyebrow = "Knockout Phase";
+  const introTitle = showingProjectedChallengeOnly || !isOfficialSeeded
+    ? "Waiting on qualifiers."
+    : "Predict all the match scores for a winner.";
   const introDescription = (shouldShowEditableProjected || shouldShowLockedProjected)
     ? shouldShowLockedProjected
       ? "Your projected bracket challenge is locked for this phase. It will stay visible as its own archived side-pick once the official Round of 32 is seeded."
       : "Build your projected bracket challenge from your group-stage picks. Official knockout picks open after the real Round of 32 is seeded."
     : isOfficialSeeded
-      ? "Swipe left/right to compare with early predictions."
+      ? "Round of 32 keeps your early Group Stage path beside the official bracket. Later rounds use standard knockout cards."
       : "We will open official knockout picks once the full group stage is complete and the real Round of 32 is seeded.";
   const introSecondaryNote = (shouldShowEditableProjected || shouldShowLockedProjected)
     ? shouldShowLockedProjected
@@ -90,7 +80,10 @@ export default async function KnockoutPage() {
         title={introTitle}
         description={introDescription}
         secondaryNote={introSecondaryNote}
-        statusChip={showingProjectedChallengeOnly ? getKnockoutPhaseChip(knockoutStatus.counts) : null}
+        statusChip={isOfficialSeeded ? getKnockoutPhaseChip(knockoutStatus.counts) : "Group Stage"}
+        disclosurePlacement="bottom-right"
+        statusChipPlacement="top-right"
+        collapseBodyWhenClosed
       />
 
       {primaryBracketView ? (
@@ -122,20 +115,20 @@ function getKnockoutPhaseChip(counts: {
   }
 
   if (counts.third > 0 || counts.sf > 0) {
-    return "Semi-finals";
+    return "SF";
   }
 
   if (counts.qf > 0) {
-    return "Quarter-finals";
+    return "QF";
   }
 
   if (counts.r16 > 0) {
-    return "Round of 16";
+    return "R16";
   }
 
   if (counts.r32 > 0) {
-    return "Round of 32";
+    return "R32";
   }
 
-  return "Not seeded";
+  return "Group Stage";
 }

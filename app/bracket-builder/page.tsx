@@ -15,6 +15,7 @@ import {
 } from "@/lib/group-stage-modes";
 import { fetchActiveGroupRulesets } from "@/lib/scoped-scoring";
 import { getRequiredThirdPlaceQualifierCount, type KnockoutPlaceholderMatch } from "@/lib/knockout-seeding";
+import { getConfiguredGroupPredictionMode, isFullScoresModeEnabled } from "@/lib/group-prediction-mode";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { logSafeSupabaseError } from "@/lib/supabase-errors";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -36,6 +37,7 @@ export default async function BracketBuilderPage() {
   await redirectIfLegacyScoringSetupRequired({ userId: authUser.id, pathname: "/bracket-builder" });
 
   const adminSupabase = createAdminClient();
+  const fullScoresEnabled = isFullScoresModeEnabled(getConfiguredGroupPredictionMode());
   const localMatches = getGroupMatches().map((match) => ({
     ...match,
     homeTeam: getTeam(match.homeTeamId),
@@ -136,12 +138,13 @@ export default async function BracketBuilderPage() {
           initialMatches={localMatches}
           initialKnockoutSeeded={knockoutStatus.isFullySeeded}
           initialSnapshot={initialSnapshot}
-          hasSavedSnapshot={hasSavedSnapshot}
-          initialGroupProjectionSources={initialGroupProjectionSources}
+        hasSavedSnapshot={hasSavedSnapshot}
+        initialGroupProjectionSources={initialGroupProjectionSources}
         requiredThirdPlaceQualifierCount={requiredThirdPlaceQualifierCount}
         roundOf32Placeholders={roundOf32Placeholders}
         groupStageDueAt={earliestGroupStageDueAt}
         knockoutProjectedPreview={projectedKnockoutComparisonView}
+        fullScoresEnabled={fullScoresEnabled || authUser.role === "admin"}
       />
       </div>
     </AppShell>

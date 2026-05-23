@@ -7,6 +7,7 @@ import { previewBracketPredictionImpactAction, saveBracketPredictionAction } fro
 import { WindowChoiceRail, useSessionJsonState } from "@/components/player-management/Shared";
 import { showAppToast } from "@/lib/app-toast";
 import { formatDateTimeWithZone } from "@/lib/date-time";
+import { shouldShowProjectedComparisonRound } from "@/lib/knockout-display";
 import {
   type BracketTeamOption,
   type KnockoutBracketEditorView,
@@ -219,7 +220,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
                 onClick={() => goToSlide(index)}
                 data-choice-key={slide.id}
                 data-choice-active={isActive ? "true" : "false"}
-                className={`inline-flex items-center rounded-md px-2.5 py-1 text-[13px] font-bold leading-none transition ${
+                className={`inline-flex min-h-10 items-center rounded-md px-3 py-1.5 text-[14px] font-bold leading-none transition ${
                   isActive
                     ? "bg-accent text-white"
                     : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
@@ -513,7 +514,7 @@ function BracketStageViewport({
     };
   }, [selectedCountryFilter, slide]);
   const projectedMatchesForStage = useMemo(() => {
-    if (!projectedComparisonView) {
+    if (!projectedComparisonView || slide.currentStage !== "r32") {
       return [];
     }
 
@@ -527,7 +528,24 @@ function BracketStageViewport({
       [match.homeTeam?.id, match.awayTeam?.id, match.seededHomeTeam?.id, match.seededAwayTeam?.id].includes(selectedCountryFilter)
     );
   }, [projectedComparisonView, selectedCountryFilter, slide.currentStage]);
-  const usesComparisonView = mode === "projected" || projectedMatchesForStage.length > 0;
+  const usesComparisonView = shouldShowProjectedComparisonRound({
+    currentStage: slide.currentStage,
+    mode,
+    projectedComparisonMatchCount: projectedMatchesForStage.length
+  });
+  const standardCardSlide = useMemo(() => {
+    if (mode !== "projected" || slide.currentStage === "r32") {
+      return filteredSlide;
+    }
+
+    return {
+      ...filteredSlide,
+      currentMatches: filteredSlide.currentMatches.map((match) => ({
+        ...match,
+        viewMode: "official" as const
+      }))
+    };
+  }, [filteredSlide, mode, slide.currentStage]);
 
   if (selectedCountryFilter && filteredSlide.currentMatches.length === 0) {
     return (
@@ -571,25 +589,12 @@ function BracketStageViewport({
           ready ? "opacity-100" : "opacity-88"
         }`}
       >
-        {mode === "projected" ? (
+        {usesComparisonView ? (
           <ProjectedAndOfficialRoundView
-            projectedMatches={filteredSlide.currentMatches}
+            projectedMatches={mode === "projected" ? filteredSlide.currentMatches : projectedMatchesForStage}
             officialMatches={filteredSlide.currentMatches}
-            officialState="pending"
-            isOfficialRound={false}
-            forcedProjectedBias={forcedProjectedBias}
-            pendingMatchId={pendingMatchId}
-            pendingConfirmation={pendingConfirmation}
-            onSelect={onSelect}
-            onAdjustScore={onAdjustScore}
-            onSave={onSave}
-          />
-        ) : projectedMatchesForStage.length > 0 ? (
-          <ProjectedAndOfficialRoundView
-            projectedMatches={projectedMatchesForStage}
-            officialMatches={filteredSlide.currentMatches}
-            officialState="live"
-            isOfficialRound
+            officialState={mode === "projected" ? "pending" : "live"}
+            isOfficialRound={mode !== "projected"}
             forcedProjectedBias={forcedProjectedBias}
             pendingMatchId={pendingMatchId}
             pendingConfirmation={pendingConfirmation}
@@ -599,7 +604,7 @@ function BracketStageViewport({
           />
         ) : slide.layout === "split" ? (
           <SplitRoundView
-            slide={filteredSlide}
+            slide={standardCardSlide}
             pendingMatchId={pendingMatchId}
             pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
@@ -608,7 +613,7 @@ function BracketStageViewport({
           />
         ) : slide.layout === "finale" ? (
           <FinaleRoundView
-            slide={filteredSlide}
+            slide={standardCardSlide}
             pendingMatchId={pendingMatchId}
             pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
@@ -617,7 +622,7 @@ function BracketStageViewport({
           />
         ) : (
           <FocusedRoundView
-            slide={filteredSlide}
+            slide={standardCardSlide}
             pendingMatchId={pendingMatchId}
             pendingConfirmation={pendingConfirmation}
             onSelect={onSelect}
@@ -646,7 +651,7 @@ function KnockoutPhaseChoiceRail({
   return (
     <WindowChoiceRail
       motionMode="anchored"
-      allowAnchoredTouchScroll={false}
+      allowAnchoredTouchScroll
       className={className}
       showControls={showControls}
       prevLabel="Show previous knockout phase"
@@ -1088,7 +1093,7 @@ function ProjectedAndOfficialRoundView({
                     style={isNarrowViewport ? { width: `${mobileCardWidthPx}px` } : undefined}
                   >
                     <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">
-                      Early Side Picks
+                      Group Picks
                     </div>
                     {pair.projected ? (
                       <CurrentRoundMatchCard

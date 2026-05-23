@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Brackets, Dices, PenSquare, Users } from "lucide-react";
+import { shouldHideStrategyModeForLaunch } from "@/lib/group-prediction-mode";
 
 type PreviewMode = "full_scoring" | "easy_bracket" | "strategy_mode" | "groups";
 
@@ -26,9 +27,9 @@ const PREVIEW_CONTENT: Record<
     accentClass: "bg-accent/10 text-accent-dark"
   },
   easy_bracket: {
-    title: "Easy Bracket",
-    description: "Focus on the knockout phase.",
-    detail: "Best if you want a lighter entry point that still builds your tournament path.",
+    title: "Group Stage",
+    description: "Start with the Group Stage and pick the qualifying teams.",
+    detail: "This is the launch starting point for regular players.",
     nextPath: "/bracket-builder",
     icon: Brackets,
     accentClass: "bg-emerald-100 text-emerald-700"
@@ -54,7 +55,7 @@ const PREVIEW_CONTENT: Record<
 export function PlayModePreviewClient({ mode }: { mode: PreviewMode }) {
   const searchParams = useSearchParams();
   const isOnboarding = searchParams.get("onboarding") === "1";
-  const content = PREVIEW_CONTENT[mode];
+  const content = PREVIEW_CONTENT[shouldHideStrategyModeForLaunch() && mode === "strategy_mode" ? "easy_bracket" : mode];
   const Icon = content.icon;
   const nextPath = `${content.nextPath}${isOnboarding ? "?onboarding=1" : ""}`;
 

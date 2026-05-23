@@ -4,6 +4,7 @@ export type AccessCodeFailureReason =
   | "expired"
   | "full"
   | "group_full"
+  | "group_restricted"
   | "group_unavailable"
   | "redemption_failed";
 
@@ -13,6 +14,7 @@ export const ACCESS_CODE_ERROR_KEY = {
   expired: "ACCESS_CODE_EXPIRED",
   full: "ACCESS_CODE_FULL",
   groupFull: "ACCESS_CODE_GROUP_FULL",
+  groupRestricted: "ACCESS_CODE_GROUP_RESTRICTED",
   groupUnavailable: "ACCESS_CODE_GROUP_UNAVAILABLE",
   redemptionFailed: "ACCESS_CODE_REDEMPTION_FAILED"
 } as const;
@@ -43,6 +45,10 @@ export function getAccessCodeBlockedMessage(reason: AccessCodeFailureReason) {
     return "This code's group is full.";
   }
 
+  if (reason === "group_restricted") {
+    return "This group only accepts approved emails. Ask the manager to add your email first.";
+  }
+
   if (reason === "group_unavailable") {
     return "This code is no longer available for its group.";
   }
@@ -67,6 +73,10 @@ export function getAccessCodeFailureReasonFromMessage(message: string): AccessCo
 
   if (normalized.includes(ACCESS_CODE_ERROR_KEY.groupFull.toLowerCase())) {
     return "group_full";
+  }
+
+  if (normalized.includes(ACCESS_CODE_ERROR_KEY.groupRestricted.toLowerCase())) {
+    return "group_restricted";
   }
 
   if (normalized.includes(ACCESS_CODE_ERROR_KEY.groupUnavailable.toLowerCase())) {

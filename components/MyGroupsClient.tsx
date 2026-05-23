@@ -2,12 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Info } from "lucide-react";
 import {
   acceptGroupInviteAction,
+  addAllGroupFocusTeamsAction,
+  addGroupFocusTeamAction,
+  assignCaptainsPassAction,
   awardManagedGroupTrophyAction,
   cancelGroupInviteAction,
+  createCaptainManagedGroupInviteAction,
   createGroupAction,
   createGroupInviteAction,
   createManagedGroupInviteCodeAction,
@@ -17,8 +21,15 @@ import {
   fetchManagedGroupDetailAction,
   fetchGroupInvitePreviewAction,
   fetchMyGroupsAction,
+  removeGroupFocusTeamAction,
+  removeManagedGroupAllowedEmailAction,
+  removeManagedGroupAvatarAction,
   removeGroupMemberAction,
   resendGroupInviteAction,
+  saveManagedGroupAllowedEmailsAction,
+  uploadManagedGroupAvatarAction,
+  updateManagedGroupAccessAction,
+  updateManagedGroupProfileAction,
   updateManagedGroupLimitAction,
   updateGroupInviteNameAction,
   type ManagedGroupDetails,
@@ -27,7 +38,6 @@ import {
 } from "@/app/my-groups/actions";
 import { Avatar } from "@/components/Avatar";
 import { DismissibleHelperText, useDismissedHelperState } from "@/components/DismissibleHelperText";
-import { ManagedGroupRulesetPanel } from "@/components/ManagedGroupRulesetPanel";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { OrganizationBrandingPanel } from "@/components/OrganizationBrandingPanel";
@@ -59,9 +69,14 @@ import {
   normalizeInviteTokenInput,
   useSessionDisclosureState
 } from "@/components/player-management/Shared";
-import type { GroupBaseMode } from "@/lib/play-mode";
+import {
+  MAX_GROUP_AVATAR_FILE_BYTES,
+  getGroupInviteSourceLabel,
+  getGroupJoinSourceLabel,
+  MAX_CAPTAIN_PRIVATE_GROUP_MEMBERS,
+  normalizeGroupAccessMode
+} from "@/lib/group-management";
 import { redactEmailAddress } from "@/lib/redact-email";
-import type { AccessLevel } from "@/lib/tier-access";
 
 type MyGroupsClientProps = {
   inviteToken?: string;
@@ -87,17 +102,11 @@ const TROPHY_PROMPTS = [
   { name: "Drama King", icon: "🎭", description: "Never met a chaotic scoreline they didn't love." }
 ] as const;
 
-function getGroupCardTierAccessLevel(group: MyManagedGroup): AccessLevel {
-  if (group.userRole === "super_admin") {
-    return "super_admin";
-  }
-
-  if (group.canManage || group.userRole === "manager") {
-    return "manager";
-  }
-
-  return "player";
-}
+type GroupAvatarDraft = {
+  file: File | null;
+  previewUrl: string | null;
+  removeCurrent: boolean;
+};
 
 export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLanguage, forceCreateGroupOpen }: MyGroupsClientProps) {
   const router = useRouter();
@@ -111,11 +120,15 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [groupDescription, setGroupDescription] = useState("");
-  const [groupBaseMode, setGroupBaseMode] = useState<GroupBaseMode>("my_picks");
-  const [homeTeamAdvantageEnabled, setHomeTeamAdvantageEnabled] = useState(false);
   const [membershipLimit, setMembershipLimit] = useState("");
   const [createGroupInviteEmails, setCreateGroupInviteEmails] = useState("");
   const [groupLimitForms, setGroupLimitForms] = useState<Record<string, string>>({});
+  const [groupProfileDrafts, setGroupProfileDrafts] = useState<Record<string, { name: string; description: string }>>({});
+  const [groupAvatarDrafts, setGroupAvatarDrafts] = useState<Record<string, GroupAvatarDraft>>({});
+  const [allowedEmailsDrafts, setAllowedEmailsDrafts] = useState<Record<string, string>>({});
+  const [captainPassSelections, setCaptainPassSelections] = useState<Record<string, { userId: string; allowance: string }>>({});
+  const [captainInviteEmailsByGroup, setCaptainInviteEmailsByGroup] = useState<Record<string, string>>({});
+  const [focusTeamSelectionsByGroup, setFocusTeamSelectionsByGroup] = useState<Record<string, string>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
   const [newInviteEmailsByGroup, setNewInviteEmailsByGroup] = useState<Record<string, string>>({});
   const [inviteCodeDrafts, setInviteCodeDrafts] = useState<Record<string, string>>({});
@@ -186,6 +199,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     icon: string;
     tier?: "bronze" | "silver" | "gold" | "special" | null;
   } | null>(null);
+  const groupAvatarInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -208,12 +222,33 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     setGroupLimitForms(
       Object.fromEntries(resolvedSummary.groups.map((group) => [group.id, String(group.membershipLimit)]))
     );
+    setGroupProfileDrafts(
+      Object.fromEntries(
+        resolvedSummary.groups.map((group) => [
+          group.id,
+          {
+            name: group.name,
+            description: group.description ?? ""
+          }
+        ])
+      )
+    );
     setIsLoading(false);
   }, [inviteToken]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(groupAvatarDrafts).forEach((draft) => {
+        if (draft.previewUrl?.startsWith("blob:")) {
+          URL.revokeObjectURL(draft.previewUrl);
+        }
+      });
+    };
+  }, [groupAvatarDrafts]);
 
   const loadGroupDetail = useCallback(async (groupId: string, force = false) => {
     if (!force && (groupDetailsById[groupId] || loadingGroupDetailIds[groupId])) {
@@ -234,7 +269,37 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     const result = await fetchManagedGroupDetailAction(groupId);
     if (result.ok) {
       setGroupDetailsById((current) => ({ ...current, [groupId]: result.group }));
+      setSummary((current) => {
+        if (!current?.ok) {
+          return current;
+        }
+
+        return {
+          ...current,
+          groups: current.groups.map((group) =>
+            group.id === groupId
+              ? {
+                  ...group,
+                  name: result.group.name,
+                  description: result.group.description ?? null,
+                  avatarUrl: result.group.avatarUrl,
+                  accessMode: result.group.accessMode,
+                  membershipLimit: result.group.membershipLimit,
+                  memberCount: result.group.memberCount,
+                  pendingInviteCount: result.group.pendingInviteCount
+                }
+              : group
+          )
+        };
+      });
       setGroupLimitForms((current) => ({ ...current, [groupId]: String(result.group.membershipLimit) }));
+      setGroupProfileDrafts((current) => ({
+        ...current,
+        [groupId]: {
+          name: result.group.name,
+          description: result.group.description ?? ""
+        }
+      }));
       setManagerCustomTrophiesEnabled(result.managerCustomTrophiesEnabled);
     } else {
       setGroupDetailErrors((current) => ({ ...current, [groupId]: result.message }));
@@ -581,14 +646,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const canManageSocialTrophies = Boolean(summary?.ok && summary.tierAccess.capabilities.canManageSocialTrophies);
   const groupLimitWarningStorageKey = `${GROUP_LIMIT_WARNING_DISMISS_PREFIX}:${currentUserId ?? "guest"}`;
   const groupLimitWarningState = useDismissedHelperState(groupLimitWarningStorageKey);
+  const managedSummaryGroups = useMemo(() => summaryGroups.filter((group) => group.canManage), [summaryGroups]);
   const filteredGroups = useMemo(() => {
-    const orderedGroups = [...summaryGroups].sort((left, right) => {
-      if (left.canManage !== right.canManage) {
-        return left.canManage ? -1 : 1;
-      }
-
-      return 0;
-    });
+    const orderedGroups = [...managedSummaryGroups];
 
     if (!isSuperAdmin) {
       return orderedGroups;
@@ -600,11 +660,183 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     }
 
     return orderedGroups.filter((group) => group.name.toLowerCase().includes(query));
-  }, [summaryGroups, isSuperAdmin, superAdminGroupQuery]);
+  }, [managedSummaryGroups, isSuperAdmin, superAdminGroupQuery]);
   const activeTrophyGroup = trophySheetTarget ? groupDetailsById[trophySheetTarget.groupId] ?? null : null;
   const activeTrophyMember = activeTrophyGroup
     ? activeTrophyGroup.members.find((member) => member.userId === trophySheetTarget?.userId) ?? null
     : null;
+
+  function clearGroupAvatarDraft(groupId: string) {
+    setGroupAvatarDrafts((current) => {
+      const draft = current[groupId];
+      if (draft?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(draft.previewUrl);
+      }
+
+      if (!draft) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[groupId];
+      return next;
+    });
+  }
+
+  async function handleGroupAvatarSelection(group: MyManagedGroup, event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setMessage({ tone: "error", text: "Use a JPG, PNG, or WEBP image for the group avatar." });
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > MAX_GROUP_AVATAR_FILE_BYTES) {
+      setMessage({ tone: "error", text: "Choose a JPG, PNG, or WEBP image under 2 MB." });
+      event.target.value = "";
+      return;
+    }
+
+    const nextPreviewUrl = URL.createObjectURL(file);
+    setGroupAvatarDrafts((current) => {
+      const previous = current[group.id];
+      if (previous?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(previous.previewUrl);
+      }
+
+      return {
+        ...current,
+        [group.id]: {
+          file,
+          previewUrl: nextPreviewUrl,
+          removeCurrent: false
+        }
+      };
+    });
+
+    event.target.value = "";
+  }
+
+  function handleRemoveGroupAvatar(group: MyManagedGroup) {
+    setGroupAvatarDrafts((current) => {
+      const previous = current[group.id];
+      if (previous?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(previous.previewUrl);
+      }
+
+      if (!group.avatarUrl) {
+        if (!previous) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[group.id];
+        return next;
+      }
+
+      return {
+        ...current,
+        [group.id]: {
+          file: null,
+          previewUrl: null,
+          removeCurrent: true
+        }
+      };
+    });
+  }
+
+  function isGroupProfileDirty(
+    group: MyManagedGroup,
+    profileDraft: { name: string; description: string },
+    avatarDraft?: GroupAvatarDraft | null
+  ) {
+    const hasNameChange = profileDraft.name.trim() !== group.name.trim();
+    const hasDescriptionChange = profileDraft.description.trim() !== (group.description ?? "").trim();
+    const hasAvatarUpload = Boolean(avatarDraft?.file);
+    const hasAvatarRemoval = Boolean(avatarDraft?.removeCurrent && group.avatarUrl);
+
+    return hasNameChange || hasDescriptionChange || hasAvatarUpload || hasAvatarRemoval;
+  }
+
+  async function handleRemoveSavedGroupAvatar(group: MyManagedGroup) {
+    const result = await removeManagedGroupAvatarAction(group.id);
+    if (!result.ok) {
+      throw new Error(result.message);
+    }
+  }
+
+  async function handleUploadSavedGroupAvatar(group: MyManagedGroup, file: File) {
+    const formData = new FormData();
+    formData.set("groupId", group.id);
+    formData.set("file", file);
+    const result = await uploadManagedGroupAvatarAction(formData);
+    if (!result.ok) {
+      throw new Error(result.message);
+    }
+  }
+
+  async function handleRefreshManagedGroup(groupId: string) {
+    await loadGroupDetail(groupId, true);
+    await load();
+  }
+
+  async function handleSaveGroupProfile(group: MyManagedGroup) {
+    const draft = groupProfileDrafts[group.id] ?? {
+      name: group.name,
+      description: group.description ?? ""
+    };
+    const avatarDraft = groupAvatarDrafts[group.id] ?? null;
+    const hasProfileChanges =
+      draft.name.trim() !== group.name.trim() ||
+      draft.description.trim() !== (group.description ?? "").trim();
+    const hasAvatarUpload = Boolean(avatarDraft?.file);
+    const hasAvatarRemoval = Boolean(avatarDraft?.removeCurrent && group.avatarUrl);
+
+    if (!hasProfileChanges && !hasAvatarUpload && !hasAvatarRemoval) {
+      return;
+    }
+
+    await withAction(`save-group-profile-${group.id}`, async () => {
+      try {
+        if (hasProfileChanges) {
+          const result = await updateManagedGroupProfileAction({
+            groupId: group.id,
+            name: draft.name,
+            description: draft.description
+          });
+
+          if (!result.ok) {
+            throw new Error(result.message);
+          }
+        }
+
+        if (hasAvatarRemoval) {
+          await handleRemoveSavedGroupAvatar(group);
+        } else if (avatarDraft?.file) {
+          await handleUploadSavedGroupAvatar(group, avatarDraft.file);
+        }
+
+        clearGroupAvatarDraft(group.id);
+        await handleRefreshManagedGroup(group.id);
+        setMessage({
+          tone: "success",
+          text:
+            hasAvatarUpload || hasAvatarRemoval
+              ? "Group profile and avatar updated."
+              : "Group profile updated."
+        });
+      } catch (caughtError) {
+        setMessage({
+          tone: "error",
+          text: caughtError instanceof Error ? caughtError.message : "Could not update that group."
+        });
+      }
+    });
+  }
 
   async function handleCreateGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -614,8 +846,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     const result = await createGroupAction({
       name: groupName,
       description: groupDescription,
-      basePredictionMode: groupBaseMode,
-      homeTeamAdvantageEnabled,
       membershipLimit: membershipLimit ? Number(membershipLimit) : undefined,
       inviteEmailsText: createGroupInviteEmails
     });
@@ -624,8 +854,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     if (result.ok) {
       setGroupName("");
       setGroupDescription("");
-      setGroupBaseMode("my_picks");
-      setHomeTeamAdvantageEnabled(false);
       setMembershipLimit("");
       setCreateGroupInviteEmails("");
       await load();
@@ -799,6 +1027,134 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     });
   }
 
+  async function handleSaveGroupAccess(group: MyManagedGroup, nextAccessMode: string) {
+    await withAction(`save-group-access-${group.id}`, async () => {
+      const result = await updateManagedGroupAccessAction({
+        groupId: group.id,
+        accessMode: normalizeGroupAccessMode(nextAccessMode)
+      });
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        await loadGroupDetail(group.id, true);
+        await load();
+      }
+    });
+  }
+
+  async function handleSaveAllowedEmails(group: MyManagedGroup) {
+    const value = allowedEmailsDrafts[group.id]?.trim() ?? "";
+    if (!value) {
+      setMessage({ tone: "error", text: "Add at least one email first." });
+      return;
+    }
+
+    await withAction(`save-allowed-emails-${group.id}`, async () => {
+      const result = await saveManagedGroupAllowedEmailsAction({
+        groupId: group.id,
+        emailsText: value
+      });
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        const summary = result.summary;
+        if (summary.invalidCount > 0 || summary.duplicateIgnoredCount > 0) {
+          setMessage({
+            tone: "tip",
+            text: `${result.message} ${summary.duplicateIgnoredCount > 0 ? `${summary.duplicateIgnoredCount} duplicates ignored. ` : ""}${summary.invalidCount > 0 ? `${summary.invalidCount} invalid entries skipped.` : ""}`.trim()
+          });
+        }
+        setAllowedEmailsDrafts((current) => ({ ...current, [group.id]: "" }));
+        await loadGroupDetail(group.id, true);
+      }
+    });
+  }
+
+  async function handleRemoveAllowedEmail(group: MyManagedGroup, allowedEmailId: string) {
+    await withAction(`remove-allowed-email-${allowedEmailId}`, async () => {
+      const result = await removeManagedGroupAllowedEmailAction(group.id, allowedEmailId);
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        await loadGroupDetail(group.id, true);
+      }
+    });
+  }
+
+  async function handleAssignCaptainsPass(group: MyManagedGroup) {
+    const selection = captainPassSelections[group.id] ?? { userId: "", allowance: "1" };
+    if (!selection.userId) {
+      setMessage({ tone: "error", text: "Choose a trusted player first." });
+      return;
+    }
+
+    await withAction(`assign-captains-pass-${group.id}`, async () => {
+      const result = await assignCaptainsPassAction({
+        groupId: group.id,
+        captainUserId: selection.userId,
+        inviteAllowance: Number(selection.allowance || "1")
+      });
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        await loadGroupDetail(group.id, true);
+      }
+    });
+  }
+
+  async function handleCreateCaptainInvite(group: MyManagedGroup) {
+    const email = captainInviteEmailsByGroup[group.id]?.trim() ?? "";
+    if (!email) {
+      setMessage({ tone: "error", text: "Enter an email address first." });
+      return;
+    }
+
+    await withAction(`create-captain-invite-${group.id}`, async () => {
+      const result = await createCaptainManagedGroupInviteAction({
+        groupId: group.id,
+        email
+      });
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        setCaptainInviteEmailsByGroup((current) => ({ ...current, [group.id]: "" }));
+        await loadGroupDetail(group.id, true);
+      }
+    });
+  }
+
+  async function handleAddFocusTeam(group: MyManagedGroup) {
+    const teamId = focusTeamSelectionsByGroup[group.id]?.trim() ?? "";
+    if (!teamId) {
+      setMessage({ tone: "error", text: "Choose a team first." });
+      return;
+    }
+
+    await withAction(`add-focus-team-${group.id}`, async () => {
+      const result = await addGroupFocusTeamAction(group.id, teamId);
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        setFocusTeamSelectionsByGroup((current) => ({ ...current, [group.id]: "" }));
+        await loadGroupDetail(group.id, true);
+      }
+    });
+  }
+
+  async function handleAddAllFocusTeams(group: MyManagedGroup) {
+    await withAction(`add-all-focus-teams-${group.id}`, async () => {
+      const result = await addAllGroupFocusTeamsAction(group.id);
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        await loadGroupDetail(group.id, true);
+      }
+    });
+  }
+
+  async function handleRemoveFocusTeam(group: MyManagedGroup, focusTeamId: string) {
+    await withAction(`remove-focus-team-${focusTeamId}`, async () => {
+      const result = await removeGroupFocusTeamAction(group.id, focusTeamId);
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        await loadGroupDetail(group.id, true);
+      }
+    });
+  }
+
   async function handleAcceptInvite() {
     if (!inviteToken) {
       return;
@@ -956,6 +1312,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             ? `${summary.groupAccess.joinedGroupCount} joined · ${summary.groupAccess.managedGroupCount} managed`
             : null
         }
+        disclosureStorageKey="my-groups-intro"
+        disclosurePlacement="bottom-right"
+        collapseBodyWhenClosed
       />
 
       {confirmation || deleteConfirmation ? (
@@ -1259,47 +1618,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   ) : null}
                 </label>
                 <label className="block">
-                  <span className="text-sm font-bold text-gray-800">Base mode</span>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                    {(
-                      [
-                        ["my_picks", "My Picks"],
-                        ["easy_bracket", "Easy Bracket"],
-                        ["strategy_mode", "Global Challenge"]
-                      ] as Array<[GroupBaseMode, string]>
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => setGroupBaseMode(value)}
-                        className={`rounded-md border px-3 py-3 text-sm font-bold transition ${
-                          groupBaseMode === value
-                            ? "border-accent bg-accent-light text-accent-dark"
-                            : "border-gray-300 bg-white text-gray-700 hover:border-accent"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </label>
-                <label className="block rounded-lg border border-gray-200 bg-white px-3 py-3">
-                  <span className="flex items-start justify-between gap-3">
-                    <span>
-                      <span className="block text-sm font-bold text-gray-800">Home Team Advantage</span>
-                      <span className="mt-1 block text-xs font-semibold leading-5 text-gray-600">
-                        Each group member can add their home team to this group leaderboard only.
-                      </span>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={homeTeamAdvantageEnabled}
-                      onChange={(event) => setHomeTeamAdvantageEnabled(event.target.checked)}
-                      className="mt-1 h-4 w-4 accent-accent"
-                    />
-                  </span>
-                </label>
-                <label className="block">
                   <span className="text-sm font-bold text-gray-800">Invite specific players by email</span>
                   <textarea
                     value={createGroupInviteEmails}
@@ -1312,6 +1630,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     Optional. Use commas or new lines. We&apos;ll create pending email invites without changing the invite-code flow.
                   </p>
                 </label>
+                <p className="text-xs font-semibold text-gray-500">
+                  You can add an avatar, access settings, Captain&apos;s Pass, and team focus after the group is created.
+                </p>
                 <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
                   {isCreatingGroup ? "Creating..." : "Create Group"}
                 </ActionButton>
@@ -1323,14 +1644,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
       <section className="space-y-3">
         <div>
-          <h3 className="text-xl font-black">Groups</h3>
-          <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-700">
-            {summary?.ok && summary.currentUser.role === "admin"
-              ? "See every group, members, invites, and the admin control layer."
-              : summary?.ok && summary.tierAccess.capabilities.canSeeOrganizerControls
-                ? "See your groups, members, invites, and the limits that apply to your tier."
-                : "See the groups you belong to and who is in them."}
-          </p>
+          <h3 className="text-xl font-black">Managed Groups</h3>
         </div>
         {isSuperAdmin ? (
           <label className="block rounded-lg border border-gray-200 bg-white p-4">
@@ -1350,9 +1664,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             message={
               isSuperAdmin && superAdminGroupQuery.trim()
                 ? "No groups match that search."
-                : summary?.ok && !summary.groupAccess.hasAnyGroups
-                ? "No managed groups yet. Use a new invite link or create a group if your tier includes it."
-                : "No groups available right now."
+                : summary?.ok && !summary.groupAccess.managedGroupCount
+                  ? "No managed groups yet. Create one if your tier includes group management."
+                  : "No managed groups available right now."
             }
           />
         ) : (
@@ -1372,7 +1686,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const usesDisclosure = true;
             const isExpanded = usesDisclosure ? expandedGroupIds.includes(group.id) : true;
             const compactMemberCount = resolvedMemberCount ?? 0;
-            const compactPendingInviteCount = resolvedPendingInviteCount ?? 0;
             const isInviteCodeExpanded = expandedInviteCodeIds.includes(group.id);
             const isGroupLimitExpanded = expandedGroupLimitIds.includes(group.id);
             const isPeopleInvitesExpanded = expandedPeopleInviteIds.includes(group.id);
@@ -1395,59 +1708,61 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             });
             const hasReachedCustomTrophyLimit = customTrophies.length >= 10;
             const activeMembers = groupMembers.filter((member) => member.role === "member");
+            const focusedTeamIds = new Set((detailedGroup?.focusTeams ?? []).map((entry) => entry.teamId));
+            const groupProfileDraft = groupProfileDrafts[group.id] ?? {
+              name: group.name,
+              description: group.description ?? ""
+            };
+            const avatarDraft = groupAvatarDrafts[group.id] ?? { file: null, previewUrl: null, removeCurrent: false };
+            const avatarPreviewUrl = avatarDraft.previewUrl ?? (avatarDraft.removeCurrent ? undefined : group.avatarUrl ?? undefined);
+            const isGroupProfileSaveReady = isGroupProfileDirty(group, groupProfileDraft, avatarDraft);
+            const captainPassSelection = captainPassSelections[group.id] ?? { userId: "", allowance: "1" };
+            const availableCaptainCandidates = activeMembers.filter((member) => member.userId !== currentUserId);
+            const availableFocusTeamOptions = (detailedGroup?.teamOptions ?? []).filter(
+              (team) => !focusedTeamIds.has(team.id)
+            );
+            const totalTeamOptionCount = detailedGroup?.teamOptions.length ?? 0;
+            const hasLimitedTeamFocus = totalTeamOptionCount > 0 && focusedTeamIds.size > 0 && focusedTeamIds.size < totalTeamOptionCount;
+            const allTeamsIncluded = totalTeamOptionCount > 0 && focusedTeamIds.size === totalTeamOptionCount;
+            const captainPass = detailedGroup?.captainPass ?? null;
+            const isCaptainInviteHelperVisible = Boolean(captainPass?.canCurrentUserUseInvites && !group.canManage);
+            const inviteAccessChipLabel =
+              group.accessMode === "restricted_by_email" ? "Email" : group.accessMode === "closed" ? "Closed" : "Code";
 
             return (
               <ManagementCard
                 key={group.id}
                 title={
-                  <div className="flex min-w-0 items-start gap-3">
-                    <Avatar name={group.name} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <div className="min-w-0 flex-1 truncate text-base font-black leading-tight text-gray-950">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar name={group.name} avatarUrl={group.avatarUrl} size="sm" />
+                        <div className="min-w-0 truncate text-base font-black leading-tight text-gray-950">
                           {group.name}
                         </div>
-                        <TierIconBadge accessLevel={getGroupCardTierAccessLevel(group)} size={16} />
                       </div>
-                      <div className="mt-1 truncate text-[10px] font-semibold uppercase tracking-wide text-gray-700">
-                        {group.canManage
-                          ? `${compactMemberCount} members · ${compactPendingInviteCount} pending invites`
-                          : `${compactMemberCount} members`}
+                      <div className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-gray-700">
+                        {compactMemberCount} member{compactMemberCount === 1 ? "" : "s"}
                       </div>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 flex-wrap gap-2">
+                        <ManagementBadge label={inviteAccessChipLabel} tone="neutral" />
+                        {hasLimitedTeamFocus ? (
+                          <ManagementBadge label={`Following ${focusedTeamIds.size} teams`} tone="neutral" />
+                        ) : null}
+                      </div>
+                      {usesDisclosure ? (
+                        <InlineDisclosureButton
+                          isOpen={isExpanded}
+                          variant="subtle"
+                          onClick={() => toggleExpandedGroup(group.id)}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 }
                 className="bg-gray-50"
-                badges={
-                  <>
-                    <ManagementBadge label={group.status} tone={group.status === "active" ? "success" : "neutral"} />
-                    <ManagementBadge
-                      label={
-                        group.basePredictionMode === "easy_bracket"
-                          ? "Easy Bracket"
-                          : group.basePredictionMode === "strategy_mode"
-                            ? "Global Challenge"
-                            : "My Picks"
-                      }
-                      tone="neutral"
-                    />
-                    {group.homeTeamAdvantageEnabled ? (
-                      <ManagementBadge label="Home Team Advantage" tone="success" />
-                    ) : null}
-                    <ManagementBadge label={`Cap ${group.membershipLimit}`} tone="neutral" />
-                  </>
-                }
-                headerActions={
-                  usesDisclosure ? (
-                    <div className="flex items-center gap-2">
-                      <InlineDisclosureButton
-                        isOpen={isExpanded}
-                        variant="subtle"
-                        onClick={() => toggleExpandedGroup(group.id)}
-                      />
-                    </div>
-                  ) : null
-                }
               >
                 {isExpanded ? (
                   <>
@@ -1460,10 +1775,430 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       </Link>
                     </div>
                     {group.canManage ? (
+                      <div className="mt-4 space-y-4">
+                        <div className="rounded-lg border border-gray-200 bg-white p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group Profile</h4>
+                              <p className="mt-1 text-xs font-semibold text-gray-500">
+                                Update the group name, avatar, and short description.
+                              </p>
+                            </div>
+                            <Avatar name={groupProfileDraft.name || group.name} avatarUrl={avatarPreviewUrl} size="md" />
+                          </div>
+                          <div className="mt-3 space-y-3">
+                            <input
+                              ref={(node) => {
+                                groupAvatarInputRefs.current[group.id] = node;
+                              }}
+                              type="file"
+                              accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                              className="hidden"
+                              onChange={(event) => void handleGroupAvatarSelection(group, event)}
+                            />
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+                              <div className="flex items-center gap-3">
+                                <Avatar
+                                  name={groupProfileDraft.name || group.name}
+                                  avatarUrl={avatarPreviewUrl}
+                                  size="md"
+                                  className="rounded-lg"
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-bold text-gray-900">
+                                    {avatarDraft.file
+                                      ? "Avatar selected"
+                                      : avatarDraft.removeCurrent
+                                        ? "Avatar will be removed"
+                                        : group.avatarUrl
+                                          ? "Avatar saved"
+                                          : "No avatar yet"}
+                                  </p>
+                                  <p className="mt-1 text-xs font-semibold text-gray-500">
+                                    {avatarDraft.file
+                                      ? "Local preview shown. Save Group Profile to apply it."
+                                      : avatarDraft.removeCurrent
+                                        ? "Save Group Profile to remove this avatar."
+                                        : "Optional. If you skip it, your initials stay in place."}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="mt-3 grid grid-cols-2 gap-2">
+                                <ActionButton
+                                  type="button"
+                                  disabled={actionKey === `save-group-profile-${group.id}`}
+                                  onClick={() => groupAvatarInputRefs.current[group.id]?.click()}
+                                  fullWidth
+                                >
+                                  Upload Avatar
+                                </ActionButton>
+                                {group.avatarUrl || avatarDraft.previewUrl ? (
+                                  <ActionButton
+                                    type="button"
+                                    disabled={actionKey === `save-group-profile-${group.id}`}
+                                    onClick={() => {
+                                      handleRemoveGroupAvatar(group);
+                                    }}
+                                    fullWidth
+                                  >
+                                    Remove Avatar
+                                  </ActionButton>
+                                ) : (
+                                  <div />
+                                )}
+                              </div>
+                            </div>
+                            <label className="block">
+                              <span className="text-sm font-bold text-gray-800">Group name</span>
+                              <input
+                                value={groupProfileDraft.name}
+                                onChange={(event) =>
+                                  setGroupProfileDrafts((current) => ({
+                                    ...current,
+                                    [group.id]: {
+                                      ...groupProfileDraft,
+                                      name: event.target.value
+                                    }
+                                  }))
+                                }
+                                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="text-sm font-bold text-gray-800">Short description</span>
+                              <textarea
+                                value={groupProfileDraft.description}
+                                onChange={(event) =>
+                                  setGroupProfileDrafts((current) => ({
+                                    ...current,
+                                    [group.id]: {
+                                      ...groupProfileDraft,
+                                      description: event.target.value
+                                    }
+                                  }))
+                                }
+                                rows={2}
+                                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                              />
+                            </label>
+                            <ActionButton
+                              type="button"
+                              disabled={actionKey === `save-group-profile-${group.id}` || !isGroupProfileSaveReady}
+                              onClick={() => void handleSaveGroupProfile(group)}
+                              tone={isGroupProfileSaveReady ? "accent" : "neutral"}
+                              fullWidth
+                            >
+                              {actionKey === `save-group-profile-${group.id}` ? "Saving..." : "Save Group Profile"}
+                            </ActionButton>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-gray-200 bg-white p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Restricted Email List</h4>
+                              <p className="mt-1 text-xs font-semibold text-gray-500">
+                                Approved emails for restricted groups. Existing members stay in place if you turn restriction on later.
+                              </p>
+                            </div>
+                            <ManagementBadge
+                              label={`${detailedGroup?.allowedEmails.length ?? 0} approved`}
+                              tone={group.accessMode === "restricted_by_email" ? "accent" : "neutral"}
+                            />
+                          </div>
+                          <div className="mt-3 space-y-3">
+                            <label className="block">
+                              <span className="text-sm font-bold text-gray-800">Add approved emails</span>
+                              <textarea
+                                value={allowedEmailsDrafts[group.id] ?? ""}
+                                onChange={(event) =>
+                                  setAllowedEmailsDrafts((current) => ({
+                                    ...current,
+                                    [group.id]: event.target.value
+                                  }))
+                                }
+                                rows={4}
+                                placeholder="player@example.com&#10;captain@example.com"
+                                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Upload CSV</span>
+                              <input
+                                type="file"
+                                accept=".csv,text/csv"
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0];
+                                  if (!file) {
+                                    return;
+                                  }
+
+                                  void file.text().then((text) => {
+                                    setAllowedEmailsDrafts((current) => ({
+                                      ...current,
+                                      [group.id]: text
+                                    }));
+                                  });
+                                }}
+                                className="mt-2 block w-full text-xs font-semibold text-gray-600"
+                              />
+                            </label>
+                            <p className="text-xs font-semibold text-gray-500">
+                              CSV support uses the <code>email</code> column when present. XLSX can follow later if we add it cleanly.
+                            </p>
+                            <ActionButton
+                              type="button"
+                              disabled={actionKey === `save-allowed-emails-${group.id}`}
+                              onClick={() => void handleSaveAllowedEmails(group)}
+                              fullWidth
+                            >
+                              {actionKey === `save-allowed-emails-${group.id}` ? "Saving..." : "Save Approved Emails"}
+                            </ActionButton>
+                            <div className="space-y-2">
+                              {(detailedGroup?.allowedEmails ?? []).length > 0 ? (
+                                detailedGroup?.allowedEmails.map((entry) => (
+                                  <div key={entry.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-black text-gray-950">{entry.email}</p>
+                                      <p className="mt-1 text-xs font-semibold text-gray-500">
+                                        {entry.status === "joined" ? `Joined as ${entry.joinedUserName ?? "player"}` : "Allowed"}
+                                      </p>
+                                    </div>
+                                    <ActionButton
+                                      type="button"
+                                      tone="danger"
+                                      disabled={actionKey === `remove-allowed-email-${entry.id}`}
+                                      onClick={() => void handleRemoveAllowedEmail(group, entry.id)}
+                                    >
+                                      Remove
+                                    </ActionButton>
+                                  </div>
+                                ))
+                              ) : (
+                                <p className="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                                  No approved emails yet.
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {group.groupKind === "standard" ? (
+                          <div className="rounded-lg border border-gray-200 bg-white p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Captain’s Pass</h4>
+                                <p className="mt-1 text-xs font-semibold text-gray-500">
+                                  Give one trusted player limited invite power for this group. They also get one small private Captain Group of their own.
+                                </p>
+                              </div>
+                              {captainPass ? (
+                                <ManagementBadge label={captainPass.statusLabel} tone={captainPass.status === "claimed" ? "accent" : "neutral"} />
+                              ) : null}
+                            </div>
+                            <div className="mt-3 space-y-3">
+                              {captainPass ? (
+                                <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                                  <p className="text-sm font-black text-gray-950">
+                                    {captainPass.captainName ?? "Captain"} · {captainPass.invitesRemaining} invite{captainPass.invitesRemaining === 1 ? "" : "s"} remaining
+                                  </p>
+                                  <p className="mt-1 text-xs font-semibold text-gray-500">
+                                    Private group: {captainPass.captainPrivateGroupName ?? "Created"}
+                                  </p>
+                                </div>
+                              ) : (
+                                <>
+                                  <label className="block">
+                                    <span className="text-sm font-bold text-gray-800">Trusted player</span>
+                                    <select
+                                      value={captainPassSelection.userId}
+                                      onChange={(event) =>
+                                        setCaptainPassSelections((current) => ({
+                                          ...current,
+                                          [group.id]: {
+                                            ...captainPassSelection,
+                                            userId: event.target.value
+                                          }
+                                        }))
+                                      }
+                                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                    >
+                                      <option value="">Choose a player</option>
+                                      {availableCaptainCandidates.map((member) => (
+                                        <option key={member.userId} value={member.userId}>
+                                          {member.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="block">
+                                    <span className="text-sm font-bold text-gray-800">Invite allowance</span>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={6}
+                                      value={captainPassSelection.allowance}
+                                      onChange={(event) =>
+                                        setCaptainPassSelections((current) => ({
+                                          ...current,
+                                          [group.id]: {
+                                            ...captainPassSelection,
+                                            allowance: event.target.value
+                                          }
+                                        }))
+                                      }
+                                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                    />
+                                  </label>
+                                  <p className="text-xs font-semibold text-gray-500">
+                                    Choose how many people this Captain can invite into your group. This cannot exceed your remaining group capacity.
+                                  </p>
+                                  <ActionButton
+                                    type="button"
+                                    disabled={actionKey === `assign-captains-pass-${group.id}`}
+                                    onClick={() => void handleAssignCaptainsPass(group)}
+                                    fullWidth
+                                  >
+                                    {actionKey === `assign-captains-pass-${group.id}` ? "Saving..." : "Issue Captain’s Pass"}
+                                  </ActionButton>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="rounded-lg border border-gray-200 bg-white p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Team Focus</h4>
+                              <p className="mt-1 text-xs font-semibold text-gray-500">
+                                Choose which teams count toward this group’s team-focused views and tallies.
+                              </p>
+                            </div>
+                            <ManagementBadge
+                              label={allTeamsIncluded ? "All teams" : `${detailedGroup?.focusTeams.length ?? 0} teams`}
+                              tone="neutral"
+                            />
+                          </div>
+                          <div className="mt-3 space-y-3">
+                            <div className="flex flex-col gap-3 sm:flex-row">
+                              <label className="min-w-0 flex-1">
+                                <span className="sr-only">Choose a focus team</span>
+                                <select
+                                  value={focusTeamSelectionsByGroup[group.id] ?? ""}
+                                  onChange={(event) =>
+                                    setFocusTeamSelectionsByGroup((current) => ({
+                                      ...current,
+                                      [group.id]: event.target.value
+                                    }))
+                                  }
+                                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                >
+                                  <option value="">Add a team</option>
+                                  {availableFocusTeamOptions.map((team) => (
+                                    <option key={team.id} value={team.id}>
+                                      {team.groupName} · {team.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <div className="flex gap-2">
+                                <ActionButton
+                                  type="button"
+                                  disabled={actionKey === `add-focus-team-${group.id}` || allTeamsIncluded}
+                                  onClick={() => void handleAddFocusTeam(group)}
+                                >
+                                  {actionKey === `add-focus-team-${group.id}` ? "Adding..." : "Add Team"}
+                                </ActionButton>
+                                <ActionButton
+                                  type="button"
+                                  disabled={actionKey === `add-all-focus-teams-${group.id}` || totalTeamOptionCount === 0 || allTeamsIncluded}
+                                  onClick={() => void handleAddAllFocusTeams(group)}
+                                >
+                                  {actionKey === `add-all-focus-teams-${group.id}` ? "Adding..." : "Add All Teams"}
+                                </ActionButton>
+                              </div>
+                            </div>
+                            {allTeamsIncluded ? (
+                              <p className="rounded-md border border-green-200 bg-green-50 px-3 py-3 text-sm font-semibold text-green-700">
+                                All teams are included in this group&apos;s tallies.
+                              </p>
+                            ) : null}
+                            <div className="space-y-2">
+                              {(detailedGroup?.focusTeams ?? []).length > 0 ? (
+                                detailedGroup?.focusTeams.map((team) => (
+                                  <div key={team.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-black text-gray-950">
+                                        {team.flagEmoji ? `${team.flagEmoji} ` : ""}{team.name}
+                                      </p>
+                                      <p className="mt-1 text-xs font-semibold text-gray-500">{team.groupName}</p>
+                                    </div>
+                                    <ActionButton
+                                      type="button"
+                                      tone="danger"
+                                      disabled={actionKey === `remove-focus-team-${team.id}`}
+                                      onClick={() => void handleRemoveFocusTeam(group, team.id)}
+                                    >
+                                      Remove
+                                    </ActionButton>
+                                  </div>
+                                ))
+                              ) : (
+                                <p className="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                                  No focused teams yet.
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                    {isCaptainInviteHelperVisible ? (
+                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Captain’s Pass</h4>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">
+                              Invite helpers for this manager group. {captainPass?.isRestrictedByEmail ? "This group is restricted by email. Captain invites only work for approved emails." : "Your remaining invites stop working if the group fills up."}
+                            </p>
+                          </div>
+                          <ManagementBadge label={`${captainPass?.invitesRemaining ?? 0} left`} tone="accent" />
+                        </div>
+                        <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                          <label className="min-w-0 flex-1">
+                            <span className="sr-only">Captain invite email</span>
+                            <input
+                              type="email"
+                              value={captainInviteEmailsByGroup[group.id] ?? ""}
+                              onChange={(event) =>
+                                setCaptainInviteEmailsByGroup((current) => ({
+                                  ...current,
+                                  [group.id]: event.target.value
+                                }))
+                              }
+                              placeholder="player@example.com"
+                              className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                            />
+                          </label>
+                          <ActionButton
+                            type="button"
+                            disabled={actionKey === `create-captain-invite-${group.id}` || (captainPass?.invitesRemaining ?? 0) <= 0}
+                            onClick={() => void handleCreateCaptainInvite(group)}
+                          >
+                            {actionKey === `create-captain-invite-${group.id}` ? "Creating..." : "Create Captain Invite"}
+                          </ActionButton>
+                        </div>
+                      </div>
+                    ) : null}
+                    {group.canManage ? (
                       <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <p className="text-sm font-black uppercase tracking-wide text-gray-700">Invite code</p>
+                            <p className="text-sm font-black uppercase tracking-wide text-gray-700">Access &amp; Invites</p>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">
+                              Control how new members join, then share a code or direct invite that respects those rules.
+                            </p>
                           </div>
                           <InlineDisclosureButton
                             isOpen={isInviteCodeExpanded}
@@ -1474,10 +2209,36 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
                         {isInviteCodeExpanded ? (
                           <div className="mt-3 space-y-3">
+                            <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                              <label className="block">
+                                <span className="text-sm font-bold text-gray-800">Access mode</span>
+                                <select
+                                  value={group.accessMode}
+                                  onChange={(event) => void handleSaveGroupAccess(group, event.target.value)}
+                                  disabled={actionKey === `save-group-access-${group.id}`}
+                                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                >
+                                  <option value="open_by_code">Open by code</option>
+                                  <option value="restricted_by_email">Restricted by email</option>
+                                  <option value="closed">Closed</option>
+                                </select>
+                              </label>
+                              <p className="mt-2 text-xs font-semibold text-gray-500">
+                                {group.accessMode === "restricted_by_email"
+                                  ? "This group is restricted by email. Invite codes and Captain invites only work for approved emails."
+                                  : group.accessMode === "closed"
+                                    ? "This group is closed. You can still keep the current code for later, but no new joins will work while it stays closed."
+                                    : "Anyone with an active code or direct invite can join until the group fills up."}
+                              </p>
+                            </div>
                             {isGroupDetailLoading && !inviteCode ? (
                               <p className="text-sm font-semibold text-gray-600">Loading invite code...</p>
                             ) : inviteCode ? (
                               <>
+                                <div className="flex items-center justify-between gap-2 rounded-md border border-gray-200 bg-white px-3 py-2">
+                                  <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Invite status</p>
+                                  <ManagementBadge label={detailedGroup?.inviteCodeStatusLabel ?? "Active"} tone={detailedGroup?.inviteCodeStatus === "active" ? "success" : "neutral"} />
+                                </div>
                                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-3">
                                   <code className="text-base font-black uppercase tracking-[0.18em] text-gray-950">
                                     {inviteCode.code}
@@ -1682,18 +2443,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       </div>
                     ) : null}
 
-                    {group.canManage && detailedGroup?.canManageRuleset ? (
-                      <ManagedGroupRulesetPanel
-                        groupId={group.id}
-                        canManageRuleset={detailedGroup.canManageRuleset}
-                        activeRuleset={detailedGroup.activeRuleset}
-                        sidePickPackages={detailedGroup.sidePickPackages}
-                        onSaved={async () => {
-                          await loadGroupDetail(group.id, true);
-                        }}
-                      />
-                    ) : null}
-
                     {!detailedGroup ? (
                       <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
                         <div className="space-y-2">
@@ -1760,9 +2509,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       <div className="rounded-lg border border-gray-200 bg-white p-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">People</h4>
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Members</h4>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
-                              {groupMembers.length} members · {groupInvites.length} invites
+                              Search, filter, and manage members and pending invites for this group.
                             </p>
                           </div>
                           <InlineDisclosureButton
@@ -1850,7 +2599,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     </div>
                                   ) : null}
                                   <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {member.role} · Joined {formatDateOnly(member.joinedAt)}
+                                    {member.role} · {getGroupJoinSourceLabel(member.joinSource)} · Joined {formatDateOnly(member.joinedAt)}
                                   </p>
                                 </div>
                               </div>
@@ -1918,6 +2667,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   </p>
                                   <p className="mt-1 text-xs font-semibold text-gray-500">
                                     {invite.invitedByLabel ? `Invited by ${invite.invitedByLabel}` : "Group invite"}
+                                    {` · ${getGroupInviteSourceLabel(invite.inviteSource)}`}
                                     {invite.emailSentAt ? ` · Last sent ${formatDateOnly(invite.emailSentAt)}` : ""}
                                     {` · Send attempts ${invite.emailAttemptCount}`}
                                   </p>
@@ -2274,7 +3024,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     </div>
                                   ) : null}
                                   <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {member.role} · Joined {formatDateOnly(member.joinedAt)}
+                                    {member.role} · {getGroupJoinSourceLabel(member.joinSource)} · Joined {formatDateOnly(member.joinedAt)}
                                   </p>
                                 </div>
                               </div>
@@ -2288,11 +3038,13 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group Details</h4>
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group Limits</h4>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
-                              {isSuperAdmin
-                                ? "Adjust this group directly with unlimited super admin access."
-                                : `Your current tier allows up to ${summary?.ok ? summary.tierAccess.limits.maxMembersPerGroup : group.membershipLimit} members per group.`}
+                              {group.groupKind === "captain_private"
+                                ? `Captain Groups are fixed at ${MAX_CAPTAIN_PRIVATE_GROUP_MEMBERS} members.`
+                                : isSuperAdmin
+                                  ? "Adjust this group directly with unlimited super admin access."
+                                  : `Your current tier allows up to ${summary?.ok ? summary.tierAccess.limits.maxMembersPerGroup : group.membershipLimit} members per group.`}
                             </p>
                           </div>
                           <InlineDisclosureButton
@@ -2322,6 +3074,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 type="number"
                                 min={1}
                                 value={groupLimitFormValue}
+                                disabled={group.groupKind === "captain_private"}
                                 onChange={(event) =>
                                   setGroupLimitForms((current) => ({
                                     ...current,
@@ -2333,18 +3086,22 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                             </label>
                             <ActionButton
                               type="submit"
-                              disabled={actionKey === `update-group-limit-${group.id}`}
+                              disabled={group.groupKind === "captain_private" || actionKey === `update-group-limit-${group.id}`}
                               fullWidth
                             >
-                              {actionKey === `update-group-limit-${group.id}` ? "Saving limit..." : "Save Group Limit"}
+                              {group.groupKind === "captain_private"
+                                ? "Captain Group Limit Locked"
+                                : actionKey === `update-group-limit-${group.id}`
+                                  ? "Saving limit..."
+                                  : "Save Group Limit"}
                             </ActionButton>
 
                             <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                              <div className="flex flex-wrap items-start justify-between gap-3">
-                                <div>
-                                  <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Details</h4>
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div>
+                                  <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Danger Zone</h4>
                                   <p className="mt-1 text-xs font-semibold text-gray-500">
-                                    Capacity and delete controls.
+                                    Delete this group only after removing everyone else.
                                   </p>
                                 </div>
                                 <InlineDisclosureButton

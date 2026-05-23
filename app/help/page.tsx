@@ -2,58 +2,74 @@ import { AppShell } from "@/components/AppShell";
 
 const HELP_SECTIONS = [
   {
-    title: "Make Your Picks",
+    title: "Start with Group Stage",
     bullets: [
-      "Predict the score for each match",
-      "Review the score and save to confirm each pick",
-      "Your picks lock when the match starts"
+      "Rank each group and pick the teams you believe will reach the Round of 32",
+      "Set the top two finishers in every group",
+      "Choose the qualifying third-place teams to finish the bracket",
+      "You can keep editing until the tournament starts"
     ],
-    tip: "You can use Auto Pick for the next open unsaved match, then review before saving."
+    tip: "Group Stage is the default launch path for regular players."
   },
   {
-    title: "How You Score Points",
+    title: "Group Stage Scoring",
     bullets: [
-      "Correct winner or draw: +3 points",
-      "Exact goal difference with the right outcome: +1 more point",
-      "Exact score with the right outcome: +5 more points"
+      "Each group is worth up to 14 points",
+      "Correct winner: 4 points",
+      "Correct runner-up: 3 points",
+      "Correct third-place team: 2 points",
+      "Correct top two teams in any order: 2 points",
+      "Correct third-place qualification status: 1 point",
+      "Correct complete group order: 2 points"
     ],
-    tip: "The closer your prediction, the more you earn."
+    tip: "Twelve groups at 14 points each gives Group Stage a 168-point max."
   },
   {
-    title: "Knockout Bracket Scoring",
+    title: "Projected Round of 32",
     bullets: [
-      "Knockout picks score the correct winner only",
-      "Round of 32 and third-place picks do not award points",
-      "Round of 16: +5 points",
-      "Quarterfinals: +10 points",
-      "Semifinals: +15 points",
-      "Final: +20 points",
-      "Champion: +25 bonus points from your Final winner pick"
+      "Your Group Stage ladder creates a projected Round of 32 bracket",
+      "Before official seeding, the projected side shows the teams your ladder sends forward",
+      "Once official qualifiers are known, Round of 32 lets you compare your projected path with the real bracket",
+      "After Round of 32, Knockout Stage uses the standard match-pick cards only"
     ],
-    tip: "Bracket points are tracked separately from your group-stage leaderboard total for now."
+    tip: "This is the bridge between Group Stage and Knockout Stage."
+  },
+  {
+    title: "Knockout Stage Scoring",
+    bullets: [
+      "Knockout Stage opens once the official bracket is seeded",
+      "You predict winners and scores match by match",
+      "Round of 32: 8 points max",
+      "Round of 16: 10 points max",
+      "Quarterfinals: 13 points max",
+      "Semifinals: 15 points max",
+      "Third-place match: 10 points max",
+      "Final: 25 points max"
+    ],
+    tip: "Later rounds are worth more, so staying alive in Knockout matters."
+  },
+  {
+    title: "Leaderboards",
+    bullets: [
+      "Group Stage Leaderboard compares ladder prediction scores",
+      "Knockout Stage Leaderboard compares knockout match scores",
+      "Global Top 10 is the compact prestige board",
+      "Your group leaderboards still compare you directly with friends in each group"
+    ]
   },
   {
     title: "Play in Groups",
     bullets: [
       "You can join one group or multiple groups",
       "Each group has its own leaderboard",
-      "Use group and team filters to focus your picks",
-      "See how you rank against your friends"
+      "Invite friends and compete inside your own pool"
     ]
   },
   {
     title: "See Your Results",
     bullets: [
-      "Check global standings and group standings",
-      "Use the leaderboard view controls to change focus"
-    ]
-  },
-  {
-    title: "Track Your Predictions",
-    bullets: [
-      "Review saved picks once matches lock",
-      "See social picks after kickoff",
-      "Watch your score grow over time"
+      "Check Group Stage, Knockout Stage, and Global leaderboard views",
+      "Open the selector to move between Global, Managed, and Invited boards"
     ]
   },
   {
@@ -73,10 +89,10 @@ const HELP_SECTIONS = [
 ] as const;
 
 const QUICK_TIPS = [
-  "Make your picks before a match starts",
-  "Auto Pick suggests a score but never saves it for you",
-  "Use the group table on My Picks to preview how your saved scores affect a group",
-  "Bracket points are separate from the main leaderboard for now",
+  "Finish your Group Stage ladder before tournament kickoff",
+  "Use the projected Round of 32 to check who your ladder sends into Knockout",
+  "Knockout Stage opens after official qualifiers are seeded",
+  "Leaderboard chips and rows now reflect the current phase score",
   "Create and manage groups to build different pools"
 ] as const;
 
@@ -90,7 +106,7 @@ export default function HelpPage() {
             Welcome to PICK-IT! <span aria-hidden="true">⚽</span>
           </h1>
           <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">
-            Predict match scores, compete with friends, and climb the leaderboard.
+            Start with Group Stage, then keep playing through Knockout Stage and the leaderboards.
           </p>
         </section>
 
@@ -129,7 +145,7 @@ export default function HelpPage() {
 
         <section className="rounded-lg bg-gray-100 p-4">
           <p className="text-sm font-semibold leading-6 text-gray-800">
-            That’s it. Simple, competitive, and fun. Now go make your picks <span aria-hidden="true">⚽🔥</span>
+            That’s it. Build your Group Stage first, then come back for Knockout Stage when the bracket is official. <span aria-hidden="true">⚽🔥</span>
           </p>
         </section>
       </div>

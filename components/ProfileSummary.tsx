@@ -1,6 +1,4 @@
 "use client";
-
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
@@ -25,7 +23,6 @@ import {
 import { getAccessLevel, getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-levels";
 import { showAppToast } from "@/lib/app-toast";
 import type { LegalDocument } from "@/lib/legal";
-import { redactEmailAddress } from "@/lib/redact-email";
 import { getStrings } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY } from "@/lib/ui-storage-keys";
@@ -239,7 +236,7 @@ export function ProfileSummary({
                   {getAccessLevelLabel(user)}
                   {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
                 </p>
-                <p className="truncate text-sm text-gray-600">{redactEmailAddress(user.email)}</p>
+                <p className="truncate text-sm text-gray-600">{user.email}</p>
                 <div className="mt-2">
                   {user.homeTeamId ? (
                     <HomeTeamBadge teamId={user.homeTeamId} />
@@ -371,14 +368,6 @@ export function ProfileSummary({
             <option value="es">{copy.spanish}</option>
           </select>
         </label>
-        <div className="mt-4">
-          <Link
-            href="/my-groups"
-            className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-          >
-            Create and Manage Groups
-          </Link>
-        </div>
         <div className="mt-5 border-t border-gray-200 pt-4">
           <div className="flex flex-wrap gap-2">
             <button

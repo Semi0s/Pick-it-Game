@@ -3,14 +3,14 @@ import { validateAccessCodeAvailability } from "@/lib/access-codes-server";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { code?: string };
+    const body = (await request.json()) as { code?: string; email?: string };
     const preview = (body.code ?? "").replace(/\s+/g, "").trim().toLowerCase();
     console.info("[access-code:validate] Validating access code.", {
       hasCode: Boolean(preview),
       codePreview: preview ? `${preview.slice(0, 4)}...` : null
     });
 
-    const result = await validateAccessCodeAvailability(body.code ?? "");
+    const result = await validateAccessCodeAvailability(body.code ?? "", body.email ?? "");
 
     if (!result.ok) {
       console.warn("[access-code:validate] Access code unavailable.", {

@@ -42,6 +42,7 @@ type BracketBuilderClientProps = {
   roundOf32Placeholders: KnockoutPlaceholderMatch[];
   groupStageDueAt?: string | null;
   knockoutProjectedPreview?: KnockoutBracketEditorView | null;
+  fullScoresEnabled?: boolean;
 };
 
 type BracketPreviewSide = {
@@ -147,7 +148,8 @@ export function BracketBuilderClient({
   requiredThirdPlaceQualifierCount = 0,
   roundOf32Placeholders,
   groupStageDueAt = null,
-  knockoutProjectedPreview = null
+  knockoutProjectedPreview = null,
+  fullScoresEnabled = true
 }: BracketBuilderClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -916,17 +918,14 @@ export function BracketBuilderClient({
           </div>
           <h1 className="mt-5 text-3xl font-black text-gray-950">Your bracket is complete.</h1>
           <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">
-            Your base predictions are saved. You can go home for more information or start scoring matches for more points.
+            You can keep editing until the start of the Tournament.
           </p>
-          <div className="mt-8 grid grid-cols-3 gap-3">
+          <div className="mt-8 grid grid-cols-2 gap-3">
             <ActionButton fullWidth onClick={() => setShowCompletionScreen(false)}>
               Stay Here
             </ActionButton>
             <ActionButton fullWidth tone="accent" onClick={() => router.push("/dashboard")}>
               <span className="block w-full text-center">Home</span>
-            </ActionButton>
-            <ActionButton fullWidth tone="accent" onClick={handleGoToFullScoring}>
-              Pick Full Scores
             </ActionButton>
           </div>
         </section>
@@ -948,8 +947,8 @@ export function BracketBuilderClient({
       {isReadOnly ? (
         <section className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-center text-[11px] font-semibold text-gray-600">
           {initialKnockoutSeeded
-            ? "Easy Bracket is locked because the knockout bracket has already been seeded."
-            : "Easy Bracket is locked because this group's picks deadline has passed."}
+            ? "Group Stage is locked because the knockout bracket has already been seeded."
+            : "Group Stage is locked because this group's picks deadline has passed."}
         </section>
       ) : null}
 
@@ -963,7 +962,7 @@ export function BracketBuilderClient({
         }}
       >
         <div className="pb-0.5 text-center">
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-cyan-900">Easy Bracket</p>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-cyan-900">Group Stage</p>
           <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-800">Pick qualifying teams only</p>
         </div>
 
@@ -1089,7 +1088,7 @@ export function BracketBuilderClient({
                   event.preventDefault();
                   handleDropReorder(team.id);
                 }}
-                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_3.6rem_2rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1 last:border-b-0 transition-shadow ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
+                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_3.6rem_2rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1 last:border-b-0 transition-shadow select-none [touch-action:manipulation] [-webkit-touch-callout:none] ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <div className="flex justify-start">
                   <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
@@ -1229,7 +1228,7 @@ export function BracketBuilderClient({
                         Cutoff
                       </div>
                     ) : null}
-                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-lg border px-2 py-1 transition-shadow ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
+                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-lg border px-2 py-1 transition-shadow select-none [touch-action:manipulation] [-webkit-touch-callout:none] ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
                       <div className="flex justify-start">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
                           {index + 1}
@@ -1461,14 +1460,18 @@ export function BracketBuilderClient({
         </div>
 
         <div className="mt-3">
-          <p className="mb-2 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">Pick scores, earn more points</p>
-          <div className="grid grid-cols-2 gap-3">
+          <p className="mb-2 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">
+            {fullScoresEnabled ? "Pick scores, earn more points" : "Finish Group Stage, then return for Knockout"}
+          </p>
+          <div className={`grid gap-3 ${fullScoresEnabled ? "grid-cols-2" : "grid-cols-1"}`}>
           <ActionButton fullWidth disabled={!canAdvanceFromEasyBracket} onClick={() => router.push("/dashboard")}>
-            Dashboard
+            Home
           </ActionButton>
-          <ActionButton fullWidth tone="accent" disabled={!canAdvanceFromEasyBracket} onClick={handleGoToFullScoring}>
-            Pick Full Scores
-          </ActionButton>
+          {fullScoresEnabled ? (
+            <ActionButton fullWidth tone="accent" disabled={!canAdvanceFromEasyBracket} onClick={handleGoToFullScoring}>
+              Pick Full Scores
+            </ActionButton>
+          ) : null}
           </div>
         </div>
       </section>

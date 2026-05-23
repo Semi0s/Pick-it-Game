@@ -8,6 +8,7 @@ import {
 } from "@/lib/group-scoring-setup-gate";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { normalizeLanguage } from "@/lib/i18n";
+import { getConfiguredGroupPredictionMode, shouldHideFullScoresForLaunch } from "@/lib/group-prediction-mode";
 import type { PredictionStartMode } from "@/lib/play-mode";
 import { fetchUserGroupProjectionSourceMap, fetchUserLightSeedBuilderSnapshot, type LightSeedBuilderSnapshot, type UserGroupProjectionSource } from "@/lib/group-stage-modes";
 import { getSafeSupabaseErrorInfo, isLikelySchemaDriftError, logSafeSupabaseError } from "@/lib/supabase-errors";
@@ -65,6 +66,7 @@ export default async function GroupsPage() {
   let myPicksAcknowledgedAt: string | null = null;
   let shouldGateMyPicks = false;
   let groupStageMatchCount = 72;
+  const fullScoresHiddenForLaunch = shouldHideFullScoresForLaunch(getConfiguredGroupPredictionMode());
 
   if (authUser) {
     await redirectIfLegacyScoringSetupRequired({ userId: authUser.id, pathname: "/groups" });
@@ -238,6 +240,7 @@ export default async function GroupsPage() {
         myPicksAcknowledgedAt={myPicksAcknowledgedAt}
         shouldGateMyPicks={shouldGateMyPicks}
         groupStageMatchCount={groupStageMatchCount}
+        fullScoresHiddenForLaunch={fullScoresHiddenForLaunch && initialUser?.role !== "admin"}
       />
     </AppShell>
   );

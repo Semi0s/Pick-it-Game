@@ -30,6 +30,7 @@ type GroupRow = {
   id: string;
   name: string;
   status: "active" | "archived";
+  access_mode?: "open_by_code" | "restricted_by_email" | "closed" | null;
   membership_limit: number;
   owner_user_id?: string | null;
 };
@@ -56,7 +57,7 @@ export type AccessCodeAvailability =
       message: string;
     };
 
-export async function validateAccessCodeAvailability(rawCode: string): Promise<AccessCodeAvailability> {
+export async function validateAccessCodeAvailability(rawCode: string, email?: string): Promise<AccessCodeAvailability> {
   const normalizedCode = normalizeAccessCode(rawCode);
   if (!normalizedCode) {
     return invalidAvailability("invalid");
@@ -96,7 +97,7 @@ export async function validateAccessCodeAvailability(rawCode: string): Promise<A
     const [{ data: group, error: groupError }, { count, error: memberCountError }] = await Promise.all([
       adminSupabase
         .from("groups")
-        .select("id,name,status,membership_limit,owner_user_id")
+        .select("id,name,status,access_mode,membership_limit,owner_user_id")
         .eq("id", code.group_id)
         .maybeSingle(),
       adminSupabase.from("group_members").select("id", { count: "exact", head: true }).eq("group_id", code.group_id)
@@ -113,6 +114,28 @@ export async function validateAccessCodeAvailability(rawCode: string): Promise<A
     const resolvedGroup = (group as GroupRow | null) ?? null;
     if (!resolvedGroup || resolvedGroup.status !== "active") {
       return invalidAvailability("group_unavailable");
+    }
+
+    if (resolvedGroup.access_mode === "closed") {
+      return invalidAvailability("group_unavailable");
+    }
+
+    if (resolvedGroup.access_mode === "restricted_by_email" && email?.trim()) {
+      const normalizedEmail = email.trim().toLowerCase();
+      const { data: allowedEmail, error: allowedEmailError } = await adminSupabase
+        .from("group_allowed_emails")
+        .select("id")
+        .eq("group_id", code.group_id)
+        .eq("email_normalized", normalizedEmail)
+        .maybeSingle();
+
+      if (allowedEmailError) {
+        throw new Error(allowedEmailError.message);
+      }
+
+      if (!allowedEmail) {
+        return invalidAvailability("group_restricted");
+      }
     }
 
     const effectiveSeatLimit = await getEffectiveGroupSeatLimit(adminSupabase, resolvedGroup);
@@ -165,6 +188,10 @@ export function getAccessCodeDbErrorKey(reason: AccessCodeFailureReason) {
 
   if (reason === "group_full") {
     return ACCESS_CODE_ERROR_KEY.groupFull;
+  }
+
+  if (reason === "group_restricted") {
+    return ACCESS_CODE_ERROR_KEY.groupRestricted;
   }
 
   return ACCESS_CODE_ERROR_KEY.groupUnavailable;
