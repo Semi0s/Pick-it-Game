@@ -549,14 +549,6 @@ function GroupStageHelperMock() {
               opacity: 0;
             }
           }
-
-          @media (prefers-reduced-motion: reduce) {
-            .gs-team-x,
-            .gs-team-y,
-            .gs-hand {
-              animation: none;
-            }
-          }
         `}</style>
       </MockPhoneFrame>
     </div>
@@ -766,17 +758,6 @@ function ThirdPlaceHelperMock() {
               opacity: 0;
             }
           }
-
-          @media (prefers-reduced-motion: reduce) {
-            .tp-row-three,
-            .tp-row-four,
-            .tp-slot-three,
-            .tp-slot-four,
-            .tp-finish,
-            .tp-hand {
-              animation: none;
-            }
-          }
         `}</style>
       </MockPhoneFrame>
     </div>
@@ -938,15 +919,6 @@ function KnockoutHelperMock() {
             100% {
               transform: translate(82px, 18px);
               opacity: 0;
-            }
-          }
-
-          @media (prefers-reduced-motion: reduce) {
-            .ko-score-roll,
-            .ko-team-b,
-            .ko-team-b-arrows,
-            .ko-hand {
-              animation: none;
             }
           }
         `}</style>
@@ -1124,14 +1096,6 @@ function LeaderboardHelperMock() {
             100% {
               transform: translate(92px, 40px) scale(1);
               opacity: 0;
-            }
-          }
-
-          @media (prefers-reduced-motion: reduce) {
-            .leaderboard-target-a,
-            .leaderboard-target-d,
-            .leaderboard-hand-tap {
-              animation: none;
             }
           }
         `}</style>
@@ -1313,15 +1277,6 @@ function GroupsHelperMock() {
             100% {
               transform: translate(82px, 12px);
               opacity: 0;
-            }
-          }
-
-          @media (prefers-reduced-motion: reduce) {
-            .groups-add,
-            .groups-add-text,
-            .groups-john,
-            .groups-hand {
-              animation: none;
             }
           }
         `}</style>
