@@ -672,10 +672,10 @@ export function DashboardOverview({
               <p className="font-bold uppercase tracking-wide text-gray-950">Group Stage Scoring</p>
               <p>Each group is worth up to 14 points.</p>
               <div className="pl-4">
-                <p>Correct winner: 4 points</p>
+                <p>Correct winner: 5 points</p>
                 <p>Correct runner-up: 3 points</p>
                 <p>Correct third-place team: 2 points</p>
-                <p>Correct top two teams, any order: 2 points</p>
+                <p>Correct top two teams, any order: 1 point</p>
                 <p>Correct third-place qualification status: 1 point</p>
                 <p>Correct full group order: 2 points</p>
               </div>
@@ -691,12 +691,12 @@ export function DashboardOverview({
               <p className="font-bold uppercase tracking-wide text-gray-950">Knockout Stage</p>
               <p>Once the official bracket is seeded, you predict knockout winners and scores match by match.</p>
               <div className="pl-4">
-                <p>Round of 32: 8 max</p>
-                <p>Round of 16: 10 max</p>
-                <p>Quarterfinals: 13 max</p>
-                <p>Semifinals: 15 max</p>
-                <p>Third-place match: 10 max</p>
-                <p>Final: 25 max</p>
+                <p>Round of 32: 3 winner + 5 Perfect Pick = 8</p>
+                <p>Round of 16: 5 winner + 5 Perfect Pick = 10</p>
+                <p>Quarterfinals: 8 winner + 5 Perfect Pick = 13</p>
+                <p>Semifinals: 10 winner + 5 Perfect Pick = 15</p>
+                <p>Third-place: 5 winner + 5 Perfect Pick = 10</p>
+                <p>Final: 15 winner + 10 Perfect Pick = 25</p>
               </div>
             </div>
 

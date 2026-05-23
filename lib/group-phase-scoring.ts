@@ -30,10 +30,10 @@ export const GROUP_PHASE_GROUP_MAX_POINTS = 14;
  * Launch scoring ladder for the Group Phase default path.
  *
  * Each group can earn up to 14 points:
- * - Correct winner: 4
+ * - Correct winner: 5
  * - Correct runner-up: 3
  * - Correct third-place team: 2
- * - Correct top two teams in any order: 2
+ * - Correct top two teams in any order: 1
  * - Correct third-place qualification status: 1
  * - Correct complete ladder order: 2
  *
@@ -54,7 +54,7 @@ export function scoreGroupPhaseGroupPrediction(params: {
   const predictedRunnerUp = predicted[1] ?? null;
   const predictedThird = predicted[2] ?? null;
 
-  const winnerPoints = actualWinner && predictedWinner === actualWinner ? 4 : 0;
+  const winnerPoints = actualWinner && predictedWinner === actualWinner ? 5 : 0;
   const runnerUpPoints = actualRunnerUp && predictedRunnerUp === actualRunnerUp ? 3 : 0;
   const thirdPlacePoints = actualThird && predictedThird === actualThird ? 2 : 0;
 
@@ -64,7 +64,7 @@ export function scoreGroupPhaseGroupPrediction(params: {
     actualTopTwo.size === 2 &&
     predictedTopTwo.size === 2 &&
     Array.from(actualTopTwo).every((teamId) => predictedTopTwo.has(teamId))
-      ? 2
+      ? 1
       : 0;
 
   const thirdPlaceQualificationPoints =

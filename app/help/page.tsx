@@ -15,10 +15,10 @@ const HELP_SECTIONS = [
     title: "Group Stage Scoring",
     bullets: [
       "Each group is worth up to 14 points",
-      "Correct winner: 4 points",
+      "Correct winner: 5 points",
       "Correct runner-up: 3 points",
       "Correct third-place team: 2 points",
-      "Correct top two teams in any order: 2 points",
+      "Correct top two teams in any order: 1 point",
       "Correct third-place qualification status: 1 point",
       "Correct complete group order: 2 points"
     ],
@@ -39,12 +39,12 @@ const HELP_SECTIONS = [
     bullets: [
       "Knockout Stage opens once the official bracket is seeded",
       "You predict winners and scores match by match",
-      "Round of 32: 8 points max",
-      "Round of 16: 10 points max",
-      "Quarterfinals: 13 points max",
-      "Semifinals: 15 points max",
-      "Third-place match: 10 points max",
-      "Final: 25 points max"
+      "Round of 32: 3 winner + 5 Perfect Pick = 8",
+      "Round of 16: 5 winner + 5 Perfect Pick = 10",
+      "Quarterfinals: 8 winner + 5 Perfect Pick = 13",
+      "Semifinals: 10 winner + 5 Perfect Pick = 15",
+      "Third-place: 5 winner + 5 Perfect Pick = 10",
+      "Final: 15 winner + 10 Perfect Pick = 25"
     ],
     tip: "Later rounds are worth more, so staying alive in Knockout matters."
   },
