@@ -240,7 +240,7 @@ export function StartPlayingChoiceClient() {
             <p className="text-center text-xs font-black uppercase tracking-[0.14em] text-gray-400" aria-live="polite">
               {stepIndex + 1} / {steps.length}
             </p>
-            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[auto_auto_1fr]">
+            <div className="grid grid-cols-3 items-center gap-2">
               <button
                 type="button"
                 onClick={() => goToStep(stepIndex - 1)}
@@ -248,14 +248,6 @@ export function StartPlayingChoiceClient() {
                 className="inline-flex min-h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
               >
                 Back
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push("/dashboard")}
-                aria-label="Go home"
-                className="inline-flex min-h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
-              >
-                Home
               </button>
               <button
                 type="button"
@@ -267,6 +259,14 @@ export function StartPlayingChoiceClient() {
                 className="inline-flex min-h-10 items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-black text-white transition hover:bg-accent/95 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isSavingMode ? "Opening..." : "Start"}
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/dashboard")}
+                aria-label="Go home"
+                className="inline-flex min-h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+              >
+                Home
               </button>
             </div>
           </div>
