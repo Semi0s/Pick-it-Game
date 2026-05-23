@@ -18,10 +18,10 @@ test("group phase group prediction awards the full 14-point ladder when everythi
   });
 
   assert.equal(result.totalPoints, GROUP_PHASE_GROUP_MAX_POINTS);
-  assert.equal(result.winnerPoints, 4);
+  assert.equal(result.winnerPoints, 5);
   assert.equal(result.runnerUpPoints, 3);
   assert.equal(result.thirdPlacePoints, 2);
-  assert.equal(result.topTwoAnyOrderBonus, 2);
+  assert.equal(result.topTwoAnyOrderBonus, 1);
   assert.equal(result.thirdPlaceQualificationPoints, 1);
   assert.equal(result.completeLadderBonus, 2);
 });
@@ -40,10 +40,10 @@ test("group phase ladder awards top-two any-order bonus without full-order bonus
   assert.equal(result.winnerPoints, 0);
   assert.equal(result.runnerUpPoints, 0);
   assert.equal(result.thirdPlacePoints, 2);
-  assert.equal(result.topTwoAnyOrderBonus, 2);
+  assert.equal(result.topTwoAnyOrderBonus, 1);
   assert.equal(result.completeLadderBonus, 0);
   assert.equal(result.thirdPlaceQualificationPoints, 1);
-  assert.equal(result.totalPoints, 5);
+  assert.equal(result.totalPoints, 4);
 });
 
 test("group phase snapshot scoring totals multiple groups with third-place qualifier selections", () => {
@@ -66,5 +66,5 @@ test("group phase snapshot scoring totals multiple groups with third-place quali
   });
 
   assert.equal(summary.maxPoints, 28);
-  assert.equal(summary.totalPoints, 19);
+  assert.equal(summary.totalPoints, 18);
 });
