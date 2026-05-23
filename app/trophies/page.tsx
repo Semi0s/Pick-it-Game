@@ -1,8 +1,19 @@
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { ManagementIntro } from "@/components/player-management/Shared";
+import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
+import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
-export default function TrophiesPage() {
+export default async function TrophiesPage() {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (user) {
+    await redirectIfLaunchOnboardingRequired({ userId: user.id });
+  }
+
   return (
     <AppShell>
       <div className="space-y-5">

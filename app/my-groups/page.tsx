@@ -1,6 +1,7 @@
 import { AppShell } from "@/components/AppShell";
 import { MyGroupsClient } from "@/components/MyGroupsClient";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
+import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export default async function MyGroupsPage({
@@ -15,6 +16,7 @@ export default async function MyGroupsPage({
   } = await supabase.auth.getUser();
 
   if (user) {
+    await redirectIfLaunchOnboardingRequired({ userId: user.id });
     const searchParamsString = resolvedSearchParams
       ? new URLSearchParams(
           Object.entries(resolvedSearchParams).flatMap(([key, value]) => (value ? [[key, value]] : []))

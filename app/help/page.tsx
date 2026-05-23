@@ -1,4 +1,6 @@
 import { AppShell } from "@/components/AppShell";
+import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
+import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 const HELP_SECTIONS = [
   {
@@ -96,7 +98,16 @@ const QUICK_TIPS = [
   "Create and manage groups to build different pools"
 ] as const;
 
-export default function HelpPage() {
+export default async function HelpPage() {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (user) {
+    await redirectIfLaunchOnboardingRequired({ userId: user.id });
+  }
+
   return (
     <AppShell>
       <div className="space-y-5">

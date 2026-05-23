@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { BracketBuilderClient } from "@/components/BracketBuilderClient";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
+import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
 import {
   fetchKnockoutStructureStatus,
   fetchProjectedKnockoutBracketPreview,
@@ -34,6 +35,7 @@ export default async function BracketBuilderPage() {
     redirect("/login?next=%2Fbracket-builder&mode=signup");
   }
 
+  await redirectIfLaunchOnboardingRequired({ userId: authUser.id });
   await redirectIfLegacyScoringSetupRequired({ userId: authUser.id, pathname: "/bracket-builder" });
 
   const adminSupabase = createAdminClient();

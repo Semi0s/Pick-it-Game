@@ -9,6 +9,7 @@ import {
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { normalizeLanguage } from "@/lib/i18n";
 import { getConfiguredGroupPredictionMode, shouldHideFullScoresForLaunch } from "@/lib/group-prediction-mode";
+import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
 import type { PredictionStartMode } from "@/lib/play-mode";
 import { fetchUserGroupProjectionSourceMap, fetchUserLightSeedBuilderSnapshot, type LightSeedBuilderSnapshot, type UserGroupProjectionSource } from "@/lib/group-stage-modes";
 import { getSafeSupabaseErrorInfo, isLikelySchemaDriftError, logSafeSupabaseError } from "@/lib/supabase-errors";
@@ -69,6 +70,7 @@ export default async function GroupsPage() {
   const fullScoresHiddenForLaunch = shouldHideFullScoresForLaunch(getConfiguredGroupPredictionMode());
 
   if (authUser) {
+    await redirectIfLaunchOnboardingRequired({ userId: authUser.id });
     await redirectIfLegacyScoringSetupRequired({ userId: authUser.id, pathname: "/groups" });
     const localMatches = getGroupMatches().map((match) => ({
       ...match,

@@ -301,7 +301,7 @@ export function LoginForm({
           <div className="flex flex-col items-center text-center">
             <div>
               <p className="text-[11px] font-black uppercase tracking-wide">
-                Invite-only access • Limited membership
+                Request Access &amp; Provide Feedback
               </p>
             </div>
             <div className="mt-1.5">

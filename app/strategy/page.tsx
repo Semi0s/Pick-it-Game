@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { StrategyModeClient } from "@/components/StrategyModeClient";
 import { shouldHideStrategyModeForLaunch } from "@/lib/group-prediction-mode";
+import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
 import { teams as demoTeams } from "@/lib/mock-data.ts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
@@ -24,6 +25,8 @@ export default async function StrategyPage() {
   if (!user) {
     redirect("/login?next=%2Fstrategy&mode=signup");
   }
+
+  await redirectIfLaunchOnboardingRequired({ userId: user.id });
 
   const [settings, teamsResult, profileResult] = await Promise.all([
     fetchTournamentEntrySettings(adminSupabase, user.id).catch(() => ({

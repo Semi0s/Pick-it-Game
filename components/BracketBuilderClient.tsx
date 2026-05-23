@@ -64,8 +64,8 @@ const BRACKET_BUILDER_COMPLETION_SEEN_STORAGE_KEY = "bracket-builder-completion-
 
 const SWIPE_THRESHOLD_PX = 42;
 const NEAR_DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
-const CUSTOM_TOUCH_DRAG_HOLD_MS = 140;
-const CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX = 8;
+const CUSTOM_TOUCH_DRAG_HOLD_MS = 110;
+const CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX = 16;
 const COMPACT_ICON_BUTTON_CLASS =
   "inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 transition hover:border-accent hover:text-accent-dark disabled:cursor-not-allowed disabled:opacity-40";
 
@@ -573,9 +573,20 @@ export function BracketBuilderClient({
       const deltaX = Math.abs(event.clientX - state.startX);
       const deltaY = Math.abs(event.clientY - state.startY);
       if (deltaX > CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX || deltaY > CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX) {
-        clearCustomTouchDragState();
+        if (customDragHoldTimeoutRef.current !== null) {
+          window.clearTimeout(customDragHoldTimeoutRef.current);
+          customDragHoldTimeoutRef.current = null;
+        }
+
+        state.isDragging = true;
+        if (state.kind === "group") {
+          setDraggedTeamId(state.teamId);
+        } else {
+          setDraggedThirdPlaceTeamId(state.teamId);
+        }
+      } else {
+        return;
       }
-      return;
     }
 
     event.preventDefault();
