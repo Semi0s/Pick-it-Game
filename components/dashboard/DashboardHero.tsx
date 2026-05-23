@@ -4,33 +4,16 @@ import Link from "next/link";
 import { ChevronDown, ChevronUp, CircleHelp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DismissibleHelperText } from "@/components/DismissibleHelperText";
-import { DashboardHeroActionGrid } from "@/components/dashboard/DashboardHeroActionGrid";
 
 type DashboardHeroProps = {
   userId?: string | null;
   name: string;
-  ctaLabel: string;
-  onPrimaryAction: () => void;
-  autoPickLabel: string;
-  autoPickLoadingLabel: string;
-  knockoutLabel: string;
-  sidePicksLabel: string;
-  isAutoPicking: boolean;
-  onAutoPick: () => void;
   dashboardCopy: { hello: string; help: string };
   homeTeamId?: string | null;
 };
 
 export function DashboardHero({
   name,
-  ctaLabel,
-  onPrimaryAction,
-  autoPickLabel,
-  autoPickLoadingLabel,
-  knockoutLabel,
-  sidePicksLabel,
-  isAutoPicking,
-  onAutoPick,
   dashboardCopy,
   homeTeamId,
   userId
@@ -124,18 +107,6 @@ export function DashboardHero({
               <p>Get your first set of picks in before June 11 and earn a BONUS!</p>
             </div>
           </DismissibleHelperText>
-          <div className="mx-auto mt-5 max-w-xl">
-            <DashboardHeroActionGrid
-              ctaLabel={ctaLabel}
-              onPrimaryAction={onPrimaryAction}
-              autoPickLabel={autoPickLabel}
-              autoPickLoadingLabel={autoPickLoadingLabel}
-              knockoutLabel={knockoutLabel}
-              sidePicksLabel={sidePicksLabel}
-              isAutoPicking={isAutoPicking}
-              onAutoPick={onAutoPick}
-            />
-          </div>
         </div>
       ) : null}
     </section>

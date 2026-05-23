@@ -392,10 +392,18 @@ create table public.groups (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   description text,
+  avatar_url text,
   base_prediction_mode text not null default 'my_picks'
     constraint groups_base_prediction_mode_check
     check (base_prediction_mode in ('my_picks', 'easy_bracket', 'strategy_mode')),
   home_team_advantage_enabled boolean not null default false,
+  access_mode text not null default 'open_by_code'
+    constraint groups_access_mode_check
+    check (access_mode in ('open_by_code', 'restricted_by_email', 'closed')),
+  group_kind text not null default 'standard'
+    constraint groups_group_kind_check
+    check (group_kind in ('standard', 'captain_private')),
+  parent_group_id uuid references public.groups(id) on delete set null,
   owner_user_id uuid references public.users(id) on delete set null,
   created_by_user_id uuid references public.users(id) on delete set null,
   membership_limit integer not null default 15,
@@ -406,11 +414,55 @@ create table public.groups (
   constraint groups_description_length_check check (description is null or char_length(description) <= 250)
 );
 
+create table public.group_allowed_emails (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups(id) on delete cascade,
+  email_normalized text not null,
+  display_name text,
+  created_by_user_id uuid references public.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  unique (group_id, email_normalized),
+  constraint group_allowed_emails_normalized_email_check check (email_normalized = lower(email_normalized))
+);
+
+create table public.group_focus_teams (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.groups(id) on delete cascade,
+  team_id text not null references public.teams(id) on delete cascade,
+  created_by_user_id uuid references public.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  unique (group_id, team_id)
+);
+
+create table public.captains_passes (
+  id uuid primary key default gen_random_uuid(),
+  manager_group_id uuid not null unique references public.groups(id) on delete cascade,
+  captain_user_id uuid references public.users(id) on delete set null,
+  captain_email_normalized text,
+  issued_by_user_id uuid references public.users(id) on delete set null,
+  status text not null default 'available'
+    check (status in ('available', 'pending', 'claimed', 'exhausted', 'expired', 'cancelled_by_admin')),
+  manager_group_invite_allowance integer not null default 1,
+  manager_group_invites_used integer not null default 0,
+  captain_private_group_id uuid references public.groups(id) on delete set null,
+  created_at timestamptz not null default now(),
+  claimed_at timestamptz,
+  expires_at timestamptz,
+  constraint captains_passes_allowance_positive check (manager_group_invite_allowance > 0),
+  constraint captains_passes_invites_used_nonnegative check (manager_group_invites_used >= 0),
+  constraint captains_passes_email_normalized_check check (
+    captain_email_normalized is null or captain_email_normalized = lower(captain_email_normalized)
+  )
+);
+
 create table public.group_members (
   id uuid primary key default gen_random_uuid(),
   group_id uuid not null references public.groups(id) on delete cascade,
   user_id uuid not null references public.users(id) on delete cascade,
   role public.group_member_role not null default 'member',
+  join_source text not null default 'direct'
+    check (join_source in ('direct', 'manager_code', 'manager_invite', 'captain_pass', 'captain_private_code', 'captain_private_invite')),
+  joined_invite_id uuid,
   joined_at timestamptz not null default now(),
   unique (group_id, user_id)
 );
@@ -441,6 +493,9 @@ create table public.group_invites (
   last_sent_at timestamptz,
   send_attempts integer not null default 0,
   last_error text,
+  invite_source text not null default 'manager_invite'
+    check (invite_source in ('manager_invite', 'captain_pass', 'captain_private_invite')),
+  captains_pass_id uuid references public.captains_passes(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint group_invites_normalized_email_check check (normalized_email = lower(email))
@@ -777,15 +832,40 @@ create index group_members_user_id_idx
 create index group_members_group_id_idx
   on public.group_members (group_id);
 
+create index group_members_join_source_idx
+  on public.group_members (group_id, join_source);
+
 create unique index group_members_one_manager_per_group_idx
   on public.group_members (group_id)
   where role = 'manager';
+
+create index group_allowed_emails_group_id_idx
+  on public.group_allowed_emails (group_id);
+
+create index group_allowed_emails_email_idx
+  on public.group_allowed_emails (email_normalized);
+
+create index group_focus_teams_group_id_idx
+  on public.group_focus_teams (group_id);
+
+create unique index captains_passes_captain_private_group_unique_idx
+  on public.captains_passes (captain_private_group_id)
+  where captain_private_group_id is not null;
+
+create unique index captains_passes_captain_user_claimed_unique_idx
+  on public.captains_passes (captain_user_id)
+  where captain_user_id is not null
+    and status in ('claimed', 'exhausted');
 
 create index group_invites_group_id_idx
   on public.group_invites (group_id);
 
 create index group_invites_normalized_email_idx
   on public.group_invites (normalized_email);
+
+create index group_invites_captains_pass_idx
+  on public.group_invites (captains_pass_id)
+  where captains_pass_id is not null;
 
 create unique index group_invites_active_group_email_idx
   on public.group_invites (group_id, normalized_email)
@@ -1296,6 +1376,45 @@ as $$
   end;
 $$;
 
+create or replace function public.group_allows_email(target_group_id uuid, target_email text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_access_mode text;
+begin
+  select groups.access_mode
+  into v_access_mode
+  from public.groups
+  where groups.id = target_group_id;
+
+  if not found then
+    return false;
+  end if;
+
+  if v_access_mode = 'closed' then
+    return false;
+  end if;
+
+  if v_access_mode <> 'restricted_by_email' then
+    return true;
+  end if;
+
+  if target_email is null or trim(target_email) = '' then
+    return false;
+  end if;
+
+  return exists (
+    select 1
+    from public.group_allowed_emails
+    where group_allowed_emails.group_id = target_group_id
+      and group_allowed_emails.email_normalized = lower(trim(target_email))
+  );
+end;
+$$;
+
 create or replace function public.group_has_open_seat(target_group_id uuid)
 returns boolean
 language sql
@@ -1482,6 +1601,7 @@ begin
     select
       groups.id,
       groups.status,
+      groups.access_mode,
       groups.membership_limit,
       public.effective_group_membership_limit(groups.id) as effective_membership_limit,
       (
@@ -1494,6 +1614,18 @@ begin
     where groups.id = v_access_code_row.group_id;
 
     if v_target_group.id is null or v_target_group.status <> 'active' then
+      raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
+    end if;
+
+    if v_target_group.access_mode = 'closed' then
+      raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
+    end if;
+
+    if not public.group_allows_email(v_target_group.id, auth_email) then
+      if v_target_group.access_mode = 'restricted_by_email' then
+        raise exception 'ACCESS_CODE_GROUP_RESTRICTED';
+      end if;
+
       raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
     end if;
 
@@ -1540,6 +1672,7 @@ declare
   access_code_row public.access_codes%rowtype;
   derived_name text;
   raw_access_code text;
+  target_group_kind text;
   debug_step text := 'start';
 begin
   debug_step := 'read_access_code';
@@ -1630,9 +1763,23 @@ begin
   on conflict (code_id, user_id) do nothing;
 
   if access_code_row.group_id is not null then
+    debug_step := 'read_access_code_group_kind';
+    select groups.group_kind
+    into target_group_kind
+    from public.groups
+    where groups.id = access_code_row.group_id;
+
     debug_step := 'insert_group_member';
-    insert into public.group_members (group_id, user_id, role)
-    values (access_code_row.group_id, new.id, 'member'::public.group_member_role)
+    insert into public.group_members (group_id, user_id, role, join_source)
+    values (
+      access_code_row.group_id,
+      new.id,
+      'member'::public.group_member_role,
+      case
+        when target_group_kind = 'captain_private' then 'captain_private_code'
+        else 'manager_code'
+      end
+    )
     on conflict (group_id, user_id) do nothing;
   end if;
 
@@ -1749,6 +1896,9 @@ alter table public.user_settings enable row level security;
 alter table public.email_jobs enable row level security;
 alter table public.manager_limits enable row level security;
 alter table public.groups enable row level security;
+alter table public.group_allowed_emails enable row level security;
+alter table public.group_focus_teams enable row level security;
+alter table public.captains_passes enable row level security;
 alter table public.group_members enable row level security;
 alter table public.group_invites enable row level security;
 alter table public.access_codes enable row level security;
@@ -1758,6 +1908,11 @@ alter table public.push_tokens enable row level security;
 
 insert into storage.buckets (id, name, public)
 values ('avatars', 'avatars', true)
+on conflict (id) do update
+set public = excluded.public;
+
+insert into storage.buckets (id, name, public)
+values ('group-avatars', 'group-avatars', true)
 on conflict (id) do update
 set public = excluded.public;
 
@@ -2575,6 +2730,50 @@ on public.group_invites for select
 to authenticated
 using (public.is_group_manager(group_id, auth.uid()));
 
+create policy "Group managers can read allowed group emails"
+on public.group_allowed_emails for select
+to authenticated
+using (public.is_group_manager(group_id, auth.uid()));
+
+create policy "Group managers manage allowed group emails"
+on public.group_allowed_emails for all
+to authenticated
+using (public.is_group_manager(group_id, auth.uid()))
+with check (public.is_group_manager(group_id, auth.uid()));
+
+create policy "Group members can read focused teams"
+on public.group_focus_teams for select
+to authenticated
+using (
+  public.is_group_manager(group_id, auth.uid())
+  or exists (
+    select 1
+    from public.group_members
+    where group_members.group_id = group_focus_teams.group_id
+      and group_members.user_id = auth.uid()
+  )
+);
+
+create policy "Group managers manage focused teams"
+on public.group_focus_teams for all
+to authenticated
+using (public.is_group_manager(group_id, auth.uid()))
+with check (public.is_group_manager(group_id, auth.uid()));
+
+create policy "Managers and captains can read Captain's Passes"
+on public.captains_passes for select
+to authenticated
+using (
+  public.is_group_manager(manager_group_id, auth.uid())
+  or captain_user_id = auth.uid()
+);
+
+create policy "Group managers manage Captain's Passes"
+on public.captains_passes for all
+to authenticated
+using (public.is_group_manager(manager_group_id, auth.uid()))
+with check (public.is_group_manager(manager_group_id, auth.uid()));
+
 create policy "Group managers can create pending invites"
 on public.group_invites for insert
 to authenticated
@@ -2583,6 +2782,7 @@ with check (
   and invited_by_user_id = auth.uid()
   and status = 'pending'
   and public.group_has_open_seat(group_id)
+  and public.group_allows_email(group_id, email)
 );
 
 create table public.organizations (
@@ -2754,6 +2954,9 @@ revoke all on public.user_settings from anon, authenticated, public;
 revoke all on public.user_notifications from anon, authenticated, public;
 revoke all on public.groups from anon, authenticated, public;
 revoke all on public.manager_limits from anon, authenticated, public;
+revoke all on public.group_allowed_emails from anon, authenticated, public;
+revoke all on public.group_focus_teams from anon, authenticated, public;
+revoke all on public.captains_passes from anon, authenticated, public;
 revoke all on public.group_members from anon, authenticated, public;
 revoke all on public.group_invites from anon, authenticated, public;
 revoke all on public.bracket_predictions from anon, authenticated, public;
@@ -2791,6 +2994,9 @@ grant select, insert, update, delete on public.user_settings to authenticated;
 grant select, update on public.user_notifications to authenticated;
 grant select, insert, update, delete on public.groups to authenticated;
 grant select on public.manager_limits to authenticated;
+grant select, insert, update, delete on public.group_allowed_emails to authenticated;
+grant select, insert, update, delete on public.group_focus_teams to authenticated;
+grant select, insert, update, delete on public.captains_passes to authenticated;
 grant select, insert, update, delete on public.group_members to authenticated;
 grant select, insert, update, delete on public.group_invites to authenticated;
 grant select, insert, update, delete on public.bracket_predictions to authenticated;
@@ -2825,6 +3031,9 @@ grant select, insert, update, delete on public.user_settings to service_role;
 grant select, insert, update, delete on public.user_notifications to service_role;
 grant select, insert, update, delete on public.groups to service_role;
 grant select, insert, update, delete on public.manager_limits to service_role;
+grant select, insert, update, delete on public.group_allowed_emails to service_role;
+grant select, insert, update, delete on public.group_focus_teams to service_role;
+grant select, insert, update, delete on public.captains_passes to service_role;
 grant select, insert, update, delete on public.group_members to service_role;
 grant select, insert, update, delete on public.group_invites to service_role;
 grant select, insert, update, delete on public.bracket_predictions to service_role;

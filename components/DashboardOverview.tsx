@@ -7,12 +7,6 @@ import { CalendarDays, Network, Sparkles, Trophy, X } from "lucide-react";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
 import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
-import {
-  DASHBOARD_ACTION_COPY,
-  DASHBOARD_AUTO_PICK_EMPTY_COPY,
-  DASHBOARD_AUTO_PICK_LABEL_COPY,
-  DASHBOARD_AUTO_PICK_LOADING_COPY
-} from "@/components/dashboard/DashboardHeroActionGrid";
 import { DashboardHero } from "@/components/dashboard/DashboardHero";
 import { DashboardNoGroupsPanel } from "@/components/dashboard/DashboardNoGroupsPanel";
 import {
@@ -21,8 +15,6 @@ import {
   useSessionDisclosureState,
   useSessionJsonState
 } from "@/components/player-management/Shared";
-import { clearStoredAutoPickDraft, fetchNextAutoPick, storeAutoPickDraft } from "@/lib/auto-pick-client";
-import { clearGroupsEntryIntent, storeGroupsEntryIntent } from "@/lib/groups-entry-intent";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import {
   getGroupShortLabel,
@@ -31,7 +23,7 @@ import {
 } from "@/lib/group-standings";
 import { buildGroupStandingsByGroup, buildQualifiedTeamSeeds } from "@/lib/knockout-seeding";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
-import { showAppToast } from "@/lib/app-toast";
+import { shouldHideStrategyModeForLaunch } from "@/lib/group-prediction-mode";
 import { normalizeInviteTokenInput } from "@/components/player-management/Shared";
 import {
   getExplainerLanguageForUser,
@@ -57,6 +49,7 @@ const DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-
 const DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX = "pickit:dashboard-logo-hint-dismissed-session";
 const DASHBOARD_STANDINGS_GROUP_STORAGE_KEY = "dashboard-standings-group";
 const DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY = "dashboard-standings-disclosure";
+const DASHBOARD_HOW_TO_PLAY_DISCLOSURE_STORAGE_KEY = "dashboard-how-to-play-disclosure";
 const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
   en: "Tap the PICK-IT logo above to return to this page again.",
   es: "Toca el logo de PICK-IT! para volver aquí.",
@@ -86,19 +79,6 @@ function isDashboardGroupAccessResponse(value: unknown): value is DashboardGroup
   return "ok" in value;
 }
 
-const DEBUG_DASHBOARD_NEXT_PICK = process.env.NODE_ENV !== "production";
-
-function logDashboardNextPick(event: string, details?: Record<string, unknown>) {
-  if (!DEBUG_DASHBOARD_NEXT_PICK || typeof window === "undefined" || window.innerWidth < 1024) {
-    return;
-  }
-
-  console.info("[dashboard-next-pick]", {
-    event,
-    ...details
-  });
-}
-
 export function DashboardOverview({
   initialGlobalChallengeSummary
 }: {
@@ -126,7 +106,6 @@ export function DashboardOverview({
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
   const [displayLanguage] = usePersistentExplainerLanguage(user);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
-  const [isAutoPicking, setIsAutoPicking] = useState(false);
   const [showDashboardLogoHint, setShowDashboardLogoHint] = useState(false);
   const [selectedStandingsGroup, setSelectedStandingsGroup, selectedStandingsGroupState] = useSessionJsonState<string>(
     DASHBOARD_STANDINGS_GROUP_STORAGE_KEY,
@@ -135,6 +114,10 @@ export function DashboardOverview({
   const [isStandingsOpen, setIsStandingsOpen] = useSessionDisclosureState(
     DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY,
     true
+  );
+  const [isHowToPlayOpen, setIsHowToPlayOpen] = useSessionDisclosureState(
+    DASHBOARD_HOW_TO_PLAY_DISCLOSURE_STORAGE_KEY,
+    false
   );
   const refreshGroupAccess = useCallback(async () => {
     if (!user) {
@@ -343,15 +326,7 @@ export function DashboardOverview({
       [...openMatches].sort((left, right) => +new Date(left.kickoffTime) - +new Date(right.kickoffTime))[0] ?? null,
     [openMatches]
   );
-  const nextUnsavedOpenMatch = useMemo(
-    () => openMatches.find((match) => !savedMatchIds.has(match.id)) ?? null,
-    [openMatches, savedMatchIds]
-  );
-  const nextPrimaryMatch = nextUnsavedOpenMatch ?? nextOpenMatch;
-  const actionCopy = DASHBOARD_ACTION_COPY[displayLanguage === "es" ? "es" : "en"];
-  const heroCtaLabel = completedCount > 0 ? actionCopy.myNextPick : actionCopy.myPicks;
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
-  const autoPickLanguage = displayLanguage === "es" ? "es" : "en";
   const { selectedGroup: resolvedStandingsGroup } = resolvePreferredStandingsGroupSelection({
     availableGroups: availableStandingsGroups,
     storedGroup: selectedStandingsGroup,
@@ -493,68 +468,6 @@ export function DashboardOverview({
     router.push(`/my-groups?invite=${encodeURIComponent(token)}`);
   }
 
-  async function handleAutoPickAction() {
-    setIsAutoPicking(true);
-
-    try {
-      logDashboardNextPick("click", { target: "next-auto-pick" });
-      clearGroupsEntryIntent();
-      clearStoredAutoPickDraft();
-      const suggestion = await fetchNextAutoPick();
-      storeAutoPickDraft(suggestion);
-      const targetMatch = groupMatches.find((match) => match.id === suggestion.matchId) ?? null;
-      const groupKey = normalizeGroupKey(targetMatch?.groupName) ?? null;
-      storeGroupsEntryIntent({
-        source: "dashboard",
-        target: "next-auto-pick",
-        matchId: suggestion.matchId,
-        groupKey
-      });
-      logDashboardNextPick("intent-stored", {
-        target: "next-auto-pick",
-        matchId: suggestion.matchId,
-        groupKey
-      });
-      router.push("/groups");
-      logDashboardNextPick("route-pushed", { href: "/groups", target: "next-auto-pick" });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage];
-      const localizedMessage =
-        message === DASHBOARD_AUTO_PICK_EMPTY_COPY.en ? DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage] : message;
-
-      showAppToast({
-        tone: localizedMessage === DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage] ? "tip" : "error",
-        text: localizedMessage
-      });
-    } finally {
-      setIsAutoPicking(false);
-    }
-  }
-
-  function handleHeroPrimaryAction() {
-    if (completedCount > 0) {
-      logDashboardNextPick("click", { target: "next-pick" });
-      clearGroupsEntryIntent();
-      clearStoredAutoPickDraft();
-      storeGroupsEntryIntent({
-        source: "dashboard",
-        target: "next-pick",
-        matchId: nextPrimaryMatch?.id ?? null,
-        groupKey: normalizeGroupKey(nextPrimaryMatch?.groupName) ?? null
-      });
-      logDashboardNextPick("intent-stored", {
-        target: "next-pick",
-        matchId: nextPrimaryMatch?.id ?? null,
-        groupKey: normalizeGroupKey(nextPrimaryMatch?.groupName) ?? null
-      });
-    }
-    router.push("/groups");
-    logDashboardNextPick("route-pushed", {
-      href: "/groups",
-      target: completedCount > 0 ? "next-pick" : "groups"
-    });
-  }
-
   return (
     <div className="-mt-1 space-y-4">
       {showDashboardLogoHint ? (
@@ -578,21 +491,13 @@ export function DashboardOverview({
       <DashboardHero
         userId={user?.id ?? null}
         name={user?.name ?? "Player"}
-        ctaLabel={heroCtaLabel}
-        onPrimaryAction={handleHeroPrimaryAction}
-        autoPickLabel={DASHBOARD_AUTO_PICK_LABEL_COPY[autoPickLanguage]}
-        autoPickLoadingLabel={DASHBOARD_AUTO_PICK_LOADING_COPY[autoPickLanguage]}
-        knockoutLabel={actionCopy.myKnockoutPicks}
-        sidePicksLabel={actionCopy.mySidePicks}
-        isAutoPicking={isAutoPicking}
-        onAutoPick={handleAutoPickAction}
         dashboardCopy={dashboardCopy}
         homeTeamId={user?.homeTeamId ?? null}
       />
 
       <AppUpdatesCard />
 
-      {initialGlobalChallengeSummary ? (
+      {initialGlobalChallengeSummary && !shouldHideStrategyModeForLaunch() ? (
         <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -755,68 +660,61 @@ export function DashboardOverview({
 
       <section className="rounded-lg border border-gray-200 p-4">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">How To Play</p>
-        <div className="mt-3 space-y-4 text-sm leading-6 text-gray-600">
-          <div>
-            <p className="font-bold text-gray-950">Make Your Picks</p>
-            <p>Predict the score of every match.</p>
-            <p>You can edit your picks until kickoff.</p>
-            <p>Once a match starts, it is locked and cannot be changed.</p>
-          </div>
+        {isHowToPlayOpen ? (
+          <div className="mt-3 space-y-4 text-sm leading-6 text-gray-600">
+            <div>
+              <p className="font-bold text-gray-950">Start with Group Stage</p>
+              <p>Rank each group and pick which teams qualify for the Round of 32.</p>
+              <p>You can keep editing until the tournament starts.</p>
+            </div>
 
-          <div>
-            <p className="font-bold uppercase tracking-wide text-gray-950">Match Status</p>
-            <p>Open — You can make or edit picks</p>
-            <p>Locked — Match has started, picks are closed</p>
-            <p>Final — Match is finished, points are awarded</p>
-          </div>
+            <div>
+              <p className="font-bold uppercase tracking-wide text-gray-950">Group Stage Scoring</p>
+              <p>Each group is worth up to 14 points.</p>
+              <div className="pl-4">
+                <p>Correct winner: 4 points</p>
+                <p>Correct runner-up: 3 points</p>
+                <p>Correct third-place team: 2 points</p>
+                <p>Correct top two teams, any order: 2 points</p>
+                <p>Correct third-place qualification status: 1 point</p>
+                <p>Correct full group order: 2 points</p>
+              </div>
+            </div>
 
-          <div>
-            <p className="font-bold uppercase tracking-wide text-gray-950">Scoring (Group Stage)</p>
-            <p>For each match:</p>
-            <div className="pl-4">
-              <p>Correct winner or draw: +3 points</p>
-              <p>Exact score: +8 points total</p>
-              <p>Correct goal difference (but not exact): +4 points total</p>
-              <p className="mt-2 font-bold text-gray-950">Examples:</p>
-              <p>Pick 2–1, result 2–1 → 8 points</p>
-              <p>Pick 2–1, result 3–2 → 4 points</p>
-              <p>Pick 2–1, result 1–0 → 3 points</p>
-              <p>Wrong outcome → 0 points</p>
+            <div>
+              <p className="font-bold uppercase tracking-wide text-gray-950">Projected Bracket</p>
+              <p>Your Group Stage picks build a projected Round of 32 path.</p>
+              <p>That preview helps you see who your ladder sends into Knockout.</p>
+            </div>
+
+            <div>
+              <p className="font-bold uppercase tracking-wide text-gray-950">Knockout Stage</p>
+              <p>Once the official bracket is seeded, you predict knockout winners and scores match by match.</p>
+              <div className="pl-4">
+                <p>Round of 32: 8 max</p>
+                <p>Round of 16: 10 max</p>
+                <p>Quarterfinals: 13 max</p>
+                <p>Semifinals: 15 max</p>
+                <p>Third-place match: 10 max</p>
+                <p>Final: 25 max</p>
+              </div>
+            </div>
+
+            <div>
+              <p className="font-bold uppercase tracking-wide text-gray-950">Leaderboards</p>
+              <p>Use Group Stage Leaderboard to compare ladder picks.</p>
+              <p>Use Knockout Stage Leaderboard once the bracket opens.</p>
+              <p>Global Top 10 shows the combined prestige board.</p>
             </div>
           </div>
-
-          <div>
-            <p className="font-bold uppercase tracking-wide text-gray-950">Group Standings (Prediction Mode)</p>
-            <p>Standings are based on your picks, not real results, until matches are final.</p>
-            <p>This helps you see which teams advance based on your predictions.</p>
-          </div>
-
-          <div>
-            <p className="font-bold uppercase tracking-wide text-gray-950">Leaderboards</p>
-            <p>Global leaderboard includes all players</p>
-            <p>Group leaderboards include only your groups</p>
-            <p>Rankings update after matches are final</p>
-          </div>
-
-          <div>
-            <p className="font-bold uppercase tracking-wide text-gray-950">Knockout Stage</p>
-            <p>You will predict who advances and the score</p>
-            <p>Later rounds may be worth more points</p>
-          </div>
-
-          <div>
-            <p className="font-bold uppercase tracking-wide text-gray-950">Side Picks</p>
-            <p>Optional predictions like Champion, MVP, or Golden Boot</p>
-            <p>These may add bonus points</p>
-          </div>
-
-          <div>
-            <p className="font-bold uppercase tracking-wide text-gray-950">Key Tips</p>
-            <p>No pick = 0 points</p>
-            <p>Picks lock at kickoff</p>
-            <p>Exact scores earn the most points</p>
-            <p>Consistency matters more than randomness</p>
-          </div>
+        ) : null}
+        <div className="mt-3 flex justify-end">
+          <InlineDisclosureButton
+            isOpen={isHowToPlayOpen}
+            onClick={() => setIsHowToPlayOpen((current) => !current)}
+            label={isHowToPlayOpen ? "Less" : "More"}
+            variant="subtle"
+          />
         </div>
       </section>
     </div>

@@ -1,141 +1,145 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Brackets, Dices, PenSquare, Users } from "lucide-react";
+import { ArrowRight, Brackets, ListOrdered, Trophy, Users } from "lucide-react";
 import { savePlayerStartModeAction } from "@/app/start-playing/actions";
 import { showAppToast } from "@/lib/app-toast";
 
-type StartModeCard = {
-  key: "full_scoring" | "easy_bracket" | "strategy_mode" | "groups";
+type OnboardingStep = {
+  eyebrow: string;
   title: string;
-  description: string;
-  cta: string;
-  nextPath: string;
-  previewPath: string;
-  icon: typeof PenSquare;
+  body: string;
+  helper?: string | null;
+  icon: typeof Brackets;
   accentClass: string;
 };
 
-const START_MODE_CARDS: StartModeCard[] = [
-  {
-    key: "full_scoring",
-    title: "My Picks",
-    description: "Predict each match as it happens.",
-    cta: "Make Picks",
-    nextPath: "/groups?onboarding=1",
-    previewPath: "/play-preview?mode=full_scoring&onboarding=1",
-    icon: PenSquare,
-    accentClass: "bg-accent/10 text-accent-dark"
-  },
-  {
-    key: "easy_bracket",
-    title: "Easy Bracket",
-    description: "Focus on the knockout phase.",
-    cta: "Just Build a Bracket",
-    nextPath: "/bracket-builder?onboarding=1",
-    previewPath: "/play-preview?mode=easy_bracket&onboarding=1",
-    icon: Brackets,
-    accentClass: "bg-emerald-100 text-emerald-700"
-  },
-  {
-    key: "strategy_mode",
-    title: "Global Challenge",
-    description: "Build a Group Strategy before kickoff, then predict knockout matches once the bracket is set.",
-    cta: "Start Global Challenge",
-    nextPath: "/strategy?onboarding=1",
-    previewPath: "/play-preview?mode=strategy_mode&onboarding=1",
-    icon: Dices,
-    accentClass: "bg-amber-100 text-amber-700"
-  },
-  {
-    key: "groups",
-    title: "Groups",
-    description: "Play with friends using your rules.",
-    cta: "Create or Join Groups",
-    nextPath: "/my-groups?onboarding=1&create=1",
-    previewPath: "/play-preview?mode=groups&onboarding=1",
-    icon: Users,
-    accentClass: "bg-sky-100 text-sky-700"
-  }
-];
-
 export function StartPlayingChoiceClient() {
   const router = useRouter();
-  const [isSavingMode, setIsSavingMode] = useState<StartModeCard["key"] | null>(null);
+  const [isSavingMode, setIsSavingMode] = useState(false);
+  const [stepIndex, setStepIndex] = useState(0);
 
-  async function handleSelectStartMode(card: StartModeCard) {
-    setIsSavingMode(card.key);
-    const result = await savePlayerStartModeAction(card.key);
-    setIsSavingMode(null);
+  const steps = useMemo<OnboardingStep[]>(
+    () => [
+      {
+        eyebrow: "Start here",
+        title: "Choose how you want to play",
+        body: "Start with the Group Stage. Pick the qualifying teams.",
+        helper: "↘ Start Here",
+        icon: Brackets,
+        accentClass: "bg-emerald-100 text-emerald-700"
+      },
+      {
+        eyebrow: "Step 2",
+        title: "Rank each group",
+        body: "Rank each group and predict who reaches the Round of 32.",
+        icon: Trophy,
+        accentClass: "bg-cyan-100 text-cyan-800"
+      },
+      {
+        eyebrow: "Step 3",
+        title: "Keep playing in Knockout",
+        body: "When the knockout bracket is official, keep playing match by match.",
+        helper: "Knockout opens when the bracket is set.",
+        icon: ArrowRight,
+        accentClass: "bg-amber-100 text-amber-700"
+      },
+      {
+        eyebrow: "Step 4",
+        title: "Check leaderboards",
+        body: "Check Leaderboards to see where you and your friends rank.",
+        icon: ListOrdered,
+        accentClass: "bg-violet-100 text-violet-700"
+      },
+      {
+        eyebrow: "Step 5",
+        title: "Make groups and invite friends",
+        body: "Make groups and invite friends from your account.",
+        icon: Users,
+        accentClass: "bg-sky-100 text-sky-700"
+      }
+    ],
+    []
+  );
+
+  async function handleStartGroupPhase() {
+    setIsSavingMode(true);
+    const result = await savePlayerStartModeAction("easy_bracket");
+    setIsSavingMode(false);
 
     if (!result.ok) {
       showAppToast({ tone: "error", text: result.message });
       return;
     }
 
-    router.push(card.nextPath);
+    router.push("/bracket-builder?onboarding=1");
   }
 
+  const step = steps[stepIndex]!;
+  const StepIcon = step.icon;
+
   return (
-    <section className="mx-auto max-w-4xl space-y-5">
+    <section className="mx-auto max-w-3xl space-y-5">
       <div className="rounded-2xl border border-gray-200 bg-white p-5">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Get started</p>
         <h1 className="mt-2 text-3xl font-black leading-tight text-gray-950">Choose how you want to play</h1>
         <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">
-          Pick the style that feels right now. You can preview any mode before you commit.
+          We’ll walk you through the launch flow and get you into the Group Stage quickly.
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {START_MODE_CARDS.map((card) => {
-          const Icon = card.icon;
+      <div className="rounded-2xl border border-gray-200 bg-white p-5">
+        <div className="flex items-start gap-4">
+          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${step.accentClass}`}>
+            <StepIcon className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{step.eyebrow}</p>
+            <h2 className="mt-2 text-2xl font-black text-gray-950">{step.title}</h2>
+            <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">{step.body}</p>
+            {step.helper ? (
+              <p className="mt-4 text-sm font-black uppercase tracking-[0.12em] text-emerald-700">{step.helper}</p>
+            ) : null}
+          </div>
+        </div>
 
-          return (
-            <div key={card.key} className="rounded-2xl border border-gray-200 bg-white p-5">
-              <div className="flex items-center gap-3">
-                <div className={`flex h-11 w-11 items-center justify-center rounded-full ${card.accentClass}`}>
-                  <Icon className="h-5 w-5" />
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-xl font-black text-gray-950">{card.title}</h2>
-                    {card.key === "strategy_mode" ? (
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-emerald-700">
-                        Recommended
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 text-sm font-semibold text-gray-600">{card.description}</p>
-                </div>
-              </div>
+        {stepIndex === 0 ? (
+          <div className="mt-6">
+            <button
+              type="button"
+              disabled={isSavingMode}
+              onClick={() => {
+                void handleStartGroupPhase();
+              }}
+              className="inline-flex items-center justify-center rounded-xl bg-accent px-5 py-3 text-sm font-black text-white transition hover:bg-accent/95 disabled:opacity-60"
+            >
+              {isSavingMode ? "Opening..." : "Start Group Stage"}
+            </button>
+          </div>
+        ) : null}
 
-              <div className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <button
-                  type="button"
-                  disabled={isSavingMode !== null}
-                  onClick={() => {
-                    void handleSelectStartMode(card);
-                  }}
-                  className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-3 text-sm font-black text-white transition hover:bg-accent/95 disabled:opacity-60"
-                >
-                  {isSavingMode === card.key ? "Opening..." : card.cta}
-                </button>
-                <Link
-                  href={card.previewPath}
-                  className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                >
-                  Preview
-                </Link>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm font-semibold text-emerald-900">
-        Preview only. This will not count toward leaderboards.
+        <div className="mt-6 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => setStepIndex((current) => Math.max(0, current - 1))}
+            disabled={stepIndex === 0}
+            className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:opacity-40"
+          >
+            Back
+          </button>
+          <p className="text-xs font-black uppercase tracking-[0.14em] text-gray-400">
+            {stepIndex + 1} / {steps.length}
+          </p>
+          <button
+            type="button"
+            onClick={() => setStepIndex((current) => Math.min(steps.length - 1, current + 1))}
+            disabled={stepIndex === steps.length - 1}
+            className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
       </div>
     </section>
   );

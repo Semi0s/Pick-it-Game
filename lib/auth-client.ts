@@ -1084,7 +1084,7 @@ async function signUpWithInviteContext(
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ code: trimmedAccessCode })
+      body: JSON.stringify({ code: trimmedAccessCode, email })
     });
 
     const validationResult = await parseJsonResponse<

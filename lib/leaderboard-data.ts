@@ -16,6 +16,7 @@ import {
   type DailyWinner
 } from "@/lib/leaderboard-highlights";
 import { fetchGlobalChallengeSummaries } from "@/lib/global-challenge-data";
+import { fetchGroupPhaseSummaries } from "@/lib/group-phase-data";
 import { isMissingAnyRelationError, isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { hasOrganizerAccess, normalizeCommercialTier, resolveAccessLevel, type AccessLevel } from "@/lib/tier-access";
 import type { UserProfile, UserTrophy } from "@/lib/types";
@@ -31,10 +32,9 @@ type UserRow = {
   total_points: number;
 };
 
-type LeaderboardEntryRow = {
+type BracketScoreRow = {
   user_id: string;
-  total_points: number;
-  rank: number;
+  points?: number | null;
 };
 
 type LatestSnapshotRow = {
@@ -45,6 +45,7 @@ type LatestSnapshotRow = {
 type GroupRow = {
   id: string;
   name: string;
+  avatar_url?: string | null;
   status?: "active" | "archived";
   owner_user_id?: string | null;
   owner?:
@@ -67,6 +68,13 @@ type ManagerLimitRow = {
   user_id: string;
   max_groups?: number | null;
   max_members_per_group?: number | null;
+};
+
+type TeamCatalogRow = {
+  id: string;
+  name: string;
+  short_name: string;
+  flag_emoji?: string | null;
 };
 
 type UserTrophyRow = {
@@ -99,12 +107,16 @@ export type LeaderboardListItem = UserProfile & {
   hasPerfectPickHighlight: boolean;
   standardPoints?: number;
   groupCustomPoints?: number;
+  groupPhasePoints?: number | null;
+  knockoutPhasePoints?: number | null;
+  globalTopTenPoints?: number | null;
   groupStrategyPoints?: number | null;
   knockoutGlobalPoints?: number | null;
   globalChallengePoints?: number | null;
 };
 
-export type LeaderboardSwitcherView = "global" | "my_groups" | "managed_groups" | "groups" | "managers";
+export type LeaderboardSwitcherView = "global" | "my_groups" | "managed_groups" | "groups" | "teams" | "managers";
+export type LeaderboardPhase = "group_phase" | "knockout_phase" | "global_top10";
 
 export type LeaderboardSwitcherOption = {
   id: string;
@@ -117,6 +129,10 @@ export type LeaderboardGroupNavItem = LeaderboardSwitcherOption & {
   points: number | null;
   rankDelta: number | null;
   context: "joined" | "managed" | "all";
+  avatarUrl?: string | null;
+  managerName: string | null;
+  averagePoints: number | null;
+  globalRank: number | null;
 };
 
 export type LeaderboardSwitcherContext = {
@@ -134,10 +150,13 @@ export type LeaderboardSwitcherContext = {
 export type LeaderboardPageData = {
   leaderboard: LeaderboardListItem[];
   groupStandings: GroupStandingItem[];
+  teamStandings: TeamStandingItem[];
   switcher: LeaderboardSwitcherContext;
   dailyWinners: DailyWinner[];
   activityFeed: LeaderboardActivityItem[];
   settings: LeaderboardFeatureSettings;
+  phase: LeaderboardPhase;
+  currentUserRank: number | null;
 };
 
 export type GroupStandingItem = {
@@ -156,13 +175,34 @@ export type GroupStandingItem = {
   scoringScope: "standard";
 };
 
+export type TeamStandingItem = {
+  id: string;
+  rank: number;
+  name: string;
+  shortName: string;
+  flagEmoji?: string | null;
+  avgPoints: number;
+  totalPoints: number;
+  playerCount: number;
+  topPlayerName: string;
+  topPlayerPoints: number;
+  tag: string | null;
+};
+
 export type LeaderboardPageRequest = {
+  phase?: LeaderboardPhase;
   view?: LeaderboardSwitcherView;
   groupId?: string;
   managerId?: string;
 };
 
 export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest): Promise<LeaderboardPageData> {
+  const phase = normalizeLeaderboardPhase(request?.phase);
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user: currentUser }
+  } = await supabase.auth.getUser();
+
   if (!hasSupabaseConfig()) {
     return {
       leaderboard: [...demoUsers]
@@ -175,9 +215,12 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
           hasPerfectPickHighlight: false
         })),
       groupStandings: [],
+      teamStandings: [],
       dailyWinners: [],
       activityFeed: [],
       settings: await fetchLeaderboardFeatureSettings(),
+      phase,
+      currentUserRank: null,
       switcher: {
         accessLevel: "player",
         tabs: [
@@ -203,11 +246,12 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
         settings.perfect_pick_enabled
       )
     : Promise.resolve([]);
+  const teamStandingsPromise = activeView === "teams" ? fetchTeamStandings() : Promise.resolve([]);
   const leaderboardPromise =
     activeView === "global"
-      ? fetchGlobalLeaderboardRows(settings.perfect_pick_enabled)
+      ? fetchGlobalLeaderboardRows(phase, settings.perfect_pick_enabled)
       : selectedGroupId
-        ? fetchGroupLeaderboardRows(selectedGroupId, settings.perfect_pick_enabled)
+        ? fetchGroupLeaderboardRows(selectedGroupId, phase, settings.perfect_pick_enabled)
         : Promise.resolve([]);
   const dailyWinnersPromise =
     settings.daily_winner_enabled
@@ -218,11 +262,17 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
           : Promise.resolve([])
       : Promise.resolve([]);
 
-  const [leaderboard, dailyWinners, groupStandings] = await Promise.all([
+  const [rawLeaderboard, dailyWinners, groupStandings, teamStandings] = await Promise.all([
     leaderboardPromise,
     dailyWinnersPromise,
-    groupStandingsPromise
+    groupStandingsPromise,
+    teamStandingsPromise
   ]);
+  const currentUserRank =
+    activeView === "global" && currentUser
+      ? rawLeaderboard.find((item) => item.id === currentUser.id)?.rank ?? null
+      : null;
+  const leaderboard = activeView === "global" && phase === "global_top10" ? rawLeaderboard.slice(0, 10) : rawLeaderboard;
   const activityFeed =
     settings.leaderboard_activity_enabled
       ? activeView === "global"
@@ -246,9 +296,12 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
       hasPerfectPickHighlight: settings.perfect_pick_enabled ? item.hasPerfectPickHighlight : false
     })),
     groupStandings,
+    teamStandings,
     dailyWinners: settings.daily_winner_enabled ? dailyWinners : [],
     activityFeed: settings.leaderboard_activity_enabled ? activityFeed : [],
     settings,
+    phase,
+    currentUserRank,
     switcher
   };
 }
@@ -395,7 +448,94 @@ async function fetchGroupStandingsForAccessibleGroups(
     }));
 }
 
-async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<LeaderboardListItem[]> {
+async function fetchTeamStandings(): Promise<TeamStandingItem[]> {
+  const adminSupabase = createAdminClient();
+  const { data: usersData, error: usersError } = await adminSupabase
+    .from("users")
+    .select("id,name,home_team_id,total_points")
+    .not("home_team_id", "is", null);
+
+  if (usersError) {
+    throw new Error(usersError.message);
+  }
+
+  const playersWithTeams = (((usersData as Array<Pick<UserRow, "id" | "name" | "home_team_id" | "total_points">> | null) ?? []).filter(
+    (user): user is Pick<UserRow, "id" | "name" | "home_team_id" | "total_points"> & { home_team_id: string } =>
+      Boolean(user.home_team_id)
+  ));
+
+  if (playersWithTeams.length === 0) {
+    return [];
+  }
+
+  const uniqueTeamIds = Array.from(new Set(playersWithTeams.map((user) => user.home_team_id)));
+  const { data: teamsData, error: teamsError } = await adminSupabase
+    .from("teams")
+    .select("id,name,short_name,flag_emoji")
+    .in("id", uniqueTeamIds);
+
+  if (teamsError) {
+    throw new Error(teamsError.message);
+  }
+
+  const teamsById = new Map((((teamsData as TeamCatalogRow[] | null) ?? []).map((team) => [team.id, team] as const)));
+  const playersByTeamId = new Map<string, Array<{ userId: string; name: string; totalPoints: number }>>();
+
+  for (const player of playersWithTeams) {
+    const list = playersByTeamId.get(player.home_team_id) ?? [];
+    list.push({
+      userId: player.id,
+      name: player.name,
+      totalPoints: player.total_points
+    });
+    playersByTeamId.set(player.home_team_id, list);
+  }
+
+  return Array.from(playersByTeamId.entries())
+    .map(([teamId, players]) => {
+      const team = teamsById.get(teamId);
+      if (!team || players.length === 0) {
+        return null;
+      }
+
+      const totalPoints = players.reduce((sum, player) => sum + player.totalPoints, 0);
+      const playerCount = players.length;
+      const avgPoints = totalPoints / playerCount;
+      const topPlayer = [...players].sort(
+        (left, right) => right.totalPoints - left.totalPoints || left.name.localeCompare(right.name)
+      )[0];
+
+      return {
+        id: team.id,
+        rank: 0,
+        name: team.name,
+        shortName: team.short_name,
+        flagEmoji: team.flag_emoji ?? null,
+        avgPoints,
+        totalPoints,
+        playerCount,
+        topPlayerName: topPlayer?.name ?? "No top player yet",
+        topPlayerPoints: topPlayer?.totalPoints ?? 0,
+        tag: deriveGroupStandingTag({ avgPoints, playerCount, perfectPickCount: null })
+      } satisfies TeamStandingItem;
+    })
+    .filter(Boolean)
+    .sort((left, right) =>
+      (right?.avgPoints ?? 0) - (left?.avgPoints ?? 0) ||
+      (right?.totalPoints ?? 0) - (left?.totalPoints ?? 0) ||
+      (right?.playerCount ?? 0) - (left?.playerCount ?? 0) ||
+      (left?.name ?? "").localeCompare(right?.name ?? "")
+    )
+    .map((team, index) => ({
+      ...(team as TeamStandingItem),
+      rank: index + 1
+    }));
+}
+
+async function fetchGlobalLeaderboardRows(
+  phase: LeaderboardPhase,
+  perfectPickEnabled: boolean
+): Promise<LeaderboardListItem[]> {
   const adminSupabase = createAdminClient();
   const { data: usersData, error: usersError } = await adminSupabase
     .from("users")
@@ -412,16 +552,25 @@ async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<
   }
 
   const userIds = users.map((user) => user.id);
-  const [globalChallengeSummaries, perfectPickUserIds, trophiesByUserId] = await Promise.all([
+  const [globalChallengeSummaries, groupPhaseSummaries, knockoutPointsByUserId, perfectPickUserIds, trophiesByUserId] =
+    await Promise.all([
     fetchGlobalChallengeSummaries(userIds),
+    fetchGroupPhaseSummaries(userIds),
+    fetchKnockoutPointsByUserIds(adminSupabase, userIds),
     perfectPickEnabled ? fetchPerfectPickUserIdsForLatestFinalizedMatch() : Promise.resolve(new Set<string>()),
     fetchTrophiesByUserIds(adminSupabase, userIds)
   ]);
 
   const rankedEntries = users
     .map((user) => {
-      const summary = globalChallengeSummaries.get(user.id);
-      const totalPoints = summary?.totalPoints ?? 0;
+      const groupPhasePoints = groupPhaseSummaries.get(user.id)?.points ?? 0;
+      const knockoutPhasePoints = knockoutPointsByUserId.get(user.id) ?? 0;
+      const totalPoints =
+        phase === "group_phase"
+          ? groupPhasePoints
+          : phase === "knockout_phase"
+            ? knockoutPhasePoints
+            : groupPhasePoints + knockoutPhasePoints;
       return {
         user_id: user.id,
         total_points: totalPoints
@@ -439,6 +588,8 @@ async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<
       }
 
       const summary = globalChallengeSummaries.get(entry.user_id) ?? null;
+      const groupPhaseSummary = groupPhaseSummaries.get(entry.user_id) ?? null;
+      const knockoutPhasePoints = knockoutPointsByUserId.get(entry.user_id) ?? 0;
 
       return {
         ...mapUserRow(joinedUser),
@@ -446,6 +597,9 @@ async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<
         totalPoints: entry.total_points,
         standardPoints: entry.total_points,
         groupCustomPoints: 0,
+        groupPhasePoints: groupPhaseSummary?.points ?? 0,
+        knockoutPhasePoints,
+        globalTopTenPoints: (groupPhaseSummary?.points ?? 0) + knockoutPhasePoints,
         groupStrategyPoints: summary?.groupStrategy.points ?? null,
         knockoutGlobalPoints: summary?.knockout.points ?? null,
         globalChallengePoints: summary?.totalPoints ?? null,
@@ -460,6 +614,7 @@ async function fetchGlobalLeaderboardRows(perfectPickEnabled: boolean): Promise<
 
 async function fetchGroupLeaderboardRows(
   groupId: string,
+  phase: LeaderboardPhase,
   perfectPickEnabled: boolean
 ): Promise<LeaderboardListItem[]> {
   const adminSupabase = createAdminClient();
@@ -480,30 +635,35 @@ async function fetchGroupLeaderboardRows(
     return [];
   }
 
-  const { data: leaderboardData, error: leaderboardError } = await adminSupabase
-    .from("leaderboard_entries")
-    .select("user_id,total_points,rank")
-    .in("user_id", memberUserIds);
-
-  if (leaderboardError) {
-    throw new Error(leaderboardError.message);
-  }
-
-  const groupCustomTotals = await fetchGroupCustomScoreTotals(adminSupabase, [groupId]);
+  const [groupCustomTotals, groupPhaseSummaries, knockoutPointsByUserId] = await Promise.all([
+    fetchGroupCustomScoreTotals(adminSupabase, [groupId]),
+    fetchGroupPhaseSummaries(memberUserIds),
+    fetchKnockoutPointsByUserIds(adminSupabase, memberUserIds)
+  ]);
   const groupCustomTotalsByUserId = groupCustomTotals.get(groupId) ?? new Map<string, number>();
   const groupLeaderboardEntries: Array<{
     user_id: string;
     standard_points: number;
     group_custom_points: number;
     total_points: number;
-  }> = (((leaderboardData as LeaderboardEntryRow[] | null) ?? [])
-    .map((entry) => ({
-      user_id: entry.user_id,
-      standard_points: entry.total_points,
-      group_custom_points: groupCustomTotalsByUserId.get(entry.user_id) ?? 0,
-      total_points: entry.total_points + (groupCustomTotalsByUserId.get(entry.user_id) ?? 0)
-    }))
-    .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id)));
+  }> = memberUserIds
+    .map((userId) => {
+      const groupPhasePoints = groupPhaseSummaries.get(userId)?.points ?? 0;
+      const knockoutPhasePoints = knockoutPointsByUserId.get(userId) ?? 0;
+      const phasePoints =
+        phase === "group_phase"
+          ? groupPhasePoints
+          : phase === "knockout_phase"
+            ? knockoutPhasePoints
+            : groupPhasePoints + knockoutPhasePoints;
+      return {
+        user_id: userId,
+        standard_points: phasePoints,
+        group_custom_points: phase === "global_top10" ? groupCustomTotalsByUserId.get(userId) ?? 0 : 0,
+        total_points: phasePoints + (phase === "global_top10" ? groupCustomTotalsByUserId.get(userId) ?? 0 : 0)
+      };
+    })
+    .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id));
 
   const rankedEntries = assignRanks(groupLeaderboardEntries);
   const latestMatchId = await fetchLatestSnapshotMatchId(adminSupabase, { scopeType: "group", groupId });
@@ -541,6 +701,10 @@ async function fetchGroupLeaderboardRows(
         totalPoints: entry.total_points,
         standardPoints: entry.standard_points,
         groupCustomPoints: entry.group_custom_points,
+        groupPhasePoints: groupPhaseSummaries.get(entry.user_id)?.points ?? 0,
+        knockoutPhasePoints: knockoutPointsByUserId.get(entry.user_id) ?? 0,
+        globalTopTenPoints:
+          (groupPhaseSummaries.get(entry.user_id)?.points ?? 0) + (knockoutPointsByUserId.get(entry.user_id) ?? 0),
         rank: entry.rank,
         rankDelta: movement.rankDelta,
         pointsDelta: movement.pointsDelta,
@@ -601,19 +765,22 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
       ? [
           { value: "global", label: "Global Standings" },
           { value: "managers", label: "Managers" },
-          { value: "groups", label: "Group Standings" }
+          { value: "groups", label: "Group Standings" },
+          { value: "teams", label: "Team Standings" }
         ]
       : hasOrganizerAccess(accessLevel)
         ? [
             { value: "managed_groups", label: "My Managed Groups" },
             { value: "my_groups", label: "Invited / Joined Groups" },
             { value: "global", label: "Global Standings" },
-            { value: "groups", label: "Group Standings" }
+            { value: "groups", label: "Group Standings" },
+            { value: "teams", label: "Team Standings" }
           ]
         : [
             { value: "my_groups", label: "Invited / Joined Groups" },
             { value: "global", label: "Global Standings" },
-            { value: "groups", label: "Group Standings" }
+            { value: "groups", label: "Group Standings" },
+            { value: "teams", label: "Team Standings" }
           ];
 
   return {
@@ -803,9 +970,15 @@ async function fetchAccessibleGroupOptions(
       .select("id,name,status")
       .in("id", relevantGroupIds)
       .order("name", { ascending: true }),
-    fetchGroupNavigationItems(adminSupabase, userId, joinedGroupIds, "joined"),
+    fetchGroupNavigationItems(adminSupabase, userId, joinedGroupIds, "joined", {
+      rankScopeGroupIds: relevantGroupIds,
+      ownedGroupIds: new Set(ownedGroupIds)
+    }),
     hasOrganizerAccess(accessLevel)
-      ? fetchGroupNavigationItems(adminSupabase, userId, managedGroupIds, "managed")
+      ? fetchGroupNavigationItems(adminSupabase, userId, managedGroupIds, "managed", {
+          rankScopeGroupIds: relevantGroupIds,
+          ownedGroupIds: new Set(ownedGroupIds)
+        })
       : Promise.resolve([])
   ]);
 
@@ -843,22 +1016,28 @@ async function fetchGroupNavigationItems(
   adminSupabase: ReturnType<typeof createAdminClient>,
   userId: string,
   groupIds: string[],
-  context: LeaderboardGroupNavItem["context"]
+  context: LeaderboardGroupNavItem["context"],
+  options?: {
+    rankScopeGroupIds?: string[];
+    ownedGroupIds?: Set<string>;
+  }
 ): Promise<LeaderboardGroupNavItem[]> {
   const uniqueGroupIds = Array.from(new Set(groupIds)).filter(Boolean);
   if (uniqueGroupIds.length === 0) {
     return [];
   }
 
+  const scopedGroupIds = Array.from(new Set([...(options?.rankScopeGroupIds ?? []), ...uniqueGroupIds])).filter(Boolean);
+
   const [{ data: groupsData, error: groupsError }, { data: membershipsData, error: membershipsError }] = await Promise.all([
     adminSupabase
       .from("groups")
-      .select("id,name,status")
-      .in("id", uniqueGroupIds),
+      .select("id,name,status,owner_user_id,avatar_url")
+      .in("id", scopedGroupIds),
     adminSupabase
       .from("group_members")
-      .select("group_id,user_id")
-      .in("group_id", uniqueGroupIds)
+      .select("group_id,user_id,role")
+      .in("group_id", scopedGroupIds)
   ]);
 
   if (groupsError) {
@@ -870,18 +1049,19 @@ async function fetchGroupNavigationItems(
   }
 
   const groups = (groupsData as GroupRow[] | null) ?? [];
-  const memberships = (membershipsData as Array<{ group_id: string; user_id: string }> | null) ?? [];
+  const memberships = (membershipsData as Array<{ group_id: string; user_id: string; role: "manager" | "member" }> | null) ?? [];
   if (groups.length === 0 || memberships.length === 0) {
     return [];
   }
 
   const memberIds = Array.from(new Set(memberships.map((membership) => membership.user_id)));
-  const usersById = await fetchUsersByIds(adminSupabase, memberIds);
+  const ownerIds = Array.from(new Set(groups.map((group) => group.owner_user_id).filter(Boolean) as string[]));
+  const usersById = await fetchUsersByIds(adminSupabase, Array.from(new Set([...memberIds, ...ownerIds])));
 
-  const membersByGroupId = new Map<string, string[]>();
+  const membersByGroupId = new Map<string, Array<{ userId: string; role: "manager" | "member" }>>();
   for (const membership of memberships) {
     const list = membersByGroupId.get(membership.group_id) ?? [];
-    list.push(membership.user_id);
+    list.push({ userId: membership.user_id, role: membership.role });
     membersByGroupId.set(membership.group_id, list);
   }
 
@@ -910,9 +1090,33 @@ async function fetchGroupNavigationItems(
     })
   );
 
+  const globalRankByGroupId = new Map(
+    assignRanks(
+      groups
+        .map((group) => {
+          const memberEntries = (membersByGroupId.get(group.id) ?? [])
+            .map((member) => usersById.get(member.userId))
+            .filter((member): member is UserRow => Boolean(member));
+          if (memberEntries.length === 0) {
+            return null;
+          }
+
+          const totalPoints = memberEntries.reduce((sum, member) => sum + member.total_points, 0);
+          return {
+            user_id: group.id,
+            total_points: totalPoints / memberEntries.length
+          };
+        })
+        .filter((entry): entry is { user_id: string; total_points: number } => Boolean(entry))
+        .sort((left, right) => right.total_points - left.total_points || left.user_id.localeCompare(right.user_id))
+    ).map((entry) => [entry.user_id, entry.rank] as const)
+  );
+
   return groups
+    .filter((group) => uniqueGroupIds.includes(group.id))
     .map((group) => {
-      const memberUserIds = membersByGroupId.get(group.id) ?? [];
+      const memberEntries = membersByGroupId.get(group.id) ?? [];
+      const memberUserIds = memberEntries.map((member) => member.userId);
       const rankedEntries: Array<{
         user_id: string;
         standard_points: number;
@@ -951,6 +1155,13 @@ async function fetchGroupNavigationItems(
       );
       const currentUserEntry = rankedEntries.find((entry) => entry.user_id === userId) ?? null;
       const currentUser = usersById.get(userId);
+      const managerMember = memberEntries.find((member) => member.role === "manager") ?? null;
+      const managerUser = managerMember ? usersById.get(managerMember.userId) ?? null : null;
+      const ownerUser = group.owner_user_id ? usersById.get(group.owner_user_id) ?? null : null;
+      const averagePoints =
+        rankedEntries.length > 0
+          ? rankedEntries.reduce((sum, entry) => sum + entry.total_points, 0) / rankedEntries.length
+          : null;
 
       return {
         id: group.id,
@@ -962,7 +1173,14 @@ async function fetchGroupNavigationItems(
             ? currentUser.total_points + (groupCustomTotals.get(group.id)?.get(userId) ?? 0)
             : null,
         rankDelta: movementByGroupId.get(group.id)?.rankDelta ?? null,
-        context
+        context,
+        avatarUrl: group.avatar_url ?? null,
+        managerName:
+          context === "managed" && options?.ownedGroupIds?.has(group.id)
+            ? "You"
+            : managerUser?.name ?? ownerUser?.name ?? null,
+        averagePoints,
+        globalRank: globalRankByGroupId.get(group.id) ?? null
       } satisfies LeaderboardGroupNavItem;
     })
     .sort((left, right) =>
@@ -1113,6 +1331,33 @@ function mapUserRow(row: UserRow): UserProfile {
     }),
     totalPoints: row.total_points
   };
+}
+
+async function fetchKnockoutPointsByUserIds(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userIds: string[]
+): Promise<Map<string, number>> {
+  const uniqueIds = Array.from(new Set(userIds)).filter(Boolean);
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+
+  const { data, error } = await adminSupabase.from("bracket_scores").select("user_id,points").in("user_id", uniqueIds);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const pointsByUserId = new Map<string, number>();
+  for (const row of ((data as BracketScoreRow[] | null) ?? [])) {
+    pointsByUserId.set(row.user_id, (pointsByUserId.get(row.user_id) ?? 0) + Math.max(0, row.points ?? 0));
+  }
+
+  return pointsByUserId;
+}
+
+function normalizeLeaderboardPhase(value?: string | null): LeaderboardPhase {
+  return value === "knockout_phase" || value === "global_top10" ? value : "group_phase";
 }
 
 function resolveAllowedView(

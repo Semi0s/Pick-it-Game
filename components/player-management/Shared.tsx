@@ -222,6 +222,7 @@ export function WindowChoiceRail({
   const [canScrollNext, setCanScrollNext] = useState(false);
   const edgeControlWidth = 24;
   const beltGutterWidth = 40;
+  const anchoredEdgeGutterWidth = edgeControlWidth + 10;
   const baseScrollerClassName = "flex min-w-max gap-1.5 px-0.5 pb-0.5";
   const isAnchored = motionMode === "anchored";
 
@@ -253,15 +254,13 @@ export function WindowChoiceRail({
 
       if (isAnchored) {
         setOffsetX(0);
-        const viewportBounds = viewport.getBoundingClientRect();
-        const itemBounds = activeItem.getBoundingClientRect();
-        const itemNeedsReveal =
-          itemBounds.left < viewportBounds.left + 4 || itemBounds.right > viewportBounds.right - 4;
+        const maxScrollLeft = Math.max(0, beltWidth - viewportWidth);
+        const desiredScrollLeft = activeItem.offsetLeft + activeItem.offsetWidth / 2 - viewportWidth / 2;
+        const clampedScrollLeft = Math.max(0, Math.min(maxScrollLeft, desiredScrollLeft));
 
-        if (itemNeedsReveal) {
-          activeItem.scrollIntoView({
-            inline: "nearest",
-            block: "nearest",
+        if (Math.abs(viewport.scrollLeft - clampedScrollLeft) > 1) {
+          viewport.scrollTo({
+            left: clampedScrollLeft,
             behavior: "auto"
           });
         }
@@ -403,9 +402,21 @@ export function WindowChoiceRail({
                   }
             }
           >
-            {showControls && !isAnchored ? <div aria-hidden="true" className="shrink-0" style={{ width: beltGutterWidth }} /> : null}
+            {showControls ? (
+              <div
+                aria-hidden="true"
+                className="shrink-0"
+                style={{ width: isAnchored ? anchoredEdgeGutterWidth : beltGutterWidth }}
+              />
+            ) : null}
             {children}
-            {showControls && !isAnchored ? <div aria-hidden="true" className="shrink-0" style={{ width: beltGutterWidth }} /> : null}
+            {showControls ? (
+              <div
+                aria-hidden="true"
+                className="shrink-0"
+                style={{ width: isAnchored ? anchoredEdgeGutterWidth : beltGutterWidth }}
+              />
+            ) : null}
           </div>
         </div>
         {showControls ? (
@@ -449,7 +460,8 @@ export function ManagementIntro({
   disclosureStorageKey,
   disclosureVariant = "subtle",
   disclosurePlacement = "below-title",
-  statusChipPlacement = "top-right"
+  statusChipPlacement = "top-right",
+  collapseBodyWhenClosed = false
 }: {
   eyebrow?: string;
   title: string;
@@ -458,14 +470,20 @@ export function ManagementIntro({
   secondaryNote?: string | null;
   disclosureStorageKey?: string;
   disclosureVariant?: "chip" | "subtle";
-  disclosurePlacement?: "top-right" | "below-title";
+  disclosurePlacement?: "top-right" | "below-title" | "bottom-right";
   statusChipPlacement?: "top-right" | "below-title";
+  collapseBodyWhenClosed?: boolean;
 }) {
   const [isMoreOpen, setIsMoreOpen] = useSessionDisclosureState(
     disclosureStorageKey ??
       `management-intro:${(eyebrow ?? title).toLowerCase().replace(/\s+/g, "-")}`,
     false
   );
+  const shouldShowBody = !collapseBodyWhenClosed || isMoreOpen;
+  const shouldShowInlineTopRightChip =
+    Boolean(statusChip) && statusChipPlacement === "top-right" && disclosurePlacement !== "top-right";
+  const shouldShowStackedTopRightChip =
+    Boolean(statusChip) && statusChipPlacement === "top-right" && disclosurePlacement === "top-right";
 
   return (
     <section className="rounded-lg bg-gray-100 p-5">
@@ -477,39 +495,81 @@ export function ManagementIntro({
             variant={disclosureVariant}
             onClick={() => setIsMoreOpen((current) => !current)}
           />
-        ) : statusChip && statusChipPlacement === "top-right" ? (
+        ) : shouldShowInlineTopRightChip ? (
           <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
             {statusChip}
           </div>
         ) : null}
       </div>
-      <div className="mt-3 min-w-0">
-        <h2 className="text-xl font-black leading-tight sm:text-2xl">{title}</h2>
-        {statusChip && statusChipPlacement === "below-title" ? (
-          <div className="mt-3 flex justify-start">
-            <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
-              {statusChip}
+      {shouldShowStackedTopRightChip ? (
+        <div className="mt-3 flex justify-end">
+          <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+            {statusChip}
+          </div>
+        </div>
+      ) : null}
+      {shouldShowBody ? (
+        <div className="mt-3 min-w-0">
+          <h2 className="text-xl font-black leading-tight sm:text-2xl">{title}</h2>
+          {statusChip && statusChipPlacement === "below-title" ? (
+            <div className="mt-3 flex justify-start">
+              <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+                {statusChip}
+              </div>
             </div>
-          </div>
-        ) : null}
-        {disclosurePlacement === "below-title" ? (
-          <div className="mt-3 flex justify-start">
-            <InlineDisclosureButton
-              isOpen={isMoreOpen}
-              variant={disclosureVariant}
-              onClick={() => setIsMoreOpen((current) => !current)}
-            />
-          </div>
-        ) : null}
-        {isMoreOpen ? (
-          <div className="mt-3">
-            <p className="text-sm leading-6 text-gray-600">{description}</p>
-            {secondaryNote ? (
-              <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">{secondaryNote}</p>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+          ) : null}
+          {disclosurePlacement === "below-title" ? (
+            <div className="mt-3 flex justify-start">
+              <InlineDisclosureButton
+                isOpen={isMoreOpen}
+                variant={disclosureVariant}
+                onClick={() => setIsMoreOpen((current) => !current)}
+              />
+            </div>
+          ) : null}
+          {isMoreOpen ? (
+            <div className="mt-3">
+              <p className="text-sm leading-6 text-gray-600">{description}</p>
+              {secondaryNote ? (
+                <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">{secondaryNote}</p>
+              ) : null}
+              {disclosurePlacement === "bottom-right" ? (
+                <div className="mt-3 flex justify-end">
+                  <InlineDisclosureButton
+                    isOpen={isMoreOpen}
+                    variant={disclosureVariant}
+                    onClick={() => setIsMoreOpen((current) => !current)}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : disclosurePlacement === "bottom-right" ? (
+            <div className="mt-3 flex justify-end">
+              <InlineDisclosureButton
+                isOpen={isMoreOpen}
+                variant={disclosureVariant}
+                onClick={() => setIsMoreOpen((current) => !current)}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : disclosurePlacement === "bottom-right" ? (
+        <div className="mt-3 flex justify-end">
+          <InlineDisclosureButton
+            isOpen={isMoreOpen}
+            variant={disclosureVariant}
+            onClick={() => setIsMoreOpen((current) => !current)}
+          />
+        </div>
+      ) : disclosurePlacement === "below-title" ? (
+        <div className="mt-3 flex justify-start">
+          <InlineDisclosureButton
+            isOpen={isMoreOpen}
+            variant={disclosureVariant}
+            onClick={() => setIsMoreOpen((current) => !current)}
+          />
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -521,6 +581,7 @@ export function HierarchyPanel({
   activeLevel?: AccessLevel;
   activeDetails?: string[];
 }) {
+  const [isOpen, setIsOpen] = useSessionDisclosureState("my-groups:levels-section", false);
   const levels: Array<{
     key: AccessLevel;
     title: string;
@@ -567,36 +628,46 @@ export function HierarchyPanel({
 
   return (
     <section className="space-y-3">
-      <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">LEVELS</p>
-      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-        {levels.map((level) => {
-          const isActive = activeLevel === level.key;
-          const accentClass =
-            level.key === "super_admin"
-              ? "text-accent-dark"
-              : level.key === "manager" || level.key === "director" || level.key === "managing_director"
-                ? "text-amber-700"
-                : "text-green-700";
-
-          return (
-            <HierarchyCard
-              key={level.key}
-              storageKey={`my-groups:hierarchy-level:${level.key}`}
-              title={
-                <>
-                  {level.title}{" "}
-                  {isActive ? <span className={`text-sm font-black ${accentClass}`}>(YOU)</span> : null}
-                </>
-              }
-              badge={level.badge}
-              copy={level.copy}
-              tone={level.tone}
-              isActive={isActive}
-              detailLines={isActive ? activeDetails : undefined}
-            />
-          );
-        })}
+      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">LEVELS</p>
+          <InlineDisclosureButton
+            isOpen={isOpen}
+            variant="subtle"
+            onClick={() => setIsOpen((current) => !current)}
+          />
+        </div>
       </div>
+      {isOpen ? (
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {levels.map((level) => {
+            const isActive = activeLevel === level.key;
+            const accentClass =
+              level.key === "super_admin"
+                ? "text-accent-dark"
+                : level.key === "manager" || level.key === "director" || level.key === "managing_director"
+                  ? "text-amber-700"
+                  : "text-green-700";
+
+            return (
+              <HierarchyCard
+                key={level.key}
+                title={
+                  <>
+                    {level.title}{" "}
+                    {isActive ? <span className={`text-sm font-black ${accentClass}`}>(YOU)</span> : null}
+                  </>
+                }
+                badge={level.badge}
+                copy={level.copy}
+                tone={level.tone}
+                isActive={isActive}
+                detailLines={isActive ? activeDetails : undefined}
+              />
+            );
+          })}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -710,7 +781,7 @@ export function ManagementCard({
   return (
     <div className={`rounded-lg border border-gray-200 p-4 ${className ?? "bg-white"}`}>
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className={titleClassName ?? "text-base"}>{title}</div>
           {subtitle ? <div className="truncate text-sm font-semibold text-gray-600">{subtitle}</div> : null}
         </div>
@@ -951,7 +1022,6 @@ export function InlineTextConfirmation({
 }
 
 function HierarchyCard({
-  storageKey,
   title,
   badge,
   copy,
@@ -959,7 +1029,6 @@ function HierarchyCard({
   isActive = false,
   detailLines
 }: {
-  storageKey: string;
   title: ReactNode;
   badge: string;
   copy: string;
@@ -967,7 +1036,6 @@ function HierarchyCard({
   isActive?: boolean;
   detailLines?: string[];
 }) {
-  const [isMoreOpen, setIsMoreOpen] = useSessionDisclosureState(storageKey, false);
   const activeClasses =
     tone === "accent"
       ? "border-accent-light bg-accent-light/40"
@@ -983,25 +1051,18 @@ function HierarchyCard({
         <h3 className={`text-xs font-black ${isActive ? "text-gray-950" : "text-gray-500"}`}>{title}</h3>
         <div className="flex items-center gap-2">
           <ManagementBadge label={badge} tone={isActive ? tone : "neutral"} />
-          <InlineDisclosureButton
-            isOpen={isMoreOpen}
-            variant="subtle"
-            onClick={() => setIsMoreOpen((current) => !current)}
-          />
         </div>
       </div>
-      {isMoreOpen ? (
-        <>
-          <p className={`mt-1.5 text-[11px] font-semibold leading-4 ${isActive ? "text-gray-700" : "text-gray-500"}`}>{copy}</p>
-          {isActive && detailLines && detailLines.length > 0 ? (
-            <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] font-semibold text-gray-700">
-              {detailLines.map((line) => (
-                <p key={line}>{line}</p>
-              ))}
-            </div>
-          ) : null}
-        </>
-      ) : null}
+      <>
+        <p className={`mt-1.5 text-[11px] font-semibold leading-4 ${isActive ? "text-gray-700" : "text-gray-500"}`}>{copy}</p>
+        {isActive && detailLines && detailLines.length > 0 ? (
+          <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] font-semibold text-gray-700">
+            {detailLines.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
+        ) : null}
+      </>
     </div>
   );
 }

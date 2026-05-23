@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { PlayModePreviewClient } from "@/components/PlayModePreviewClient";
+import { shouldHideStrategyModeForLaunch } from "@/lib/group-prediction-mode";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,10 @@ export default async function PlayPreviewPage({
   }
 
   if (mode !== "full_scoring" && mode !== "easy_bracket" && mode !== "strategy_mode" && mode !== "groups") {
+    redirect("/start-playing");
+  }
+
+  if (shouldHideStrategyModeForLaunch() && mode === "strategy_mode") {
     redirect("/start-playing");
   }
 

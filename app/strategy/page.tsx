@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { StrategyModeClient } from "@/components/StrategyModeClient";
+import { shouldHideStrategyModeForLaunch } from "@/lib/group-prediction-mode";
 import { teams as demoTeams } from "@/lib/mock-data.ts";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
@@ -10,6 +11,10 @@ import type { Team } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 export default async function StrategyPage() {
+  if (shouldHideStrategyModeForLaunch()) {
+    redirect("/bracket-builder");
+  }
+
   const adminSupabase = createAdminClient();
   const supabase = await createServerSupabaseClient();
   const {

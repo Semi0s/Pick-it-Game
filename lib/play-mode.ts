@@ -90,11 +90,11 @@ export function getTournamentLockMessage() {
 
 export function getModePreviewConflictMessage(activeMode: TournamentEntryMode | null, previewMode: TournamentEntryMode) {
   if (activeMode === "easy_bracket" && previewMode === "strategy_mode") {
-    return "You already have an active Easy Bracket. You can preview Global Challenge, but it will not count unless you switch before kickoff.";
+    return "You already have an active Group Stage entry. You can preview Global Challenge, but it will not count unless you switch before kickoff.";
   }
 
   if (activeMode === "strategy_mode" && previewMode === "easy_bracket") {
-    return "You already have an active Global Challenge entry. You can preview Easy Bracket, but it will not count unless you switch before kickoff.";
+    return "You already have an active Global Challenge entry. You can preview Group Stage, but it will not count unless you switch before kickoff.";
   }
 
   return null;

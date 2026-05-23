@@ -35,7 +35,7 @@ test("switch after deadline fails", () => {
 });
 
 test("Easy Bracket and Global Challenge conflict messaging is explicit", () => {
-  assert.match(getModePreviewConflictMessage("easy_bracket", "strategy_mode") ?? "", /active Easy Bracket/i);
+  assert.match(getModePreviewConflictMessage("easy_bracket", "strategy_mode") ?? "", /active Group Stage/i);
   assert.match(getModePreviewConflictMessage("strategy_mode", "easy_bracket") ?? "", /active Global Challenge/i);
 });
 

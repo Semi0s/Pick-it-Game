@@ -3,8 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ReactNode, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ChevronDown, CircleUserRound, GitBranch, Globe, ListOrdered, SquareCheckBig } from "lucide-react";
+import { ReactNode, useEffect, useRef, useState, type CSSProperties, type SVGProps } from "react";
+import { ChevronDown, CircleUserRound, Globe } from "lucide-react";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TierIconBadge } from "@/components/TierIconBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
@@ -12,6 +12,7 @@ import { APP_TOAST_EVENT, markAppToastsReady, type AppToastDetail } from "@/lib/
 import { getStrings } from "@/lib/strings";
 import { PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, normalizeExplainerLanguage, type ExplainerLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { shouldHideDockForPath } from "@/lib/play-mode";
+import { getConfiguredGroupPredictionMode, isFullScoresModeEnabled } from "@/lib/group-prediction-mode";
 import {
   fetchCurrentUserTrophies,
   fetchPendingTrophyCelebrations,
@@ -31,6 +32,79 @@ import type { MutableRefObject } from "react";
 type AppShellProps = {
   children: ReactNode;
 };
+
+function GroupStageDockIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="3" y="4" width="18" height="10" rx="2.5" />
+      <path d="M9 14v5" />
+      <path d="M15 14v5" />
+      <path d="M6 19h12" />
+      <path d="M8 9h3" />
+      <path d="M13 9h3" />
+      <path d="M10 7.5v3" />
+      <path d="M14.5 7.5v3" />
+    </svg>
+  );
+}
+
+function KnockoutDockIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="3" y="4" width="6" height="4" rx="1" />
+      <rect x="3" y="16" width="6" height="4" rx="1" />
+      <rect x="15" y="10" width="6" height="4" rx="1" />
+      <path d="M9 6h3.5a1.5 1.5 0 0 1 1.5 1.5V12" />
+      <path d="M9 18h3.5a1.5 1.5 0 0 0 1.5-1.5V12" />
+      <path d="M14 12h1" />
+    </svg>
+  );
+}
+
+function LeaderboardDockIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M9 4h6" />
+      <path d="M10 4v2.5c0 1.2.9 2.3 2 2.5 1.1-.2 2-1.3 2-2.5V4" />
+      <path d="M8 4H6.5c0 1.8 1.1 3.2 2.8 3.6" />
+      <path d="M16 4h1.5c0 1.8-1.1 3.2-2.8 3.6" />
+      <path d="M12 9v2" />
+      <path d="M10 11h4v2H10z" />
+      <path d="M4 18.5v-3a1.5 1.5 0 0 1 1.5-1.5H11v4.5Z" />
+      <path d="M13 18.5V14h5.5A1.5 1.5 0 0 1 20 15.5v3Z" />
+      <path d="M11 18.5v-6h2v6" />
+      <path d="M4 18.5h16" />
+    </svg>
+  );
+}
+
+function MyGroupsDockIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="6" cy="10" r="2" />
+      <circle cx="12" cy="11" r="2.2" />
+      <circle cx="18" cy="10" r="2" />
+      <path d="M4.5 19v-2.2A2.3 2.3 0 0 1 6.8 14.5h.7" />
+      <path d="M9.2 19v-2.5A2.7 2.7 0 0 1 11.9 13.8h.2a2.7 2.7 0 0 1 2.7 2.7V19" />
+      <path d="M16.5 14.5h.7a2.3 2.3 0 0 1 2.3 2.3V19" />
+      <path d="M10.5 4.5l.2 4.2" />
+      <path d="M10.7 4.7c1.5-.6 3.1-.6 4.6.1l-.2 2.4c-1.4-.6-2.9-.6-4.4-.1Z" />
+    </svg>
+  );
+}
+
+function MyPicksDockIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="4" y="4" width="16" height="16" rx="2.5" />
+      <path d="M8 9h4" />
+      <path d="M8 13h4" />
+      <path d="M8 17h4" />
+      <path d="m14.5 10.5 1.5 1.5 3-3" />
+      <path d="m14.5 14.5 1.5 1.5 3-3" />
+    </svg>
+  );
+}
 
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const TROPHY_POLL_INTERVAL_MS = 4000;
@@ -68,11 +142,15 @@ export function AppShell({ children }: AppShellProps) {
   });
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const copy = getStrings(dockLanguage);
+  const groupPredictionMode = getConfiguredGroupPredictionMode();
   const navItems = [
-    { href: "/bracket-builder", label: copy.myBracket, ariaLabel: copy.myBracket, icon: GitBranch },
-    { href: "/groups", label: copy.myPicks, ariaLabel: copy.myPicks, icon: SquareCheckBig },
-    { href: "/knockout", label: copy.knockoutPicks, ariaLabel: copy.knockoutPicks, icon: GitBranch },
-    { href: "/leaderboard", label: copy.results, ariaLabel: copy.results, icon: ListOrdered }
+    { href: "/bracket-builder", label: copy.myBracket, ariaLabel: copy.myBracket, icon: GroupStageDockIcon },
+    ...(isFullScoresModeEnabled(groupPredictionMode)
+      ? [{ href: "/groups", label: copy.myPicks, ariaLabel: copy.myPicks, icon: MyPicksDockIcon }]
+      : []),
+    { href: "/knockout", label: copy.knockoutPicks, ariaLabel: copy.knockoutPicks, icon: KnockoutDockIcon },
+    { href: "/leaderboard", label: copy.results, ariaLabel: copy.results, icon: LeaderboardDockIcon },
+    { href: "/my-groups", label: copy.myGroups, ariaLabel: copy.myGroups, icon: MyGroupsDockIcon }
   ];
   const [pendingCelebrationQueue, setPendingCelebrationQueue] = useState<PendingTrophyCelebration[]>([]);
   const [activeCelebration, setActiveCelebration] = useState<PendingTrophyCelebration | null>(null);
@@ -623,7 +701,10 @@ export function AppShell({ children }: AppShellProps) {
           className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-700 bg-neutral-900"
           style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
         >
-          <div className="relative mx-auto grid w-full max-w-4xl grid-cols-4 gap-0.5 px-2 pb-0.5 pt-1">
+          <div
+            className="relative mx-auto grid w-full max-w-4xl gap-0.5 px-2 pb-0.5 pt-1"
+            style={{ gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))` }}
+          >
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
@@ -648,7 +729,7 @@ export function AppShell({ children }: AppShellProps) {
                   ) : null}
                   <Icon
                     aria-hidden
-                    className={`h-4 w-4 shrink-0 ${isActive ? "text-emerald-200" : ""}`}
+                    className={`h-5 w-5 shrink-0 ${isActive ? "text-emerald-200" : ""}`}
                   />
                   <span className="truncate text-center leading-tight">{item.label}</span>
                 </Link>

@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import type { LeaderboardSwitcherView } from "@/lib/leaderboard-data";
+import type { LeaderboardPhase, LeaderboardSwitcherView } from "@/lib/leaderboard-data";
 import { fetchLeaderboardPageData } from "@/lib/leaderboard-data";
 
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const leaderboardData = await fetchLeaderboardPageData({
+      phase: (url.searchParams.get("phase") as LeaderboardPhase | null) ?? undefined,
       view: (url.searchParams.get("view") as LeaderboardSwitcherView | null) ?? undefined,
       groupId: url.searchParams.get("groupId") ?? undefined,
       managerId: url.searchParams.get("managerId") ?? undefined

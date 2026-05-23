@@ -1327,7 +1327,7 @@ export function GroupPredictions({
     }));
     showAppToast({
       tone: "tip",
-      text: `Easy Bracket kept. Start rescoring ${getGroupShortLabel(groupName)} from this match.`
+      text: `Group Stage kept. Start rescoring ${getGroupShortLabel(groupName)} from this match.`
     });
   }
 
@@ -1888,11 +1888,11 @@ export function GroupPredictions({
                   {selectedScoreAwareGroupState?.state === "score_conflict" ? (
                     <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2">
                       <p className="text-[10px] font-semibold text-amber-950">
-                        Easy Bracket and your current picks don&apos;t match.
+                        Group Stage and your current picks don&apos;t match.
                       </p>
                       <div className="grid grid-cols-2 gap-3 text-[10px] font-semibold text-gray-700">
                         <div className="space-y-1">
-                          <p className="font-black uppercase tracking-wide text-gray-900">Easy Bracket</p>
+                          <p className="font-black uppercase tracking-wide text-gray-900">Group Stage</p>
                           {selectedScoreAwareGroupState.builderRows.map((row) => (
                             <div
                               key={`builder-${row.teamId}`}

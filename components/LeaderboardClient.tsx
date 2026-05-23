@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { InlineDisclosureButton, WindowChoiceRail, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
@@ -14,53 +14,58 @@ import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
-import { TrophyBadge } from "@/components/TrophyBadge";
-import {
-  DASHBOARD_ACTION_COPY,
-  DASHBOARD_AUTO_PICK_EMPTY_COPY,
-  DASHBOARD_AUTO_PICK_LABEL_COPY,
-  DASHBOARD_AUTO_PICK_LOADING_COPY,
-  DashboardHeroActionGrid
-} from "@/components/dashboard/DashboardHeroActionGrid";
-import { clearStoredAutoPickDraft, fetchNextAutoPick, storeAutoPickDraft } from "@/lib/auto-pick-client";
-import { showAppToast } from "@/lib/app-toast";
 import { parseJsonResponse } from "@/lib/fetch-json";
-import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
-import { normalizeGroupKey } from "@/lib/group-standings";
-import { clearGroupsEntryIntent, storeGroupsEntryIntent } from "@/lib/groups-entry-intent";
 import { getHomeTeamVisual } from "@/lib/home-team-visuals";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
   GroupStandingItem,
+  LeaderboardPhase,
   LeaderboardGroupNavItem,
   LeaderboardListItem,
   LeaderboardPageData,
+  TeamStandingItem,
   LeaderboardSwitcherContext,
   LeaderboardSwitcherView
 } from "@/lib/leaderboard-data";
 import type { DailyWinner } from "@/lib/leaderboard-highlights";
-import { fetchPlayerPredictions } from "@/lib/player-predictions";
-import { canEditPrediction } from "@/lib/prediction-state";
-import { getStoredPredictions } from "@/lib/prediction-store";
 import { hasDirectorAccess } from "@/lib/tier-access";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY, LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY } from "@/lib/ui-storage-keys";
-import type { MatchWithTeams, Prediction } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 const DEFAULT_SWITCHER_STATE = {
-  activeView: "global" as LeaderboardSwitcherView,
+  activeView: "my_groups" as LeaderboardSwitcherView,
   selectedGroupId: "",
   selectedManagerId: ""
 };
 
+const DEFAULT_LEADERBOARD_PHASE: LeaderboardPhase = "group_phase";
+
 type LeaderboardSubselectionState = {
-  groupByView: Partial<Record<LeaderboardSwitcherView, string>>;
-  managerByView: Partial<Record<LeaderboardSwitcherView, string>>;
+  groupByPhaseAndView?: Partial<Record<LeaderboardPhase, Partial<Record<LeaderboardSwitcherView, string>>>>;
+  managerByPhaseAndView?: Partial<Record<LeaderboardPhase, Partial<Record<LeaderboardSwitcherView, string>>>>;
+  groupByView?: Partial<Record<LeaderboardSwitcherView, string>>;
+  managerByView?: Partial<Record<LeaderboardSwitcherView, string>>;
+};
+
+type LeaderboardStoredSwitcherState = {
+  activePhase?: LeaderboardPhase;
+  phaseViewByPhase?: Partial<Record<LeaderboardPhase, LeaderboardSwitcherView>>;
+  activeView?: LeaderboardSwitcherView;
+  selectedGroupId?: string;
+  selectedManagerId?: string;
+};
+
+type PhaseNavItem = {
+  key: string;
+  label: string;
+  view: LeaderboardSwitcherView;
+  groupId?: string;
+  phase?: LeaderboardPhase;
 };
 
 const DEFAULT_SUBSELECTION_STATE: LeaderboardSubselectionState = {
-  groupByView: {},
-  managerByView: {}
+  groupByPhaseAndView: {},
+  managerByPhaseAndView: {}
 };
 
 const LEADERBOARD_SWITCHER_STORAGE_KEY = "leaderboard-switcher-state";
@@ -74,6 +79,10 @@ const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const LEADERBOARD_STABLE_CONTENT_MIN_HEIGHT = "clamp(24rem, 54vh, 38rem)";
 const LEADERBOARD_STABLE_ROW_TARGET = 8;
 const LEADERBOARD_STABLE_ROW_DEPTH_PX = 96;
+const LEADERBOARD_COCKPIT_BUTTON_CLASS =
+  "inline-flex min-h-10 items-center rounded-md px-3 py-1.5 text-[14px] font-bold leading-none";
+const LEADERBOARD_COCKPIT_TRIGGER_CLASS =
+  "flex min-h-10 w-full items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-1.5 text-left";
 const TWO_LINE_CLAMP_STYLE = {
   display: "-webkit-box",
   WebkitLineClamp: 2,
@@ -85,21 +94,21 @@ function LeaderboardPlayerRow({
   profile,
   index,
   currentUserId,
-  scoreMode,
+  scoreLabel,
+  scoreValue,
   canAwardManagedTrophies,
   canSelfAwardTrophies,
   managedAwardGroup,
-  shouldShowPlayerSocialIndicators,
   onOpenTrophySheet
 }: {
   profile: LeaderboardListItem;
   index: number;
   currentUserId?: string;
-  scoreMode: "standard" | "group";
+  scoreLabel: string;
+  scoreValue: number | string;
   canAwardManagedTrophies: boolean;
   canSelfAwardTrophies: boolean;
   managedAwardGroup: ManagedGroupDetails | null;
-  shouldShowPlayerSocialIndicators: boolean;
   onOpenTrophySheet: (userId: string) => void;
 }) {
   const isCurrentUser = profile.id === currentUserId;
@@ -126,13 +135,6 @@ function LeaderboardPlayerRow({
       : "bg-white text-accent-dark"
     : "bg-white text-gray-800";
   const socialTone = isCurrentUser ? "text-gray-600" : "text-gray-500";
-  const showLeaderboardTrophies = scoreMode === "standard" && shouldShowPlayerSocialIndicators;
-  const standardPoints = profile.standardPoints ?? profile.totalPoints;
-  const groupCustomPoints = profile.groupCustomPoints ?? 0;
-  const shouldShowGlobalChallengeBreakdown =
-    scoreMode === "standard" &&
-    (profile.groupStrategyPoints !== null && profile.groupStrategyPoints !== undefined ||
-      profile.knockoutGlobalPoints !== null && profile.knockoutGlobalPoints !== undefined);
 
   return (
     <div
@@ -170,7 +172,7 @@ function LeaderboardPlayerRow({
         <span
           className={`flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md px-2 py-1 text-center ${rankTone}`}
         >
-          <span className="text-sm font-black leading-none">{profile.rank ?? index + 1}</span>
+          <span className="text-lg font-black leading-none">{profile.rank ?? index + 1}</span>
           <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">Place</span>
         </span>
         <span className="flex min-w-0 items-center gap-2.5">
@@ -182,9 +184,14 @@ function LeaderboardPlayerRow({
           />
           <span className="flex min-w-0 flex-1 items-center gap-2">
             <span className="min-w-0 flex-1 self-center">
-              <span className="block min-w-0 truncate text-base font-black text-gray-950">
-                {profile.name}
-                {isCurrentUser ? " (You)" : ""}
+              <span className="flex min-w-0 items-start justify-between gap-2">
+                <span className="min-w-0 truncate text-base font-black text-gray-950">
+                  {profile.name}
+                  {isCurrentUser ? " (You)" : ""}
+                </span>
+                <span className={`ui-chip-sm shrink-0 font-semibold ${pointsTone}`}>
+                  {scoreLabel}: {scoreValue}
+                </span>
               </span>
               <span className={`mt-1.5 flex flex-wrap items-center gap-1.5 text-xs font-semibold ${socialTone}`}>
                 {profile.homeTeamId ? (
@@ -194,50 +201,6 @@ function LeaderboardPlayerRow({
                     compact
                     className={isCurrentUser ? "bg-white/85" : "bg-white/70"}
                   />
-                ) : null}
-                <span className={`ui-chip-sm font-semibold ${pointsTone}`}>
-                  {scoreMode === "group" ? standardPoints : profile.totalPoints} pts
-                </span>
-                {shouldShowGlobalChallengeBreakdown ? (
-                  <span className="ui-chip-sm bg-white/80 font-bold uppercase tracking-wide text-gray-600">
-                    GS: {profile.groupStrategyPoints ?? "Pending"}
-                  </span>
-                ) : null}
-                {shouldShowGlobalChallengeBreakdown ? (
-                  <span className="ui-chip-sm bg-white/80 font-bold uppercase tracking-wide text-gray-600">
-                    KO: {profile.knockoutGlobalPoints ?? "Pending"}
-                  </span>
-                ) : null}
-                {scoreMode === "group" ? (
-                  <span className="ui-chip-sm bg-white/80 font-bold uppercase tracking-wide text-gray-600">
-                    G: {groupCustomPoints >= 0 ? `+${groupCustomPoints}` : groupCustomPoints}
-                  </span>
-                ) : null}
-                {shouldShowPlayerSocialIndicators && profile.hasPerfectPickHighlight ? (
-                  <span className="ui-chip-sm bg-rose-100 font-black text-rose-700">
-                    🎯 Perfect Pick
-                  </span>
-                ) : null}
-                {showLeaderboardTrophies && profile.trophies && profile.trophies.length > 0 ? (
-                  <span className="inline-flex items-center gap-1">
-                    {profile.trophies.slice(0, 2).map((trophy) => (
-                      <TrophyBadge
-                        key={`${profile.id}-${trophy.id}`}
-                        icon={trophy.icon}
-                        tier={trophy.tier}
-                        size="sm"
-                        className={isCurrentUser ? "border-accent/40" : ""}
-                      />
-                    ))}
-                  </span>
-                ) : null}
-                {profile.pointsDelta && profile.pointsDelta > 0 ? (
-                  <span className="text-xs font-black text-accent-dark">+{profile.pointsDelta} pts</span>
-                ) : null}
-                {profile.rankDelta ? (
-                  <span className={`text-xs font-black ${getMovementTone(profile.rankDelta)}`}>
-                    {formatRankMovement(profile.rankDelta)}
-                  </span>
                 ) : null}
               </span>
             </span>
@@ -265,18 +228,37 @@ function LeaderboardPlayerRow({
   );
 }
 
+function getLeaderboardScoreDisplay(profile: LeaderboardListItem, activePhase: LeaderboardPhase) {
+  if (activePhase === "group_phase") {
+    return {
+      scoreLabel: "Pts",
+      scoreValue: profile.groupPhasePoints ?? 0
+    };
+  }
+
+  if (activePhase === "knockout_phase") {
+    return {
+      scoreLabel: "Pts",
+      scoreValue: profile.knockoutPhasePoints ?? 0
+    };
+  }
+
+  return {
+    scoreLabel: "Pts",
+    scoreValue: profile.globalTopTenPoints ?? profile.totalPoints
+  };
+}
+
 export function LeaderboardClient() {
-  const router = useRouter();
   const { user, isLoading: isUserLoading } = useCurrentUser();
   const searchParams = useSearchParams();
-  const [groupMatches, setGroupMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
-  const [predictions, setPredictions] = useState<Prediction[]>([]);
-  const [isHeroAutoPicking, setIsHeroAutoPicking] = useState(false);
   const [users, setUsers] = useState<LeaderboardListItem[]>([]);
   const [groupStandings, setGroupStandings] = useState<GroupStandingItem[]>([]);
+  const [teamStandings, setTeamStandings] = useState<TeamStandingItem[]>([]);
   const [switcher, setSwitcher] = useState<LeaderboardSwitcherContext | null>(null);
   const [dailyWinners, setDailyWinners] = useState<DailyWinner[]>([]);
   const [activityFeed, setActivityFeed] = useState<LeaderboardActivityItem[]>([]);
+  const [activePhase, setActivePhase] = useState<LeaderboardPhase>(DEFAULT_LEADERBOARD_PHASE);
   const [activeView, setActiveView] = useState<LeaderboardSwitcherView>(DEFAULT_SWITCHER_STATE.activeView);
   const [selectedGroupId, setSelectedGroupId] = useState(DEFAULT_SWITCHER_STATE.selectedGroupId);
   const [selectedManagerId, setSelectedManagerId] = useState(DEFAULT_SWITCHER_STATE.selectedManagerId);
@@ -296,6 +278,7 @@ export function LeaderboardClient() {
     LEADERBOARD_ACTIVITY_MORE_STORAGE_KEY,
     false
   );
+  const [isPhaseNavOpen, setIsPhaseNavOpen] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [managedAwardGroup, setManagedAwardGroup] = useState<ManagedGroupDetails | null>(null);
   const [managedTrophySheetTarget, setManagedTrophySheetTarget] = useState<{ groupId: string; userId: string } | null>(null);
@@ -309,6 +292,9 @@ export function LeaderboardClient() {
   const [hasExplicitSwitcherPreference, setHasExplicitSwitcherPreference] = useState(false);
   const [hasRestoredSwitcherPreference, setHasRestoredSwitcherPreference] = useState(false);
   const [hasRestoredLeaderSummaryState, setHasRestoredLeaderSummaryState] = useState(false);
+  const [rememberedViewByPhase, setRememberedViewByPhase] = useState<
+    Partial<Record<LeaderboardPhase, LeaderboardSwitcherView>>
+  >({});
   const [subselectionState, setSubselectionState] = useSessionJsonState<LeaderboardSubselectionState>(
     LEADERBOARD_SUBSELECTION_STORAGE_KEY,
     DEFAULT_SUBSELECTION_STATE
@@ -337,6 +323,7 @@ export function LeaderboardClient() {
 
   const requestUrl = useMemo(() => {
     const params = new URLSearchParams();
+    params.set("phase", activePhase);
     params.set("view", activeView);
     if (selectedGroupId) {
       params.set("groupId", selectedGroupId);
@@ -346,30 +333,8 @@ export function LeaderboardClient() {
     }
 
     return `/api/leaderboard?${params.toString()}`;
-  }, [activeView, selectedGroupId, selectedManagerId]);
+  }, [activePhase, activeView, selectedGroupId, selectedManagerId]);
   const dailyWinnerDismissOwnerKey = user?.id ?? "anonymous";
-  const autoPickLanguage = user?.preferredLanguage === "es" ? "es" : "en";
-  const actionCopy = DASHBOARD_ACTION_COPY[autoPickLanguage];
-  const savedMatchIds = useMemo(() => new Set(predictions.map((prediction) => prediction.matchId)), [predictions]);
-  const openMatches = useMemo(
-    () => groupMatches.filter((match) => canEditPrediction(match.status)),
-    [groupMatches]
-  );
-  const completedCount = useMemo(
-    () => groupMatches.filter((match) => savedMatchIds.has(match.id)).length,
-    [groupMatches, savedMatchIds]
-  );
-  const nextOpenMatch = useMemo(
-    () =>
-      [...openMatches].sort((left, right) => +new Date(left.kickoffTime) - +new Date(right.kickoffTime))[0] ?? null,
-    [openMatches]
-  );
-  const nextUnsavedOpenMatch = useMemo(
-    () => openMatches.find((match) => !savedMatchIds.has(match.id)) ?? null,
-    [openMatches, savedMatchIds]
-  );
-  const nextPrimaryMatch = nextUnsavedOpenMatch ?? nextOpenMatch;
-  const heroCtaLabel = completedCount > 0 ? actionCopy.myNextPick : actionCopy.myPicks;
 
   const loadManagedAwardGroup = useCallback(async () => {
     if (activeView !== "managed_groups" || !selectedGroupId) {
@@ -387,96 +352,26 @@ export function LeaderboardClient() {
     setManagedAwardGroup(matchedGroup);
   }, [activeView, selectedGroupId]);
 
-  const refreshHeroGroupMatches = useCallback(async () => {
+  useEffect(() => {
     try {
-      const items = await fetchGroupMatchesForPredictions();
-      setGroupMatches(items);
-    } catch (error) {
-      console.warn("Could not refresh leaderboard hero group matches.", { error });
-      setGroupMatches((currentMatches) => currentMatches);
-    }
-  }, []);
-
-  const refreshHeroPredictions = useCallback(async () => {
-    if (!user) {
-      setPredictions([]);
-      return;
-    }
-
-    try {
-      const items = await fetchPlayerPredictions(user.id);
-      setPredictions(items);
-    } catch (error) {
-      console.warn("Could not refresh leaderboard hero predictions.", { userId: user.id, error });
-      setPredictions((currentPredictions) => currentPredictions);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    fetchGroupMatchesForPredictions()
-      .then((items) => {
-        if (isMounted) {
-          setGroupMatches(items);
+      let storedSwitcherState: LeaderboardStoredSwitcherState | null = null;
+      const storedValue = window.sessionStorage.getItem(LEADERBOARD_SWITCHER_STORAGE_KEY);
+      if (storedValue) {
+        storedSwitcherState = JSON.parse(storedValue) as LeaderboardStoredSwitcherState;
+        if (storedSwitcherState.phaseViewByPhase) {
+          setRememberedViewByPhase(storedSwitcherState.phaseViewByPhase);
         }
-      })
-      .catch(() => {
-        if (isMounted) {
-          setGroupMatches(getLocalGroupMatches());
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!user) {
-      setPredictions([]);
-      return;
-    }
-
-    setPredictions(getStoredPredictions(user.id));
-    refreshHeroPredictions().catch(() => {
-      setPredictions(getStoredPredictions(user.id));
-    });
-  }, [refreshHeroPredictions, user]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !user) {
-      return;
-    }
-
-    function handleWindowFocus() {
-      refreshHeroGroupMatches().catch(() => undefined);
-      refreshHeroPredictions().catch(() => undefined);
-    }
-
-    function handleVisibilityChange() {
-      if (document.visibilityState === "visible") {
-        refreshHeroGroupMatches().catch(() => undefined);
-        refreshHeroPredictions().catch(() => undefined);
       }
-    }
 
-    window.addEventListener("focus", handleWindowFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      window.removeEventListener("focus", handleWindowFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [refreshHeroGroupMatches, refreshHeroPredictions, user]);
-
-  useEffect(() => {
-    try {
+      const queryPhase = searchParams.get("phase");
       const queryView = searchParams.get("view");
       const queryGroupId = searchParams.get("groupId");
       const queryManagerId = searchParams.get("managerId");
-      if (queryView || queryGroupId || queryManagerId) {
+      if (queryPhase || queryView || queryGroupId || queryManagerId) {
         setHasExplicitSwitcherPreference(true);
+        if (queryPhase === "knockout_phase" || queryPhase === "global_top10" || queryPhase === "group_phase") {
+          setActivePhase(queryPhase);
+        }
         if (queryView) {
           setActiveView(queryView as LeaderboardSwitcherView);
         }
@@ -486,20 +381,21 @@ export function LeaderboardClient() {
         if (queryManagerId) {
           setSelectedManagerId(queryManagerId);
         }
-      } else {
-        const storedValue = window.sessionStorage.getItem(LEADERBOARD_SWITCHER_STORAGE_KEY);
-        if (storedValue) {
-          setHasExplicitSwitcherPreference(true);
-          const parsed = JSON.parse(storedValue) as typeof DEFAULT_SWITCHER_STATE;
-          if (parsed.activeView) {
-            setActiveView(parsed.activeView);
-          }
-          if (parsed.selectedGroupId) {
-            setSelectedGroupId(parsed.selectedGroupId);
-          }
-          if (parsed.selectedManagerId) {
-            setSelectedManagerId(parsed.selectedManagerId);
-          }
+      } else if (storedSwitcherState) {
+        setHasExplicitSwitcherPreference(true);
+        const restoredPhase = storedSwitcherState.activePhase ?? DEFAULT_LEADERBOARD_PHASE;
+        setActivePhase(restoredPhase);
+
+        const restoredView =
+          storedSwitcherState.phaseViewByPhase?.[restoredPhase] ?? storedSwitcherState.activeView;
+        if (restoredView) {
+          setActiveView(restoredView);
+        }
+        if (storedSwitcherState.selectedGroupId) {
+          setSelectedGroupId(storedSwitcherState.selectedGroupId);
+        }
+        if (storedSwitcherState.selectedManagerId) {
+          setSelectedManagerId(storedSwitcherState.selectedManagerId);
         }
       }
     } catch (caughtError) {
@@ -664,9 +560,11 @@ export function LeaderboardClient() {
 
           setUsers(result.leaderboard);
           setGroupStandings(result.groupStandings);
+          setTeamStandings(result.teamStandings);
           setSwitcher(result.switcher);
           setDailyWinners(result.dailyWinners);
           setActivityFeed(result.activityFeed);
+          setActivePhase(result.phase);
           setError(null);
           hasLoadedLeaderboardRef.current = true;
           setIsLoading(false);
@@ -716,7 +614,7 @@ export function LeaderboardClient() {
       return;
     }
 
-    fetch("/api/leaderboard?view=global", { cache: "no-store" })
+    fetch("/api/leaderboard?phase=global_top10&view=global", { cache: "no-store" })
       .then(async (response) => {
         const result = await parseJsonResponse<
           | ({ ok: true } & LeaderboardPageData)
@@ -727,15 +625,15 @@ export function LeaderboardClient() {
           throw new Error(result.ok ? "Could not load the live leaderboard right now." : result.message);
         }
 
-        return result.leaderboard.find((profile) => profile.id === user.id) ?? null;
+        return result.currentUserRank ?? null;
       })
-      .then((profile) => {
+      .then((currentUserRank) => {
         if (!isMounted) {
           return;
         }
 
         setGlobalStandingLabel(
-          profile?.rank ? `YOUR GLOBAL RANK: #${profile.rank}` : "YOUR GLOBAL RANK: UNRANKED"
+          currentUserRank ? `GLOBAL: #${currentUserRank}` : "GLOBAL: UNRANKED"
         );
       })
       .catch(() => {
@@ -785,23 +683,42 @@ export function LeaderboardClient() {
   }, [loadManagedAwardGroup, refreshNonce]);
 
   useEffect(() => {
+    if (!hasRestoredSwitcherPreference) {
+      return;
+    }
+
+    setRememberedViewByPhase((current) => {
+      if (current[activePhase] === activeView) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [activePhase]: activeView
+      };
+    });
+  }, [activePhase, activeView, hasRestoredSwitcherPreference]);
+
+  useEffect(() => {
     if (!switcher) {
       return;
     }
 
+    const preferredView = getRememberedLeaderboardViewForPhase(switcher, activePhase, rememberedViewByPhase);
+    const phaseTabs = getPhaseViewTabs(switcher, activePhase);
+
     if (!hasExplicitSwitcherPreference) {
-      const preferredView = getDefaultLeaderboardViewLocal(switcher);
       if (activeView !== preferredView) {
         setActiveView(preferredView);
       }
       return;
     }
 
-    const allowedViews = new Set(switcher.tabs.map((tab) => tab.value));
+    const allowedViews = new Set(phaseTabs.map((tab) => tab.value));
     if (!allowedViews.has(activeView)) {
-      setActiveView(switcher.tabs[0]?.value ?? "global");
+      setActiveView(preferredView);
     }
-  }, [activeView, hasExplicitSwitcherPreference, switcher]);
+  }, [activePhase, activeView, hasExplicitSwitcherPreference, rememberedViewByPhase, switcher]);
 
   const availableGroupOptions = useMemo(
     () => (switcher ? getGroupOptionsForView(switcher, activeView) : []),
@@ -813,7 +730,9 @@ export function LeaderboardClient() {
       return;
     }
 
-    const rememberedGroupId = subselectionState.groupByView[activeView];
+    const rememberedGroupId =
+      subselectionState.groupByPhaseAndView?.[activePhase]?.[activeView] ??
+      subselectionState.groupByView?.[activeView];
     const currentGroupIsValid = selectedGroupId
       ? availableGroupOptions.some((group) => group.id === selectedGroupId)
       : false;
@@ -835,7 +754,7 @@ export function LeaderboardClient() {
     if (selectedGroupId) {
       setSelectedGroupId("");
     }
-  }, [activeView, availableGroupOptions, selectedGroupId, subselectionState.groupByView, switcher]);
+  }, [activePhase, activeView, availableGroupOptions, selectedGroupId, subselectionState, switcher]);
 
   useEffect(() => {
     if (!switcher || !shouldShowManagerSelector(activeView)) {
@@ -843,7 +762,10 @@ export function LeaderboardClient() {
     }
 
     const availableManagerIds = new Set(switcher.managers.map((manager) => manager.id));
-    const rememberedManagerId = subselectionState.managerByView[activeView] ?? "";
+    const rememberedManagerId =
+      subselectionState.managerByPhaseAndView?.[activePhase]?.[activeView] ??
+      subselectionState.managerByView?.[activeView] ??
+      "";
 
     if (selectedManagerId && availableManagerIds.has(selectedManagerId)) {
       return;
@@ -857,7 +779,7 @@ export function LeaderboardClient() {
     if (selectedManagerId) {
       setSelectedManagerId("");
     }
-  }, [activeView, selectedManagerId, subselectionState.managerByView, switcher]);
+  }, [activePhase, activeView, selectedManagerId, subselectionState, switcher]);
 
   useEffect(() => {
     if (!hasRestoredSwitcherPreference) {
@@ -865,6 +787,8 @@ export function LeaderboardClient() {
     }
 
     const nextState = {
+      activePhase,
+      phaseViewByPhase: rememberedViewByPhase,
       activeView,
       selectedGroupId,
       selectedManagerId
@@ -875,7 +799,14 @@ export function LeaderboardClient() {
     } catch (caughtError) {
       console.warn("Could not persist leaderboard switcher state.", caughtError);
     }
-  }, [activeView, hasRestoredSwitcherPreference, selectedGroupId, selectedManagerId]);
+  }, [
+    activePhase,
+    activeView,
+    hasRestoredSwitcherPreference,
+    rememberedViewByPhase,
+    selectedGroupId,
+    selectedManagerId
+  ]);
 
   useEffect(() => {
     if (!shouldShowGroupSelector(activeView) || !selectedGroupId) {
@@ -883,19 +814,22 @@ export function LeaderboardClient() {
     }
 
     setSubselectionState((current) => {
-      if (current.groupByView[activeView] === selectedGroupId) {
+      if (current.groupByPhaseAndView?.[activePhase]?.[activeView] === selectedGroupId) {
         return current;
       }
 
       return {
         ...current,
-        groupByView: {
-          ...current.groupByView,
-          [activeView]: selectedGroupId
+        groupByPhaseAndView: {
+          ...current.groupByPhaseAndView,
+          [activePhase]: {
+            ...current.groupByPhaseAndView?.[activePhase],
+            [activeView]: selectedGroupId
+          }
         }
       };
     });
-  }, [activeView, selectedGroupId, setSubselectionState]);
+  }, [activePhase, activeView, selectedGroupId, setSubselectionState]);
 
   useEffect(() => {
     if (!shouldShowManagerSelector(activeView)) {
@@ -903,19 +837,22 @@ export function LeaderboardClient() {
     }
 
     setSubselectionState((current) => {
-      if (current.managerByView[activeView] === selectedManagerId) {
+      if (current.managerByPhaseAndView?.[activePhase]?.[activeView] === selectedManagerId) {
         return current;
       }
 
       return {
         ...current,
-        managerByView: {
-          ...current.managerByView,
-          [activeView]: selectedManagerId
+        managerByPhaseAndView: {
+          ...current.managerByPhaseAndView,
+          [activePhase]: {
+            ...current.managerByPhaseAndView?.[activePhase],
+            [activeView]: selectedManagerId
+          }
         }
       };
     });
-  }, [activeView, selectedManagerId, setSubselectionState]);
+  }, [activePhase, activeView, selectedManagerId, setSubselectionState]);
 
   const selectedGroupLabel = useMemo(
     () => availableGroupOptions.find((group) => group.id === selectedGroupId)?.label ?? null,
@@ -925,6 +862,77 @@ export function LeaderboardClient() {
     () => switcher?.managers.find((manager) => manager.id === selectedManagerId)?.label ?? null,
     [selectedManagerId, switcher?.managers]
   );
+  const selectedGroupSummary = useMemo(
+    () => availableGroupOptions.find((group) => group.id === selectedGroupId) ?? null,
+    [availableGroupOptions, selectedGroupId]
+  );
+  const phaseNavItems = useMemo(
+    () => (switcher ? getPhaseNavItems(switcher, activePhase) : []),
+    [activePhase, switcher]
+  );
+  const activePhaseNavKey = useMemo(() => {
+    if (activeView === "global" && activePhase === "group_phase") {
+      return "global-group-phase";
+    }
+
+    if (activeView === "global" && activePhase === "knockout_phase") {
+      return "global-knockout-phase";
+    }
+
+    if (activePhase === "global_top10" && activeView === "groups") {
+      return "groups";
+    }
+
+    if (activePhase === "global_top10" && activeView === "teams") {
+      return "teams";
+    }
+
+    if (activePhase === "global_top10" || activeView === "global") {
+      return "global";
+    }
+
+    if ((activeView === "managed_groups" || activeView === "my_groups") && selectedGroupId) {
+      return `${activeView}:${selectedGroupId}`;
+    }
+
+    return "global";
+  }, [activePhase, activeView, selectedGroupId]);
+  const activePhaseNavLabel = useMemo(
+    () => phaseNavItems.find((item) => item.key === activePhaseNavKey)?.label ?? "Global Top 10",
+    [activePhaseNavKey, phaseNavItems]
+  );
+  const groupedPhaseNavItems = useMemo(() => {
+    const globalItems = phaseNavItems.filter(
+      (item) => item.view === "global" || item.view === "groups" || item.view === "teams"
+    );
+    const managedItems = phaseNavItems.filter((item) => item.view === "managed_groups");
+    const invitedItems = phaseNavItems.filter((item) => item.view === "my_groups");
+
+    return [
+      { title: "Global", items: globalItems },
+      { title: "Managed Groups", items: managedItems },
+      { title: "Invited Groups", items: invitedItems }
+    ].filter((section) => section.items.length > 0);
+  }, [phaseNavItems]);
+  const leaderboardTitle = useMemo(() => {
+    if (activePhase === "global_top10" && activeView === "groups") {
+      return "Global Top 10 Groups";
+    }
+
+    if (activePhase === "global_top10" && activeView === "teams") {
+      return "Global Top 10 Teams";
+    }
+
+    if (activePhase === "global_top10") {
+      return "Global Top 10";
+    }
+
+    if ((activeView === "managed_groups" || activeView === "my_groups") && selectedGroupLabel) {
+      return selectedGroupLabel;
+    }
+
+    return activePhase === "group_phase" ? "Group Stage Leaderboard" : "Knockout Stage";
+  }, [activePhase, activeView, selectedGroupLabel]);
   const dailyWinnerContextLabel = useMemo(() => {
     if (activeView === "global") {
       return "Global";
@@ -958,8 +966,16 @@ export function LeaderboardClient() {
   const isGlobalView = activeView === "global";
   const isGroupView = shouldShowGroupSelector(activeView) && Boolean(selectedGroupId);
   const isGroupStandingsView = activeView === "groups";
+  const isTeamStandingsView = activeView === "teams";
+  const displayedGroupStandings = useMemo(
+    () => (activePhase === "global_top10" ? groupStandings.slice(0, 10) : groupStandings),
+    [activePhase, groupStandings]
+  );
+  const displayedTeamStandings = useMemo(
+    () => (activePhase === "global_top10" ? teamStandings.slice(0, 10) : teamStandings),
+    [activePhase, teamStandings]
+  );
   const shouldRenderLeaderboardRows = isGlobalView || isGroupView;
-  const shouldShowPlayerSocialIndicators = !isGlobalView;
   const canAwardManagedTrophies =
     activeView === "managed_groups" &&
     hasDirectorAccess(switcher?.accessLevel ?? "player") &&
@@ -1065,22 +1081,32 @@ export function LeaderboardClient() {
   const activeManagedTrophyMember = managedAwardGroup && managedTrophySheetTarget
     ? managedAwardGroup.members.find((member) => member.userId === managedTrophySheetTarget.userId) ?? null
     : null;
-  const shouldShowGroupCarouselControls = shouldShowGroupSelector(activeView) && availableGroupOptions.length > 1;
-
-  const handleSelectView = useCallback((nextView: LeaderboardSwitcherView) => {
+  const handleSelectPhase = useCallback((nextPhase: LeaderboardPhase) => {
     setHasExplicitSwitcherPreference(true);
+    setIsPhaseNavOpen(false);
+    setActivePhase(nextPhase);
+    if (switcher) {
+      setActiveView(getRememberedLeaderboardViewForPhase(switcher, nextPhase, rememberedViewByPhase));
+    }
+  }, [rememberedViewByPhase, switcher]);
+
+  const handleSelectPhaseNavItem = useCallback((item: PhaseNavItem) => {
+    setHasExplicitSwitcherPreference(true);
+    setIsPhaseNavOpen(false);
+    const nextPhase = item.phase ?? activePhase;
+    if (item.phase) {
+      setActivePhase(item.phase);
+    }
+    const nextView =
+      item.phase && item.view === "global" && !item.groupId && switcher
+        ? getRememberedLeaderboardViewForPhase(switcher, nextPhase, rememberedViewByPhase)
+        : item.view;
+
     setActiveView(nextView);
-  }, []);
-
-  const handleSelectGroup = useCallback((nextGroupId: string) => {
-    setHasExplicitSwitcherPreference(true);
-    setSelectedGroupId(nextGroupId);
-  }, []);
-
-  const handleSelectManager = useCallback((nextManagerId: string) => {
-    setHasExplicitSwitcherPreference(true);
-    setSelectedManagerId(nextManagerId);
-  }, []);
+    if (item.groupId) {
+      setSelectedGroupId(item.groupId);
+    }
+  }, [activePhase, rememberedViewByPhase, switcher]);
 
   function renderActivityCard(event: LeaderboardActivityItem, isNewest: boolean) {
     return (
@@ -1272,93 +1298,37 @@ export function LeaderboardClient() {
     );
   }
 
-  async function handleHeroAutoPickAction() {
-    setIsHeroAutoPicking(true);
-
-    try {
-      clearGroupsEntryIntent();
-      clearStoredAutoPickDraft();
-      const suggestion = await fetchNextAutoPick();
-      storeAutoPickDraft(suggestion);
-      const targetMatch = groupMatches.find((match) => match.id === suggestion.matchId) ?? null;
-      const groupKey = normalizeGroupKey(targetMatch?.groupName) ?? null;
-      storeGroupsEntryIntent({
-        source: "dashboard",
-        target: "next-auto-pick",
-        matchId: suggestion.matchId,
-        groupKey
-      });
-      router.push("/groups");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage];
-      const localizedMessage =
-        message === DASHBOARD_AUTO_PICK_EMPTY_COPY.en ? DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage] : message;
-
-      showAppToast({
-        tone: localizedMessage === DASHBOARD_AUTO_PICK_EMPTY_COPY[autoPickLanguage] ? "tip" : "error",
-        text: localizedMessage
-      });
-    } finally {
-      setIsHeroAutoPicking(false);
-    }
-  }
-
-  function handleHeroPrimaryAction() {
-    if (completedCount > 0) {
-      clearGroupsEntryIntent();
-      clearStoredAutoPickDraft();
-      storeGroupsEntryIntent({
-        source: "dashboard",
-        target: "next-pick",
-        matchId: nextPrimaryMatch?.id ?? null,
-        groupKey: normalizeGroupKey(nextPrimaryMatch?.groupName) ?? null
-      });
-    }
-
-    router.push("/groups");
-  }
-
   return (
     <div className="space-y-5">
       <section className="rounded-lg bg-gray-100 p-5">
         <div className="flex items-start justify-between gap-3">
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Leaderboard</p>
           {globalStandingLabel ? (
-            <div className="ui-chip-sm shrink-0 bg-white font-bold uppercase tracking-wide text-gray-700">
+            <div className="shrink-0 rounded-md bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-700">
               {globalStandingLabel}
             </div>
           ) : null}
         </div>
-        <div className="mt-3 min-w-0">
-          <h2 className="text-xl font-black leading-tight sm:text-2xl">Compare your standings against the rest</h2>
-          <div className="mt-3 flex justify-start">
+        {isIntroMoreOpen ? (
+          <>
+            <h2 className="mt-3 text-xl font-black leading-tight sm:text-2xl">See how you rank</h2>
+            <div className="mt-3 flex w-full justify-end">
+              <InlineDisclosureButton
+                isOpen={isIntroMoreOpen}
+                variant="subtle"
+                onClick={() => setIsIntroMoreOpen((current) => !current)}
+              />
+            </div>
+          </>
+        ) : (
+          <div className="mt-3 flex w-full justify-end">
             <InlineDisclosureButton
               isOpen={isIntroMoreOpen}
               variant="subtle"
               onClick={() => setIsIntroMoreOpen((current) => !current)}
             />
           </div>
-          {isIntroMoreOpen ? (
-            <div className="mt-3 space-y-4">
-              <p className="text-sm leading-6 text-gray-600">
-                A quick snapshot of your current rank, total points, and recent movement across global and group
-                leaderboards.
-              </p>
-              <div className="mx-auto max-w-xl">
-                <DashboardHeroActionGrid
-                  ctaLabel={heroCtaLabel}
-                  onPrimaryAction={handleHeroPrimaryAction}
-                  autoPickLabel={DASHBOARD_AUTO_PICK_LABEL_COPY[autoPickLanguage]}
-                  autoPickLoadingLabel={DASHBOARD_AUTO_PICK_LOADING_COPY[autoPickLanguage]}
-                  knockoutLabel={actionCopy.myKnockoutPicks}
-                  sidePicksLabel={actionCopy.mySidePicks}
-                  isAutoPicking={isHeroAutoPicking}
-                  onAutoPick={handleHeroAutoPickAction}
-                />
-              </div>
-            </div>
-          ) : null}
-        </div>
+        )}
       </section>
 
       {!isLoading && !error && canEvaluateDailyWinnerDismissal && dailyWinners.length > 0 && !isDailyWinnerDismissed ? (
@@ -1511,6 +1481,46 @@ export function LeaderboardClient() {
 
       {shouldRenderLeaderboardRows ? (
         <section className="space-y-2" style={{ minHeight: LEADERBOARD_STABLE_CONTENT_MIN_HEIGHT }}>
+          <div className="flex items-start justify-between gap-2 px-1 pt-1">
+            {isGroupView && selectedGroupSummary ? (
+              <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <Avatar
+                    name={leaderboardTitle}
+                    avatarUrl={selectedGroupSummary.avatarUrl ?? undefined}
+                    size="sm"
+                  />
+                  <h3 className="min-w-0 truncate text-base font-black text-gray-950">{leaderboardTitle}</h3>
+                </div>
+                <span className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700">
+                  {selectedGroupSummary.context === "managed" ? "Managed" : "Invited"}
+                </span>
+              </div>
+            ) : (
+              <h3 className="text-base font-black text-gray-950">{leaderboardTitle}</h3>
+            )}
+          </div>
+          {isGroupView && selectedGroupSummary ? (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 text-[11px] font-semibold text-gray-600">
+                <div className="min-w-0">
+                  <span className="font-black text-gray-900">Managed by:</span>{" "}
+                  <span className="truncate">{selectedGroupSummary.managerName ?? "Group manager"}</span>
+                </div>
+                <div className="text-right">
+                  <span className="font-black text-gray-900"># of Players:</span> {selectedGroupSummary.totalPlayers}
+                </div>
+                <div className="min-w-0">
+                  <span className="font-black text-gray-900">Average Points:</span>{" "}
+                  {selectedGroupSummary.averagePoints !== null ? formatAveragePoints(selectedGroupSummary.averagePoints) : "—"}
+                </div>
+                <div className="text-right">
+                  <span className="font-black text-gray-900">Global Rank:</span>{" "}
+                  {selectedGroupSummary.globalRank ? `#${selectedGroupSummary.globalRank}` : "—"}
+                </div>
+              </div>
+            </div>
+          ) : null}
           {!isLoading && !error && leaders.length > 1 ? (
             <LeaderSummaryCard
               leaders={leaders}
@@ -1546,17 +1556,6 @@ export function LeaderboardClient() {
               }
             />
           ) : null}
-
-          <div className="px-1 pt-1">
-            <h3 className="text-base font-black text-gray-950">
-              {activeView === "global" ? "Leaderboard" : "Group Leaderboard"}
-            </h3>
-            <p className="mt-1 text-xs font-semibold text-gray-500">
-              {activeView === "global"
-                ? "Standard points only."
-                : "Group Total = Global + Group."}
-            </p>
-          </div>
           {isLoading ? (
             <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
               Loading leaderboard...
@@ -1569,33 +1568,49 @@ export function LeaderboardClient() {
             </p>
           ) : null}
 
-          {users.map((profile, index) => (
-            <LeaderboardPlayerRow
-              key={profile.id}
-              profile={profile}
-              index={index}
-              currentUserId={user?.id}
-              scoreMode={activeView === "global" ? "standard" : "group"}
-              canAwardManagedTrophies={canAwardManagedTrophies}
-              canSelfAwardTrophies={canSelfAwardTrophies}
-              managedAwardGroup={managedAwardGroup}
-              shouldShowPlayerSocialIndicators={shouldShowPlayerSocialIndicators}
-              onOpenTrophySheet={(userId) => {
-                if (!managedAwardGroup) {
-                  return;
-                }
+          {users.map((profile, index) => {
+            const { scoreLabel, scoreValue } = getLeaderboardScoreDisplay(profile, activePhase);
 
-                setManagedTrophySheetTarget({ groupId: managedAwardGroup.id, userId });
-              }}
-            />
-          ))}
+            return (
+              <LeaderboardPlayerRow
+                key={profile.id}
+                profile={profile}
+                index={index}
+                currentUserId={user?.id}
+                scoreLabel={scoreLabel}
+                scoreValue={scoreValue}
+                canAwardManagedTrophies={canAwardManagedTrophies}
+                canSelfAwardTrophies={canSelfAwardTrophies}
+                managedAwardGroup={managedAwardGroup}
+                onOpenTrophySheet={(userId) => {
+                  if (!managedAwardGroup) {
+                    return;
+                  }
+
+                  setManagedTrophySheetTarget({ groupId: managedAwardGroup.id, userId });
+                }}
+              />
+            );
+          })}
 
           {shallowLeaderboardSpacerHeight > 0 ? (
             <div aria-hidden className="pointer-events-none" style={{ height: `${shallowLeaderboardSpacerHeight}px` }} />
           ) : null}
         </section>
       ) : isGroupStandingsView ? (
-        <GroupStandingsSection groups={groupStandings} isLoading={isLoading} error={error} />
+        <GroupStandingsSection
+          title={leaderboardTitle}
+          groups={displayedGroupStandings}
+          isLoading={isLoading}
+          error={error}
+        />
+      ) : isTeamStandingsView ? (
+        <TeamStandingsSection
+          title={leaderboardTitle}
+          teams={displayedTeamStandings}
+          isLoading={isLoading}
+          error={error}
+        />
       ) : (
         <LeaderboardPlaceholder
           activeView={activeView}
@@ -1768,106 +1783,74 @@ export function LeaderboardClient() {
     return (
       <div className={className ? `${className} space-y-1.5` : "space-y-1.5"}>
         <LeaderboardChoiceRail
-          prevLabel="Show previous leaderboard views"
-          nextLabel="Show more leaderboard views"
-          activeItemKey={activeView}
-          onActiveItemChange={(nextKey) => handleSelectView(nextKey as LeaderboardSwitcherView)}
+          prevLabel="Show previous leaderboard phases"
+          nextLabel="Show more leaderboard phases"
+          activeItemKey={activePhase}
+          onActiveItemChange={(nextKey) => handleSelectPhase(nextKey as LeaderboardPhase)}
         >
-          {(switcher?.tabs ?? [{ value: "global", label: "Global Standings" }]).map((tab) => (
+          {[
+            { value: "group_phase", label: "Group Stage" },
+            { value: "knockout_phase", label: "Knockout Stage" },
+            { value: "global_top10", label: "Global" }
+          ].map((phase) => (
             <button
-              key={tab.value}
+              key={phase.value}
               type="button"
-              onClick={() => handleSelectView(tab.value)}
-              data-choice-key={tab.value}
-              data-choice-active={activeView === tab.value ? "true" : "false"}
-              className={`shrink-0 rounded-md px-2.5 py-1 text-[12px] font-bold leading-none ${
-                activeView === tab.value ? "bg-accent text-white" : "bg-gray-100 text-gray-700"
+              onClick={() => handleSelectPhase(phase.value as LeaderboardPhase)}
+              data-choice-key={phase.value}
+              data-choice-active={activePhase === phase.value ? "true" : "false"}
+              className={`shrink-0 ${LEADERBOARD_COCKPIT_BUTTON_CLASS} ${
+                activePhase === phase.value
+                  ? "bg-accent text-white"
+                  : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
               }`}
             >
-              {tab.label}
+              {phase.label}
             </button>
           ))}
         </LeaderboardChoiceRail>
 
-        {(shouldShowGroupSelector(activeView) || shouldShowManagerSelector(activeView)) && switcher ? (
-          <div className="grid gap-1.5 sm:grid-cols-2">
-            {shouldShowGroupSelector(activeView) ? (
-              <div className="overflow-hidden rounded-md sm:col-span-2">
-                <LeaderboardChoiceRail
-                  showControls={shouldShowGroupCarouselControls}
-                  prevLabel="Show previous groups"
-                  nextLabel="Show more groups"
-                  contentClassName="flex gap-1.5 pb-0.5"
-                  activeItemKey={selectedGroupId}
-                  onActiveItemChange={(nextKey) => handleSelectGroup(nextKey)}
-                >
-                  {availableGroupOptions.length > 0 ? (
-                    availableGroupOptions.map((group) => (
-                      <button
-                        key={group.id}
-                        type="button"
-                        onClick={() => handleSelectGroup(group.id)}
-                        data-choice-key={group.id}
-                        data-choice-active={selectedGroupId === group.id ? "true" : "false"}
-                        className={`w-[min(12.25rem,calc(100vw-7.25rem))] max-w-full shrink-0 rounded-lg border px-2 py-1 text-left transition sm:w-[196px] ${
-                          selectedGroupId === group.id
-                            ? "border-accent bg-accent-light"
-                            : "border-gray-200 bg-gray-50 hover:border-accent-light hover:bg-white"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="truncate text-[13px] font-black leading-4 text-gray-950">{group.label}</p>
-                          </div>
-                          {group.rankDelta ? (
-                            <span className={`text-[11px] font-black ${getMovementTone(group.rankDelta)}`}>
-                              {formatRankMovement(group.rankDelta)}
-                            </span>
+        <div className="relative mx-auto w-[87%]">
+          <button
+            type="button"
+            onClick={() => setIsPhaseNavOpen((current) => !current)}
+            className={LEADERBOARD_COCKPIT_TRIGGER_CLASS}
+          >
+            <span className="truncate text-[14px] font-bold text-gray-900">{activePhaseNavLabel}</span>
+            {isPhaseNavOpen ? <ChevronUp className="h-4.5 w-4.5 text-gray-500" /> : <ChevronDown className="h-4.5 w-4.5 text-gray-500" />}
+          </button>
+          {isPhaseNavOpen ? (
+            <div className="mt-1.5 w-full rounded-md border border-gray-200 bg-white p-1.5 shadow-lg">
+              <div className="space-y-2">
+                {groupedPhaseNavItems.map((section) => (
+                  <div key={section.title} className="space-y-1">
+                    <p className="px-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">{section.title}</p>
+                    <div className="space-y-1">
+                      {section.items.map((item) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => handleSelectPhaseNavItem(item)}
+                          className={`flex min-h-9 w-full items-center justify-between rounded-md border px-3 py-1.5 text-left text-[13px] font-bold transition ${
+                            activePhaseNavKey === item.key
+                              ? "border-accent-light bg-accent-light text-accent-dark"
+                              : "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100"
+                          }`}
+                          title={item.label}
+                        >
+                          <span className="truncate text-[13px] font-bold">{item.label}</span>
+                          {activePhaseNavKey === item.key ? (
+                            <span className="ml-2 shrink-0 text-[10px] font-black uppercase tracking-wide">Open</span>
                           ) : null}
-                        </div>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] font-semibold text-gray-600">
-                          <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
-                            {group.rank ? `#${group.rank}` : "—"}
-                          </span>
-                          <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
-                            {group.totalPlayers} players
-                          </span>
-                          <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-gray-800">
-                            {group.points !== null ? `${group.points} pts` : "— pts"}
-                          </span>
-                        </div>
-                      </button>
-                    ))
-                  ) : (
-                    <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-600">
-                      {activeView === "managed_groups"
-                        ? "You are not managing any groups yet."
-                        : "You have not joined any groups yet."}
-                    </p>
-                  )}
-                </LeaderboardChoiceRail>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ) : null}
-
-            {shouldShowManagerSelector(activeView) ? (
-              <label className="block">
-                <span className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Manager</span>
-                <select
-                  value={selectedManagerId}
-                  onChange={(event) => handleSelectManager(event.target.value)}
-                  className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-[13px] font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                >
-                  <option value="">Choose a manager</option>
-                  {switcher.managers.map((manager) => (
-                    <option key={manager.id} value={manager.id}>
-                      {manager.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -1934,7 +1917,92 @@ function getGroupOptionsForView(
   return [];
 }
 
-function getDefaultLeaderboardViewLocal(switcher: LeaderboardSwitcherContext): LeaderboardSwitcherView {
+function getPhaseViewTabs(
+  switcher: LeaderboardSwitcherContext,
+  activePhase: LeaderboardPhase
+): Array<{ value: LeaderboardSwitcherView; label: string }> {
+  if (activePhase === "global_top10") {
+    return [
+      { value: "global", label: "Global Top 10" },
+      { value: "groups", label: "Global Top 10 Groups" },
+      { value: "teams", label: "Global Top 10 Teams" }
+    ];
+  }
+
+  const nextTabs: Array<{ value: LeaderboardSwitcherView; label: string }> = [
+    {
+      value: "global",
+      label: activePhase === "group_phase" ? "Group Stage" : "Knockout Stage"
+    }
+  ];
+  if (switcher.managedGroups.length > 0 && switcher.tabs.some((tab) => tab.value === "managed_groups")) {
+    nextTabs.push({ value: "managed_groups", label: "Managed Groups" });
+  }
+  if (switcher.joinedGroups.length > 0 && switcher.tabs.some((tab) => tab.value === "my_groups")) {
+    nextTabs.push({ value: "my_groups", label: "Invited Groups" });
+  }
+
+  return nextTabs;
+}
+
+function getPhaseNavItems(
+  switcher: LeaderboardSwitcherContext,
+  activePhase: LeaderboardPhase
+): PhaseNavItem[] {
+  if (activePhase === "global_top10") {
+    return [
+      { key: "global", label: "Global Top 10", view: "global" },
+      { key: "global-group-phase", label: "Group Stage", view: "global", phase: "group_phase" },
+      { key: "global-knockout-phase", label: "Knockout Stage", view: "global", phase: "knockout_phase" },
+      { key: "groups", label: "Global Top 10 Groups", view: "groups" },
+      { key: "teams", label: "Global Top 10 Teams", view: "teams" }
+    ];
+  }
+
+  const items: PhaseNavItem[] = [
+    {
+      key: "global",
+      label: activePhase === "group_phase" ? "Group Stage" : "Knockout Stage",
+      view: "global"
+    }
+  ];
+
+  const seenGroupIds = new Set<string>();
+
+  for (const group of switcher.managedGroups) {
+    items.push({
+      key: `managed_groups:${group.id}`,
+      label: group.label,
+      view: "managed_groups",
+      groupId: group.id
+    });
+    seenGroupIds.add(group.id);
+  }
+
+  for (const group of switcher.joinedGroups) {
+    if (seenGroupIds.has(group.id)) {
+      continue;
+    }
+
+    items.push({
+      key: `my_groups:${group.id}`,
+      label: group.label,
+      view: "my_groups",
+      groupId: group.id
+    });
+  }
+
+  return items;
+}
+
+function getDefaultLeaderboardViewForPhase(
+  switcher: LeaderboardSwitcherContext,
+  activePhase: LeaderboardPhase
+): LeaderboardSwitcherView {
+  if (activePhase === "global_top10") {
+    return "global";
+  }
+
   if (switcher.managedGroups.length > 0 && switcher.tabs.some((tab) => tab.value === "managed_groups")) {
     return "managed_groups";
   }
@@ -1943,7 +2011,20 @@ function getDefaultLeaderboardViewLocal(switcher: LeaderboardSwitcherContext): L
     return "my_groups";
   }
 
-  return switcher.tabs[0]?.value ?? "global";
+  return "global";
+}
+
+function getRememberedLeaderboardViewForPhase(
+  switcher: LeaderboardSwitcherContext,
+  activePhase: LeaderboardPhase,
+  rememberedViewByPhase: Partial<Record<LeaderboardPhase, LeaderboardSwitcherView>>
+): LeaderboardSwitcherView {
+  const rememberedView = rememberedViewByPhase[activePhase];
+  if (rememberedView && getPhaseViewTabs(switcher, activePhase).some((tab) => tab.value === rememberedView)) {
+    return rememberedView;
+  }
+
+  return getDefaultLeaderboardViewForPhase(switcher, activePhase);
 }
 
 function shouldShowManagerSelector(activeView: LeaderboardSwitcherView) {
@@ -2007,10 +2088,12 @@ function getPlaceholderCopy(
 }
 
 function GroupStandingsSection({
+  title,
   groups,
   isLoading,
   error
 }: {
+  title: string;
   groups: GroupStandingItem[];
   isLoading: boolean;
   error: string | null;
@@ -2021,10 +2104,7 @@ function GroupStandingsSection({
   return (
       <section className="space-y-2">
           <div className="px-1 pt-1">
-            <h3 className="text-base font-black text-gray-950">Average Group Points</h3>
-            <p className="mt-1 text-xs font-semibold text-gray-500">
-              Avg standard points only.
-            </p>
+            <h3 className="text-base font-black text-gray-950">{title}</h3>
           </div>
 
       {isLoading ? (
@@ -2110,6 +2190,113 @@ function GroupStandingsSection({
                       {group.tag ? (
                         <span className="rounded-md bg-accent-light px-2 py-1 text-[11px] font-black text-accent-dark">
                           {group.tag}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        : null}
+    </section>
+  );
+}
+
+function TeamStandingsSection({
+  title,
+  teams,
+  isLoading,
+  error
+}: {
+  title: string;
+  teams: TeamStandingItem[];
+  isLoading: boolean;
+  error: string | null;
+}) {
+  const topAverage = teams[0]?.avgPoints ?? 0;
+  const allTeamsAreScoreless = teams.length > 0 && teams.every((team) => team.totalPoints <= 0);
+
+  return (
+    <section className="space-y-2">
+      <div className="px-1 pt-1">
+        <h3 className="text-base font-black text-gray-950">{title}</h3>
+      </div>
+
+      {isLoading ? (
+        <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
+          Loading team standings...
+        </p>
+      ) : null}
+
+      {!isLoading && error ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          Could not load team standings right now: {error}
+        </p>
+      ) : null}
+
+      {!isLoading && !error && teams.length === 0 ? (
+        <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
+          No team standings are ready yet.
+        </p>
+      ) : null}
+
+      {!isLoading && !error && allTeamsAreScoreless ? (
+        <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600">
+          Teams are lined up, but no scores have landed yet.
+        </p>
+      ) : null}
+
+      {!isLoading && !error
+        ? teams.map((team) => {
+            const isScoreless = team.totalPoints <= 0;
+            const barWidth = topAverage > 0
+              ? Math.min(100, Math.max(team.avgPoints > 0 ? 12 : 10, Math.round((team.avgPoints / topAverage) * 100)))
+              : 10;
+
+            return (
+              <div key={team.id} className="rounded-lg border border-gray-200 bg-white p-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-center text-gray-700">
+                    <span className="text-sm font-black leading-none">{team.rank}</span>
+                    <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">Rank</span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <p className="truncate text-base font-black text-gray-950">{team.name}</p>
+                          <HomeTeamBadge teamId={team.id} label="" compact className="bg-gray-50" />
+                        </div>
+                        <p className="mt-1 truncate text-sm font-semibold text-gray-600">
+                          {team.playerCount} player{team.playerCount === 1 ? "" : "s"} backing {team.shortName}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-lg font-black text-accent-dark">{formatAveragePoints(team.avgPoints)}</p>
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Avg pts</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-gray-100">
+                      <div
+                        className={`h-full rounded-full ${isScoreless ? "bg-gray-300" : "bg-accent"}`}
+                        style={{ width: `${barWidth}%` }}
+                      />
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-gray-600">
+                      <span>{team.totalPoints} total pts</span>
+                      <span>•</span>
+                      <span>Top player: {team.topPlayerName} ({team.topPlayerPoints} pts)</span>
+                      {isScoreless ? (
+                        <span className="rounded-md bg-gray-100 px-2 py-1 text-[11px] font-black text-gray-600">
+                          No scores yet
+                        </span>
+                      ) : null}
+                      {team.tag ? (
+                        <span className="rounded-md bg-accent-light px-2 py-1 text-[11px] font-black text-accent-dark">
+                          {team.tag}
                         </span>
                       ) : null}
                     </div>
@@ -2242,26 +2429,6 @@ function LeaderboardChoiceRail({
 
 function formatAveragePoints(value: number) {
   return value % 1 === 0 ? `${value}` : value.toFixed(1);
-}
-
-function formatRankMovement(rankDelta: number | null) {
-  if (!rankDelta) {
-    return "—";
-  }
-
-  if (rankDelta > 0) {
-    return `↑ ${rankDelta}`;
-  }
-
-  return `↓ ${Math.abs(rankDelta)}`;
-}
-
-function getMovementTone(rankDelta: number | null) {
-  if (!rankDelta) {
-    return "text-gray-500";
-  }
-
-  return rankDelta > 0 ? "text-accent-dark" : "text-gray-600";
 }
 
 function getActivityLabel(event: LeaderboardActivityItem) {
