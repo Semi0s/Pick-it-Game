@@ -163,6 +163,7 @@ export function AppShell({ children }: AppShellProps) {
   const isOnboardingExperience = shouldHideDockForPath(pathname, onboardingFlag);
   const onboardingExitHref = pathname === "/start-playing" ? "/dashboard" : "/start-playing";
   const onboardingExitLabel = pathname === "/start-playing" ? "Exit" : "Back";
+  const shouldShowOnboardingHeaderExit = isOnboardingExperience && pathname !== "/start-playing";
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -585,18 +586,18 @@ export function AppShell({ children }: AppShellProps) {
     >
       <header ref={headerRef} className="sticky top-0 z-20 bg-white">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-2.5 px-3 py-2 sm:px-4">
-          <Link href="/dashboard" className="min-w-0" aria-label="PICK-IT! World Cup 2026 home">
+          <Link href="/dashboard" className="shrink-0" aria-label="PICK-IT! World Cup 2026 home">
             <Image
               src="/images/pickit-header-logo.png"
               alt="PICK-IT! World Cup 2026"
               width={648}
               height={220}
               priority
-              className="h-[4.25rem] w-auto max-[399px]:h-[3.6rem] sm:h-[5.1rem]"
+              className="h-[4.25rem] w-auto shrink-0 sm:h-[5.1rem]"
             />
           </Link>
-          <div className="flex shrink-0 items-center gap-1.5 max-[399px]:gap-2.5">
-            {isOnboardingExperience ? (
+          <div className="flex shrink-0 items-center gap-1.5 max-[430px]:gap-1">
+            {shouldShowOnboardingHeaderExit ? (
               <Link
                 href={onboardingExitHref}
                 className="inline-flex h-8 items-center rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light max-[399px]:px-2.5 max-[399px]:text-[10px] sm:h-9 sm:px-3"
@@ -651,10 +652,11 @@ export function AppShell({ children }: AppShellProps) {
             </div>
             <Link
               href="/profile"
+              aria-label="Account"
               className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1.5 text-[11px] font-semibold text-gray-700 max-[399px]:h-8 max-[399px]:gap-1 max-[399px]:px-2.25 max-[399px]:py-0 max-[399px]:text-[10px] sm:px-2.5"
             >
               <CircleUserRound aria-hidden className="h-[17.5px] w-[17.5px] max-[399px]:h-[15px] max-[399px]:w-[15px]" />
-              <span className="max-[399px]:hidden">Account</span>
+              <span className="max-[430px]:hidden">Account</span>
             </Link>
           </div>
         </div>

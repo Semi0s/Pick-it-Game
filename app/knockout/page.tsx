@@ -7,6 +7,7 @@ import {
   fetchKnockoutStructureStatus
 } from "@/lib/bracket-predictions";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
+import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +18,7 @@ export default async function KnockoutPage() {
     data: { user }
   } = await supabase.auth.getUser();
   if (user) {
+    await redirectIfLaunchOnboardingRequired({ userId: user.id });
     await redirectIfLegacyScoringSetupRequired({ userId: user.id, pathname: "/knockout" });
   }
   const knockoutStatus = await fetchKnockoutStructureStatus().catch(() => ({

@@ -5,6 +5,7 @@ import { isSelfServiceTestResetEnabled } from "@/lib/admin/destructive-tools";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
 import { getLegalLanguageForUser } from "@/lib/i18n";
 import { DEFAULT_LEGAL_DOCUMENT_TYPE, getRequiredLegalDocument } from "@/lib/legal";
+import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
 import { isLikelySchemaDriftError, logSafeSupabaseError } from "@/lib/supabase-errors";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -19,6 +20,7 @@ export default async function ProfilePage() {
   let managedGroupCount = 0;
 
   if (user) {
+    await redirectIfLaunchOnboardingRequired({ userId: user.id });
     await redirectIfLegacyScoringSetupRequired({ userId: user.id, pathname: "/profile" });
     try {
       const [{ data: profile }, groupAccessResult] = await Promise.all([

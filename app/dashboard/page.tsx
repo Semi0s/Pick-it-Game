@@ -2,6 +2,7 @@ import { AppShell } from "@/components/AppShell";
 import { DashboardOverview } from "@/components/DashboardOverview";
 import { fetchGlobalChallengeSummaryForUser } from "@/lib/global-challenge-data";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
+import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export default async function DashboardPage() {
@@ -11,6 +12,7 @@ export default async function DashboardPage() {
   } = await supabase.auth.getUser();
 
   if (user) {
+    await redirectIfLaunchOnboardingRequired({ userId: user.id });
     await redirectIfLegacyScoringSetupRequired({ userId: user.id, pathname: "/dashboard" });
   }
 
