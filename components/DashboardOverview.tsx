@@ -479,6 +479,7 @@ export function DashboardOverview({
         name={user?.name ?? "Player"}
         dashboardCopy={dashboardCopy}
         homeTeamId={user?.homeTeamId ?? null}
+        preferredLanguage={user?.preferredLanguage ?? null}
       />
 
       <AppUpdatesCard />
