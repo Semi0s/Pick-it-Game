@@ -12,6 +12,7 @@ import {
 } from "@/app/my-groups/actions";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { LocalizedCardBackground } from "@/components/localized-card/LocalizedCardBackground";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { parseJsonResponse } from "@/lib/fetch-json";
@@ -28,6 +29,7 @@ import type {
   LeaderboardSwitcherView
 } from "@/lib/leaderboard-data";
 import type { DailyWinner } from "@/lib/leaderboard-highlights";
+import { getLocalizedCardCssVars, getLocalizedCardTheme } from "@/lib/localized-card-themes";
 import { hasDirectorAccess } from "@/lib/tier-access";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY, LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -312,6 +314,17 @@ export function LeaderboardClient() {
   const hasLoadedLeaderboardRef = useRef(false);
   const lastSelectedGroupIdRef = useRef("");
   const lastSelectedManagerIdRef = useRef("");
+  const localizedTheme = getLocalizedCardTheme({
+    homeTeamId: user?.homeTeamId ?? null,
+    preferredLanguage: user?.preferredLanguage ?? null
+  });
+  const localizedCardVars = getLocalizedCardCssVars(localizedTheme);
+  const introChipStyle = {
+    backgroundColor: "var(--localized-card-control-surface)",
+    color: "var(--localized-card-control-text)"
+  } as const;
+  const introDisclosureClassName =
+    "text-[color:var(--localized-card-secondary-text)] hover:text-[color:var(--localized-card-text)]";
 
   if (selectedGroupId) {
     lastSelectedGroupIdRef.current = selectedGroupId;
@@ -1300,32 +1313,47 @@ export function LeaderboardClient() {
 
   return (
     <div className="space-y-5">
-      <section className="rounded-lg bg-gray-100 p-5">
-        <div className="flex items-start justify-between gap-3">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Leaderboard</p>
+      <section
+        className="relative overflow-hidden rounded-lg border p-5"
+        style={{
+          ...localizedCardVars,
+          backgroundColor: "var(--localized-card-bg)",
+          borderColor: "var(--localized-card-border)",
+          color: "var(--localized-card-text)"
+        }}
+      >
+        <LocalizedCardBackground theme={localizedTheme} />
+        <div className="relative flex items-start justify-between gap-3">
+          <p className="text-sm font-bold uppercase tracking-wide text-[color:var(--localized-card-secondary-text)]">
+            Leaderboard
+          </p>
           {globalStandingLabel ? (
-            <div className="shrink-0 rounded-md bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-700">
+            <div className="shrink-0 rounded-md px-2 py-1 text-[11px] font-bold uppercase tracking-wide" style={introChipStyle}>
               {globalStandingLabel}
             </div>
           ) : null}
         </div>
         {isIntroMoreOpen ? (
           <>
-            <h2 className="mt-3 text-xl font-black leading-tight sm:text-2xl">See how you rank</h2>
-            <div className="mt-3 flex w-full justify-end">
+            <h2 className="relative mt-3 text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">
+              See how you rank
+            </h2>
+            <div className="relative mt-3 flex w-full justify-end">
               <InlineDisclosureButton
                 isOpen={isIntroMoreOpen}
                 variant="subtle"
                 onClick={() => setIsIntroMoreOpen((current) => !current)}
+                className={introDisclosureClassName}
               />
             </div>
           </>
         ) : (
-          <div className="mt-3 flex w-full justify-end">
+          <div className="relative mt-3 flex w-full justify-end">
             <InlineDisclosureButton
               isOpen={isIntroMoreOpen}
               variant="subtle"
               onClick={() => setIsIntroMoreOpen((current) => !current)}
+              className={introDisclosureClassName}
             />
           </div>
         )}

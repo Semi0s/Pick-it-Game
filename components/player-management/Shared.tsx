@@ -3,7 +3,10 @@
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react";
 import { Dispatch, SetStateAction, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { LocalizedCardBackground } from "@/components/localized-card/LocalizedCardBackground";
+import { getLocalizedCardCssVars, getLocalizedCardTheme, type LocalizedCardThemeInput } from "@/lib/localized-card-themes";
 import type { AccessLevel } from "@/lib/tier-access";
+import { useCurrentUser } from "@/lib/use-current-user";
 
 export type PlayerManagementPermissions = {
   canViewAllPlayers: boolean;
@@ -19,16 +22,18 @@ export function InlineDisclosureButton({
   isOpen,
   label,
   onClick,
-  variant = "chip"
+  variant = "chip",
+  className = ""
 }: {
   isOpen: boolean;
   label?: string;
   onClick: () => void;
   variant?: "chip" | "subtle";
+  className?: string;
 }) {
   const resolvedLabel =
     label ?? (variant === "subtle" ? (isOpen ? "Less" : "More") : isOpen ? "Close" : "Open");
-  const className =
+  const baseClassName =
     variant === "subtle"
       ? "inline-flex items-center gap-1 px-0 py-0 text-[10px] font-semibold uppercase tracking-wide text-gray-700 transition hover:text-accent-dark"
       : "inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark";
@@ -38,7 +43,7 @@ export function InlineDisclosureButton({
       type="button"
       onClick={onClick}
       aria-expanded={isOpen}
-      className={className}
+      className={`${baseClassName} ${className}`.trim()}
     >
       {isOpen ? <ChevronUp aria-hidden className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden className="h-3.5 w-3.5" />}
       {resolvedLabel}
@@ -461,7 +466,8 @@ export function ManagementIntro({
   disclosureVariant = "subtle",
   disclosurePlacement = "below-title",
   statusChipPlacement = "top-right",
-  collapseBodyWhenClosed = false
+  collapseBodyWhenClosed = false,
+  localizedThemeInput
 }: {
   eyebrow?: string;
   title: string;
@@ -473,47 +479,91 @@ export function ManagementIntro({
   disclosurePlacement?: "top-right" | "below-title" | "bottom-right";
   statusChipPlacement?: "top-right" | "below-title";
   collapseBodyWhenClosed?: boolean;
+  localizedThemeInput?: LocalizedCardThemeInput;
 }) {
+  const { user } = useCurrentUser();
   const [isMoreOpen, setIsMoreOpen] = useSessionDisclosureState(
     disclosureStorageKey ??
       `management-intro:${(eyebrow ?? title).toLowerCase().replace(/\s+/g, "-")}`,
     false
   );
+  const localizedTheme = getLocalizedCardTheme({
+    homeTeamId: localizedThemeInput?.homeTeamId ?? user?.homeTeamId,
+    countryCode: localizedThemeInput?.countryCode,
+    marketCode: localizedThemeInput?.marketCode,
+    preferredLanguage: localizedThemeInput?.preferredLanguage ?? user?.preferredLanguage
+  });
+  const localizedCardVars = getLocalizedCardCssVars(localizedTheme);
   const shouldShowBody = !collapseBodyWhenClosed || isMoreOpen;
   const shouldShowInlineTopRightChip =
     Boolean(statusChip) && statusChipPlacement === "top-right" && disclosurePlacement !== "top-right";
   const shouldShowStackedTopRightChip =
     Boolean(statusChip) && statusChipPlacement === "top-right" && disclosurePlacement === "top-right";
+  const shouldPreserveRightControlZone =
+    disclosurePlacement === "top-right" || statusChipPlacement === "top-right";
+  const controlSurfaceStyle = {
+    backgroundColor: "var(--localized-card-control-surface)",
+    color: "var(--localized-card-control-text)"
+  } as const;
+  const subtleDisclosureClassName =
+    "text-[color:var(--localized-card-secondary-text)] hover:text-[color:var(--localized-card-text)]";
+  const chipDisclosureClassName =
+    "border-transparent bg-[var(--localized-card-control-surface)] text-[color:var(--localized-card-control-text)] hover:border-transparent hover:bg-[var(--localized-card-control-surface)] hover:text-[color:var(--localized-card-control-text)]";
 
   return (
-    <section className="rounded-lg bg-gray-100 p-5">
+    <section
+      className="relative overflow-hidden rounded-lg border p-5"
+      style={{
+        ...localizedCardVars,
+        backgroundColor: "var(--localized-card-bg)",
+        borderColor: "var(--localized-card-border)",
+        color: "var(--localized-card-text)"
+      }}
+    >
+      <LocalizedCardBackground theme={localizedTheme} preserveRightControlZone={shouldPreserveRightControlZone} />
       <div className="flex items-start justify-between gap-3">
-        {eyebrow ? <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{eyebrow}</p> : <div />}
+        {eyebrow ? (
+          <p className="relative text-sm font-bold uppercase tracking-wide text-[color:var(--localized-card-secondary-text)]">
+            {eyebrow}
+          </p>
+        ) : (
+          <div />
+        )}
         {disclosurePlacement === "top-right" ? (
           <InlineDisclosureButton
             isOpen={isMoreOpen}
             variant={disclosureVariant}
             onClick={() => setIsMoreOpen((current) => !current)}
+            className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
           />
         ) : shouldShowInlineTopRightChip ? (
-          <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+          <div
+            className="relative shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2"
+            style={controlSurfaceStyle}
+          >
             {statusChip}
           </div>
         ) : null}
       </div>
       {shouldShowStackedTopRightChip ? (
         <div className="mt-3 flex justify-end">
-          <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+          <div
+            className="relative shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2"
+            style={controlSurfaceStyle}
+          >
             {statusChip}
           </div>
         </div>
       ) : null}
       {shouldShowBody ? (
-        <div className="mt-3 min-w-0">
-          <h2 className="text-xl font-black leading-tight sm:text-2xl">{title}</h2>
+        <div className="relative mt-3 min-w-0">
+          <h2 className="text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">{title}</h2>
           {statusChip && statusChipPlacement === "below-title" ? (
             <div className="mt-3 flex justify-start">
-              <div className="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+              <div
+                className="shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2"
+                style={controlSurfaceStyle}
+              >
                 {statusChip}
               </div>
             </div>
@@ -524,14 +574,17 @@ export function ManagementIntro({
                 isOpen={isMoreOpen}
                 variant={disclosureVariant}
                 onClick={() => setIsMoreOpen((current) => !current)}
+                className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
               />
             </div>
           ) : null}
           {isMoreOpen ? (
             <div className="mt-3">
-              <p className="text-sm leading-6 text-gray-600">{description}</p>
+              <p className="text-sm leading-6 text-[color:var(--localized-card-secondary-text)]">{description}</p>
               {secondaryNote ? (
-                <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">{secondaryNote}</p>
+                <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-[color:var(--localized-card-secondary-text)]">
+                  {secondaryNote}
+                </p>
               ) : null}
               {disclosurePlacement === "bottom-right" ? (
                 <div className="mt-3 flex justify-end">
@@ -539,6 +592,7 @@ export function ManagementIntro({
                     isOpen={isMoreOpen}
                     variant={disclosureVariant}
                     onClick={() => setIsMoreOpen((current) => !current)}
+                    className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
                   />
                 </div>
               ) : null}
@@ -549,6 +603,7 @@ export function ManagementIntro({
                 isOpen={isMoreOpen}
                 variant={disclosureVariant}
                 onClick={() => setIsMoreOpen((current) => !current)}
+                className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
               />
             </div>
           ) : null}
@@ -559,6 +614,7 @@ export function ManagementIntro({
             isOpen={isMoreOpen}
             variant={disclosureVariant}
             onClick={() => setIsMoreOpen((current) => !current)}
+            className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
           />
         </div>
       ) : disclosurePlacement === "below-title" ? (
@@ -567,6 +623,7 @@ export function ManagementIntro({
             isOpen={isMoreOpen}
             variant={disclosureVariant}
             onClick={() => setIsMoreOpen((current) => !current)}
+            className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
           />
         </div>
       ) : null}
