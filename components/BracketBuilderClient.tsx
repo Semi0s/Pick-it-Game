@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, GripVertical, TriangleAlert, X } from "lucide-react";
 import { saveLightSeedBuilderAction } from "@/app/groups/actions";
@@ -153,7 +153,11 @@ export function BracketBuilderClient({
 }: BracketBuilderClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const touchStartXRef = useRef<number | null>(null);
+  const groupSwipeTouchRef = useRef<{ startX: number | null; startY: number | null; enabled: boolean }>({
+    startX: null,
+    startY: null,
+    enabled: true
+  });
   const customDragHoldTimeoutRef = useRef<number | null>(null);
   const customDragStateRef = useRef<{
     kind: "group" | "third";
@@ -536,6 +540,7 @@ export function BracketBuilderClient({
       return;
     }
 
+    event.preventDefault();
     clearCustomTouchDragState();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     customDragStateRef.current = {
@@ -773,19 +778,35 @@ export function BracketBuilderClient({
     setActiveGroupIndex(boundedIndex);
   }
 
-  function handleSwipeEnd(clientX: number) {
-    const startX = touchStartXRef.current;
-    touchStartXRef.current = null;
-    if (startX === null) {
+  function handleGroupSwipeTouchStart(event: TouchEvent<HTMLElement>) {
+    const touch = event.changedTouches[0];
+    const target = event.target as HTMLElement | null;
+    groupSwipeTouchRef.current = {
+      startX: touch?.clientX ?? null,
+      startY: touch?.clientY ?? null,
+      enabled: !Boolean(target?.closest("[data-disable-group-swipe='true']"))
+    };
+  }
+
+  function handleGroupSwipeTouchEnd(event: TouchEvent<HTMLElement>) {
+    const { startX, startY, enabled } = groupSwipeTouchRef.current;
+    groupSwipeTouchRef.current = { startX: null, startY: null, enabled: true };
+    if (!enabled || customDragStateRef.current?.isDragging || startX === null || startY === null) {
       return;
     }
 
-    const delta = clientX - startX;
-    if (Math.abs(delta) < SWIPE_THRESHOLD_PX) {
+    const touch = event.changedTouches[0];
+    if (!touch) {
       return;
     }
 
-    if (delta < 0) {
+    const deltaX = touch.clientX - startX;
+    const deltaY = touch.clientY - startY;
+    if (Math.abs(deltaX) < SWIPE_THRESHOLD_PX || Math.abs(deltaX) <= Math.abs(deltaY)) {
+      return;
+    }
+
+    if (deltaX < 0) {
       goToGroup(activeGroupIndex + 1);
       return;
     }
@@ -959,18 +980,14 @@ export function BracketBuilderClient({
         <section className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-center text-[11px] font-semibold text-gray-600">
           {initialKnockoutSeeded
             ? "Group Stage is locked because the knockout bracket has already been seeded."
-            : "Group Stage is locked because this group's picks deadline has passed."}
+            : "Group Stage is locked because the tournament has started."}
         </section>
       ) : null}
 
       <section
         className="space-y-2.5 px-0 py-0"
-        onTouchStart={(event) => {
-          touchStartXRef.current = event.changedTouches[0]?.clientX ?? null;
-        }}
-        onTouchEnd={(event) => {
-          handleSwipeEnd(event.changedTouches[0]?.clientX ?? 0);
-        }}
+        onTouchStart={handleGroupSwipeTouchStart}
+        onTouchEnd={handleGroupSwipeTouchEnd}
       >
         <div className="pb-0.5 text-center">
           <p className="text-[11px] font-black uppercase tracking-[0.16em] text-cyan-900">Group Stage</p>
@@ -1055,6 +1072,7 @@ export function BracketBuilderClient({
             return (
                 <div
                   data-group-team-id={team.id}
+                  data-disable-group-swipe="true"
                   key={team.id}
                   ref={(node) => {
                     if (node) {
@@ -1099,7 +1117,7 @@ export function BracketBuilderClient({
                   event.preventDefault();
                   handleDropReorder(team.id);
                 }}
-                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_3.6rem_2rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1 last:border-b-0 transition-shadow select-none [touch-action:manipulation] [-webkit-touch-callout:none] ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
+                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_3.6rem_2rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1 last:border-b-0 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "[touch-action:none]" : "[touch-action:manipulation]"} ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <div className="flex justify-start">
                   <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
@@ -1191,6 +1209,7 @@ export function BracketBuilderClient({
                 return (
                   <div
                     data-third-team-id={team.id}
+                    data-disable-group-swipe="true"
                     key={team.id}
                     ref={(node) => {
                       if (node) {
@@ -1239,7 +1258,7 @@ export function BracketBuilderClient({
                         Cutoff
                       </div>
                     ) : null}
-                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-lg border px-2 py-1 transition-shadow select-none [touch-action:manipulation] [-webkit-touch-callout:none] ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
+                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-lg border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly ? "[touch-action:none]" : "[touch-action:manipulation]"} ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
                       <div className="flex justify-start">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
                           {index + 1}

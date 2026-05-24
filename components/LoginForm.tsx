@@ -4,7 +4,6 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchGroupInvitePreviewAction } from "@/app/my-groups/actions";
 import { authenticateWithEmail, isUsingDemoAuthFallback, sendCurrentUserPasswordReset } from "@/lib/auth-client";
-import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 
 type AuthMode = "login" | "signup";
 
@@ -38,7 +37,6 @@ export function LoginForm({
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingReset, setIsSendingReset] = useState(false);
-  const [isInviteInfoOpen, setIsInviteInfoOpen] = useSessionDisclosureState("login-invite-info-disclosure", false);
   const [inviteContext, setInviteContext] = useState<{
     groupName: string;
     email: string;
@@ -299,39 +297,21 @@ export function LoginForm({
       {!isDemoFallback ? (
         <div className="rounded-md border border-accent-light bg-white/95 px-2.5 py-2 text-accent-dark">
           <div className="flex flex-col items-center text-center">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-wide">
-                Request Access &amp; Provide Feedback
-              </p>
-            </div>
-            <div className="mt-1.5">
-              <InlineDisclosureButton
-                isOpen={isInviteInfoOpen}
-                variant="subtle"
-                onClick={() => setIsInviteInfoOpen((current) => !current)}
-              />
-            </div>
+            <p className="text-[11px] font-black uppercase tracking-wide">
+              <span className="block">Request Access And</span>
+              <span className="block">Provide Feedback</span>
+            </p>
           </div>
-          {isInviteInfoOpen ? (
-            <>
-              <p className="mt-2 border-t border-accent-light pt-2 text-[11px] font-medium">
-                Sign up with the email you were invited to the pool.
-              </p>
-              <p className="mt-2 text-[11px] font-medium text-gray-700">
-                If you would like to be placed on the waiting list please visit:
-              </p>
-              <div className="mt-1.5 flex justify-center">
-                <a
-                  href="https://www.semiosdesign.com/pick-it-game"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-gray-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
-                >
-                  Add Me To The List
-                </a>
-              </div>
-            </>
-          ) : null}
+          <div className="mt-2 flex justify-center">
+            <a
+              href="https://www.semiosdesign.com/pick-it-game"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-gray-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
+            >
+              Contact Us
+            </a>
+          </div>
         </div>
       ) : null}
       {isDemoFallback ? (

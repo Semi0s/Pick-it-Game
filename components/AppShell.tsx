@@ -164,6 +164,7 @@ export function AppShell({ children }: AppShellProps) {
   const onboardingExitHref = pathname === "/start-playing" ? "/dashboard" : "/start-playing";
   const onboardingExitLabel = pathname === "/start-playing" ? "Exit" : "Back";
   const shouldShowOnboardingHeaderExit = isOnboardingExperience && pathname !== "/start-playing";
+  const shouldShowAccountButton = pathname !== "/start-playing";
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -650,14 +651,16 @@ export function AppShell({ children }: AppShellProps) {
                 </div>
               ) : null}
             </div>
-            <Link
-              href="/profile"
-              aria-label="Account"
-              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1.5 text-[11px] font-semibold text-gray-700 max-[399px]:h-8 max-[399px]:gap-1 max-[399px]:px-2.25 max-[399px]:py-0 max-[399px]:text-[10px] sm:px-2.5"
-            >
-              <CircleUserRound aria-hidden className="h-[17.5px] w-[17.5px] max-[399px]:h-[15px] max-[399px]:w-[15px]" />
-              <span className="max-[430px]:hidden">Account</span>
-            </Link>
+            {shouldShowAccountButton ? (
+              <Link
+                href="/profile"
+                aria-label="Account"
+                className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1.5 text-[11px] font-semibold text-gray-700 max-[399px]:h-8 max-[399px]:gap-1 max-[399px]:px-2.25 max-[399px]:py-0 max-[399px]:text-[10px] sm:px-2.5"
+              >
+                <CircleUserRound aria-hidden className="h-[17.5px] w-[17.5px] max-[399px]:h-[15px] max-[399px]:w-[15px]" />
+                <span className="max-[430px]:hidden">Account</span>
+              </Link>
+            ) : null}
           </div>
         </div>
       </header>

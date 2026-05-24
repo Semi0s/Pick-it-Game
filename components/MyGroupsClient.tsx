@@ -6,8 +6,6 @@ import { ChangeEvent, Dispatch, FormEvent, SetStateAction, useCallback, useEffec
 import { Info } from "lucide-react";
 import {
   acceptGroupInviteAction,
-  addAllGroupFocusTeamsAction,
-  addGroupFocusTeamAction,
   assignCaptainsPassAction,
   awardManagedGroupTrophyAction,
   cancelGroupInviteAction,
@@ -21,7 +19,6 @@ import {
   fetchManagedGroupDetailAction,
   fetchGroupInvitePreviewAction,
   fetchMyGroupsAction,
-  removeGroupFocusTeamAction,
   removeManagedGroupAllowedEmailAction,
   removeManagedGroupAvatarAction,
   removeGroupMemberAction,
@@ -128,7 +125,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [allowedEmailsDrafts, setAllowedEmailsDrafts] = useState<Record<string, string>>({});
   const [captainPassSelections, setCaptainPassSelections] = useState<Record<string, { userId: string; allowance: string }>>({});
   const [captainInviteEmailsByGroup, setCaptainInviteEmailsByGroup] = useState<Record<string, string>>({});
-  const [focusTeamSelectionsByGroup, setFocusTeamSelectionsByGroup] = useState<Record<string, string>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
   const [newInviteEmailsByGroup, setNewInviteEmailsByGroup] = useState<Record<string, string>>({});
   const [inviteCodeDrafts, setInviteCodeDrafts] = useState<Record<string, string>>({});
@@ -1118,43 +1114,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     });
   }
 
-  async function handleAddFocusTeam(group: MyManagedGroup) {
-    const teamId = focusTeamSelectionsByGroup[group.id]?.trim() ?? "";
-    if (!teamId) {
-      setMessage({ tone: "error", text: "Choose a team first." });
-      return;
-    }
-
-    await withAction(`add-focus-team-${group.id}`, async () => {
-      const result = await addGroupFocusTeamAction(group.id, teamId);
-      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-      if (result.ok) {
-        setFocusTeamSelectionsByGroup((current) => ({ ...current, [group.id]: "" }));
-        await loadGroupDetail(group.id, true);
-      }
-    });
-  }
-
-  async function handleAddAllFocusTeams(group: MyManagedGroup) {
-    await withAction(`add-all-focus-teams-${group.id}`, async () => {
-      const result = await addAllGroupFocusTeamsAction(group.id);
-      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-      if (result.ok) {
-        await loadGroupDetail(group.id, true);
-      }
-    });
-  }
-
-  async function handleRemoveFocusTeam(group: MyManagedGroup, focusTeamId: string) {
-    await withAction(`remove-focus-team-${focusTeamId}`, async () => {
-      const result = await removeGroupFocusTeamAction(group.id, focusTeamId);
-      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-      if (result.ok) {
-        await loadGroupDetail(group.id, true);
-      }
-    });
-  }
-
   async function handleAcceptInvite() {
     if (!inviteToken) {
       return;
@@ -1631,7 +1590,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   </p>
                 </label>
                 <p className="text-xs font-semibold text-gray-500">
-                  You can add an avatar, access settings, Captain&apos;s Pass, and team focus after the group is created.
+                  You can add an avatar, access settings, and a Captain&apos;s Pass after the group is created.
                 </p>
                 <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
                   {isCreatingGroup ? "Creating..." : "Create Group"}
@@ -1708,7 +1667,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             });
             const hasReachedCustomTrophyLimit = customTrophies.length >= 10;
             const activeMembers = groupMembers.filter((member) => member.role === "member");
-            const focusedTeamIds = new Set((detailedGroup?.focusTeams ?? []).map((entry) => entry.teamId));
             const groupProfileDraft = groupProfileDrafts[group.id] ?? {
               name: group.name,
               description: group.description ?? ""
@@ -1718,12 +1676,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const isGroupProfileSaveReady = isGroupProfileDirty(group, groupProfileDraft, avatarDraft);
             const captainPassSelection = captainPassSelections[group.id] ?? { userId: "", allowance: "1" };
             const availableCaptainCandidates = activeMembers.filter((member) => member.userId !== currentUserId);
-            const availableFocusTeamOptions = (detailedGroup?.teamOptions ?? []).filter(
-              (team) => !focusedTeamIds.has(team.id)
-            );
-            const totalTeamOptionCount = detailedGroup?.teamOptions.length ?? 0;
-            const hasLimitedTeamFocus = totalTeamOptionCount > 0 && focusedTeamIds.size > 0 && focusedTeamIds.size < totalTeamOptionCount;
-            const allTeamsIncluded = totalTeamOptionCount > 0 && focusedTeamIds.size === totalTeamOptionCount;
             const captainPass = detailedGroup?.captainPass ?? null;
             const isCaptainInviteHelperVisible = Boolean(captainPass?.canCurrentUserUseInvites && !group.canManage);
             const inviteAccessChipLabel =
@@ -1748,9 +1700,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     <div className="mt-3 flex items-center justify-between gap-3">
                       <div className="flex min-w-0 flex-wrap gap-2">
                         <ManagementBadge label={inviteAccessChipLabel} tone="neutral" />
-                        {hasLimitedTeamFocus ? (
-                          <ManagementBadge label={`Following ${focusedTeamIds.size} teams`} tone="neutral" />
-                        ) : null}
                       </div>
                       {usesDisclosure ? (
                         <InlineDisclosureButton
@@ -2067,91 +2016,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                           </div>
                         ) : null}
 
-                        <div className="rounded-lg border border-gray-200 bg-white p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Team Focus</h4>
-                              <p className="mt-1 text-xs font-semibold text-gray-500">
-                                Choose which teams count toward this group’s team-focused views and tallies.
-                              </p>
-                            </div>
-                            <ManagementBadge
-                              label={allTeamsIncluded ? "All teams" : `${detailedGroup?.focusTeams.length ?? 0} teams`}
-                              tone="neutral"
-                            />
-                          </div>
-                          <div className="mt-3 space-y-3">
-                            <div className="flex flex-col gap-3 sm:flex-row">
-                              <label className="min-w-0 flex-1">
-                                <span className="sr-only">Choose a focus team</span>
-                                <select
-                                  value={focusTeamSelectionsByGroup[group.id] ?? ""}
-                                  onChange={(event) =>
-                                    setFocusTeamSelectionsByGroup((current) => ({
-                                      ...current,
-                                      [group.id]: event.target.value
-                                    }))
-                                  }
-                                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                                >
-                                  <option value="">Add a team</option>
-                                  {availableFocusTeamOptions.map((team) => (
-                                    <option key={team.id} value={team.id}>
-                                      {team.groupName} · {team.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <div className="flex gap-2">
-                                <ActionButton
-                                  type="button"
-                                  disabled={actionKey === `add-focus-team-${group.id}` || allTeamsIncluded}
-                                  onClick={() => void handleAddFocusTeam(group)}
-                                >
-                                  {actionKey === `add-focus-team-${group.id}` ? "Adding..." : "Add Team"}
-                                </ActionButton>
-                                <ActionButton
-                                  type="button"
-                                  disabled={actionKey === `add-all-focus-teams-${group.id}` || totalTeamOptionCount === 0 || allTeamsIncluded}
-                                  onClick={() => void handleAddAllFocusTeams(group)}
-                                >
-                                  {actionKey === `add-all-focus-teams-${group.id}` ? "Adding..." : "Add All Teams"}
-                                </ActionButton>
-                              </div>
-                            </div>
-                            {allTeamsIncluded ? (
-                              <p className="rounded-md border border-green-200 bg-green-50 px-3 py-3 text-sm font-semibold text-green-700">
-                                All teams are included in this group&apos;s tallies.
-                              </p>
-                            ) : null}
-                            <div className="space-y-2">
-                              {(detailedGroup?.focusTeams ?? []).length > 0 ? (
-                                detailedGroup?.focusTeams.map((team) => (
-                                  <div key={team.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-black text-gray-950">
-                                        {team.flagEmoji ? `${team.flagEmoji} ` : ""}{team.name}
-                                      </p>
-                                      <p className="mt-1 text-xs font-semibold text-gray-500">{team.groupName}</p>
-                                    </div>
-                                    <ActionButton
-                                      type="button"
-                                      tone="danger"
-                                      disabled={actionKey === `remove-focus-team-${team.id}`}
-                                      onClick={() => void handleRemoveFocusTeam(group, team.id)}
-                                    >
-                                      Remove
-                                    </ActionButton>
-                                  </div>
-                                ))
-                              ) : (
-                                <p className="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
-                                  No focused teams yet.
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
                       </div>
                     ) : null}
                     {isCaptainInviteHelperVisible ? (

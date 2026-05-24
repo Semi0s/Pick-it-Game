@@ -323,6 +323,7 @@ create table public.user_settings (
   group_strategy_adjustments jsonb,
   group_strategy_heart_pick_team_id text,
   onboarding_version_seen integer,
+  followed_team_ids text[] not null default '{}',
   projected_knockout_source text not null default 'seed_builder'
     constraint user_settings_projected_knockout_source_check
     check (projected_knockout_source in ('seed_builder', 'score_predictions')),

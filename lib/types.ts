@@ -26,6 +26,7 @@ export type UserProfile = {
   email: string;
   avatarUrl?: string;
   homeTeamId?: string | null;
+  followedTeamIds?: string[];
   preferredLanguage?: SupportedLanguage;
   trophies?: UserTrophy[];
   role: UserRole;

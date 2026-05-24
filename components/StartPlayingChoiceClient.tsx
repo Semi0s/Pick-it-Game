@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent, type SVGProps, type TouchEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeftRight } from "lucide-react";
-import { savePlayerStartModeAction } from "@/app/start-playing/actions";
+import { completeLaunchOnboardingAction, savePlayerStartModeAction } from "@/app/start-playing/actions";
 import { showAppToast } from "@/lib/app-toast";
 
 type StepVisual = "group-stage" | "third-place" | "knockout" | "leaderboard" | "groups";
@@ -22,6 +22,7 @@ const SWIPE_THRESHOLD_PX = 40;
 export function StartPlayingChoiceClient() {
   const router = useRouter();
   const [isSavingMode, setIsSavingMode] = useState(false);
+  const [isGoingHome, setIsGoingHome] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [animationEpoch, setAnimationEpoch] = useState(0);
   const [stepOpenEpoch, setStepOpenEpoch] = useState(0);
@@ -79,6 +80,19 @@ export function StartPlayingChoiceClient() {
     }
 
     router.push("/bracket-builder?onboarding=1");
+  }
+
+  async function handleHome() {
+    setIsGoingHome(true);
+    const result = await completeLaunchOnboardingAction();
+    setIsGoingHome(false);
+
+    if (!result.ok) {
+      showAppToast({ tone: "error", text: result.message });
+      return;
+    }
+
+    router.push("/dashboard");
   }
 
   function goToStep(nextIndex: number) {
@@ -245,7 +259,7 @@ export function StartPlayingChoiceClient() {
                 type="button"
                 onClick={() => goToStep(stepIndex - 1)}
                 aria-label="Go to previous onboarding step"
-                className="inline-flex min-h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                className="inline-flex w-full min-h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
               >
                 Back
               </button>
@@ -256,17 +270,20 @@ export function StartPlayingChoiceClient() {
                   void handleStartGroupPhase();
                 }}
                 aria-label="Start Group Stage"
-                className="inline-flex min-h-10 items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-black text-white transition hover:bg-accent/95 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex w-full min-h-10 items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-black text-white transition hover:bg-accent/95 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isSavingMode ? "Opening..." : "Start"}
               </button>
               <button
                 type="button"
-                onClick={() => router.push("/dashboard")}
+                disabled={isGoingHome}
+                onClick={() => {
+                  void handleHome();
+                }}
                 aria-label="Go home"
-                className="inline-flex min-h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                className="inline-flex w-full min-h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Home
+                {isGoingHome ? "Opening..." : "Home"}
               </button>
             </div>
           </div>
@@ -402,7 +419,7 @@ function MockPhoneFrame({ children }: { children: React.ReactNode }) {
 
 function GroupStageHelperMock() {
   return (
-    <div className="flex w-full items-center justify-center gap-3">
+    <div className="gs-loop-shell flex w-full items-center justify-center gap-3">
       <MockPhoneFrame>
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-accent-dark">Group A</p>
         <div className="relative mt-2 h-[106px]">
@@ -434,6 +451,10 @@ function GroupStageHelperMock() {
           </span>
         </div>
         <style jsx>{`
+          .gs-loop-shell {
+            animation: gs-loop-shell-fade 8.6s ease-in-out infinite;
+          }
+
           .gs-team {
             top: 0;
           }
@@ -549,6 +570,19 @@ function GroupStageHelperMock() {
               opacity: 0;
             }
           }
+
+          @keyframes gs-loop-shell-fade {
+            0%,
+            80% {
+              opacity: 1;
+            }
+            88% {
+              opacity: 0;
+            }
+            100% {
+              opacity: 1;
+            }
+          }
         `}</style>
       </MockPhoneFrame>
     </div>
@@ -557,7 +591,7 @@ function GroupStageHelperMock() {
 
 function ThirdPlaceHelperMock() {
   return (
-    <div className="flex w-full items-center justify-center gap-3">
+    <div className="tp-loop-shell flex w-full items-center justify-center gap-3">
       <MockPhoneFrame>
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-accent-dark">Pick 3rd Place</p>
         <div className="relative mt-2 space-y-1.5">
@@ -582,6 +616,10 @@ function ThirdPlaceHelperMock() {
           Finish Bracket
         </div>
         <style jsx>{`
+          .tp-loop-shell {
+            animation: tp-loop-shell-fade 8.8s ease-in-out infinite;
+          }
+
           .tp-row-three,
           .tp-row-four,
           .tp-slot-three,
@@ -758,6 +796,19 @@ function ThirdPlaceHelperMock() {
               opacity: 0;
             }
           }
+
+          @keyframes tp-loop-shell-fade {
+            0%,
+            82% {
+              opacity: 1;
+            }
+            90% {
+              opacity: 0;
+            }
+            100% {
+              opacity: 1;
+            }
+          }
         `}</style>
       </MockPhoneFrame>
     </div>
@@ -766,7 +817,7 @@ function ThirdPlaceHelperMock() {
 
 function KnockoutHelperMock() {
   return (
-    <div className="flex w-full items-center justify-center gap-3">
+    <div className="ko-loop-shell flex w-full items-center justify-center gap-3">
       <MockPhoneFrame>
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-accent-dark">Knockout</p>
         <div className="relative mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
@@ -805,6 +856,10 @@ function KnockoutHelperMock() {
           <div className="text-center">TEAM B</div>
         </div>
         <style jsx>{`
+          .ko-loop-shell {
+            animation: ko-loop-shell-fade 8.6s ease-in-out infinite;
+          }
+
           .ko-score-roll,
           .ko-team-b,
           .ko-team-b-arrows,
@@ -921,6 +976,19 @@ function KnockoutHelperMock() {
               opacity: 0;
             }
           }
+
+          @keyframes ko-loop-shell-fade {
+            0%,
+            80% {
+              opacity: 1;
+            }
+            88% {
+              opacity: 0;
+            }
+            100% {
+              opacity: 1;
+            }
+          }
         `}</style>
       </MockPhoneFrame>
     </div>
@@ -929,7 +997,7 @@ function KnockoutHelperMock() {
 
 function LeaderboardHelperMock() {
   return (
-    <div className="flex w-full items-center justify-center gap-3">
+    <div className="leaderboard-loop-shell flex w-full items-center justify-center gap-3">
       <MockPhoneFrame>
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-accent-dark">Leaderboard</p>
         <div className="relative mt-2 space-y-1">
@@ -955,6 +1023,10 @@ function LeaderboardHelperMock() {
           </span>
         </div>
         <style jsx>{`
+          .leaderboard-loop-shell {
+            animation: leaderboard-loop-shell-fade 9s ease-in-out infinite;
+          }
+
           .leaderboard-target-a,
           .leaderboard-target-d {
             transform-origin: center;
@@ -1098,6 +1170,19 @@ function LeaderboardHelperMock() {
               opacity: 0;
             }
           }
+
+          @keyframes leaderboard-loop-shell-fade {
+            0%,
+            82% {
+              opacity: 1;
+            }
+            90% {
+              opacity: 0;
+            }
+            100% {
+              opacity: 1;
+            }
+          }
         `}</style>
       </MockPhoneFrame>
     </div>
@@ -1134,7 +1219,7 @@ function MiniHandTapIcon(props: SVGProps<SVGSVGElement>) {
 
 function GroupsHelperMock() {
   return (
-    <div className="flex w-full items-center justify-center gap-3">
+    <div className="groups-loop-shell flex w-full items-center justify-center gap-3">
       <MockPhoneFrame>
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-accent-dark">My Groups</p>
         <div className="mt-2 rounded-lg border border-gray-200 bg-white px-2 py-1">
@@ -1157,6 +1242,10 @@ function GroupsHelperMock() {
           </span>
         </div>
         <style jsx>{`
+          .groups-loop-shell {
+            animation: groups-loop-shell-fade 9s ease-in-out infinite;
+          }
+
           .groups-add,
           .groups-add-text,
           .groups-john,
@@ -1277,6 +1366,19 @@ function GroupsHelperMock() {
             100% {
               transform: translate(82px, 12px);
               opacity: 0;
+            }
+          }
+
+          @keyframes groups-loop-shell-fade {
+            0%,
+            82% {
+              opacity: 1;
+            }
+            90% {
+              opacity: 0;
+            }
+            100% {
+              opacity: 1;
             }
           }
         `}</style>
