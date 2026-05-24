@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDown, ChevronUp, CircleHelp } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DismissibleHelperText } from "@/components/DismissibleHelperText";
 
@@ -74,7 +74,9 @@ export function DashboardHero({
               className={`inline-flex h-12 w-12 items-center justify-center rounded-md transition ${hasEcuadorBackground ? "text-white/90 hover:text-white" : "text-gray-800 hover:text-accent-dark"}`}
             >
               <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-accent-dark shadow-sm">
-                <CircleHelp aria-hidden className="h-5 w-5" />
+                <span aria-hidden className="text-[1.45rem] font-black leading-none">
+                  ?
+                </span>
               </span>
             </Link>
           </div>

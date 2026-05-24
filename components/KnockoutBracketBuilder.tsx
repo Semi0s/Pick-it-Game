@@ -1154,7 +1154,7 @@ function ProjectedAndOfficialRoundView({
             showMatchIdentity={false}
           />
         ) : (
-          <ActualComparisonMatchCard match={pair.official} pendingOnly />
+          <ActualComparisonMatchCard match={pair.official} pendingOnly showHeader={false} />
         )}
       </div>
     );
@@ -1185,7 +1185,7 @@ function FocusedRoundView({
   const pods = groupMatchesIntoPods(slide.currentMatches);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 px-2 sm:px-0">
       {pods.map((pod, index) => (
         <div
           key={`focus-pod-${index}`}
@@ -1236,7 +1236,7 @@ function FinaleRoundView({
   const finalMatch = slide.currentMatches[0] ?? null;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 px-2 sm:px-0">
       <ChampionCard champion={slide.champion} />
       {finalMatch ? (
         <div className="box-border w-full max-w-full rounded-xl bg-gray-50/40 px-1 py-1.5 sm:px-1.5 sm:py-2">
@@ -2458,10 +2458,12 @@ function stageSortValue(stage: KnockoutBracketMatchView["stage"]) {
 
 function ActualComparisonMatchCard({
   match,
-  pendingOnly = false
+  pendingOnly = false,
+  showHeader = true
 }: {
   match: KnockoutBracketMatchView;
   pendingOnly?: boolean;
+  showHeader?: boolean;
 }) {
   const matchNumber = getKnockoutMatchNumber(match.title);
   const actualHomeTeam = match.seededHomeTeam;
@@ -2478,28 +2480,30 @@ function ActualComparisonMatchCard({
 
   return (
     <div className="box-border w-full max-w-full overflow-hidden rounded-lg border border-gray-200 bg-white p-2">
-      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
-        <div className="min-w-0">
-          {matchNumber ? (
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">Match</span>
-              <KnockoutMatchNumberBadge number={matchNumber} compact />
-            </div>
-          ) : (
-            <p className="text-xs font-bold text-gray-950">{match.title}</p>
-          )}
+      {showHeader ? (
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
+          <div className="min-w-0">
+            {matchNumber ? (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">Match</span>
+                <KnockoutMatchNumberBadge number={matchNumber} compact />
+              </div>
+            ) : (
+              <p className="text-xs font-bold text-gray-950">{match.title}</p>
+            )}
+          </div>
+          <p className="min-w-0 truncate text-[10px] font-bold uppercase tracking-wide text-gray-500">
+            {formatCompactKickoff(match.kickoffTime)}
+          </p>
+          <div className="min-w-0 justify-self-end">
+            <span className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[10px] font-bold text-gray-600">
+              {statusLabel}
+            </span>
+          </div>
         </div>
-        <p className="min-w-0 truncate text-[10px] font-bold uppercase tracking-wide text-gray-500">
-          {formatCompactKickoff(match.kickoffTime)}
-        </p>
-        <div className="min-w-0 justify-self-end">
-          <span className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[10px] font-bold text-gray-600">
-            {statusLabel}
-          </span>
-        </div>
-      </div>
+      ) : null}
 
-      <div className="mt-1.5 relative px-2 py-1">
+      <div className={`${showHeader ? "mt-1.5" : ""} relative px-2 py-1`}>
         <span
           aria-hidden
           className="pointer-events-none absolute bottom-1 left-1/2 top-1 -translate-x-1/2 border-l border-gray-200"

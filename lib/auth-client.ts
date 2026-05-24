@@ -62,7 +62,8 @@ type ManagerLimitsRow = {
 };
 
 type UserSettingsRow = {
-  notifications_enabled: boolean;
+  notifications_enabled?: boolean | null;
+  followed_team_ids?: string[] | null;
 };
 
 type PushTokenRow = {
@@ -258,11 +259,7 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
       .select("max_groups,max_members_per_group")
       .eq("user_id", session.user.id)
       .maybeSingle(),
-    supabase
-      .from("user_settings")
-      .select("notifications_enabled")
-      .eq("user_id", session.user.id)
-      .maybeSingle(),
+    fetchCurrentUserSettingsRow(supabase, session.user.id),
     supabase
       .from("push_tokens")
       .select("id")
@@ -304,6 +301,9 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
   const notificationsEnabled = isMissingUserSettingsTableError(userSettingsResult.error?.message)
     ? false
     : ((userSettingsResult.data as UserSettingsRow | null)?.notifications_enabled ?? false);
+  const followedTeamIds = isMissingUserSettingsTableError(userSettingsResult.error?.message)
+    ? []
+    : normalizeFollowedTeamIds((userSettingsResult.data as UserSettingsRow | null)?.followed_team_ids ?? []);
   const pushNotificationsEnabled = isMissingPushTokensTableError(pushTokensResult.error?.message)
     ? false
     : Boolean((pushTokensResult.data as PushTokenRow | null)?.id);
@@ -327,6 +327,7 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
     profileRow,
     (managerLimits as ManagerLimitsRow | null) ?? null,
     notificationsEnabled,
+    followedTeamIds,
     pushNotificationsEnabled,
     {
       needsLegalAcceptance,
@@ -719,6 +720,47 @@ export async function updateCurrentUserHomeTeam(homeTeamId: string | null): Prom
   };
 }
 
+export async function updateCurrentUserFollowedTeams(teamIds: string[]): Promise<AuthResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Followed teams need a configured Supabase project." };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to update followed teams." };
+  }
+
+  const normalizedTeamIds = normalizeFollowedTeamIds(teamIds);
+  const { error } = await supabase.from("user_settings").upsert(
+    {
+      user_id: user.id,
+      followed_team_ids: normalizedTeamIds
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error) {
+    if (isMissingUserSettingsTableError(error.message) || isMissingFollowedTeamIdsColumnError(error.message)) {
+      return {
+        ok: false,
+        message: "Followed teams are not available yet. Apply the followed teams migration first."
+      };
+    }
+
+    return { ok: false, message: error.message || "Could not update followed teams right now." };
+  }
+
+  return {
+    ok: true,
+    message: normalizedTeamIds.length > 0 ? "Followed teams updated." : "Followed teams cleared."
+  };
+}
+
 export async function updateCurrentUserPreferredLanguage(language: string): Promise<AuthResult> {
   if (!hasSupabaseConfig()) {
     return { ok: false, message: "Language preferences need a configured Supabase project." };
@@ -758,6 +800,7 @@ function mapUserRow(
   row: UserRow,
   managerLimits: ManagerLimitsRow | null,
   notificationsEnabled: boolean,
+  followedTeamIds: string[],
   pushNotificationsEnabled: boolean,
   legalStatus?: {
     needsLegalAcceptance: boolean;
@@ -775,6 +818,7 @@ function mapUserRow(
     email: row.email,
     avatarUrl: row.avatar_url ?? undefined,
     homeTeamId: row.home_team_id ?? null,
+    followedTeamIds,
     preferredLanguage: normalizeLanguage(row.preferred_language),
     role: row.role,
     accessLevel: resolveAccessLevel({
@@ -1233,6 +1277,72 @@ async function fetchCurrentUserProfileRow(
   };
 }
 
+async function fetchCurrentUserSettingsRow(
+  supabase: ReturnType<typeof createClient>,
+  userId: string
+): Promise<{ data: UserSettingsRow | null; error: { message: string } | null }> {
+  const fullSettingsQuery = await supabase
+    .from("user_settings")
+    .select("notifications_enabled,followed_team_ids")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (!fullSettingsQuery.error) {
+    return {
+      data: (fullSettingsQuery.data as UserSettingsRow | null) ?? null,
+      error: null
+    };
+  }
+
+  if (isMissingUserSettingsTableError(fullSettingsQuery.error.message)) {
+    return { data: null, error: { message: fullSettingsQuery.error.message } };
+  }
+
+  if (!isMissingFollowedTeamIdsColumnError(fullSettingsQuery.error.message)) {
+    return { data: null, error: { message: fullSettingsQuery.error.message } };
+  }
+
+  warnOptionalFeatureOnce(
+    "current-user-settings-followed-teams-missing",
+    "Current-user settings are loading without followed_team_ids because the live public.user_settings schema is behind the app.",
+    fullSettingsQuery.error.message
+  );
+
+  const fallbackSettingsQuery = await supabase
+    .from("user_settings")
+    .select("notifications_enabled")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (fallbackSettingsQuery.error) {
+    return { data: null, error: { message: fallbackSettingsQuery.error.message } };
+  }
+
+  return {
+    data: {
+      notifications_enabled: (fallbackSettingsQuery.data as UserSettingsRow | null)?.notifications_enabled ?? false,
+      followed_team_ids: []
+    },
+    error: null
+  };
+}
+
+function normalizeFollowedTeamIds(teamIds: string[] | null | undefined) {
+  const validTeamIds = new Set(teams.map((team) => team.id));
+  const normalized: string[] = [];
+
+  for (const value of teamIds ?? []) {
+    const normalizedTeamId = value?.trim().toLowerCase();
+    if (!normalizedTeamId || !validTeamIds.has(normalizedTeamId) || normalized.includes(normalizedTeamId)) {
+      continue;
+    }
+
+    normalized.push(normalizedTeamId);
+  }
+
+  return normalized;
+}
+
 function isInvalidRefreshTokenError(message: string) {
   const normalized = message.toLowerCase();
   return normalized.includes("invalid refresh token") || normalized.includes("refresh token not found");
@@ -1240,6 +1350,10 @@ function isInvalidRefreshTokenError(message: string) {
 
 function isMissingUserSettingsTableError(message?: string) {
   return isMissingRelationError(message, "user_settings");
+}
+
+function isMissingFollowedTeamIdsColumnError(message?: string) {
+  return isMissingColumnError(message, "user_settings", "followed_team_ids");
 }
 
 function isMissingPlanTierColumnError(message: string) {

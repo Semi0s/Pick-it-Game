@@ -14,10 +14,10 @@ import {
   type LightSeedBuilderSnapshot,
   type UserGroupProjectionSource
 } from "@/lib/group-stage-modes";
-import { fetchActiveGroupRulesets } from "@/lib/scoped-scoring";
 import { getRequiredThirdPlaceQualifierCount, type KnockoutPlaceholderMatch } from "@/lib/knockout-seeding";
 import { getConfiguredGroupPredictionMode, isFullScoresModeEnabled } from "@/lib/group-prediction-mode";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
+import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
 import { logSafeSupabaseError } from "@/lib/supabase-errors";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
@@ -108,31 +108,6 @@ export default async function BracketBuilderPage() {
 
   const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(roundOf32Placeholders);
 
-  const [{ data: memberRows, error: memberError }, { data: ownedRows, error: ownedError }] = await Promise.all([
-    adminSupabase.from("group_members").select("group_id").eq("user_id", authUser.id),
-    adminSupabase.from("groups").select("id").eq("owner_user_id", authUser.id)
-  ]);
-
-  if (memberError || ownedError) {
-    throw new Error(memberError?.message ?? ownedError?.message ?? "Could not load group deadlines.");
-  }
-
-  const visibleGroupIds = Array.from(
-    new Set([
-      ...((memberRows ?? []) as Array<{ group_id: string }>).map((row) => row.group_id),
-      ...((ownedRows ?? []) as Array<{ id: string }>).map((row) => row.id)
-    ])
-  );
-
-  let earliestGroupStageDueAt: string | null = null;
-  if (visibleGroupIds.length > 0) {
-    const rulesets = await fetchActiveGroupRulesets(adminSupabase, visibleGroupIds);
-    earliestGroupStageDueAt = Array.from(rulesets.values())
-      .map((ruleset) => ruleset.groupStagePicksDueAt)
-      .filter((value): value is string => Boolean(value))
-      .sort()[0] ?? null;
-  }
-
   return (
     <AppShell>
       <div className="mx-auto max-w-3xl pb-4 pt-0">
@@ -144,7 +119,7 @@ export default async function BracketBuilderPage() {
         initialGroupProjectionSources={initialGroupProjectionSources}
         requiredThirdPlaceQualifierCount={requiredThirdPlaceQualifierCount}
         roundOf32Placeholders={roundOf32Placeholders}
-        groupStageDueAt={earliestGroupStageDueAt}
+        groupStageDueAt={GROUP_PHASE_START_AT}
         knockoutProjectedPreview={projectedKnockoutComparisonView}
         fullScoresEnabled={fullScoresEnabled || authUser.role === "admin"}
       />

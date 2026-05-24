@@ -16,6 +16,7 @@ import {
   signOutCurrentUser,
   sendCurrentUserPasswordReset,
   updateCurrentUserHomeTeam,
+  updateCurrentUserFollowedTeams,
   updateCurrentUserPreferredLanguage,
   updateCurrentUserNotificationPreferences,
   uploadCurrentUserAvatar
@@ -54,6 +55,7 @@ export function ProfileSummary({
   const [isUpdatingNotifications, setIsUpdatingNotifications] = useState(false);
   const [isRegisteringPush, setIsRegisteringPush] = useState(false);
   const [isUpdatingHomeTeam, setIsUpdatingHomeTeam] = useState(false);
+  const [isUpdatingFollowedTeams, setIsUpdatingFollowedTeams] = useState(false);
   const [isUpdatingLanguage, setIsUpdatingLanguage] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [deleteAccountConfirmation, setDeleteAccountConfirmation] = useState("");
@@ -81,10 +83,21 @@ export function ProfileSummary({
     correctPicks: 0
   });
   const [isTopCardOpen, setIsTopCardOpen] = useSessionDisclosureState("profile-top-card-disclosure", true);
+  const [isFollowedTeamsOpen, setIsFollowedTeamsOpen] = useSessionDisclosureState("profile-followed-teams-disclosure", false);
+  const [followedTeamIdsDraft, setFollowedTeamIdsDraft] = useState<string[]>([]);
+  const [followedTeamSelection, setFollowedTeamSelection] = useState("");
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const sortedTeams = useMemo(
     () => [...teams].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" })),
     []
+  );
+  const selectedFollowedTeams = useMemo(
+    () => sortedTeams.filter((team) => followedTeamIdsDraft.includes(team.id)),
+    [followedTeamIdsDraft, sortedTeams]
+  );
+  const availableFollowedTeamOptions = useMemo(
+    () => sortedTeams.filter((team) => !followedTeamIdsDraft.includes(team.id)),
+    [followedTeamIdsDraft, sortedTeams]
   );
 
   useEffect(() => {
@@ -132,6 +145,10 @@ export function ProfileSummary({
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    setFollowedTeamIdsDraft(user?.followedTeamIds ?? []);
+  }, [user?.followedTeamIds]);
 
   useEffect(() => {
     if (passwordMessage) {
@@ -209,6 +226,9 @@ export function ProfileSummary({
   const canUseSelfServiceTestingReset = selfServiceTestResetEnabled && hasOrganizerResetAccess;
   const canSeeSelfServiceTestingResetHint =
     showSelfServiceTestResetHint && hasOrganizerResetAccess && !selfServiceTestResetEnabled;
+  const hasPendingFollowedTeamsChanges =
+    JSON.stringify(followedTeamIdsDraft) !== JSON.stringify(user.followedTeamIds ?? []);
+  const allTeamsFollowed = sortedTeams.length > 0 && followedTeamIdsDraft.length === sortedTeams.length;
 
   return (
     <section className="space-y-5">
@@ -344,6 +364,155 @@ export function ProfileSummary({
             ))}
           </select>
         </label>
+        <div id="followed-teams" className="mt-4 rounded-lg border border-gray-200 bg-gray-50/70 p-3 scroll-mt-24">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold text-gray-800">Followed Teams</p>
+              <p className="mt-1 text-sm font-semibold text-gray-500">
+                These teams tune your dashboard reminder and stay ready for future League and My Picks views.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-700">
+                {allTeamsFollowed ? "All teams" : `${selectedFollowedTeams.length} team${selectedFollowedTeams.length === 1 ? "" : "s"}`}
+              </div>
+              <InlineDisclosureButton
+                isOpen={isFollowedTeamsOpen}
+                variant="subtle"
+                onClick={() => setIsFollowedTeamsOpen((current) => !current)}
+              />
+            </div>
+          </div>
+          {isFollowedTeamsOpen ? (
+            <>
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                <label className="min-w-0 flex-1">
+                  <span className="sr-only">Choose a team to follow</span>
+                  <select
+                    value={followedTeamSelection}
+                    onChange={(event) => setFollowedTeamSelection(event.target.value)}
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  >
+                    <option value="">Add a team</option>
+                    {availableFollowedTeamOptions.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.groupName} · {team.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={!followedTeamSelection || allTeamsFollowed}
+                    onClick={() => {
+                      if (!followedTeamSelection) {
+                        return;
+                      }
+
+                      setFollowedTeamIdsDraft((current) =>
+                        current.includes(followedTeamSelection) ? current : [...current, followedTeamSelection]
+                      );
+                      setFollowedTeamSelection("");
+                    }}
+                    className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                  >
+                    Add Team
+                  </button>
+                  <button
+                    type="button"
+                    disabled={allTeamsFollowed || sortedTeams.length === 0}
+                    onClick={() => {
+                      setFollowedTeamIdsDraft(sortedTeams.map((team) => team.id));
+                      setFollowedTeamSelection("");
+                    }}
+                    className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                  >
+                    Add All Teams
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {user.homeTeamId && !followedTeamIdsDraft.includes(user.homeTeamId) ? (
+                  <button
+                    type="button"
+                    onClick={() => setFollowedTeamIdsDraft((current) => [user.homeTeamId as string, ...current])}
+                    className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                  >
+                    Add Home Team
+                  </button>
+                ) : null}
+                {followedTeamIdsDraft.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFollowedTeamIdsDraft([]);
+                      setFollowedTeamSelection("");
+                    }}
+                    className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                  >
+                    Clear
+                  </button>
+                ) : null}
+              </div>
+              {allTeamsFollowed ? (
+                <p className="mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-3 text-sm font-semibold text-green-700">
+                  All teams are included in your dashboard reminders.
+                </p>
+              ) : null}
+              <div className="mt-3 space-y-2">
+                {selectedFollowedTeams.length > 0 ? (
+                  selectedFollowedTeams.map((team) => (
+                    <div key={team.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-gray-950">
+                          {team.flagEmoji ? `${team.flagEmoji} ` : ""}{team.name}
+                        </p>
+                        <p className="mt-1 text-xs font-semibold text-gray-500">{team.groupName}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFollowedTeamIdsDraft((current) => current.filter((teamId) => teamId !== team.id))
+                        }
+                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-rose-300 bg-white px-3 py-2 text-xs font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 sm:text-sm"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-md border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-500">
+                    No teams selected yet.
+                  </p>
+                )}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isUpdatingFollowedTeams || !hasPendingFollowedTeamsChanges}
+                  onClick={async () => {
+                    setIsUpdatingFollowedTeams(true);
+                    setNotificationMessage(null);
+                    const result = await updateCurrentUserFollowedTeams(followedTeamIdsDraft);
+                    setNotificationMessage({
+                      tone: result.ok ? "success" : "error",
+                      text: result.message ?? "Something went wrong."
+                    });
+                    if (result.ok) {
+                      await refresh();
+                    }
+                    setIsUpdatingFollowedTeams(false);
+                  }}
+                  className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                >
+                  {isUpdatingFollowedTeams ? "Saving..." : "Save Followed Teams"}
+                </button>
+                <p className="text-xs font-semibold text-gray-500">Your dashboard reminder follows these teams.</p>
+              </div>
+            </>
+          ) : null}
+        </div>
         <label className="mt-4 block">
           <span className="text-sm font-bold text-gray-800">{copy.language}</span>
           <select

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchBooleanAppSetting, updateBooleanAppSetting } from "@/lib/app-settings";
+import { resolveAppUpdatesAdminAccess } from "@/lib/dashboard-updates";
 import type {
   AppUpdate,
   AppUpdateCardTone,
@@ -34,12 +35,14 @@ type UserUpdateReadRow = {
 };
 
 const DASHBOARD_UPDATES_FORCE_OPEN_SETTING_KEY = "dashboard_updates_force_open";
+const DASHBOARD_UPDATES_ENABLED_SETTING_KEY = "dashboard_updates_enabled";
 
 export type FetchLandingUpdatesResult =
   | {
       ok: true;
       updates: AppUpdateWithReadState[];
       forceOpen: boolean;
+      enabled: boolean;
     }
   | {
       ok: false;
@@ -51,6 +54,7 @@ export type FetchManagedUpdatesResult =
       ok: true;
       updates: AppUpdate[];
       forceOpen: boolean;
+      enabled: boolean;
     }
   | {
       ok: false;
@@ -83,6 +87,7 @@ export type UpsertAppUpdateResult =
 export type ArchiveAppUpdateResult = UpsertAppUpdateResult;
 export type MarkAppUpdateReadResult = UpsertAppUpdateResult;
 export type UpdateDashboardUpdatesForceOpenResult = UpsertAppUpdateResult;
+export type UpdateDashboardUpdatesEnabledResult = UpsertAppUpdateResult;
 
 export async function fetchLandingUpdatesAction(): Promise<FetchLandingUpdatesResult> {
   const supabase = await createServerSupabaseClient();
@@ -94,6 +99,7 @@ export async function fetchLandingUpdatesAction(): Promise<FetchLandingUpdatesRe
   }
 
   const forceOpen = await fetchBooleanAppSetting(DASHBOARD_UPDATES_FORCE_OPEN_SETTING_KEY, false);
+  const enabled = await fetchBooleanAppSetting(DASHBOARD_UPDATES_ENABLED_SETTING_KEY, true);
 
   const nowIso = new Date().toISOString();
   const { data: updates, error: updatesError } = await supabase
@@ -112,7 +118,7 @@ export async function fetchLandingUpdatesAction(): Promise<FetchLandingUpdatesRe
   ));
 
   if (activeUpdates.length === 0) {
-    return { ok: true, updates: [], forceOpen };
+    return { ok: true, updates: [], forceOpen, enabled };
   }
 
   const { data: readRows, error: readsError } = await supabase
@@ -132,6 +138,7 @@ export async function fetchLandingUpdatesAction(): Promise<FetchLandingUpdatesRe
   return {
     ok: true,
     forceOpen,
+    enabled,
     updates: activeUpdates.map((update) => ({
       ...mapAppUpdateRow(update),
       isRead: readsByUpdateId.has(update.id),
@@ -189,11 +196,13 @@ export async function fetchManagedAppUpdatesAction(): Promise<FetchManagedUpdate
   }
 
   const forceOpen = await fetchBooleanAppSetting(DASHBOARD_UPDATES_FORCE_OPEN_SETTING_KEY, false);
+  const enabled = await fetchBooleanAppSetting(DASHBOARD_UPDATES_ENABLED_SETTING_KEY, true);
 
   return {
     ok: true,
     updates: (((data as AppUpdateRow[] | null) ?? []).map(mapAppUpdateRow)),
-    forceOpen
+    forceOpen,
+    enabled
   };
 }
 
@@ -218,6 +227,30 @@ export async function updateDashboardUpdatesForceOpenAction(
   return {
     ok: true,
     message: forceOpen ? "Updates card will now stay open for everyone." : "Updates card can collapse normally again."
+  };
+}
+
+export async function updateDashboardUpdatesEnabledAction(
+  enabled: boolean
+): Promise<UpdateDashboardUpdatesEnabledResult> {
+  const currentUser = await requireSuperAdmin();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  try {
+    await updateBooleanAppSetting(DASHBOARD_UPDATES_ENABLED_SETTING_KEY, enabled);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update dashboard updates visibility."
+    };
+  }
+
+  revalidateAppUpdatePaths();
+  return {
+    ok: true,
+    message: enabled ? "Updates card is live for users again." : "Updates card is now hidden from users."
   };
 }
 
@@ -389,9 +422,8 @@ async function requireSuperAdmin(): Promise<{ ok: true; userId: string } | { ok:
     return { ok: false, message: error.message };
   }
 
-  if ((data as { role?: string } | null)?.role !== "admin") {
-    return { ok: false, message: "Only super admins can manage updates." };
-  }
-
-  return currentUser;
+  return resolveAppUpdatesAdminAccess({
+    userId: currentUser.userId,
+    role: (data as { role?: string } | null)?.role ?? null
+  });
 }

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   archiveAppUpdateAction,
   fetchManagedAppUpdatesAction,
+  updateDashboardUpdatesEnabledAction,
   updateDashboardUpdatesForceOpenAction,
   upsertAppUpdateAction,
   type UpsertAppUpdateInput
@@ -46,9 +47,11 @@ export function AdminUpdatesManager() {
   const [draft, setDraft] = useState<UpdateDraft>(EMPTY_DRAFT);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUpdatingEnabled, setIsUpdatingEnabled] = useState(false);
   const [isUpdatingForceOpen, setIsUpdatingForceOpen] = useState(false);
   const [activeArchiveId, setActiveArchiveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isEnabled, setIsEnabled] = useState(true);
   const [forceOpen, setForceOpen] = useState(false);
 
   async function loadUpdates() {
@@ -62,6 +65,7 @@ export function AdminUpdatesManager() {
     }
 
     setUpdates(result.updates);
+    setIsEnabled(result.enabled);
     setForceOpen(result.forceOpen);
     setError(null);
     setIsLoading(false);
@@ -126,6 +130,18 @@ export function AdminUpdatesManager() {
     setIsUpdatingForceOpen(false);
   }
 
+  async function handleEnabledChange(nextEnabled: boolean) {
+    setIsUpdatingEnabled(true);
+    const result = await updateDashboardUpdatesEnabledAction(nextEnabled);
+    showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+
+    if (result.ok) {
+      setIsEnabled(nextEnabled);
+    }
+
+    setIsUpdatingEnabled(false);
+  }
+
   return (
     <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
       <div>
@@ -134,6 +150,31 @@ export function AdminUpdatesManager() {
         <p className="mt-2 text-sm leading-6 text-gray-600">
           Publish short notes, feature announcements, and important tournament messages for everyone on the landing page.
         </p>
+      </div>
+
+      <div className="rounded-lg border border-gray-200 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-bold text-gray-900">Show updates card to users</p>
+            <p className="text-sm leading-6 text-gray-600">
+              Control whether the dashboard Updates card is visible to regular users at all.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isEnabled}
+            disabled={isUpdatingEnabled}
+            onClick={() => void handleEnabledChange(!isEnabled)}
+            className={`inline-flex min-w-[88px] items-center justify-center rounded-md border px-3 py-2 text-sm font-bold transition ${
+              isEnabled
+                ? "border-accent bg-accent text-white hover:bg-accent-dark"
+                : "border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
+            } disabled:cursor-not-allowed disabled:opacity-60`}
+          >
+            {isUpdatingEnabled ? "Saving..." : isEnabled ? "On" : "Off"}
+          </button>
+        </div>
       </div>
 
       <div className="rounded-lg border border-gray-200 p-4">

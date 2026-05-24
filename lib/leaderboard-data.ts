@@ -196,6 +196,12 @@ export type LeaderboardPageRequest = {
   managerId?: string;
 };
 
+export type GlobalLeaderboardRankSummary = {
+  rank: number | null;
+  totalPlayers: number;
+  totalPoints: number | null;
+};
+
 export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest): Promise<LeaderboardPageData> {
   const phase = normalizeLeaderboardPhase(request?.phase);
   const supabase = await createServerSupabaseClient();
@@ -303,6 +309,42 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
     phase,
     currentUserRank,
     switcher
+  };
+}
+
+export async function fetchGlobalLeaderboardRankSummaryForUser(
+  userId: string,
+  phase: LeaderboardPhase = "global_top10"
+): Promise<GlobalLeaderboardRankSummary> {
+  if (!userId) {
+    return {
+      rank: null,
+      totalPlayers: 0,
+      totalPoints: null
+    };
+  }
+
+  if (!hasSupabaseConfig()) {
+    const rankedDemoUsers = [...demoUsers]
+      .sort((left, right) => right.totalPoints - left.totalPoints || left.name.localeCompare(right.name))
+      .map((user, index) => ({ ...user, rank: index + 1 }));
+    const currentUser = rankedDemoUsers.find((user) => user.id === userId) ?? null;
+
+    return {
+      rank: currentUser?.rank ?? null,
+      totalPlayers: rankedDemoUsers.length,
+      totalPoints: currentUser?.totalPoints ?? null
+    };
+  }
+
+  const settings = await fetchLeaderboardFeatureSettings();
+  const rows = await fetchGlobalLeaderboardRows(phase, settings.perfect_pick_enabled);
+  const currentUser = rows.find((row) => row.id === userId) ?? null;
+
+  return {
+    rank: currentUser?.rank ?? null,
+    totalPlayers: rows.length,
+    totalPoints: currentUser?.totalPoints ?? null
   };
 }
 

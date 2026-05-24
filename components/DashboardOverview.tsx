@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CalendarDays, Network, Sparkles, Trophy, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { CalendarDays, Trophy, X } from "lucide-react";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
 import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
+import { DashboardCommandCenter } from "@/components/dashboard/DashboardCommandCenter";
 import { DashboardHero } from "@/components/dashboard/DashboardHero";
 import { DashboardNoGroupsPanel } from "@/components/dashboard/DashboardNoGroupsPanel";
 import {
@@ -15,6 +16,14 @@ import {
   useSessionDisclosureState,
   useSessionJsonState
 } from "@/components/player-management/Shared";
+import {
+  dismissMessageId,
+  getDashboardHomeMessageStorageKey,
+  isMessageDismissed,
+  parseDismissedMessageIds,
+  serializeDismissedMessageIds,
+  type DashboardCommandCenterSummary
+} from "@/lib/dashboard-home";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import {
   getGroupShortLabel,
@@ -31,10 +40,7 @@ import {
   PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
   type ExplainerLanguage
 } from "@/lib/i18n";
-import { fetchPlayerPredictions } from "@/lib/player-predictions";
-import { canEditPrediction } from "@/lib/prediction-state";
-import { getStoredPredictions } from "@/lib/prediction-store";
-import type { MatchWithTeams, Prediction } from "@/lib/types";
+import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: string }> = {
@@ -45,6 +51,7 @@ const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: s
   de: { hello: "Hallo", help: "RULES" }
 };
 
+const DASHBOARD_LOGO_HINT_MESSAGE_ID = "dashboard-logo-hint-v2";
 const DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-dismissed";
 const DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX = "pickit:dashboard-logo-hint-dismissed-session";
 const DASHBOARD_STANDINGS_GROUP_STORAGE_KEY = "dashboard-standings-group";
@@ -80,7 +87,9 @@ function isDashboardGroupAccessResponse(value: unknown): value is DashboardGroup
 }
 
 export function DashboardOverview({
-  initialGlobalChallengeSummary
+  initialGlobalChallengeSummary,
+  initialCommandCenterSummary,
+  initialGroupAccess
 }: {
   initialGlobalChallengeSummary?: {
     groupStrategy: { points: number | null; maxPoints: number; status: string };
@@ -89,9 +98,16 @@ export function DashboardOverview({
     totalMaxPoints: number;
     prompt: string | null;
   } | null;
+  initialCommandCenterSummary: DashboardCommandCenterSummary;
+  initialGroupAccess: {
+    hasAnyGroups: boolean;
+    joinedGroupCount: number;
+    managedGroupCount: number;
+    dashboardUiResetEpoch: number;
+  } | null;
 }) {
   const router = useRouter();
-  const { user } = useCurrentUser();
+  const { user, isLoading: isCurrentUserLoading } = useCurrentUser();
   const currentUserId = user?.id ?? null;
   const [groupMatches, setGroupMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
   const [adminCounts, setAdminCounts] = useState<AdminCounts | null>(null);
@@ -101,11 +117,10 @@ export function DashboardOverview({
     joinedGroupCount: number;
     managedGroupCount: number;
     dashboardUiResetEpoch: number;
-  } | null>(null);
+  } | null>(initialGroupAccess);
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
   const [displayLanguage] = usePersistentExplainerLanguage(user);
-  const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [showDashboardLogoHint, setShowDashboardLogoHint] = useState(false);
   const [selectedStandingsGroup, setSelectedStandingsGroup, selectedStandingsGroupState] = useSessionJsonState<string>(
     DASHBOARD_STANDINGS_GROUP_STORAGE_KEY,
@@ -174,21 +189,6 @@ export function DashboardOverview({
     }
   }, []);
 
-  const refreshPredictions = useCallback(async () => {
-    if (!user) {
-      setPredictions([]);
-      return;
-    }
-
-    try {
-      const items = await fetchPlayerPredictions(user.id);
-      setPredictions(items);
-    } catch (error) {
-      console.error("Could not refresh dashboard predictions.", { userId: user.id, error });
-      setPredictions((currentPredictions) => currentPredictions);
-    }
-  }, [user]);
-
   useEffect(() => {
     let isMounted = true;
 
@@ -210,19 +210,6 @@ export function DashboardOverview({
   }, []);
 
   useEffect(() => {
-    if (!user) {
-      setPredictions([]);
-      return;
-    }
-
-    setPredictions(getStoredPredictions(user.id));
-    refreshPredictions()
-      .catch(() => {
-        setPredictions(getStoredPredictions(user.id));
-      });
-  }, [refreshPredictions, user]);
-
-  useEffect(() => {
     if (typeof window === "undefined" || !user) {
       return;
     }
@@ -230,14 +217,12 @@ export function DashboardOverview({
     function handleWindowFocus() {
       refreshGroupAccess().catch(() => undefined);
       refreshGroupMatches().catch(() => undefined);
-      refreshPredictions().catch(() => undefined);
     }
 
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
         refreshGroupAccess().catch(() => undefined);
         refreshGroupMatches().catch(() => undefined);
-        refreshPredictions().catch(() => undefined);
       }
     }
 
@@ -247,7 +232,6 @@ export function DashboardOverview({
       if (document.visibilityState === "visible") {
         refreshGroupAccess().catch(() => undefined);
         refreshGroupMatches().catch(() => undefined);
-        refreshPredictions().catch(() => undefined);
       }
     }, DASHBOARD_GROUP_MATCH_REFRESH_INTERVAL_MS);
 
@@ -256,7 +240,7 @@ export function DashboardOverview({
       window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refreshGroupAccess, refreshGroupMatches, refreshPredictions, user]);
+  }, [refreshGroupAccess, refreshGroupMatches, user]);
 
   useEffect(() => {
     if (!user) {
@@ -290,11 +274,6 @@ export function DashboardOverview({
     };
   }, [user?.role]);
 
-  const savedMatchIds = useMemo(() => new Set(predictions.map((prediction) => prediction.matchId)), [predictions]);
-  const openMatches = useMemo(
-    () => groupMatches.filter((match) => canEditPrediction(match.status)),
-    [groupMatches]
-  );
   const availableStandingsGroups = useMemo(
     () =>
       Array.from(
@@ -317,15 +296,6 @@ export function DashboardOverview({
 
     return normalizeGroupKey(homeTeamMatch?.groupName) ?? null;
   }, [groupMatches, user?.homeTeamId]);
-  const completedCount = useMemo(
-    () => groupMatches.filter((match) => savedMatchIds.has(match.id)).length,
-    [groupMatches, savedMatchIds]
-  );
-  const nextOpenMatch = useMemo(
-    () =>
-      [...openMatches].sort((left, right) => +new Date(left.kickoffTime) - +new Date(right.kickoffTime))[0] ?? null,
-    [openMatches]
-  );
   const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
   const { selectedGroup: resolvedStandingsGroup } = resolvePreferredStandingsGroupSelection({
     availableGroups: availableStandingsGroups,
@@ -413,49 +383,65 @@ export function DashboardOverview({
   ]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !currentUserId) {
-      setShowDashboardLogoHint(false);
+    const messageStorageKey = getDashboardHomeMessageStorageKey({
+      userId: currentUserId,
+      isUserLoading: isCurrentUserLoading
+    });
+
+    if (typeof window === "undefined" || !messageStorageKey) {
       return;
     }
 
     const sharedPersistentStorageKey = DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX;
     const sharedSessionStorageKey = DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX;
-    const persistentStorageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX}:${currentUserId}`;
-    const sessionStorageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX}:${currentUserId}`;
+    const legacyPersistentStorageKey = currentUserId
+      ? `${DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX}:${currentUserId}`
+      : null;
+    const legacySessionStorageKey = currentUserId
+      ? `${DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX}:${currentUserId}`
+      : null;
 
     try {
-      const dismissedInSession =
-        window.sessionStorage.getItem(sharedSessionStorageKey) === "true" ||
-        window.sessionStorage.getItem(sessionStorageKey) === "true";
-      const dismissedPermanently =
+      const dismissedIds = parseDismissedMessageIds(window.localStorage.getItem(messageStorageKey));
+      const dismissedInLegacyStorage =
         window.localStorage.getItem(sharedPersistentStorageKey) === "true" ||
-        window.localStorage.getItem(persistentStorageKey) === "true";
-      setShowDashboardLogoHint(!(dismissedInSession || dismissedPermanently));
+        window.sessionStorage.getItem(sharedSessionStorageKey) === "true" ||
+        (legacyPersistentStorageKey ? window.localStorage.getItem(legacyPersistentStorageKey) === "true" : false) ||
+        (legacySessionStorageKey ? window.sessionStorage.getItem(legacySessionStorageKey) === "true" : false);
+      const nextDismissedIds = dismissedInLegacyStorage
+        ? dismissMessageId(dismissedIds, DASHBOARD_LOGO_HINT_MESSAGE_ID)
+        : dismissedIds;
+
+      if (nextDismissedIds.length !== dismissedIds.length) {
+        window.localStorage.setItem(messageStorageKey, serializeDismissedMessageIds(nextDismissedIds));
+      }
+
+      setShowDashboardLogoHint(!isMessageDismissed(nextDismissedIds, DASHBOARD_LOGO_HINT_MESSAGE_ID));
     } catch (error) {
       console.warn("Could not restore dashboard logo hint dismissal state.", error);
       setShowDashboardLogoHint(true);
     }
-  }, [currentUserId]);
+  }, [currentUserId, isCurrentUserLoading]);
 
   const dismissDashboardLogoHint = useCallback(() => {
-    const sharedPersistentStorageKey = DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX;
-    const sharedSessionStorageKey = DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX;
-    const persistentStorageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX}:${currentUserId}`;
-    const sessionStorageKey = `${DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX}:${currentUserId}`;
+    const messageStorageKey = getDashboardHomeMessageStorageKey({
+      userId: currentUserId,
+      isUserLoading: isCurrentUserLoading
+    });
+    if (!messageStorageKey) {
+      return;
+    }
 
     try {
-      window.localStorage.setItem(sharedPersistentStorageKey, "true");
-      window.sessionStorage.setItem(sharedSessionStorageKey, "true");
-      if (currentUserId) {
-        window.localStorage.setItem(persistentStorageKey, "true");
-        window.sessionStorage.setItem(sessionStorageKey, "true");
-      }
+      const dismissedIds = parseDismissedMessageIds(window.localStorage.getItem(messageStorageKey));
+      const nextDismissedIds = dismissMessageId(dismissedIds, DASHBOARD_LOGO_HINT_MESSAGE_ID);
+      window.localStorage.setItem(messageStorageKey, serializeDismissedMessageIds(nextDismissedIds));
     } catch (error) {
       console.warn("Could not persist dashboard logo hint dismissal state.", error);
     }
 
     setShowDashboardLogoHint(false);
-  }, [currentUserId]);
+  }, [currentUserId, isCurrentUserLoading]);
 
   function handleInviteEntrySubmit() {
     const token = normalizeInviteTokenInput(inviteEntryValue);
@@ -568,23 +554,7 @@ export function DashboardOverview({
         />
       ) : null}
 
-      <section className="grid grid-cols-3 overflow-hidden rounded-lg border border-gray-200 bg-white">
-        <DashboardStatPane
-          icon={<CalendarDays className="h-5 w-5" />}
-          label="Group matches"
-          value={String(groupMatches.length)}
-        />
-        <DashboardStatPane
-          icon={<Sparkles className="h-5 w-5" />}
-          label="Picks saved"
-          value={`${completedCount}/${groupMatches.length}`}
-        />
-        <DashboardStatPane
-          icon={<span className="text-xl leading-none">⏱</span>}
-          label="Next match"
-          value={formatNextMatchCountdown(nextOpenMatch?.kickoffTime ?? null)}
-        />
-      </section>
+      <DashboardCommandCenter summary={initialCommandCenterSummary} />
 
       {availableStandingsGroups.length > 0 ? (
         <section className="space-y-3">
@@ -643,13 +613,7 @@ export function DashboardOverview({
         </section>
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2">
-        <DashboardLinkCard
-          href="/knockout"
-          icon={Network}
-          title="Knockout Picks"
-          copy="Bracket picks from the Round of 32 to the Final."
-        />
+      <section>
         <DashboardLinkCard
           href="/trophies"
           icon={Trophy}
@@ -721,22 +685,6 @@ export function DashboardOverview({
   );
 }
 
-type StatCardProps = {
-  icon: ReactNode;
-  label: string;
-  value: string;
-};
-
-function DashboardStatPane({ icon, label, value }: StatCardProps) {
-  return (
-    <div className="flex min-h-[112px] flex-col items-center justify-center border-r border-gray-200 px-4 py-3.5 text-center last:border-r-0">
-      <span className="inline-flex h-5 w-5 items-center justify-center text-accent-dark">{icon}</span>
-      <p className="mt-3 text-2xl font-black">{value}</p>
-      <p className="mt-1 text-sm font-semibold text-gray-600">{label}</p>
-    </div>
-  );
-}
-
 type DashboardLinkCardProps = {
   href: string;
   icon: typeof CalendarDays;
@@ -748,7 +696,7 @@ function DashboardLinkCard({ href, icon: Icon, title, copy }: DashboardLinkCardP
   return (
     <Link
       href={href}
-      className="rounded-lg border border-gray-200 bg-white p-4 transition-colors hover:border-accent hover:bg-accent-light"
+      className="flex w-full flex-col rounded-lg border border-gray-200 bg-white p-4 transition-colors hover:border-accent hover:bg-accent-light"
     >
       <Icon aria-hidden className="h-5 w-5 text-accent-dark" />
       <h3 className="mt-4 text-lg font-black">{title}</h3>
@@ -805,30 +753,4 @@ function usePersistentExplainerLanguage(user: { preferredLanguage?: string | nul
   }, [displayLanguage]);
 
   return [displayLanguage, setDisplayLanguage] as const;
-}
-
-function formatNextMatchCountdown(kickoffTime: string | null) {
-  if (!kickoffTime) {
-    return "TBD";
-  }
-
-  const diffMs = new Date(kickoffTime).getTime() - Date.now();
-  if (diffMs <= 0) {
-    return "Live";
-  }
-
-  const totalMinutes = Math.floor(diffMs / 60000);
-  const days = Math.floor(totalMinutes / (60 * 24));
-  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
-  const minutes = totalMinutes % 60;
-
-  if (days > 0) {
-    return `${days}d ${hours}h`;
-  }
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-
-  return `${minutes}m`;
 }
