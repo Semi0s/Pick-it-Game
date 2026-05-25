@@ -21,11 +21,12 @@ import {
   updateCurrentUserNotificationPreferences,
   uploadCurrentUserAvatar
 } from "@/lib/auth-client";
-import { getAccessLevel, getAccessLevelDescription, getAccessLevelLabel } from "@/lib/access-levels";
+import { getAccessLevel } from "@/lib/access-levels";
 import { showAppToast } from "@/lib/app-toast";
 import type { LegalDocument } from "@/lib/legal";
 import { getStrings } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
+import { resolveTierAccess } from "@/lib/tier-access";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import type { UserTrophy } from "@/lib/types";
 import type { CurrentLegalDocument } from "@/lib/auth-client";
@@ -82,6 +83,7 @@ export function ProfileSummary({
     bracketPoints: 0,
     correctPicks: 0
   });
+  const [isProfileEditingOpen, setIsProfileEditingOpen] = useSessionDisclosureState("profile-editing-disclosure", false);
   const [isFollowedTeamsOpen, setIsFollowedTeamsOpen] = useSessionDisclosureState("profile-followed-teams-disclosure", false);
   const [followedTeamIdsDraft, setFollowedTeamIdsDraft] = useState<string[]>([]);
   const [followedTeamSelection, setFollowedTeamSelection] = useState("");
@@ -221,6 +223,11 @@ export function ProfileSummary({
 
   const copy = getStrings(user.preferredLanguage);
   const currentAccessLevel = getAccessLevel(user);
+  const currentTierAccess = resolveTierAccess({
+    role: user.role,
+    planTier: user.planTier,
+    managerLimits: user.managerLimits ?? null
+  });
   const hasOrganizerResetAccess = currentAccessLevel !== "player" || managedGroupCount > 0;
   const canUseSelfServiceTestingReset = selfServiceTestResetEnabled && hasOrganizerResetAccess;
   const canSeeSelfServiceTestingResetHint =
@@ -228,6 +235,15 @@ export function ProfileSummary({
   const hasPendingFollowedTeamsChanges =
     JSON.stringify(followedTeamIdsDraft) !== JSON.stringify(user.followedTeamIds ?? []);
   const allTeamsFollowed = sortedTeams.length > 0 && followedTeamIdsDraft.length === sortedTeams.length;
+  const membershipSummaryLines = currentTierAccess.limits.isUnlimited
+    ? ["Unlimited groups", "Unlimited members per group", "Unlimited total players"]
+    : currentTierAccess.accessLevel === "player"
+      ? []
+      : [
+          `Up to ${currentTierAccess.limits.maxGroups ?? 0} groups`,
+          `${currentTierAccess.limits.maxMembersPerGroup ?? 0} members per group`,
+          `${currentTierAccess.limits.maxTotalPlayers ?? 0} total players`
+        ];
 
   return (
     <section className="space-y-5">
@@ -235,18 +251,21 @@ export function ProfileSummary({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Profile</p>
           <div className="rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
-            Membership Active
+            Active
           </div>
         </div>
         <div className="mt-4 flex min-w-0 items-center gap-4">
           <Avatar name={user.name} avatarUrl={user.avatarUrl} size="lg" className="rounded-lg" />
           <div className="min-w-0">
             <h2 className="truncate text-xl font-black leading-tight sm:text-2xl">{user.name}</h2>
-            <p className="mt-2 text-sm text-accent-dark">
-              {getAccessLevelLabel(user)}
-              {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
-            </p>
-            <p className="truncate text-sm text-gray-600">{user.email}</p>
+            {membershipSummaryLines.length > 0 ? (
+              <div className="mt-2 space-y-0.5 text-sm leading-tight text-accent-dark">
+                {membershipSummaryLines.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
+            ) : null}
+            <p className="mt-2 truncate text-sm text-gray-600">{user.email}</p>
             <div className="mt-2">
               {user.homeTeamId ? (
                 <HomeTeamBadge teamId={user.homeTeamId} />
@@ -320,281 +339,289 @@ export function ProfileSummary({
       </div>
 
       <div className="ui-card p-4">
-        <h3 className="text-lg font-bold">Profile editing</h3>
-        <label className="mt-4 block">
-          <span className="text-sm font-bold text-gray-800">Home Team</span>
-          <p className="mt-1 text-sm font-semibold text-gray-500">Choose the team you&apos;re backing.</p>
-          <select
-            value={user.homeTeamId ?? ""}
-            disabled={isUpdatingHomeTeam}
-            onChange={async (event) => {
-              setIsUpdatingHomeTeam(true);
-              setNotificationMessage(null);
-              const result = await updateCurrentUserHomeTeam(event.target.value || null);
-              setNotificationMessage({
-                tone: result.ok ? "success" : "error",
-                text: result.message ?? "Something went wrong."
-              });
-              if (result.ok) {
-                await refresh();
-              }
-              setIsUpdatingHomeTeam(false);
-            }}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
-          >
-            <option value="">No home team selected</option>
-            {sortedTeams.map((team) => (
-              <option key={team.id} value={team.id}>
-                {team.flagEmoji} {team.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div id="followed-teams" className="mt-4 rounded-[1.15rem] border border-gray-200 bg-gray-50/70 p-3 scroll-mt-24">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-bold text-gray-800">Followed Teams</p>
-              <p className="mt-1 text-sm font-semibold text-gray-500">
-                These teams tune your dashboard reminder and stay ready for future League and My Picks views.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="ui-chip-sm border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-700">
-                {allTeamsFollowed ? "All teams" : `${selectedFollowedTeams.length} team${selectedFollowedTeams.length === 1 ? "" : "s"}`}
-              </div>
-              <InlineDisclosureButton
-                isOpen={isFollowedTeamsOpen}
-                variant="subtle"
-                onClick={() => setIsFollowedTeamsOpen((current) => !current)}
-              />
-            </div>
-          </div>
-          {isFollowedTeamsOpen ? (
-            <>
-              <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-                <label className="min-w-0 flex-1">
-                  <span className="sr-only">Choose a team to follow</span>
-                  <select
-                    value={followedTeamSelection}
-                    onChange={(event) => setFollowedTeamSelection(event.target.value)}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                  >
-                    <option value="">Add a team</option>
-                    {availableFollowedTeamOptions.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.groupName} · {team.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={!followedTeamSelection || allTeamsFollowed}
-                    onClick={() => {
-                      if (!followedTeamSelection) {
-                        return;
-                      }
-
-                      setFollowedTeamIdsDraft((current) =>
-                        current.includes(followedTeamSelection) ? current : [...current, followedTeamSelection]
-                      );
-                      setFollowedTeamSelection("");
-                    }}
-                    className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
-                  >
-                    Add Team
-                  </button>
-                  <button
-                    type="button"
-                    disabled={allTeamsFollowed || sortedTeams.length === 0}
-                    onClick={() => {
-                      setFollowedTeamIdsDraft(sortedTeams.map((team) => team.id));
-                      setFollowedTeamSelection("");
-                    }}
-                    className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
-                  >
-                    Add All Teams
-                  </button>
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-lg font-bold">Profile editing</h3>
+          <InlineDisclosureButton
+            isOpen={isProfileEditingOpen}
+            variant="subtle"
+            onClick={() => setIsProfileEditingOpen((current) => !current)}
+            className="shrink-0"
+          />
+        </div>
+        {isProfileEditingOpen ? (
+          <>
+            <label className="mt-4 block">
+              <span className="text-sm font-bold text-gray-800">Home Team</span>
+              <p className="mt-1 text-sm font-semibold text-gray-500">Choose the team you&apos;re backing.</p>
+              <select
+                value={user.homeTeamId ?? ""}
+                disabled={isUpdatingHomeTeam}
+                onChange={async (event) => {
+                  setIsUpdatingHomeTeam(true);
+                  setNotificationMessage(null);
+                  const result = await updateCurrentUserHomeTeam(event.target.value || null);
+                  setNotificationMessage({
+                    tone: result.ok ? "success" : "error",
+                    text: result.message ?? "Something went wrong."
+                  });
+                  if (result.ok) {
+                    await refresh();
+                  }
+                  setIsUpdatingHomeTeam(false);
+                }}
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+              >
+                <option value="">No home team selected</option>
+                {sortedTeams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.flagEmoji} {team.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div id="followed-teams" className="mt-4 rounded-[1.15rem] border border-gray-200 bg-gray-50/70 p-3 scroll-mt-24">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm font-bold text-gray-800">Followed Teams</p>
+                <div className="ui-chip-sm border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-700">
+                  {allTeamsFollowed ? "All" : selectedFollowedTeams.length}
                 </div>
               </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {user.homeTeamId && !followedTeamIdsDraft.includes(user.homeTeamId) ? (
-                  <button
-                    type="button"
-                    onClick={() => setFollowedTeamIdsDraft((current) => [user.homeTeamId as string, ...current])}
-                    className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                  >
-                    Add Home Team
-                  </button>
-                ) : null}
-                {followedTeamIdsDraft.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFollowedTeamIdsDraft([]);
-                      setFollowedTeamSelection("");
-                    }}
-                    className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                  >
-                    Clear
-                  </button>
-                ) : null}
+              <p className="mt-1 text-sm font-normal text-gray-500">App focus and reminders will follow these teams.</p>
+              <div className="mt-2 flex justify-end">
+                <InlineDisclosureButton
+                  isOpen={isFollowedTeamsOpen}
+                  variant="subtle"
+                  onClick={() => setIsFollowedTeamsOpen((current) => !current)}
+                />
               </div>
-              {allTeamsFollowed ? (
-                <p className="mt-3 rounded-md border border-accent-light bg-accent-light/40 px-3 py-3 text-sm font-semibold text-accent-dark">
-                  All teams are included in your dashboard reminders.
-                </p>
-              ) : null}
-              <div className="mt-3 space-y-2">
-                {selectedFollowedTeams.length > 0 ? (
-                  selectedFollowedTeams.map((team) => (
-                    <div key={team.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-black text-gray-950">
-                          {team.flagEmoji ? `${team.flagEmoji} ` : ""}{team.name}
-                        </p>
-                        <p className="mt-1 text-xs font-semibold text-gray-500">{team.groupName}</p>
-                      </div>
+              {isFollowedTeamsOpen ? (
+                <>
+                  <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                    <label className="min-w-0 flex-1">
+                      <span className="sr-only">Choose a team to follow</span>
+                      <select
+                        value={followedTeamSelection}
+                        onChange={(event) => setFollowedTeamSelection(event.target.value)}
+                        className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                      >
+                        <option value="">Add a team</option>
+                        {availableFollowedTeamOptions.map((team) => (
+                          <option key={team.id} value={team.id}>
+                            {team.groupName} · {team.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="flex gap-2">
                       <button
                         type="button"
-                        onClick={() =>
-                          setFollowedTeamIdsDraft((current) => current.filter((teamId) => teamId !== team.id))
-                        }
-                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-rose-300 bg-white px-3 py-2 text-xs font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 sm:text-sm"
+                        disabled={!followedTeamSelection || allTeamsFollowed}
+                        onClick={() => {
+                          if (!followedTeamSelection) {
+                            return;
+                          }
+
+                          setFollowedTeamIdsDraft((current) =>
+                            current.includes(followedTeamSelection) ? current : [...current, followedTeamSelection]
+                          );
+                          setFollowedTeamSelection("");
+                        }}
+                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
                       >
-                        Remove
+                        Add Team
+                      </button>
+                      <button
+                        type="button"
+                        disabled={allTeamsFollowed || sortedTeams.length === 0}
+                        onClick={() => {
+                          setFollowedTeamIdsDraft(sortedTeams.map((team) => team.id));
+                          setFollowedTeamSelection("");
+                        }}
+                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                      >
+                        Add All Teams
                       </button>
                     </div>
-                  ))
-                ) : (
-                  <p className="rounded-md border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-500">
-                    No teams selected yet.
-                  </p>
-                )}
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={isUpdatingFollowedTeams || !hasPendingFollowedTeamsChanges}
-                  onClick={async () => {
-                    setIsUpdatingFollowedTeams(true);
-                    setNotificationMessage(null);
-                    const result = await updateCurrentUserFollowedTeams(followedTeamIdsDraft);
-                    setNotificationMessage({
-                      tone: result.ok ? "success" : "error",
-                      text: result.message ?? "Something went wrong."
-                    });
-                    if (result.ok) {
-                      await refresh();
-                    }
-                    setIsUpdatingFollowedTeams(false);
-                  }}
-                  className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
-                >
-                  {isUpdatingFollowedTeams ? "Saving..." : "Save Followed Teams"}
-                </button>
-                <p className="text-xs font-semibold text-gray-500">Your dashboard reminder follows these teams.</p>
-              </div>
-            </>
-          ) : null}
-        </div>
-        <label className="mt-4 block">
-          <span className="text-sm font-bold text-gray-800">{copy.language}</span>
-          <select
-            value={user.preferredLanguage ?? "en"}
-            disabled={isUpdatingLanguage}
-            onChange={async (event) => {
-              setIsUpdatingLanguage(true);
-              setNotificationMessage(null);
-              const result = await updateCurrentUserPreferredLanguage(event.target.value);
-              setNotificationMessage({
-                tone: result.ok ? "success" : "error",
-                text: result.message ?? "Something went wrong."
-              });
-              if (result.ok) {
-                await refresh();
-              }
-              setIsUpdatingLanguage(false);
-            }}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
-          >
-            <option value="en">{copy.english}</option>
-            <option value="es">{copy.spanish}</option>
-          </select>
-        </label>
-        <div className="mt-5 border-t border-gray-200 pt-4">
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={async () => {
-                await signOutCurrentUser();
-                router.replace("/login");
-                router.refresh();
-              }}
-              className="inline-flex rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
-            >
-              Sign out
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowDeleteAccountPrompt((current) => !current)}
-              className="inline-flex rounded-md border border-rose-300 bg-white px-4 py-3 text-sm font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50"
-            >
-              Delete my account
-            </button>
-          </div>
-          {showDeleteAccountPrompt ? (
-            <div className="mt-3 rounded-md border border-rose-200 bg-rose-50/70 p-3">
-              <p className="text-sm font-semibold text-rose-800">
-                This permanently deletes your account. Type <span className="font-black">{user.email?.trim().toLowerCase()}</span> to confirm.
-              </p>
-              <input
-                type="text"
-                value={deleteAccountConfirmation}
-                onChange={(event) => setDeleteAccountConfirmation(event.target.value)}
-                placeholder={user.email?.trim().toLowerCase() ?? "your email"}
-                className="mt-3 w-full rounded-md border border-rose-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
-              />
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={isDeletingAccount || deleteAccountConfirmation.trim().toLowerCase() !== (user.email?.trim().toLowerCase() ?? "")}
-                  onClick={async () => {
-                    setIsDeletingAccount(true);
-                    setDeleteAccountMessage(null);
-                    const result = await deleteCurrentUserAccount(deleteAccountConfirmation);
-                    setDeleteAccountMessage({
-                      tone: result.ok ? "success" : "error",
-                      text: result.message ?? "Could not delete your account."
-                    });
-                    if (result.ok) {
-                      await signOutCurrentUser();
-                      router.replace("/login");
-                      router.refresh();
-                      return;
-                    }
-                    setIsDeletingAccount(false);
-                  }}
-                  className="inline-flex rounded-md border border-rose-600 bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600"
-                >
-                  {isDeletingAccount ? "Deleting..." : "Permanently delete account"}
-                </button>
-                <button
-                  type="button"
-                  disabled={isDeletingAccount}
-                  onClick={() => {
-                    setShowDeleteAccountPrompt(false);
-                    setDeleteAccountConfirmation("");
-                  }}
-                  className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-700"
-                >
-                  Cancel
-                </button>
-              </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {user.homeTeamId && !followedTeamIdsDraft.includes(user.homeTeamId) ? (
+                      <button
+                        type="button"
+                        onClick={() => setFollowedTeamIdsDraft((current) => [user.homeTeamId as string, ...current])}
+                        className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                      >
+                        Add Home Team
+                      </button>
+                    ) : null}
+                    {followedTeamIdsDraft.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFollowedTeamIdsDraft([]);
+                          setFollowedTeamSelection("");
+                        }}
+                        className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                      >
+                        Clear
+                      </button>
+                    ) : null}
+                  </div>
+                  {allTeamsFollowed ? (
+                    <p className="mt-3 rounded-md border border-accent-light bg-accent-light/40 px-3 py-3 text-sm font-semibold text-accent-dark">
+                      All teams are included in your dashboard reminders.
+                    </p>
+                  ) : null}
+                  <div className="mt-3 space-y-2">
+                    {selectedFollowedTeams.length > 0 ? (
+                      selectedFollowedTeams.map((team) => (
+                        <div key={team.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-black text-gray-950">
+                              {team.flagEmoji ? `${team.flagEmoji} ` : ""}{team.name}
+                            </p>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">{team.groupName}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFollowedTeamIdsDraft((current) => current.filter((teamId) => teamId !== team.id))
+                            }
+                            className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-rose-300 bg-white px-3 py-2 text-xs font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 sm:text-sm"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="rounded-md border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-500">
+                        No teams selected yet.
+                      </p>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isUpdatingFollowedTeams || !hasPendingFollowedTeamsChanges}
+                      onClick={async () => {
+                        setIsUpdatingFollowedTeams(true);
+                        setNotificationMessage(null);
+                        const result = await updateCurrentUserFollowedTeams(followedTeamIdsDraft);
+                        setNotificationMessage({
+                          tone: result.ok ? "success" : "error",
+                          text: result.message ?? "Something went wrong."
+                        });
+                        if (result.ok) {
+                          await refresh();
+                        }
+                        setIsUpdatingFollowedTeams(false);
+                      }}
+                      className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                    >
+                      {isUpdatingFollowedTeams ? "Saving..." : "Save Followed Teams"}
+                    </button>
+                    <p className="text-xs font-semibold text-gray-500">Your dashboard reminder follows these teams.</p>
+                  </div>
+                </>
+              ) : null}
             </div>
-          ) : null}
-        </div>
+            <label className="mt-4 block">
+              <span className="text-sm font-bold text-gray-800">{copy.language}</span>
+              <select
+                value={user.preferredLanguage ?? "en"}
+                disabled={isUpdatingLanguage}
+                onChange={async (event) => {
+                  setIsUpdatingLanguage(true);
+                  setNotificationMessage(null);
+                  const result = await updateCurrentUserPreferredLanguage(event.target.value);
+                  setNotificationMessage({
+                    tone: result.ok ? "success" : "error",
+                    text: result.message ?? "Something went wrong."
+                  });
+                  if (result.ok) {
+                    await refresh();
+                  }
+                  setIsUpdatingLanguage(false);
+                }}
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+              >
+                <option value="en">{copy.english}</option>
+                <option value="es">{copy.spanish}</option>
+              </select>
+            </label>
+            <div className="mt-5 border-t border-gray-200 pt-4">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await signOutCurrentUser();
+                    router.replace("/login");
+                    router.refresh();
+                  }}
+                  className="inline-flex rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
+                >
+                  Sign out
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteAccountPrompt((current) => !current)}
+                  className="inline-flex rounded-md border border-rose-300 bg-white px-4 py-3 text-sm font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50"
+                >
+                  Delete my account
+                </button>
+              </div>
+              {showDeleteAccountPrompt ? (
+                <div className="mt-3 rounded-md border border-rose-200 bg-rose-50/70 p-3">
+                  <p className="text-sm font-semibold text-rose-800">
+                    This permanently deletes your account. Type <span className="font-black">{user.email?.trim().toLowerCase()}</span> to confirm.
+                  </p>
+                  <input
+                    type="text"
+                    value={deleteAccountConfirmation}
+                    onChange={(event) => setDeleteAccountConfirmation(event.target.value)}
+                    placeholder={user.email?.trim().toLowerCase() ?? "your email"}
+                    className="mt-3 w-full rounded-md border border-rose-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                  />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={isDeletingAccount || deleteAccountConfirmation.trim().toLowerCase() !== (user.email?.trim().toLowerCase() ?? "")}
+                      onClick={async () => {
+                        setIsDeletingAccount(true);
+                        setDeleteAccountMessage(null);
+                        const result = await deleteCurrentUserAccount(deleteAccountConfirmation);
+                        setDeleteAccountMessage({
+                          tone: result.ok ? "success" : "error",
+                          text: result.message ?? "Could not delete your account."
+                        });
+                        if (result.ok) {
+                          await signOutCurrentUser();
+                          router.replace("/login");
+                          router.refresh();
+                          return;
+                        }
+                        setIsDeletingAccount(false);
+                      }}
+                      className="inline-flex rounded-md border border-rose-600 bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600"
+                    >
+                      {isDeletingAccount ? "Deleting..." : "Permanently delete account"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isDeletingAccount}
+                      onClick={() => {
+                        setShowDeleteAccountPrompt(false);
+                        setDeleteAccountConfirmation("");
+                      }}
+                      className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-700"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="ui-card p-4">

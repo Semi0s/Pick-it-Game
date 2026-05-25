@@ -596,9 +596,9 @@ export function AppShell({ children }: AppShellProps) {
           <Link href="/dashboard" className="shrink-0" aria-label="PICK-IT! World Cup 2026 home">
             <PickItLogo
               alt="PICK-IT! World Cup 2026"
-              sizes="(max-width: 430px) 132px, (max-width: 640px) 164px, 208px"
+              sizes="(max-width: 430px) 119px, (max-width: 640px) 148px, 187px"
               priority
-              className="w-[clamp(8.25rem,34vw,13rem)] min-w-[8.25rem] max-w-[13rem] shrink-0"
+              className="w-[clamp(7.425rem,30.6vw,11.7rem)] min-w-[7.425rem] max-w-[11.7rem] shrink-0"
             />
           </Link>
           <div className="flex shrink-0 items-center gap-1.5 max-[430px]:gap-1">
