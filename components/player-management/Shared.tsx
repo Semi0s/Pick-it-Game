@@ -4,7 +4,11 @@ import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react"
 import { Dispatch, SetStateAction, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { LocalizedCardBackground } from "@/components/localized-card/LocalizedCardBackground";
-import { getLocalizedCardCssVars, getLocalizedCardTheme, type LocalizedCardThemeInput } from "@/lib/localized-card-themes";
+import {
+  getLocalizedCardCssVars,
+  getLocalizedCardThemeForUserSurface,
+  type LocalizedCardThemeInput
+} from "@/lib/localized-card-themes";
 import type { AccessLevel } from "@/lib/tier-access";
 import { useCurrentUser } from "@/lib/use-current-user";
 
@@ -36,7 +40,7 @@ export function InlineDisclosureButton({
   const baseClassName =
     variant === "subtle"
       ? "inline-flex items-center gap-1 px-0 py-0 text-[10px] font-semibold uppercase tracking-wide text-gray-700 transition hover:text-accent-dark"
-      : "inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark";
+      : "ui-chip-sm border border-gray-300 bg-gray-50 font-bold uppercase tracking-[0.14em] text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark";
 
   return (
     <button
@@ -459,14 +463,8 @@ export function normalizeInviteTokenInput(value: string) {
 export function ManagementIntro({
   eyebrow,
   title,
-  description,
   statusChip,
-  secondaryNote,
-  disclosureStorageKey,
-  disclosureVariant = "subtle",
-  disclosurePlacement = "below-title",
   statusChipPlacement = "top-right",
-  collapseBodyWhenClosed = false,
   localizedThemeInput
 }: {
   eyebrow?: string;
@@ -482,37 +480,22 @@ export function ManagementIntro({
   localizedThemeInput?: LocalizedCardThemeInput;
 }) {
   const { user } = useCurrentUser();
-  const [isMoreOpen, setIsMoreOpen] = useSessionDisclosureState(
-    disclosureStorageKey ??
-      `management-intro:${(eyebrow ?? title).toLowerCase().replace(/\s+/g, "-")}`,
-    false
-  );
-  const localizedTheme = getLocalizedCardTheme({
+  const localizedTheme = getLocalizedCardThemeForUserSurface({
     homeTeamId: localizedThemeInput?.homeTeamId ?? user?.homeTeamId,
     countryCode: localizedThemeInput?.countryCode,
     marketCode: localizedThemeInput?.marketCode,
     preferredLanguage: localizedThemeInput?.preferredLanguage ?? user?.preferredLanguage
   });
   const localizedCardVars = getLocalizedCardCssVars(localizedTheme);
-  const shouldShowBody = !collapseBodyWhenClosed || isMoreOpen;
-  const shouldShowInlineTopRightChip =
-    Boolean(statusChip) && statusChipPlacement === "top-right" && disclosurePlacement !== "top-right";
-  const shouldShowStackedTopRightChip =
-    Boolean(statusChip) && statusChipPlacement === "top-right" && disclosurePlacement === "top-right";
-  const shouldPreserveRightControlZone =
-    disclosurePlacement === "top-right" || statusChipPlacement === "top-right";
+  const shouldShowTopRightChip = Boolean(statusChip) && statusChipPlacement === "top-right";
   const controlSurfaceStyle = {
     backgroundColor: "var(--localized-card-control-surface)",
     color: "var(--localized-card-control-text)"
   } as const;
-  const subtleDisclosureClassName =
-    "text-[color:var(--localized-card-secondary-text)] hover:text-[color:var(--localized-card-text)]";
-  const chipDisclosureClassName =
-    "border-transparent bg-[var(--localized-card-control-surface)] text-[color:var(--localized-card-control-text)] hover:border-transparent hover:bg-[var(--localized-card-control-surface)] hover:text-[color:var(--localized-card-control-text)]";
 
   return (
     <section
-      className="relative overflow-hidden rounded-lg border p-5"
+      className="relative overflow-hidden rounded-[1.15rem] p-5"
       style={{
         ...localizedCardVars,
         backgroundColor: "var(--localized-card-bg)",
@@ -520,7 +503,7 @@ export function ManagementIntro({
         color: "var(--localized-card-text)"
       }}
     >
-      <LocalizedCardBackground theme={localizedTheme} preserveRightControlZone={shouldPreserveRightControlZone} />
+      <LocalizedCardBackground theme={localizedTheme} preserveRightControlZone={shouldShowTopRightChip} />
       <div className="flex items-start justify-between gap-3">
         {eyebrow ? (
           <p className="relative text-sm font-bold uppercase tracking-wide text-[color:var(--localized-card-secondary-text)]">
@@ -529,104 +512,28 @@ export function ManagementIntro({
         ) : (
           <div />
         )}
-        {disclosurePlacement === "top-right" ? (
-          <InlineDisclosureButton
-            isOpen={isMoreOpen}
-            variant={disclosureVariant}
-            onClick={() => setIsMoreOpen((current) => !current)}
-            className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
-          />
-        ) : shouldShowInlineTopRightChip ? (
+        {shouldShowTopRightChip ? (
           <div
-            className="relative shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2"
+            className="ui-chip-sm relative shrink-0 font-semibold"
             style={controlSurfaceStyle}
           >
             {statusChip}
           </div>
         ) : null}
       </div>
-      {shouldShowStackedTopRightChip ? (
-        <div className="mt-3 flex justify-end">
-          <div
-            className="relative shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2"
-            style={controlSurfaceStyle}
-          >
-            {statusChip}
+      <div className="relative mt-3 min-w-0">
+        <h2 className="text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">{title}</h2>
+        {statusChip && statusChipPlacement === "below-title" ? (
+          <div className="mt-3 flex justify-start">
+            <div
+              className="ui-chip-sm shrink-0 font-semibold"
+              style={controlSurfaceStyle}
+            >
+              {statusChip}
+            </div>
           </div>
-        </div>
-      ) : null}
-      {shouldShowBody ? (
-        <div className="relative mt-3 min-w-0">
-          <h2 className="text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">{title}</h2>
-          {statusChip && statusChipPlacement === "below-title" ? (
-            <div className="mt-3 flex justify-start">
-              <div
-                className="shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold sm:px-3 sm:py-2"
-                style={controlSurfaceStyle}
-              >
-                {statusChip}
-              </div>
-            </div>
-          ) : null}
-          {disclosurePlacement === "below-title" ? (
-            <div className="mt-3 flex justify-start">
-              <InlineDisclosureButton
-                isOpen={isMoreOpen}
-                variant={disclosureVariant}
-                onClick={() => setIsMoreOpen((current) => !current)}
-                className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
-              />
-            </div>
-          ) : null}
-          {isMoreOpen ? (
-            <div className="mt-3">
-              <p className="text-sm leading-6 text-[color:var(--localized-card-secondary-text)]">{description}</p>
-              {secondaryNote ? (
-                <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-[color:var(--localized-card-secondary-text)]">
-                  {secondaryNote}
-                </p>
-              ) : null}
-              {disclosurePlacement === "bottom-right" ? (
-                <div className="mt-3 flex justify-end">
-                  <InlineDisclosureButton
-                    isOpen={isMoreOpen}
-                    variant={disclosureVariant}
-                    onClick={() => setIsMoreOpen((current) => !current)}
-                    className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
-                  />
-                </div>
-              ) : null}
-            </div>
-          ) : disclosurePlacement === "bottom-right" ? (
-            <div className="mt-3 flex justify-end">
-              <InlineDisclosureButton
-                isOpen={isMoreOpen}
-                variant={disclosureVariant}
-                onClick={() => setIsMoreOpen((current) => !current)}
-                className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
-              />
-            </div>
-          ) : null}
-        </div>
-      ) : disclosurePlacement === "bottom-right" ? (
-        <div className="mt-3 flex justify-end">
-          <InlineDisclosureButton
-            isOpen={isMoreOpen}
-            variant={disclosureVariant}
-            onClick={() => setIsMoreOpen((current) => !current)}
-            className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
-          />
-        </div>
-      ) : disclosurePlacement === "below-title" ? (
-        <div className="mt-3 flex justify-start">
-          <InlineDisclosureButton
-            isOpen={isMoreOpen}
-            variant={disclosureVariant}
-            onClick={() => setIsMoreOpen((current) => !current)}
-            className={disclosureVariant === "subtle" ? subtleDisclosureClassName : chipDisclosureClassName}
-          />
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -685,7 +592,7 @@ export function HierarchyPanel({
 
   return (
     <section className="space-y-3">
-      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+      <div className="ui-card px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">LEVELS</p>
           <InlineDisclosureButton
@@ -704,7 +611,7 @@ export function HierarchyPanel({
                 ? "text-accent-dark"
                 : level.key === "manager" || level.key === "director" || level.key === "managing_director"
                   ? "text-amber-700"
-                  : "text-green-700";
+                  : "text-accent-dark";
 
             return (
               <HierarchyCard
@@ -747,7 +654,7 @@ export function ManagementToolbar({
   className?: string;
 }) {
   return (
-    <div className={`grid gap-3 rounded-lg border border-gray-200 bg-white p-4 md:grid-cols-[minmax(0,1fr)_220px_auto] md:items-end ${className ?? ""}`}>
+    <div className={`ui-card grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_220px_auto] md:items-end ${className ?? ""}`}>
       <label className="block">
         <span className="text-sm font-bold text-gray-800">Search</span>
         <input
@@ -795,7 +702,7 @@ export function ManagementSection({
 
   return (
     <section className="space-y-3">
-      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+      <div className="ui-card px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-xl font-black">{title}</h3>
@@ -836,7 +743,7 @@ export function ManagementCard({
   className?: string;
 }) {
   return (
-    <div className={`rounded-lg border border-gray-200 p-4 ${className ?? "bg-white"}`}>
+    <div className={`rounded-[1.15rem] border border-gray-200 p-4 ${className ?? "bg-white"}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className={titleClassName ?? "text-base"}>{title}</div>
@@ -898,7 +805,7 @@ export function ManagementBadge({
             : "bg-gray-100 text-gray-700";
 
   return (
-    <span className={`rounded-md px-2 py-1 text-xs font-bold uppercase ${className}`}>
+    <span className={`ui-chip-sm border border-transparent font-bold uppercase tracking-[0.14em] ${className}`}>
       {label}
     </span>
   );
@@ -940,7 +847,7 @@ export function ActionButton({
 
 export function ManagementEmptyState({ message }: { message: string }) {
   return (
-    <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
+    <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
       {message}
     </p>
   );
@@ -962,7 +869,7 @@ export function InviteEntryForm({
   description?: string;
 }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
+    <div className="ui-card p-4">
       <p className="text-sm font-black text-gray-950">Use an invite link</p>
       <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">{description}</p>
       <label className="mt-4 block">
@@ -1004,7 +911,7 @@ export function InlineConfirmation({
   tone?: "danger" | "neutral";
 }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <div className="ui-card-soft p-4">
       <p className="text-sm font-black text-gray-950">{title}</p>
       <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">{description}</p>
       <div className="mt-4 flex flex-wrap gap-2">
@@ -1051,7 +958,7 @@ export function InlineTextConfirmation({
   const matches = value.trim() === expectedValue.trim();
 
   return (
-    <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+    <div className="rounded-[1.15rem] border border-red-200 bg-red-50 p-4">
       <p className="text-sm font-black text-gray-950">{title}</p>
       <p className="mt-2 text-sm font-semibold leading-6 text-gray-700">{description}</p>
       <label className="mt-4 block">
@@ -1103,7 +1010,7 @@ function HierarchyCard({
           : "border-green-200 bg-green-50";
 
   return (
-    <div className={`rounded-md border p-2 transition-colors ${isActive ? activeClasses : "border-gray-200 bg-gray-50"}`}>
+    <div className={`rounded-[1rem] border p-2 transition-colors ${isActive ? activeClasses : "border-gray-200 bg-gray-50"}`}>
       <div className="flex items-center justify-between gap-3">
         <h3 className={`text-xs font-black ${isActive ? "text-gray-950" : "text-gray-500"}`}>{title}</h3>
         <div className="flex items-center gap-2">

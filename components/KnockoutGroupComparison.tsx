@@ -21,7 +21,7 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
 
   if (view.groups.length === 0) {
     return (
-      <section className="rounded-lg border border-gray-200 bg-white p-5">
+      <section className="ui-card p-5">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Group Standings</p>
         <h2 className="mt-2 text-2xl font-black leading-tight">No group bracket view yet.</h2>
         <p className="mt-3 text-base leading-7 text-gray-600">
@@ -33,7 +33,7 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
 
   return (
     <section className="space-y-4">
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="ui-card p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Group Bracket Comparison</p>
@@ -121,13 +121,13 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
                   onToggle={() => setIsDetailOpen((current) => !current)}
                 />
               ) : (
-                <section className="rounded-lg border border-gray-200 bg-white p-4">
+                <section className="ui-card p-4">
                   <p className="text-sm font-semibold text-gray-600">Tap a player to open that bracket detail.</p>
                 </section>
               )}
             </>
           ) : (
-            <section className="rounded-lg border border-gray-200 bg-white p-4">
+            <section className="ui-card p-4">
               <p className="text-sm font-semibold text-gray-600">Choose a group above to open its bracket comparison.</p>
             </section>
           )}
@@ -161,7 +161,7 @@ function SelectedBracketDetail({
   );
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-4">
+    <section className="ui-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Bracket Detail</p>
@@ -182,7 +182,7 @@ function SelectedBracketDetail({
         </span>
       </div>
 
-      <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+      <div className="ui-card-soft mt-4 p-3">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-gray-700">Round-by-round picks</p>

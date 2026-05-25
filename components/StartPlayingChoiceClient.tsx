@@ -201,7 +201,7 @@ export function StartPlayingChoiceClient() {
                   aria-label={`${index + 1} of ${steps.length}: ${item.title}`}
                 >
                   <div className="flex items-start gap-3">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#50aa5f] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent text-accent-text shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
                       <ItemIcon className="h-[30px] w-[30px]" />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -244,7 +244,7 @@ export function StartPlayingChoiceClient() {
               type="button"
               onClick={() => goToStep(stepIndex + 1)}
               aria-label="Go to next onboarding step"
-              className="inline-flex min-h-10 items-center justify-center rounded-xl border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+              className="inline-flex min-h-10 items-center justify-center rounded-xl border border-accent bg-accent-light px-4 py-2 text-sm font-bold text-accent-dark transition hover:border-accent-dark hover:bg-accent-light/80"
             >
               Next
             </button>
@@ -270,7 +270,7 @@ export function StartPlayingChoiceClient() {
                   void handleStartGroupPhase();
                 }}
                 aria-label="Start Group Stage"
-                className="inline-flex w-full min-h-10 items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-black text-white transition hover:bg-accent/95 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex w-full min-h-10 items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-black text-accent-text transition hover:bg-accent/95 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isSavingMode ? "Opening..." : "Start"}
               </button>
@@ -510,15 +510,15 @@ function GroupStageHelperMock() {
             }
             18% {
               transform: translateY(0);
-              background: #ecfdf3;
-              border-color: #86efac;
+              background: #eff7ee;
+              border-color: #88c783;
               color: #166534;
             }
             32%,
             80% {
               transform: translateY(-28px);
-              background: #ecfdf3;
-              border-color: #86efac;
+              background: #eff7ee;
+              border-color: #88c783;
               color: #166534;
             }
             88%,
@@ -599,7 +599,7 @@ function ThirdPlaceHelperMock() {
             <div
               key={item}
               className={`tp-row flex items-center justify-between rounded-lg border px-2 py-1 ${
-                index < 2 ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-white"
+                index < 2 ? "border-accent-light bg-accent-light/40" : "border-gray-200 bg-white"
               } ${index === 2 ? "tp-row-three" : index === 3 ? "tp-row-four" : ""}`}
             >
               <span className="text-[10px] font-black text-gray-700">{item}</span>
@@ -678,8 +678,8 @@ function ThirdPlaceHelperMock() {
             }
             30%,
             82% {
-              background: #ecfdf3;
-              border-color: #86efac;
+              background: #eff7ee;
+              border-color: #88c783;
               color: #166534;
             }
           }
@@ -695,8 +695,8 @@ function ThirdPlaceHelperMock() {
             }
             50%,
             82% {
-              background: #ecfdf3;
-              border-color: #86efac;
+              background: #eff7ee;
+              border-color: #88c783;
               color: #166534;
             }
           }
@@ -918,8 +918,8 @@ function KnockoutHelperMock() {
             }
             24%,
             80% {
-              border-color: #86efac;
-              background: #ecfdf3;
+              border-color: #88c783;
+              background: #eff7ee;
             }
           }
 
@@ -932,7 +932,7 @@ function KnockoutHelperMock() {
             }
             24%,
             80% {
-              color: #16a34a;
+              color: #56a24f;
             }
           }
 
@@ -1225,7 +1225,7 @@ function GroupsHelperMock() {
         <div className="mt-2 rounded-lg border border-gray-200 bg-white px-2 py-1">
           <p className="text-[10px] font-black text-gray-700">1. The Family</p>
         </div>
-        <div className="groups-add mt-1.5 rounded-lg border border-dashed border-emerald-300 bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">
+        <div className="groups-add mt-1.5 rounded-lg border border-dashed border-accent bg-accent-light px-2 py-1 text-[10px] font-black text-accent-dark">
           <span className="groups-add-text">Add John</span>
         </div>
         <div className="groups-list relative mt-1.5 space-y-1">
@@ -1286,13 +1286,13 @@ function GroupsHelperMock() {
             90%,
             100% {
               background: #ecfdf3;
-              border-color: #86efac;
+              border-color: #88c783;
               opacity: 1;
             }
             44%,
             82% {
-              background: #dcfce7;
-              border-color: #22c55e;
+              background: #dcefd8;
+              border-color: #56a24f;
               opacity: 1;
             }
           }

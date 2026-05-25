@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { fetchCurrentProfile, onAuthStateChange } from "@/lib/auth-client";
+import { CURRENT_USER_PROFILE_CHANGED_EVENT } from "@/lib/current-user-events";
 import type { UserProfile } from "@/lib/types";
 
 export function useCurrentUser() {
@@ -21,10 +22,12 @@ export function useCurrentUser() {
 
     loadProfile();
     const subscription = onAuthStateChange(loadProfile);
+    window.addEventListener(CURRENT_USER_PROFILE_CHANGED_EVENT, loadProfile);
 
     return () => {
       isMounted = false;
       subscription.unsubscribe();
+      window.removeEventListener(CURRENT_USER_PROFILE_CHANGED_EVENT, loadProfile);
     };
   }, []);
 

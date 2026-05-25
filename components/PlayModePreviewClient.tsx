@@ -32,7 +32,7 @@ const PREVIEW_CONTENT: Record<
     detail: "This is the launch starting point for regular players.",
     nextPath: "/bracket-builder",
     icon: Brackets,
-    accentClass: "bg-emerald-100 text-emerald-700"
+    accentClass: "bg-accent-light text-accent-dark"
   },
   strategy_mode: {
     title: "Global Challenge",
@@ -82,7 +82,7 @@ export function PlayModePreviewClient({ mode }: { mode: PreviewMode }) {
           </Link>
           <Link
             href={nextPath}
-            className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-3 text-sm font-black text-white transition hover:bg-accent/95"
+            className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-3 text-sm font-black text-accent-text transition hover:bg-accent/95"
           >
             Open {content.title}
           </Link>

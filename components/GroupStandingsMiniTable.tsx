@@ -76,10 +76,10 @@ export function GroupStandingsMiniTable({
             const movement = movementByTeamId?.[row.teamId];
             const rowClassName = row.isQualifier
               ? row.isHomeTeam
-                ? "bg-emerald-200/90"
-                : "bg-emerald-50"
+                ? "bg-accent-light/70"
+                : "bg-accent-light/40"
               : row.isPossibleQualifier
-                ? "bg-emerald-50/60"
+                ? "bg-accent-light/20"
                 : row.isHomeTeam
                   ? "bg-amber-100/80"
                   : "";
@@ -93,7 +93,7 @@ export function GroupStandingsMiniTable({
                   {movement ? (
                     <span
                       className={`text-[8px] font-bold leading-none ${
-                        movement === "up" ? "text-emerald-700" : "text-amber-700"
+                        movement === "up" ? "text-accent-dark" : "text-amber-700"
                       }`}
                       aria-label={movement === "up" ? "Moved up" : "Moved down"}
                     >

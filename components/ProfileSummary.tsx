@@ -82,7 +82,6 @@ export function ProfileSummary({
     bracketPoints: 0,
     correctPicks: 0
   });
-  const [isTopCardOpen, setIsTopCardOpen] = useSessionDisclosureState("profile-top-card-disclosure", true);
   const [isFollowedTeamsOpen, setIsFollowedTeamsOpen] = useSessionDisclosureState("profile-followed-teams-disclosure", false);
   const [followedTeamIdsDraft, setFollowedTeamIdsDraft] = useState<string[]>([]);
   const [followedTeamSelection, setFollowedTeamSelection] = useState("");
@@ -214,7 +213,7 @@ export function ProfileSummary({
 
   if (isLoading || !user) {
     return (
-      <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
+      <div className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
         Loading profile...
       </div>
     );
@@ -232,7 +231,7 @@ export function ProfileSummary({
 
   return (
     <section className="space-y-5">
-      <div className="rounded-lg bg-gray-100 p-5">
+      <div className="rounded-[1.15rem] bg-gray-100 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Profile</p>
           <div className="rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
@@ -243,33 +242,21 @@ export function ProfileSummary({
           <Avatar name={user.name} avatarUrl={user.avatarUrl} size="lg" className="rounded-lg" />
           <div className="min-w-0">
             <h2 className="truncate text-xl font-black leading-tight sm:text-2xl">{user.name}</h2>
-            <div className="mt-3 flex justify-start">
-              <InlineDisclosureButton
-                isOpen={isTopCardOpen}
-                variant="subtle"
-                onClick={() => setIsTopCardOpen((current) => !current)}
-              />
+            <p className="mt-2 text-sm text-accent-dark">
+              {getAccessLevelLabel(user)}
+              {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
+            </p>
+            <p className="truncate text-sm text-gray-600">{user.email}</p>
+            <div className="mt-2">
+              {user.homeTeamId ? (
+                <HomeTeamBadge teamId={user.homeTeamId} />
+              ) : (
+                <p className="text-sm text-gray-500">No home team selected</p>
+              )}
             </div>
-            {isTopCardOpen ? (
-              <>
-                <p className="mt-2 text-sm text-accent-dark">
-                  {getAccessLevelLabel(user)}
-                  {getAccessLevelDescription(user) ? ` · ${getAccessLevelDescription(user)}` : ""}
-                </p>
-                <p className="truncate text-sm text-gray-600">{user.email}</p>
-                <div className="mt-2">
-                  {user.homeTeamId ? (
-                    <HomeTeamBadge teamId={user.homeTeamId} />
-                  ) : (
-                    <p className="text-sm text-gray-500">No home team selected</p>
-                  )}
-                </div>
-              </>
-            ) : null}
           </div>
         </div>
-        {isTopCardOpen ? (
-          <div className="mt-4 mx-auto max-w-xl text-center">
+        <div className="mt-4 mx-auto max-w-xl text-center">
           <input
             ref={avatarInputRef}
             type="file"
@@ -329,11 +316,10 @@ export function ProfileSummary({
             )}
           </div>
           <p className="mt-2 text-center text-xs text-gray-500">Optional. If upload fails, your initials stay in place.</p>
-          </div>
-        ) : null}
+        </div>
       </div>
 
-      <div className="rounded-lg border border-gray-200 p-4">
+      <div className="ui-card p-4">
         <h3 className="text-lg font-bold">Profile editing</h3>
         <label className="mt-4 block">
           <span className="text-sm font-bold text-gray-800">Home Team</span>
@@ -364,7 +350,7 @@ export function ProfileSummary({
             ))}
           </select>
         </label>
-        <div id="followed-teams" className="mt-4 rounded-lg border border-gray-200 bg-gray-50/70 p-3 scroll-mt-24">
+        <div id="followed-teams" className="mt-4 rounded-[1.15rem] border border-gray-200 bg-gray-50/70 p-3 scroll-mt-24">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-sm font-bold text-gray-800">Followed Teams</p>
@@ -373,7 +359,7 @@ export function ProfileSummary({
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <div className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-700">
+              <div className="ui-chip-sm border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-700">
                 {allTeamsFollowed ? "All teams" : `${selectedFollowedTeams.length} team${selectedFollowedTeams.length === 1 ? "" : "s"}`}
               </div>
               <InlineDisclosureButton
@@ -456,7 +442,7 @@ export function ProfileSummary({
                 ) : null}
               </div>
               {allTeamsFollowed ? (
-                <p className="mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-3 text-sm font-semibold text-green-700">
+                <p className="mt-3 rounded-md border border-accent-light bg-accent-light/40 px-3 py-3 text-sm font-semibold text-accent-dark">
                   All teams are included in your dashboard reminders.
                 </p>
               ) : null}
@@ -611,7 +597,7 @@ export function ProfileSummary({
         </div>
       </div>
 
-      <div className="rounded-lg border border-gray-200 p-4">
+      <div className="ui-card p-4">
         <h3 className="text-lg font-bold">Notifications</h3>
         <p className="mt-2 text-sm leading-6 text-gray-600">
           Opt in to the big moments only: Perfect Picks, Daily Winner, major jumps up the table, and new comments on
@@ -697,7 +683,7 @@ export function ProfileSummary({
         </div>
       </div>
 
-      <div className="rounded-lg border border-gray-200 p-4">
+      <div className="ui-card p-4">
         <h3 className="text-lg font-bold">Password</h3>
         <p className="mt-2 text-sm leading-6 text-gray-600">
           Send yourself a password reset email if you want to change how you sign in.
@@ -736,7 +722,7 @@ export function ProfileSummary({
         <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/50 p-4">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-bold text-gray-900">Testing Tools</h3>
-            <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">
+            <span className="ui-chip-sm border border-amber-300 bg-white font-bold uppercase tracking-wide text-amber-800">
               Hidden
             </span>
           </div>
@@ -756,7 +742,7 @@ export function ProfileSummary({
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-lg font-bold">Testing Tools</h3>
-                <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">
+                <span className="ui-chip-sm border border-amber-300 bg-white font-bold uppercase tracking-wide text-amber-800">
                   Testing only
                 </span>
               </div>
@@ -857,7 +843,7 @@ export function ProfileSummary({
         </div>
       ) : null}
 
-      <div className="rounded-lg border border-gray-200 p-4">
+      <div className="ui-card p-4">
         <h3 className="text-lg font-bold">Trophies</h3>
         {isLoadingTrophies ? (
           <p className="mt-2 text-sm leading-6 text-gray-600">Loading trophies...</p>
@@ -866,7 +852,7 @@ export function ProfileSummary({
         ) : (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {trophies.map((trophy) => (
-              <div key={`${trophy.id}-${trophy.awardedAt}`} className="flex items-center gap-3 rounded-lg bg-gray-100 px-3 py-3">
+              <div key={`${trophy.id}-${trophy.awardedAt}`} className="flex items-center gap-3 rounded-[1rem] bg-gray-100 px-3 py-3">
                 <TrophyBadge icon={trophy.icon} tier={trophy.tier} size="md" />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-black text-gray-950">{trophy.name}</p>
@@ -877,7 +863,7 @@ export function ProfileSummary({
         )}
       </div>
 
-      <div className="rounded-lg border border-gray-200 p-4">
+      <div className="ui-card p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold">Knockout Bracket</h3>
@@ -907,7 +893,7 @@ export function ProfileSummary({
         </a>
       </div>
 
-      <div className="rounded-lg border border-gray-200 p-4">
+      <div className="ui-card p-4">
         <h3 className="text-lg font-bold">{copy.termsOfUse}</h3>
         <div className="mt-4 rounded-md bg-gray-100 px-4 py-4">
           <p className="text-sm font-bold text-gray-900">

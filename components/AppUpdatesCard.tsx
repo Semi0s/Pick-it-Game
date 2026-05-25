@@ -109,13 +109,13 @@ export function AppUpdatesCard() {
 
   if (displayState === "admin_error") {
     return (
-      <section className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+      <section className="rounded-[1.15rem] border border-amber-200 bg-amber-50 p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">Updates</p>
             <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-amber-800">Admin only</p>
           </div>
-          <span className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[10px] font-semibold text-amber-800">
+          <span className="ui-chip-sm border border-amber-200 bg-white font-semibold text-amber-800">
             Hidden from users
           </span>
         </div>
@@ -126,7 +126,7 @@ export function AppUpdatesCard() {
 
   if (displayState === "admin_disabled") {
     return (
-      <section className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+      <section className="rounded-[1.15rem] border border-gray-200 bg-gray-50 p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">Updates</p>
@@ -153,7 +153,7 @@ export function AppUpdatesCard() {
               router.refresh();
             }}
             disabled={isUpdatingEnabled}
-            className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="ui-chip-sm border border-accent-light bg-white font-semibold text-accent-dark transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isUpdatingEnabled ? "Saving..." : "On"}
           </button>
@@ -168,13 +168,13 @@ export function AppUpdatesCard() {
 
   if (displayState === "admin_empty") {
     return (
-      <section className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+      <section className="rounded-[1.15rem] border border-gray-200 bg-gray-50 p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">Updates</p>
             <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-600">Admin only</p>
           </div>
-          <span className="rounded-full border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-gray-700">
+          <span className="ui-chip-sm border border-gray-200 bg-white font-semibold text-gray-700">
             No live update
           </span>
         </div>
@@ -188,7 +188,7 @@ export function AppUpdatesCard() {
   return (
     <section
       className={`border ${
-        resolvedIsOpen ? "rounded-lg p-3" : "rounded-md px-3 py-1.5"
+        resolvedIsOpen ? "rounded-[1.15rem] p-3" : "rounded-[1rem] px-3 py-1.5"
       } ${getUpdateCardSurfaceClasses(activeUpdate.cardTone, hasUnreadImportantUpdate)}`}
     >
       <div className="flex items-center justify-between gap-3">
@@ -216,16 +216,14 @@ export function AppUpdatesCard() {
                 router.refresh();
               }}
               disabled={isUpdatingEnabled}
-              className="inline-flex items-center justify-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
+              className="ui-chip-sm border border-gray-200 bg-white font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Turn this update off for everyone"
             >
               {isUpdatingEnabled ? "Saving..." : "Off"}
             </button>
           ) : null}
           <div
-            className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
-              resolvedIsOpen ? "sm:px-2.5 sm:py-1.5" : ""
-            } ${getUpdateDateChipClasses(
+            className={`ui-chip-sm font-semibold ${getUpdateDateChipClasses(
               activeUpdate.cardTone,
               activeUpdate.importance
             )}`}
@@ -312,7 +310,7 @@ function getUpdateCardSurfaceClasses(cardTone: AppUpdateCardTone, highlightImpor
     {
       neutral: "border-gray-200 bg-white",
       sky: "border-sky-200 bg-sky-50",
-      green: "border-emerald-200 bg-emerald-50",
+      green: "border-accent/30 bg-accent-light/20",
       amber: "border-amber-200 bg-amber-50",
       rose: "border-rose-200 bg-rose-50"
     }[cardTone] ?? "border-gray-200 bg-white";
@@ -333,7 +331,7 @@ function getUpdateDateChipClasses(cardTone: AppUpdateCardTone, importance: AppUp
     {
       neutral: "bg-gray-100 text-gray-700",
       sky: "bg-sky-100 text-sky-800",
-      green: "bg-emerald-100 text-emerald-800",
+      green: "bg-accent-light/40 text-accent-dark",
       amber: "bg-amber-100 text-amber-800",
       rose: "bg-rose-100 text-rose-800"
     }[cardTone] ?? "bg-gray-100 text-gray-700"

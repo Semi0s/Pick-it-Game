@@ -6,9 +6,13 @@ const config: Config = {
     extend: {
       colors: {
         accent: {
-          DEFAULT: "#16a34a",
-          dark: "#15803d",
-          light: "#dcfce7"
+          DEFAULT: "rgb(var(--app-accent-rgb) / <alpha-value>)",
+          dark: "rgb(var(--app-accent-dark-rgb) / <alpha-value>)",
+          light: "rgb(var(--app-accent-light-rgb) / <alpha-value>)",
+          text: "rgb(var(--app-accent-text-rgb) / <alpha-value>)",
+          soft: "rgb(var(--app-accent-soft-rgb) / <alpha-value>)",
+          border: "rgb(var(--app-accent-border-rgb) / <alpha-value>)",
+          ring: "rgb(var(--app-accent-ring-rgb) / <alpha-value>)"
         }
       },
       fontFamily: {

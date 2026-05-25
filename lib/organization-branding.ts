@@ -15,7 +15,7 @@ export const ORGANIZATION_LOGO_MIN_WIDTH = 64;
 export const ORGANIZATION_LOGO_MIN_HEIGHT = 64;
 export const ORGANIZATION_BACKGROUND_MIN_WIDTH = 640;
 export const ORGANIZATION_BACKGROUND_MIN_HEIGHT = 360;
-export const ORGANIZATION_LOGO_DEFAULT_SRC = "/images/pickit-signin-logo.png";
+export const ORGANIZATION_LOGO_DEFAULT_SRC = "/images/pickit-logo.svg";
 export const ORGANIZATION_BACKGROUND_DEFAULT_SRC = "/images/signin-stadium.jpeg";
 
 export type OrganizationBrandingStatus = "draft" | "pending_review" | "approved" | "rejected" | "disabled";

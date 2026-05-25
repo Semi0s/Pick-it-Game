@@ -258,7 +258,7 @@ export function LightSeedBuilder({
               Teams above the cutoff qualify into the projected Round of 32. We only save combinations that resolve to a valid bracket.
             </p>
           </div>
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-800">
+          <span className="rounded-full bg-accent-light px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-accent-dark">
             Top {requiredThirdPlaceQualifierCount || "?"} qualify
           </span>
         </div>

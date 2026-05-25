@@ -220,9 +220,9 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
                 onClick={() => goToSlide(index)}
                 data-choice-key={slide.id}
                 data-choice-active={isActive ? "true" : "false"}
-                className={`inline-flex min-h-10 items-center rounded-md px-3 py-1.5 text-[14px] font-bold leading-none transition ${
+                className={`ui-cockpit-button transition ${
                   isActive
-                    ? "bg-accent text-white"
+                    ? "bg-accent text-accent-text"
                     : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
                 }`}
               >
@@ -239,7 +239,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
             <button
               type="button"
               onClick={() => setSelectedCountryFilter("")}
-              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide leading-none text-gray-700 transition hover:border-accent hover:bg-accent-light"
+              className="ui-chip-sm border border-gray-300 bg-white font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
             >
               All Teams
             </button>
@@ -1366,7 +1366,13 @@ function CurrentRoundMatchCard({
     ) : shellState === "closed" ? (
       <span className="ui-chip-sm shrink-0 bg-gray-950 font-bold text-white">Locked</span>
     ) : shellState === "open" ? (
-      <span className="ui-chip-sm shrink-0 bg-green-50 font-bold text-green-700">Open</span>
+      <span
+        className={`ui-chip-sm shrink-0 font-bold ${
+          match.viewMode === "projected" ? "bg-amber-50 text-amber-700" : "bg-accent-light text-accent-dark"
+        }`}
+      >
+        Open
+      </span>
     ) : (
       <span className="ui-chip-sm shrink-0 bg-amber-50 font-bold text-amber-700">Pending</span>
     );
@@ -1405,9 +1411,9 @@ function CurrentRoundMatchCard({
       className={
         isEmbeddedCenterCard
           ? `${isHero ? "p-1" : "p-0.5"}`
-          : `box-border w-full max-w-full overflow-hidden rounded-lg border ${
+          : `box-border w-full max-w-full overflow-hidden rounded-[1.15rem] border ${
               match.viewMode === "projected"
-                ? "border-green-200 bg-green-50 p-2"
+                ? "border-amber-200 bg-amber-50/80 p-2"
                 : shellState === "final"
                   ? "border-gray-200 bg-gray-100 p-2"
                   : "border-gray-200 bg-white p-2"
@@ -1659,7 +1665,7 @@ function CurrentRoundMatchCard({
               {`This will clear ${pendingConfirmation.affectedCount} future ${pendingConfirmation.affectedCount === 1 ? "pick" : "picks"}`}
             </div>
           ) : requiresWinnerSelection && !localWinnerTeamId ? (
-            <div className="mt-1 flex min-h-[22px] items-center justify-center overflow-hidden border-t border-emerald-300 bg-emerald-100/90 px-1.5 py-0 text-center text-emerald-900">
+            <div className="mt-1 flex min-h-[22px] items-center justify-center overflow-hidden border-t border-amber-300 bg-amber-100/90 px-1.5 py-0 text-center text-amber-900">
               <span className="flex min-h-[22px] w-full min-w-0 items-center justify-center truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
                 You picked these teams
               </span>
@@ -1690,14 +1696,14 @@ function CurrentRoundMatchCard({
         <div
           className={`mt-1.5 border-t px-1 pt-2 text-center ${
             requiresWinnerSelection && !localWinnerTeamId
-              ? "border-emerald-300 bg-emerald-100/90"
-              : "border-emerald-200/80 bg-emerald-50/80"
+              ? "border-amber-300 bg-amber-100/90"
+              : "border-amber-200/80 bg-amber-50/80"
           }`}
         >
-          <div className="flex min-h-[22px] items-center justify-center text-xs font-bold uppercase tracking-wide text-emerald-800">
+          <div className="flex min-h-[22px] items-center justify-center text-xs font-bold uppercase tracking-wide text-amber-800">
             {requiresWinnerSelection && !localWinnerTeamId ? (
               <span className="flex min-h-[22px] w-full min-w-0 items-center justify-center overflow-hidden px-1.5 py-0">
-                <span className="block w-full min-w-0 truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] text-emerald-900 [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
+                <span className="block w-full min-w-0 truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] text-amber-900 [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
                   You picked these teams
                 </span>
               </span>
@@ -1709,7 +1715,13 @@ function CurrentRoundMatchCard({
           </div>
         </div>
       ) : shellState === "open" ? (
-        <div className="mt-1.5 border-t border-gray-100 bg-green-50/50 px-1 pt-2 text-center text-xs font-bold uppercase tracking-wide text-green-700">
+        <div
+          className={`mt-1.5 border-t px-1 pt-2 text-center text-xs font-bold uppercase tracking-wide ${
+            match.viewMode === "projected"
+              ? "border-amber-200/80 bg-amber-50/60 text-amber-800"
+              : "border-gray-100 bg-accent-light/30 text-accent-dark"
+          }`}
+        >
           Editable until kickoff
         </div>
       ) : (
@@ -1851,6 +1863,7 @@ function KnockoutTeamPanel({
 }) {
   const isCompact = density === "compact";
   const userTeam = team;
+  const isProjectedTone = viewMode === "projected";
   const isProjectedReadOnly = viewMode === "projected" && isReadOnly;
   const unresolvedLabel =
     viewMode === "official" && !team && !officialTeam ? formatRoundOf32PlaceholderLabel(placeholderLabel) : null;
@@ -1870,6 +1883,14 @@ function KnockoutTeamPanel({
     showProjectedSlotHitOverlay || (status === "final" && isSelected && isCorrectSelection === true);
   const showCombinedMissOverlay =
     showProjectedSlotMissOverlay || (status === "final" && isSelected && isCorrectSelection === false);
+  const selectedPanelClass =
+    canSelectByTap && isSelected
+      ? isProjectedTone
+        ? "bg-amber-100/70 text-amber-900"
+        : "bg-accent-light/40 text-accent-dark"
+      : "";
+  const projectedPositiveClass = isProjectedTone ? "text-amber-800" : "text-accent-dark";
+  const projectedMutedClass = isProjectedTone ? "text-amber-500/70" : "text-accent/45";
   const ariaLabel = isProjectedReadOnly
     ? `Projected knockout preview for ${ariaTeamName}.`
     : isReadOnly || isDisabled
@@ -1880,14 +1901,14 @@ function KnockoutTeamPanel({
 
   const content = (
     <span
-      className={`relative flex w-full min-w-0 max-w-full flex-col items-center rounded-lg px-1 py-0.5 ${
-        canSelectByTap && isSelected ? "bg-accent-light/40 text-accent-dark" : ""
-      } ${isCompact ? "min-h-[86px]" : "min-h-[92px]"}`}
+      className={`relative flex w-full min-w-0 max-w-full flex-col items-center rounded-[1rem] px-1 py-0.5 ${selectedPanelClass} ${
+        isCompact ? "min-h-[86px]" : "min-h-[92px]"
+      }`}
     >
       {showCombinedHitOverlay ? (
         <span className="pointer-events-none absolute left-1/2 -top-5 -translate-x-1/2">
           <span className="rounded-full bg-white/88 p-1 shadow-sm">
-            <Check aria-hidden className="h-6 w-6 text-accent-dark" strokeWidth={2.6} />
+            <Check aria-hidden className={`h-6 w-6 ${projectedPositiveClass}`} strokeWidth={2.6} />
           </span>
         </span>
       ) : null}
@@ -1915,11 +1936,13 @@ function KnockoutTeamPanel({
                     event.stopPropagation();
                   }
                 }}
-                className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md border-2 bg-white font-bold tabular-nums ${
+                className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[0.85rem] border-2 bg-white font-bold tabular-nums ${
                   isProjectedReadOnly
                     ? "border-transparent bg-transparent text-gray-700"
                     : isSelected
-                      ? "border-accent text-accent-dark"
+                      ? isProjectedTone
+                        ? "border-amber-400 text-amber-900"
+                        : "border-accent text-accent-dark"
                       : "border-gray-300 text-gray-400"
                 } ${isCompact ? "h-10 w-9 text-2xl" : "h-10 w-10 text-2xl"}`}
               >
@@ -1967,7 +1990,7 @@ function KnockoutTeamPanel({
     return (
       <div
         aria-label={ariaLabel}
-        className={`min-w-0 cursor-default ${isSelected ? "text-accent-dark" : "text-gray-700"}`}
+        className={`min-w-0 cursor-default ${isSelected ? projectedPositiveClass : "text-gray-700"}`}
       >
         {content}
       </div>
@@ -1975,7 +1998,7 @@ function KnockoutTeamPanel({
   }
 
   if (!canSelectByTap) {
-    return <div aria-label={ariaLabel} className={`min-w-0 ${isSelected ? "text-accent-dark" : "text-gray-700"}`}>{content}</div>;
+    return <div aria-label={ariaLabel} className={`min-w-0 ${isSelected ? projectedPositiveClass : "text-gray-700"}`}>{content}</div>;
   }
 
   return (
@@ -1993,11 +2016,13 @@ function KnockoutTeamPanel({
       className={`min-w-0 cursor-pointer transition ${
         isSelected
           ? isCorrectSelection === true
-            ? "text-accent-dark"
+            ? projectedPositiveClass
             : isCorrectSelection === false
               ? "text-rose-800"
-              : "text-accent-dark"
-          : "hover:text-accent-dark"
+              : projectedPositiveClass
+          : isProjectedTone
+            ? "hover:text-amber-800"
+            : "hover:text-accent-dark"
       }`}
     >
       {content}
@@ -2017,7 +2042,7 @@ function KnockoutTeamPanel({
             event.stopPropagation();
             onIncrement();
           }}
-          className="inline-flex h-5 w-7 items-center justify-center hover:text-accent-dark"
+          className={`inline-flex h-5 w-7 items-center justify-center ${isProjectedTone ? "hover:text-amber-800" : "hover:text-accent-dark"}`}
           aria-label={`Increase ${ariaTeamName} score`}
         >
           <ChevronUpSmall />
@@ -2028,7 +2053,9 @@ function KnockoutTeamPanel({
             event.stopPropagation();
             onDecrement();
           }}
-          className="inline-flex h-5 w-7 items-center justify-center border-t border-gray-200 hover:text-accent-dark"
+          className={`inline-flex h-5 w-7 items-center justify-center border-t border-gray-200 ${
+            isProjectedTone ? "hover:text-amber-800" : "hover:text-accent-dark"
+          }`}
           aria-label={`Decrease ${ariaTeamName} score`}
         >
           <ChevronDownSmall />
@@ -2039,11 +2066,11 @@ function KnockoutTeamPanel({
 
   function renderWinnerSlot() {
     return (
-      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center text-accent-dark">
+      <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center ${projectedPositiveClass}`}>
         {isSelected ? (
           <Trophy aria-hidden className="h-5 w-5" />
         ) : canSelectByTap ? (
-          <span aria-hidden className="relative inline-flex h-5 w-5 items-center justify-center text-accent/45">
+          <span aria-hidden className={`relative inline-flex h-5 w-5 items-center justify-center ${projectedMutedClass}`}>
             <Trophy className="h-4.5 w-4.5 stroke-[1.8]" />
             <CheckSquare className="absolute -bottom-0.5 -right-1 h-3.5 w-3.5 stroke-[1.9]" />
           </span>
@@ -2066,7 +2093,7 @@ function activeFilterTeamLabel(slide: BracketSlideView, selectedCountryFilter: s
 function KnockoutMatchNumberBadge({ number, compact = false }: { number: number; compact?: boolean }) {
   return (
     <span
-      className={`inline-flex items-center justify-center rounded-full bg-accent font-bold text-white ${
+      className={`inline-flex items-center justify-center rounded-full bg-accent font-bold text-accent-text ${
         compact ? "h-6 w-6 text-xs" : "h-7 w-7 text-sm"
       }`}
     >
@@ -2479,7 +2506,7 @@ function ActualComparisonMatchCard({
         : "Waiting";
 
   return (
-    <div className="box-border w-full max-w-full overflow-hidden rounded-lg border border-gray-200 bg-white p-2">
+    <div className="box-border w-full max-w-full overflow-hidden rounded-[1.15rem] border border-gray-200 bg-white p-2">
       {showHeader ? (
         <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
           <div className="min-w-0">
@@ -2589,7 +2616,7 @@ function ComparisonPlaceholderCard({
 }) {
   return (
     <div
-      className={`box-border w-full max-w-full rounded-lg border p-4 ${
+      className={`box-border w-full max-w-full rounded-[1.15rem] border p-4 ${
         tone === "projected"
           ? "border-amber-200 bg-amber-50"
           : "border-gray-200 bg-white"

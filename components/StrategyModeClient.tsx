@@ -127,8 +127,8 @@ export function StrategyModeClient({
 
   return (
     <section className="mx-auto max-w-5xl space-y-5">
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-        <p className="text-sm font-bold uppercase tracking-wide text-emerald-800">Global Challenge</p>
+      <div className="rounded-2xl border border-accent-light bg-accent-light/20 p-5">
+        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Global Challenge</p>
         <h1 className="mt-2 text-3xl font-black leading-tight text-gray-950">Build your Group Strategy</h1>
         <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">
           Show us which teams you believe are strong enough to reach the knockout stage.
@@ -147,7 +147,7 @@ export function StrategyModeClient({
         <div className="mt-4">
           <a
             href="#team-strength-board"
-            className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-3 text-sm font-black text-white transition hover:bg-accent/95"
+            className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-3 text-sm font-black text-accent-text transition hover:bg-accent/95"
           >
             Build My Strategy
           </a>
@@ -256,8 +256,8 @@ export function StrategyModeClient({
                             onClick={() => updateAdjustment(team.id, option.value as "about_right" | "trust_more" | "high_upside" | "fade", points)}
                             className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-black uppercase tracking-wide transition ${
                               isActive
-                                ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                                : "border-gray-300 bg-white text-gray-700 hover:border-emerald-300 hover:bg-emerald-50"
+                                ? "border-accent-light bg-accent-light text-accent-dark"
+                                : "border-gray-300 bg-white text-gray-700 hover:border-accent hover:bg-accent-light"
                             } disabled:opacity-50`}
                           >
                             <Icon className="h-3.5 w-3.5" />

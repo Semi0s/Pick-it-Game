@@ -1849,9 +1849,9 @@ export function GroupPredictions({
                     <span
                       className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
                         selectedTeamQualifierStatus === "projected-r32"
-                          ? "bg-emerald-100 text-emerald-800"
+                          ? "bg-accent-light text-accent-dark"
                           : selectedTeamQualifierStatus === "best-third"
-                            ? "bg-emerald-50 text-emerald-800"
+                            ? "bg-accent-light/40 text-accent-dark"
                             : selectedTeamQualifierStatus === "eliminated"
                             ? "bg-rose-50 text-rose-700"
                             : "bg-gray-200 text-gray-700"
@@ -1912,7 +1912,7 @@ export function GroupPredictions({
                                   handleKeepBracketBuilder(miniTableGroup);
                                 }
                               }}
-                              className="w-full rounded-full bg-emerald-700 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white transition hover:bg-emerald-600"
+                              className="w-full rounded-full bg-accent px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-accent-text transition hover:bg-accent-dark"
                             >
                               Keep Bracket
                             </button>
@@ -1940,7 +1940,7 @@ export function GroupPredictions({
                                   void handleApplyGroupFromScores(miniTableGroup);
                                 }
                               }}
-                              className="w-full rounded-full bg-emerald-700 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white transition hover:bg-emerald-600 disabled:opacity-60"
+                              className="w-full rounded-full bg-accent px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-accent-text transition hover:bg-accent-dark disabled:opacity-60"
                             >
                               {isApplyingScoreGroup === miniTableGroup ? "Updating..." : "Keep My Picks"}
                             </button>

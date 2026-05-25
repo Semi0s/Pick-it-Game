@@ -944,8 +944,8 @@ export function BracketBuilderClient({
   if (showCompletionScreen) {
     return (
       <div className="pb-6 pt-3">
-        <section className="mx-auto w-full max-w-xl rounded-[2rem] border border-emerald-200 bg-white px-6 py-10 text-center shadow-soft">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+        <section className="mx-auto w-full max-w-xl rounded-[2rem] border border-accent-light bg-white px-6 py-10 text-center shadow-soft">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-accent-light text-accent-dark">
             <CheckCircle2 className="h-8 w-8" />
           </div>
           <h1 className="mt-5 text-3xl font-black text-gray-950">Your bracket is complete.</h1>
@@ -977,7 +977,7 @@ export function BracketBuilderClient({
       ) : null}
 
       {isReadOnly ? (
-        <section className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-center text-[11px] font-semibold text-gray-600">
+        <section className="rounded-[1.05rem] border border-gray-200 bg-gray-50 px-3 py-2 text-center text-[11px] font-semibold text-gray-600">
           {initialKnockoutSeeded
             ? "Group Stage is locked because the knockout bracket has already been seeded."
             : "Group Stage is locked because the tournament has started."}
@@ -989,15 +989,10 @@ export function BracketBuilderClient({
         onTouchStart={handleGroupSwipeTouchStart}
         onTouchEnd={handleGroupSwipeTouchEnd}
       >
-        <div className="pb-0.5 text-center">
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-cyan-900">Group Stage</p>
-          <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-800">Pick qualifying teams only</p>
-        </div>
-
         <div className="space-y-2">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <h1 className="truncate text-[2rem] font-black leading-none text-gray-950 text-left">
+              <h1 className="truncate text-xl font-black leading-tight text-gray-950 text-left">
                 {activeGroupName ? formatGroupName(activeGroupName) : "Group"}
               </h1>
               {isActiveGroupScoreApplied ? (
@@ -1038,7 +1033,7 @@ export function BracketBuilderClient({
               <ArrowRight className="h-5 w-5" />
             </button>
           </div>
-          <div className={`rounded-md border px-3 py-2 text-center text-xs font-black uppercase tracking-[0.08em] ${isThirdPlacePhase ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
+          <div className={`rounded-[1rem] border px-3 py-2 text-center text-xs font-black uppercase tracking-[0.08em] ${isThirdPlacePhase ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
             {isComplete
               ? "TOP TWO TEAMS QUALIFY PER GROUP"
               : isThirdPlacePhase
@@ -1047,7 +1042,7 @@ export function BracketBuilderClient({
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-lg border border-gray-200">
+        <div className="overflow-hidden rounded-[1.15rem] border border-gray-200">
           {activeGroupTeams.map((team, index) => {
             const isTopTwo = index < 2;
             const isThirdPlaceTeam = index === 2;
@@ -1060,10 +1055,10 @@ export function BracketBuilderClient({
               isThirdPlaceTeam &&
               normalizedThirdPlaceRankings.slice(0, requiredThirdPlaceQualifierCount).includes(team.id);
             const highlightClass = isThirdPlaceQualified
-              ? "bg-emerald-50"
+              ? "bg-accent-light/40"
               : isTopTwo
                 ? isGroupCommitted
-                  ? "bg-emerald-50"
+                  ? "bg-accent-light/40"
                   : "bg-gray-100"
                 : "bg-white";
             const teamOrder = activeGroupName ? groupRankingsByGroup.get(activeGroupName) ?? [] : [];
@@ -1120,13 +1115,13 @@ export function BracketBuilderClient({
                 className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_3.6rem_2rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1 last:border-b-0 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "[touch-action:none]" : "[touch-action:manipulation]"} ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <div className="flex justify-start">
-                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-text">
                     {index + 1}
                   </span>
                 </div>
                 <div className="flex justify-center">
                   {isThirdPlacePhase && isThirdPlaceTeam ? (
-                    <span className={`h-4 w-4 rounded-full border ${isThirdPlaceQualified ? "border-emerald-500 bg-emerald-100" : "border-accent/70 bg-transparent"}`} aria-label={isThirdPlaceQualified ? "Third-place qualifier selected" : "Third-place qualifier not selected"} />
+                    <span className={`h-4 w-4 rounded-full border ${isThirdPlaceQualified ? "border-accent bg-accent-light" : "border-accent/70 bg-transparent"}`} aria-label={isThirdPlaceQualified ? "Third-place qualifier selected" : "Third-place qualifier not selected"} />
                   ) : (
                     <span className="h-4 w-4 rounded-full border border-transparent" aria-hidden />
                   )}
@@ -1150,7 +1145,7 @@ export function BracketBuilderClient({
                   )}
                 </div>
                   <div className="flex items-center justify-end">
-                    <div className="grid grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-white">
+                    <div className="grid grid-cols-2 overflow-hidden rounded-[0.9rem] border border-gray-200 bg-white">
                       <button
                         type="button"
                         draggable={false}
@@ -1189,7 +1184,7 @@ export function BracketBuilderClient({
         </div>
 
         {isThirdPlacePhase ? (
-          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+          <div className="rounded-[1.15rem] border border-gray-200 bg-gray-50 px-3 py-3">
             <div className="flex items-center justify-between gap-3">
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-accent-dark">Third-place qualifiers</p>
               <InlineDisclosureButton
@@ -1258,9 +1253,9 @@ export function BracketBuilderClient({
                         Cutoff
                       </div>
                     ) : null}
-                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-lg border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly ? "[touch-action:none]" : "[touch-action:manipulation]"} ${isAboveCutoff ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
+                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly ? "[touch-action:none]" : "[touch-action:manipulation]"} ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
                       <div className="flex justify-start">
-                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-text">
                           {index + 1}
                         </span>
                       </div>

@@ -74,7 +74,7 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
 
   return (
     <div className="space-y-5">
-      <section className="rounded-lg bg-gray-100 p-5">
+      <section className="rounded-[1.15rem] bg-gray-100 p-5">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Public picks</p>
         <div className="mt-2 flex items-center gap-3">
           <Avatar name={profile?.name ?? "Player"} avatarUrl={profile?.avatarUrl} size="lg" />
@@ -98,13 +98,13 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
       </section>
 
       {!isLoading && trophies.length > 0 ? (
-        <section className="rounded-lg border border-gray-200 bg-white p-4">
+        <section className="ui-card p-4">
           <h3 className="text-lg font-bold">Trophies</h3>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {trophies.map((trophy) => (
               <div
                 key={`${trophy.id}-${trophy.awardedAt}`}
-                className="flex items-center gap-3 rounded-lg bg-gray-100 px-3 py-3"
+                className="flex items-center gap-3 rounded-[1rem] bg-gray-100 px-3 py-3"
               >
                 <TrophyBadge icon={trophy.icon} tier={trophy.tier} size="md" />
                 <span className="truncate text-sm font-bold text-gray-800">{trophy.name}</span>
@@ -115,7 +115,7 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
       ) : null}
 
       {isLoading ? (
-        <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">Loading picks...</p>
+        <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">Loading picks...</p>
       ) : null}
 
       {!isLoading && error ? (
@@ -125,7 +125,7 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
       ) : null}
 
       {!isLoading && !error && predictions.length === 0 ? (
-        <p className="rounded-lg border border-gray-200 bg-white px-4 py-5 text-sm font-semibold text-gray-600">
+        <p className="ui-card px-4 py-5 text-sm font-semibold text-gray-600">
           No public picks are available yet. Picks appear here once matches lock or go final.
         </p>
       ) : null}
@@ -152,7 +152,7 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
                   }
 
                   return (
-                    <div key={prediction.id} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <div key={prediction.id} className="ui-card-soft p-3">
                       <div className="mb-2 flex items-center justify-between gap-3">
                         <p className="text-sm font-black text-gray-950">
                           {match.homeTeam?.flagEmoji} {match.homeTeam?.shortName} vs {match.awayTeam?.flagEmoji}{" "}
