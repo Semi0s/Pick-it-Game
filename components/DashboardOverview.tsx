@@ -485,10 +485,10 @@ export function DashboardOverview({
       <AppUpdatesCard />
 
       {initialGlobalChallengeSummary && !shouldHideStrategyModeForLaunch() ? (
-        <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+        <section className="rounded-[1.15rem] border border-accent-light bg-accent-light/20 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-bold uppercase tracking-wide text-emerald-800">Global Challenge</p>
+              <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Global Challenge</p>
               <h2 className="mt-2 text-xl font-black text-gray-950">Group Strategy + Knockout Picks</h2>
               <p className="mt-2 text-sm font-semibold leading-6 text-gray-700">
                 {initialGlobalChallengeSummary.prompt ?? "Build a Group Strategy before kickoff, then score the knockout phase match by match."}
@@ -496,7 +496,7 @@ export function DashboardOverview({
             </div>
             <Link
               href="/strategy"
-              className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2.5 text-sm font-black text-white transition hover:bg-accent/95"
+              className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2.5 text-sm font-black text-accent-text transition hover:bg-accent/95"
             >
               {initialGlobalChallengeSummary.groupStrategy.status === "draft" ? "Build Group Strategy" : "Open Group Strategy"}
             </Link>
@@ -587,7 +587,7 @@ export function DashboardOverview({
                       onClick={() => setSelectedStandingsGroup(groupName)}
                       className={`rounded-md border px-2 py-1.5 text-sm font-bold transition ${
                         isActive
-                          ? "border-accent bg-accent text-white"
+                          ? "border-accent bg-accent text-accent-text"
                           : isHighlighted
                             ? "border-amber-200 bg-amber-50 text-gray-800 hover:border-amber-300 hover:bg-amber-100"
                             : "border-gray-300 bg-white text-gray-700 hover:border-accent hover:bg-accent-light"
@@ -623,7 +623,7 @@ export function DashboardOverview({
         />
       </section>
 
-      <section className="rounded-lg border border-gray-200 p-4">
+      <section className="ui-card p-4">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">How To Play</p>
         {isHowToPlayOpen ? (
           <div className="mt-3 space-y-4 text-sm leading-6 text-gray-600">
@@ -697,7 +697,7 @@ function DashboardLinkCard({ href, icon: Icon, title, copy }: DashboardLinkCardP
   return (
     <Link
       href={href}
-      className="flex w-full flex-col rounded-lg border border-gray-200 bg-white p-4 transition-colors hover:border-accent hover:bg-accent-light"
+      className="ui-card flex w-full flex-col p-4 transition-colors hover:border-accent hover:bg-accent-light"
     >
       <Icon aria-hidden className="h-5 w-5 text-accent-dark" />
       <h3 className="mt-4 text-lg font-black">{title}</h3>

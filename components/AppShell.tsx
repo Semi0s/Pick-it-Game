@@ -1,15 +1,16 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useRef, useState, type CSSProperties, type SVGProps } from "react";
 import { ChevronDown, CircleUserRound, Globe } from "lucide-react";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TierIconBadge } from "@/components/TierIconBadge";
+import { PickItLogo } from "@/components/PickItLogo";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { APP_TOAST_EVENT, markAppToastsReady, type AppToastDetail } from "@/lib/app-toast";
 import { getStrings } from "@/lib/strings";
+import { getAppAccentCssVars, getLocalizedCardThemeForUserSurface } from "@/lib/localized-card-themes";
 import { PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, normalizeExplainerLanguage, type ExplainerLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { shouldHideDockForPath } from "@/lib/play-mode";
 import { getConfiguredGroupPredictionMode, isFullScoresModeEnabled } from "@/lib/group-prediction-mode";
@@ -142,6 +143,10 @@ export function AppShell({ children }: AppShellProps) {
   });
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const copy = getStrings(dockLanguage);
+  const accentTheme = getLocalizedCardThemeForUserSurface({
+    homeTeamId: user?.homeTeamId ?? null,
+    preferredLanguage: user?.preferredLanguage ?? null
+  });
   const groupPredictionMode = getConfiguredGroupPredictionMode();
   const navItems = [
     { href: "/bracket-builder", label: copy.myBracket, ariaLabel: copy.myBracket, icon: GroupStageDockIcon },
@@ -581,20 +586,19 @@ export function AppShell({ children }: AppShellProps) {
       style={
         {
           paddingBottom: isOnboardingExperience ? "0px" : "calc(4.85rem + env(safe-area-inset-bottom, 0px))",
-          "--app-header-height": `${headerHeight}px`
+          "--app-header-height": `${headerHeight}px`,
+          ...getAppAccentCssVars(accentTheme)
         } as CSSProperties
       }
     >
       <header ref={headerRef} className="sticky top-0 z-20 bg-white">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-2.5 px-3 py-2 sm:px-4">
           <Link href="/dashboard" className="shrink-0" aria-label="PICK-IT! World Cup 2026 home">
-            <Image
-              src="/images/pickit-header-logo.png"
+            <PickItLogo
               alt="PICK-IT! World Cup 2026"
-              width={648}
-              height={220}
+              sizes="(max-width: 430px) 132px, (max-width: 640px) 164px, 208px"
               priority
-              className="h-[4.25rem] w-auto shrink-0 sm:h-[5.1rem]"
+              className="w-[clamp(8.25rem,34vw,13rem)] min-w-[8.25rem] max-w-[13rem] shrink-0"
             />
           </Link>
           <div className="flex shrink-0 items-center gap-1.5 max-[430px]:gap-1">
@@ -729,12 +733,12 @@ export function AppShell({ children }: AppShellProps) {
                   {isActive ? (
                     <span
                       aria-hidden
-                      className="absolute inset-x-4 top-0.5 h-0.5 rounded-full bg-emerald-300/85"
+                      className="absolute inset-x-4 top-0.5 h-0.5 rounded-full bg-accent/85"
                     />
                   ) : null}
                   <Icon
                     aria-hidden
-                    className={`h-5 w-5 shrink-0 ${isActive ? "text-emerald-200" : ""}`}
+                    className={`h-5 w-5 shrink-0 ${isActive ? "text-accent-light" : ""}`}
                   />
                   <span className="truncate text-center leading-tight">{item.label}</span>
                 </Link>

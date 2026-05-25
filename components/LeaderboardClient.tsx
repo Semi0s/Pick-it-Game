@@ -12,11 +12,11 @@ import {
 } from "@/app/my-groups/actions";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { LeaderboardPlayerLocalizationBackground } from "@/components/localized-card/LeaderboardPlayerLocalizationBackground";
 import { LocalizedCardBackground } from "@/components/localized-card/LocalizedCardBackground";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { parseJsonResponse } from "@/lib/fetch-json";
-import { getHomeTeamVisual } from "@/lib/home-team-visuals";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
   GroupStandingItem,
@@ -29,7 +29,7 @@ import type {
   LeaderboardSwitcherView
 } from "@/lib/leaderboard-data";
 import type { DailyWinner } from "@/lib/leaderboard-highlights";
-import { getLocalizedCardCssVars, getLocalizedCardTheme } from "@/lib/localized-card-themes";
+import { getLocalizedCardCssVars, getLocalizedCardTheme, getLocalizedCardThemeForUserSurface } from "@/lib/localized-card-themes";
 import { hasDirectorAccess } from "@/lib/tier-access";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY, LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -71,7 +71,6 @@ const DEFAULT_SUBSELECTION_STATE: LeaderboardSubselectionState = {
 };
 
 const LEADERBOARD_SWITCHER_STORAGE_KEY = "leaderboard-switcher-state";
-const LEADERBOARD_INTRO_DISCLOSURE_STORAGE_KEY = "leaderboard-intro-disclosure";
 const LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY = "leaderboard-activity-disclosure";
 const LEADERBOARD_ACTIVITY_MORE_STORAGE_KEY = "leaderboard-activity-more";
 const LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY = "leaderboard-leader-summary-state";
@@ -82,9 +81,9 @@ const LEADERBOARD_STABLE_CONTENT_MIN_HEIGHT = "clamp(24rem, 54vh, 38rem)";
 const LEADERBOARD_STABLE_ROW_TARGET = 8;
 const LEADERBOARD_STABLE_ROW_DEPTH_PX = 96;
 const LEADERBOARD_COCKPIT_BUTTON_CLASS =
-  "inline-flex min-h-10 items-center rounded-md px-3 py-1.5 text-[14px] font-bold leading-none";
+  "ui-cockpit-button";
 const LEADERBOARD_COCKPIT_TRIGGER_CLASS =
-  "flex min-h-10 w-full items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-1.5 text-left";
+  "ui-cockpit-trigger";
 const TWO_LINE_CLAMP_STYLE = {
   display: "-webkit-box",
   WebkitLineClamp: 2,
@@ -115,64 +114,28 @@ function LeaderboardPlayerRow({
 }) {
   const isCurrentUser = profile.id === currentUserId;
   const isLightlyHighlighted = index < 3;
-  const homeTeamVisual = getHomeTeamVisual(profile.homeTeamId);
-  const usesHomeCountryHighlight = isCurrentUser && Boolean(homeTeamVisual);
+  const localizedTheme = getLocalizedCardTheme({ homeTeamId: profile.homeTeamId ?? null });
+  const localizedCardVars = getLocalizedCardCssVars(localizedTheme);
   const rowTone = isCurrentUser
-    ? usesHomeCountryHighlight
-      ? "bg-white/95"
-      : "border-accent bg-accent-light"
+    ? "border-accent/60 bg-white shadow-[0_10px_24px_rgba(16,185,129,0.12)]"
     : isLightlyHighlighted
-      ? "border-gray-300 bg-gray-50"
-      : "border-gray-200 bg-white";
-  const rankTone = isCurrentUser
-    ? usesHomeCountryHighlight
-      ? "bg-white/90 text-gray-900"
-      : "bg-white text-accent-dark"
-    : isLightlyHighlighted
-      ? "bg-white text-gray-800"
-      : "bg-gray-100 text-gray-700";
-  const pointsTone = isCurrentUser
-    ? usesHomeCountryHighlight
-      ? "bg-white/90 text-gray-900"
-      : "bg-white text-accent-dark"
-    : "bg-white text-gray-800";
-  const socialTone = isCurrentUser ? "text-gray-600" : "text-gray-500";
+      ? "border-gray-300 bg-white shadow-[0_8px_20px_rgba(15,23,42,0.06)]"
+      : "border-gray-200 bg-white shadow-[0_6px_18px_rgba(15,23,42,0.04)]";
+  const rankTone = isCurrentUser ? "bg-white text-accent-dark" : isLightlyHighlighted ? "bg-white text-gray-800" : "bg-gray-100 text-gray-700";
 
   return (
     <div
       key={profile.id}
-      className={`relative overflow-hidden rounded-lg border p-3 ${rowTone}`}
-      style={
-        usesHomeCountryHighlight && homeTeamVisual
-          ? {
-              backgroundColor: homeTeamVisual.surface,
-              borderColor: homeTeamVisual.border
-            }
-          : undefined
-      }
+      className={`relative overflow-hidden rounded-[1.2rem] border p-3 ${rowTone}`}
+      style={localizedCardVars}
     >
-      {homeTeamVisual ? (
-        <>
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0"
-            style={{ backgroundImage: homeTeamVisual.gradient }}
-          />
-          <span
-            aria-hidden
-            className="pointer-events-none absolute -right-3 top-1/2 -translate-y-1/2 rotate-[-8deg] select-none text-[234px] font-black leading-none sm:-right-4 sm:text-[281px]"
-            style={{ color: homeTeamVisual.watermark, opacity: 0.14 }}
-          >
-            {homeTeamVisual.flagEmoji}
-          </span>
-        </>
-      ) : null}
+      <LeaderboardPlayerLocalizationBackground theme={localizedTheme} />
       <Link
         href={`/leaderboard/${profile.id}`}
-        className="relative z-10 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5"
+        className="relative z-10 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5 pr-24 sm:pr-28"
       >
         <span
-          className={`flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md px-2 py-1 text-center ${rankTone}`}
+          className={`flex min-h-12 min-w-12 flex-col items-center justify-center rounded-[1rem] px-2 py-1 text-center shadow-[0_8px_20px_rgba(255,255,255,0.8)] ${rankTone}`}
         >
           <span className="text-lg font-black leading-none">{profile.rank ?? index + 1}</span>
           <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">Place</span>
@@ -186,46 +149,36 @@ function LeaderboardPlayerRow({
           />
           <span className="flex min-w-0 flex-1 items-center gap-2">
             <span className="min-w-0 flex-1 self-center">
-              <span className="flex min-w-0 items-start justify-between gap-2">
-                <span className="min-w-0 truncate text-base font-black text-gray-950">
-                  {profile.name}
-                  {isCurrentUser ? " (You)" : ""}
-                </span>
-                <span className={`ui-chip-sm shrink-0 font-semibold ${pointsTone}`}>
-                  {scoreLabel}: {scoreValue}
-                </span>
-              </span>
-              <span className={`mt-1.5 flex flex-wrap items-center gap-1.5 text-xs font-semibold ${socialTone}`}>
-                {profile.homeTeamId ? (
-                  <HomeTeamBadge
-                    teamId={profile.homeTeamId}
-                    label=""
-                    compact
-                    className={isCurrentUser ? "bg-white/85" : "bg-white/70"}
-                  />
-                ) : null}
+              <span className="min-w-0 truncate text-base font-black text-gray-950">
+                {profile.name}
+                {isCurrentUser ? " (You)" : ""}
               </span>
             </span>
-            {canAwardManagedTrophies && (profile.id !== currentUserId || canSelfAwardTrophies) ? (
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (!managedAwardGroup) {
-                    return;
-                  }
-                  onOpenTrophySheet(profile.id);
-                }}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-base transition hover:border-accent hover:bg-accent-light"
-                aria-label={`Award trophy to ${profile.name}`}
-              >
-                🏆
-              </button>
-            ) : null}
           </span>
         </span>
       </Link>
+      <div className="pointer-events-none absolute right-4 top-1/2 z-10 -translate-y-1/2">
+        <span className="ui-chip-sm bg-white px-2 text-[10px] font-black text-gray-950 ring-1 ring-black/5">
+          {scoreLabel}: {scoreValue}
+        </span>
+      </div>
+      {canAwardManagedTrophies && (profile.id !== currentUserId || canSelfAwardTrophies) ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!managedAwardGroup) {
+              return;
+            }
+            onOpenTrophySheet(profile.id);
+          }}
+          className="absolute bottom-3 right-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-base shadow-[0_8px_20px_rgba(15,23,42,0.12)] transition hover:border-accent hover:bg-accent-light"
+          aria-label={`Award trophy to ${profile.name}`}
+        >
+          🏆
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -304,17 +257,13 @@ export function LeaderboardClient() {
   const [dismissedDailyWinnerKeys, setDismissedDailyWinnerKeys] = useState<string[]>([]);
   const [hasRestoredDailyWinnerDismissal, setHasRestoredDailyWinnerDismissal] = useState(false);
   const [restoredDailyWinnerDismissOwnerKey, setRestoredDailyWinnerDismissOwnerKey] = useState<string | null>(null);
-  const [isIntroMoreOpen, setIsIntroMoreOpen] = useSessionDisclosureState(
-    LEADERBOARD_INTRO_DISCLOSURE_STORAGE_KEY,
-    false
-  );
   const [leaderSummaryStateByContext, setLeaderSummaryStateByContext] = useState<
     Record<string, { isOpen: boolean; showAllLeaders: boolean }>
   >({});
   const hasLoadedLeaderboardRef = useRef(false);
   const lastSelectedGroupIdRef = useRef("");
   const lastSelectedManagerIdRef = useRef("");
-  const localizedTheme = getLocalizedCardTheme({
+  const localizedTheme = getLocalizedCardThemeForUserSurface({
     homeTeamId: user?.homeTeamId ?? null,
     preferredLanguage: user?.preferredLanguage ?? null
   });
@@ -323,9 +272,6 @@ export function LeaderboardClient() {
     backgroundColor: "var(--localized-card-control-surface)",
     color: "var(--localized-card-control-text)"
   } as const;
-  const introDisclosureClassName =
-    "text-[color:var(--localized-card-secondary-text)] hover:text-[color:var(--localized-card-text)]";
-
   if (selectedGroupId) {
     lastSelectedGroupIdRef.current = selectedGroupId;
   }
@@ -884,14 +830,6 @@ export function LeaderboardClient() {
     [activePhase, switcher]
   );
   const activePhaseNavKey = useMemo(() => {
-    if (activeView === "global" && activePhase === "group_phase") {
-      return "global-group-phase";
-    }
-
-    if (activeView === "global" && activePhase === "knockout_phase") {
-      return "global-knockout-phase";
-    }
-
     if (activePhase === "global_top10" && activeView === "groups") {
       return "groups";
     }
@@ -911,8 +849,14 @@ export function LeaderboardClient() {
     return "global";
   }, [activePhase, activeView, selectedGroupId]);
   const activePhaseNavLabel = useMemo(
-    () => phaseNavItems.find((item) => item.key === activePhaseNavKey)?.label ?? "Global Top 10",
-    [activePhaseNavKey, phaseNavItems]
+    () =>
+      phaseNavItems.find((item) => item.key === activePhaseNavKey)?.label ??
+      (activePhase === "group_phase"
+        ? "Group Stage"
+        : activePhase === "knockout_phase"
+          ? "Knockout Stage"
+          : "Global Top 10"),
+    [activePhase, activePhaseNavKey, phaseNavItems]
   );
   const groupedPhaseNavItems = useMemo(() => {
     const globalItems = phaseNavItems.filter(
@@ -1151,9 +1095,7 @@ export function LeaderboardClient() {
                     </p>
                     <div className="flex shrink-0 flex-col items-end gap-2">
                       <span
-                        className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-black ${getActivityBadgeTone(
-                          event
-                        )}`}
+                        className={`ui-chip-sm font-black ${getActivityBadgeTone(event)}`}
                       >
                         {getActivityLabel(event)}
                       </span>
@@ -1207,9 +1149,7 @@ export function LeaderboardClient() {
                 </p>
                 <div className="flex shrink-0 flex-col items-end gap-2">
                   <span
-                    className={`inline-flex items-center rounded-md px-2 py-1 text-[11px] font-black ${getActivityBadgeTone(
-                      event
-                    )}`}
+                    className={`ui-chip-sm font-black ${getActivityBadgeTone(event)}`}
                   >
                     {getActivityLabel(event)}
                   </span>
@@ -1232,7 +1172,7 @@ export function LeaderboardClient() {
                           onClick={() => {
                             void handleReactionToggle(event.eventId, emoji, reaction?.reacted ?? false);
                           }}
-                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-bold transition ${
+                          className={`ui-chip-sm border text-xs font-bold transition ${
                             reaction?.reacted
                               ? "border-accent bg-accent-light text-accent-dark"
                               : "border-gray-200 bg-white text-gray-700 hover:border-accent hover:bg-accent-light"
@@ -1297,7 +1237,7 @@ export function LeaderboardClient() {
                         activeCommentEventId === event.eventId ||
                         !(commentDrafts[event.eventId] ?? "").trim()
                       }
-                      className="inline-flex items-center rounded-md bg-accent px-3 py-2 text-xs font-bold text-white transition hover:bg-accent-dark disabled:cursor-not-allowed disabled:bg-gray-300"
+                      className="inline-flex items-center rounded-md bg-accent px-3 py-2 text-xs font-bold text-accent-text transition hover:bg-accent-dark disabled:cursor-not-allowed disabled:bg-gray-300"
                     >
                       {activeCommentEventId === event.eventId ? "Posting..." : "Post comment"}
                     </button>
@@ -1314,7 +1254,7 @@ export function LeaderboardClient() {
   return (
     <div className="space-y-5">
       <section
-        className="relative overflow-hidden rounded-lg border p-5"
+        className="relative overflow-hidden rounded-[1.15rem] p-5"
         style={{
           ...localizedCardVars,
           backgroundColor: "var(--localized-card-bg)",
@@ -1328,35 +1268,14 @@ export function LeaderboardClient() {
             Leaderboard
           </p>
           {globalStandingLabel ? (
-            <div className="shrink-0 rounded-md px-2 py-1 text-[11px] font-bold uppercase tracking-wide" style={introChipStyle}>
+            <div className="ui-chip-sm shrink-0 font-bold uppercase tracking-wide" style={introChipStyle}>
               {globalStandingLabel}
             </div>
           ) : null}
         </div>
-        {isIntroMoreOpen ? (
-          <>
-            <h2 className="relative mt-3 text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">
-              See how you rank
-            </h2>
-            <div className="relative mt-3 flex w-full justify-end">
-              <InlineDisclosureButton
-                isOpen={isIntroMoreOpen}
-                variant="subtle"
-                onClick={() => setIsIntroMoreOpen((current) => !current)}
-                className={introDisclosureClassName}
-              />
-            </div>
-          </>
-        ) : (
-          <div className="relative mt-3 flex w-full justify-end">
-            <InlineDisclosureButton
-              isOpen={isIntroMoreOpen}
-              variant="subtle"
-              onClick={() => setIsIntroMoreOpen((current) => !current)}
-              className={introDisclosureClassName}
-            />
-          </div>
-        )}
+        <h2 className="relative mt-3 text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">
+          See how you rank
+        </h2>
       </section>
 
       {!isLoading && !error && canEvaluateDailyWinnerDismissal && dailyWinners.length > 0 && !isDailyWinnerDismissed ? (
@@ -1475,7 +1394,7 @@ export function LeaderboardClient() {
       </section>
 
       {!isLoading && !error && activityFeed.length > 0 ? (
-        <section className="rounded-lg border border-gray-200 bg-white p-3">
+        <section className="ui-card p-3">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Recent Activity</p>
@@ -1529,14 +1448,14 @@ export function LeaderboardClient() {
             )}
           </div>
           {isGroupView && selectedGroupSummary ? (
-            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            <div className="px-3 py-1">
               <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 text-[11px] font-semibold text-gray-600">
                 <div className="min-w-0">
                   <span className="font-black text-gray-900">Managed by:</span>{" "}
                   <span className="truncate">{selectedGroupSummary.managerName ?? "Group manager"}</span>
                 </div>
-                <div className="text-right">
-                  <span className="font-black text-gray-900"># of Players:</span> {selectedGroupSummary.totalPlayers}
+                <div className="text-right font-black text-gray-900">
+                  {selectedGroupSummary.totalPlayers} players
                 </div>
                 <div className="min-w-0">
                   <span className="font-black text-gray-900">Average Points:</span>{" "}
@@ -1585,7 +1504,7 @@ export function LeaderboardClient() {
             />
           ) : null}
           {isLoading ? (
-            <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
+            <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
               Loading leaderboard...
             </p>
           ) : null}
@@ -1829,7 +1748,7 @@ export function LeaderboardClient() {
               data-choice-active={activePhase === phase.value ? "true" : "false"}
               className={`shrink-0 ${LEADERBOARD_COCKPIT_BUTTON_CLASS} ${
                 activePhase === phase.value
-                  ? "bg-accent text-white"
+                  ? "bg-accent text-accent-text"
                   : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
               }`}
             >
@@ -1894,7 +1813,7 @@ function LeaderboardPlaceholder({
   selectedManagerLabel: string | null;
 }) {
   return (
-    <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <section className="ui-card-soft p-4">
       <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Leaderboard View</p>
       <h3 className="mt-2 text-2xl font-black text-gray-950">{getPlaceholderTitle(activeView)}</h3>
       <p className="mt-2 text-sm font-semibold text-gray-600">
@@ -1980,20 +1899,12 @@ function getPhaseNavItems(
   if (activePhase === "global_top10") {
     return [
       { key: "global", label: "Global Top 10", view: "global" },
-      { key: "global-group-phase", label: "Group Stage", view: "global", phase: "group_phase" },
-      { key: "global-knockout-phase", label: "Knockout Stage", view: "global", phase: "knockout_phase" },
       { key: "groups", label: "Global Top 10 Groups", view: "groups" },
       { key: "teams", label: "Global Top 10 Teams", view: "teams" }
     ];
   }
 
-  const items: PhaseNavItem[] = [
-    {
-      key: "global",
-      label: activePhase === "group_phase" ? "Group Stage" : "Knockout Stage",
-      view: "global"
-    }
-  ];
+  const items: PhaseNavItem[] = [];
 
   const seenGroupIds = new Set<string>();
 
@@ -2136,7 +2047,7 @@ function GroupStandingsSection({
           </div>
 
       {isLoading ? (
-        <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
+        <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
           Loading group standings...
         </p>
       ) : null}
@@ -2148,13 +2059,13 @@ function GroupStandingsSection({
       ) : null}
 
       {!isLoading && !error && groups.length === 0 ? (
-        <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
+        <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
           No group standings are ready yet.
         </p>
       ) : null}
 
       {!isLoading && !error && allGroupsAreScoreless ? (
-        <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600">
+        <p className="ui-card px-4 py-3 text-sm font-semibold text-gray-600">
           Groups are set up, but no scores have landed yet.
         </p>
       ) : null}
@@ -2167,7 +2078,7 @@ function GroupStandingsSection({
               : 10;
 
             return (
-              <div key={group.id} className="rounded-lg border border-gray-200 bg-white p-3">
+              <div key={group.id} className="ui-card p-3">
                 <div className="flex items-start gap-3">
                   <div className="flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-center text-gray-700">
                     <span className="text-sm font-black leading-none">{group.rank}</span>
@@ -2252,7 +2163,7 @@ function TeamStandingsSection({
       </div>
 
       {isLoading ? (
-        <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
+        <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
           Loading team standings...
         </p>
       ) : null}
@@ -2264,13 +2175,13 @@ function TeamStandingsSection({
       ) : null}
 
       {!isLoading && !error && teams.length === 0 ? (
-        <p className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
+        <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
           No team standings are ready yet.
         </p>
       ) : null}
 
       {!isLoading && !error && allTeamsAreScoreless ? (
-        <p className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600">
+        <p className="ui-card px-4 py-3 text-sm font-semibold text-gray-600">
           Teams are lined up, but no scores have landed yet.
         </p>
       ) : null}
@@ -2283,7 +2194,7 @@ function TeamStandingsSection({
               : 10;
 
             return (
-              <div key={team.id} className="rounded-lg border border-gray-200 bg-white p-3">
+              <div key={team.id} className="ui-card p-3">
                 <div className="flex items-start gap-3">
                   <div className="flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-center text-gray-700">
                     <span className="text-sm font-black leading-none">{team.rank}</span>
@@ -2359,7 +2270,7 @@ function LeaderSummaryCard({
   const hiddenLeaderCount = Math.max(0, leaders.length - previewLeaders.length);
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-3">
+    <div className="ui-card p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <h3 className="text-sm font-bold uppercase tracking-wide text-accent-dark">WHO&apos;S #1</h3>

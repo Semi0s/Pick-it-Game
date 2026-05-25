@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { BracketBuilderClient } from "@/components/BracketBuilderClient";
+import { ManagementIntro } from "@/components/player-management/Shared";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
 import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
 import {
@@ -110,7 +111,17 @@ export default async function BracketBuilderPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-3xl pb-4 pt-0">
+      <div className="mx-auto max-w-3xl space-y-5 pb-4 pt-0">
+        <ManagementIntro
+          eyebrow="Start Here"
+          title="Group Stage"
+          description="Pick qualifying teams only."
+          secondaryNote={fullScoresEnabled ? "Pick scores, earn more points." : "Finish Group Stage, then return for Knockout."}
+          statusChip={knockoutStatus.isFullySeeded ? "Locked" : "Open"}
+          disclosureStorageKey="group-stage-top-card"
+          disclosurePlacement="bottom-right"
+          collapseBodyWhenClosed
+        />
         <BracketBuilderClient
           initialMatches={localMatches}
           initialKnockoutSeeded={knockoutStatus.isFullySeeded}
@@ -122,7 +133,7 @@ export default async function BracketBuilderPage() {
         groupStageDueAt={GROUP_PHASE_START_AT}
         knockoutProjectedPreview={projectedKnockoutComparisonView}
         fullScoresEnabled={fullScoresEnabled || authUser.role === "admin"}
-      />
+        />
       </div>
     </AppShell>
   );

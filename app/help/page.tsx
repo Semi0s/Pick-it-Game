@@ -111,7 +111,7 @@ export default async function HelpPage() {
   return (
     <AppShell>
       <div className="space-y-5">
-        <section className="rounded-lg bg-gray-100 p-5">
+        <section className="rounded-[1.15rem] bg-gray-100 p-5">
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Help</p>
           <h1 className="mt-2 text-3xl font-black leading-tight text-gray-950">
             Welcome to PICK-IT! <span aria-hidden="true">⚽</span>
@@ -123,7 +123,7 @@ export default async function HelpPage() {
 
         <div className="space-y-3">
           {HELP_SECTIONS.map((section, index) => (
-            <section key={section.title} className="rounded-lg border border-gray-200 bg-white p-4">
+            <section key={section.title} className="ui-card p-4">
               <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
                 {index + 1}. {section.title}
               </p>
@@ -143,7 +143,7 @@ export default async function HelpPage() {
           ))}
         </div>
 
-        <section className="rounded-lg border border-gray-200 bg-white p-4">
+        <section className="ui-card p-4">
           <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Quick Tips</p>
           <div className="mt-3 space-y-2">
             {QUICK_TIPS.map((tip) => (
@@ -154,7 +154,7 @@ export default async function HelpPage() {
           </div>
         </section>
 
-        <section className="rounded-lg bg-gray-100 p-4">
+        <section className="rounded-[1.15rem] bg-gray-100 p-4">
           <p className="text-sm font-semibold leading-6 text-gray-800">
             That’s it. Build your Group Stage first, then come back for Knockout Stage when the bracket is official. <span aria-hidden="true">⚽🔥</span>
           </p>

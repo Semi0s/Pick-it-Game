@@ -1264,7 +1264,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     <section className="space-y-5">
       <ManagementIntro
         eyebrow="My Groups"
-        title="Play in groups and manage them"
+        title="Play with friends"
         description="Players see the groups they belong to. Organizers get the group controls their tier allows."
         statusChip={
           summary?.ok
@@ -1321,7 +1321,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       ) : null}
 
       {inviteToken ? (
-        <section className="rounded-lg border border-gray-200 bg-white p-4">
+        <section className="ui-card p-4">
           <h3 className="text-lg font-bold">Group invite</h3>
           {isLoadingInvitePreview ? (
             <p className="mt-3 text-sm font-semibold text-gray-600">Loading invite...</p>
@@ -1377,7 +1377,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   )}
                 </div>
               ) : isSignedIn ? (
-                <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">
+                <p className="rounded-md border border-accent-light bg-accent-light/40 px-3 py-2 text-sm font-semibold text-accent-dark">
                   {invitePreview.status === "accepted"
                     ? `Invite accepted — welcome to ${invitePreview.groupName}.`
                     : invitePreview.status === "expired" || invitePreview.status === "revoked"
@@ -1520,7 +1520,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         ) : (
           <form
             onSubmit={handleCreateGroup}
-            className="space-y-4 rounded-lg border border-green-200 bg-green-50 p-4 transition-colors"
+            className="space-y-4 rounded-lg border border-accent-light bg-accent-light/20 p-4 transition-colors"
           >
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-lg font-bold">
@@ -1606,7 +1606,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
           <h3 className="text-xl font-black">Managed Groups</h3>
         </div>
         {isSuperAdmin ? (
-          <label className="block rounded-lg border border-gray-200 bg-white p-4">
+          <label className="ui-card block p-4">
             <span className="text-sm font-bold text-gray-800">Find a group</span>
             <input
               value={superAdminGroupQuery}
@@ -1725,7 +1725,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     </div>
                     {group.canManage ? (
                       <div className="mt-4 space-y-4">
-                        <div className="rounded-lg border border-gray-200 bg-white p-4">
+                        <div className="ui-card p-4">
                           <div className="flex items-start justify-between gap-3">
                             <div>
                               <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group Profile</h4>
@@ -1745,7 +1745,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               className="hidden"
                               onChange={(event) => void handleGroupAvatarSelection(group, event)}
                             />
-                            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+                            <div className="rounded-[1.15rem] border border-gray-200 bg-gray-50 px-3 py-3">
                               <div className="flex items-center gap-3">
                                 <Avatar
                                   name={groupProfileDraft.name || group.name}
@@ -1842,7 +1842,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                           </div>
                         </div>
 
-                        <div className="rounded-lg border border-gray-200 bg-white p-4">
+                        <div className="ui-card p-4">
                           <div className="flex items-start justify-between gap-3">
                             <div>
                               <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Restricted Email List</h4>
@@ -1933,7 +1933,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         </div>
 
                         {group.groupKind === "standard" ? (
-                          <div className="rounded-lg border border-gray-200 bg-white p-4">
+                          <div className="ui-card p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div>
                                 <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Captain’s Pass</h4>
@@ -2019,7 +2019,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       </div>
                     ) : null}
                     {isCaptainInviteHelperVisible ? (
-                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
+                      <div className="ui-card mt-4 p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Captain’s Pass</h4>
@@ -2056,7 +2056,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       </div>
                     ) : null}
                     {group.canManage ? (
-                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
+                      <div className="ui-card mt-4 p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <p className="text-sm font-black uppercase tracking-wide text-gray-700">Access &amp; Invites</p>
@@ -2103,7 +2103,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Invite status</p>
                                   <ManagementBadge label={detailedGroup?.inviteCodeStatusLabel ?? "Active"} tone={detailedGroup?.inviteCodeStatus === "active" ? "success" : "neutral"} />
                                 </div>
-                                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-accent-light bg-accent-light/40 px-3 py-3">
                                   <code className="text-base font-black uppercase tracking-[0.18em] text-gray-950">
                                     {inviteCode.code}
                                   </code>
@@ -2308,7 +2308,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     ) : null}
 
                     {!detailedGroup ? (
-                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
+                      <div className="ui-card mt-4 p-4">
                         <div className="space-y-2">
                           <p className="text-sm font-black text-gray-900">Group details</p>
                           <p className="text-sm font-semibold text-gray-600">
@@ -2370,7 +2370,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
                   return (
                     <div className="mt-6 space-y-3">
-                      <div className="rounded-lg border border-gray-200 bg-white p-3">
+                      <div className="ui-card p-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Members</h4>
@@ -2398,7 +2398,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         ] as const;
 
                         return (
-                      <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <div className="ui-card-soft mt-3 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex flex-wrap gap-2">
                             {filterOptions.map((option) => (
@@ -2636,7 +2636,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       </div>
 
                       {canManageSocialTrophies ? (
-                      <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <div className="ui-card-soft mt-4 p-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Trophies</h4>
@@ -2863,7 +2863,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     </div>
                   );
                     })() : (
-                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                      <div className="ui-card mt-4 p-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Members</h4>
@@ -2899,7 +2899,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     )}
 
                     {group.canManage ? (
-                      <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                      <div className="ui-card mt-4 p-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group Limits</h4>
@@ -2960,7 +2960,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   : "Save Group Limit"}
                             </ActionButton>
 
-                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                            <div className="ui-card-soft p-3">
                                 <div className="flex flex-wrap items-start justify-between gap-3">
                                   <div>
                                   <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Danger Zone</h4>

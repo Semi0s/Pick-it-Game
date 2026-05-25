@@ -18,6 +18,7 @@ import { getSafeSupabaseErrorInfo } from "@/lib/supabase-errors";
 import { getPublicSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/client";
 import { parseJsonResponse } from "@/lib/fetch-json";
+import { notifyCurrentUserProfileChanged } from "@/lib/current-user-events";
 import { demoSignIn, demoSignOut, demoSignUp, getDemoCurrentUser } from "@/lib/demo-auth-fallback";
 import type { UserProfile, UserTrophy } from "@/lib/types";
 
@@ -646,6 +647,8 @@ export async function uploadCurrentUserAvatar(file: File): Promise<AvatarUploadR
     return { ok: false, message: profileError.message };
   }
 
+  notifyCurrentUserProfileChanged();
+
   return {
     ok: true,
     avatarUrl,
@@ -678,6 +681,8 @@ export async function clearCurrentUserAvatar(): Promise<AuthResult> {
   if (error) {
     return { ok: false, message: error.message };
   }
+
+  notifyCurrentUserProfileChanged();
 
   return {
     ok: true,
@@ -713,6 +718,8 @@ export async function updateCurrentUserHomeTeam(homeTeamId: string | null): Prom
   if (error) {
     return { ok: false, message: error.message };
   }
+
+  notifyCurrentUserProfileChanged();
 
   return {
     ok: true,
@@ -755,6 +762,8 @@ export async function updateCurrentUserFollowedTeams(teamIds: string[]): Promise
     return { ok: false, message: error.message || "Could not update followed teams right now." };
   }
 
+  notifyCurrentUserProfileChanged();
+
   return {
     ok: true,
     message: normalizedTeamIds.length > 0 ? "Followed teams updated." : "Followed teams cleared."
@@ -785,6 +794,8 @@ export async function updateCurrentUserPreferredLanguage(language: string): Prom
   if (error) {
     return { ok: false, message: error.message };
   }
+
+  notifyCurrentUserProfileChanged();
 
   return {
     ok: true,

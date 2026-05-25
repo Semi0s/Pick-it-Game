@@ -19,7 +19,7 @@ export function MatchDateNavigator({ availableDateKeys = [] }: MatchDateNavigato
   const knockoutDates = tournamentCalendar.filter((entry) => entry.stage !== "group");
 
   return (
-    <section className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+    <section className="ui-card space-y-3 p-4">
       <div>
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Match Calendar</p>
         <h3 className="mt-1 text-xl font-black text-gray-950">Jump by date</h3>

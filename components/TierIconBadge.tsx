@@ -32,7 +32,7 @@ export function TierIconBadge({
   const toneClass =
     accessLevel === "super_admin"
       ? "border-amber-300 bg-amber-50 text-amber-800"
-      : "border-green-200 bg-green-50 text-green-700";
+      : "border-accent/30 bg-accent-light/40 text-accent-dark";
   const compactWidth = code.length > 1 ? 24 : 18;
   const compactHeight = 18;
 
@@ -40,7 +40,7 @@ export function TierIconBadge({
     <span
       className={
         className ??
-        `inline-flex shrink-0 items-center justify-center rounded-md border px-1.5 py-0.5 text-[10px] font-black leading-none ${toneClass}`
+        `ui-chip-sm shrink-0 border font-black ${toneClass}`
       }
       title={label}
       aria-label={label}

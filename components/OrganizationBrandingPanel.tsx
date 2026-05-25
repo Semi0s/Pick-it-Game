@@ -314,7 +314,7 @@ export function OrganizationBrandingPanel() {
                     <div className="mt-3 overflow-hidden rounded-md border border-gray-200 bg-gray-50">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={workspace.organization.logo.signedUrl ?? "/images/pickit-signin-logo.png"}
+                        src={workspace.organization.logo.signedUrl ?? "/images/pickit-logo.svg"}
                         alt={`${workspace.organization.organizationName} logo preview`}
                         className="h-28 w-full object-contain p-3"
                       />

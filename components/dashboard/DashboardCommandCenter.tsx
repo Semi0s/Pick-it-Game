@@ -95,7 +95,7 @@ function ReminderPanel({
         <div className={`pointer-events-none absolute inset-px rounded-[1.05rem] ${getPanelInnerSurfaceClasses("green")}`} />
         <div className={`pointer-events-none absolute -right-10 top-0 h-20 w-20 rounded-full blur-2xl ${getPanelGlowClasses("green")}`} />
         <div className="relative flex h-full flex-col items-center justify-center">
-          <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/80 bg-white/85 text-emerald-700 shadow-[0_1px_0_rgba(255,255,255,0.9)]">
+          <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/80 bg-white/85 text-accent-dark shadow-[0_1px_0_rgba(255,255,255,0.9)]">
             <BellRing aria-hidden className="h-4 w-4" />
           </span>
           <p className="mt-2 text-[7px] font-semibold uppercase tracking-[0.2em] text-slate-500">Reminders</p>
@@ -195,7 +195,7 @@ function UrgencyIconChip({
   return (
     <span
       aria-label={getUrgencyAriaLabel(tone, isComplete)}
-      className={`ui-chip-sm rounded-full border px-1.5 py-[0.3rem] font-bold ${getToneChipShadowClass(tone)} ${getToneIconChipClasses(tone)}`}
+      className={`ui-chip-icon-sm border font-bold ${getToneIconChipClasses(tone)}`}
     >
       <Icon
         aria-hidden
@@ -213,7 +213,7 @@ function ReminderChip({
   label: string;
 }) {
   return (
-    <span className={`ui-chip-sm gap-1 rounded-full border px-1.5 py-[0.3rem] text-[8px] font-bold ${getToneChipShadowClass(tone)} ${getToneLabelChipClasses(tone)}`}>
+    <span className={`ui-chip-sm border font-bold ${getToneLabelChipClasses(tone)}`}>
       <BellRing aria-hidden className={`h-2.5 w-2.5 ${tone === "red" ? "motion-safe:animate-pulse" : ""}`} />
       <span className="truncate leading-none tabular-nums">{label}</span>
     </span>
@@ -299,7 +299,7 @@ function CompactLiveMatch({ match }: { match: DashboardMatchSummary }) {
     <div className="rounded-[0.95rem] border border-rose-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,241,242,0.94))] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.88)]">
       <div className="flex items-center justify-between gap-2">
         <p className="truncate text-[7px] font-semibold uppercase tracking-[0.2em] text-rose-700">{compactStageLabel(match.stage)}</p>
-        <span className="inline-flex items-center gap-1 rounded-full border border-rose-200/80 bg-white/85 px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-[0.18em] text-rose-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+        <span className="ui-chip-sm border border-rose-200/80 bg-white/85 text-[7px] font-bold uppercase tracking-[0.18em] text-rose-700">
           <span className="h-1.5 w-1.5 rounded-full bg-rose-500 motion-safe:animate-pulse" />
           Live
         </span>
@@ -353,7 +353,7 @@ function CompactLiveRow({
 
 function TinyCardStat({ label, value }: { label: string; value: number }) {
   return (
-    <span className="inline-flex items-center gap-0.5 rounded-full border border-white/80 bg-white/90 px-1.5 py-0.5 text-[7px] font-semibold text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+    <span className="ui-chip-sm border border-white/80 bg-white/90 text-[7px] font-semibold text-slate-700">
       <span aria-hidden>{label}</span>
       <span className="tabular-nums">{value}</span>
     </span>
@@ -408,14 +408,10 @@ function getToneIconChipClasses(tone: DashboardUrgencyTone) {
     case "orange":
       return "border-amber-200/80 bg-amber-50/90 text-amber-700";
     case "green":
-      return "border-emerald-200/80 bg-emerald-50/90 text-emerald-700";
+      return "border-accent/30 bg-accent-light/40 text-accent-dark";
     default:
       return "border-slate-200/80 bg-white/85 text-slate-500";
   }
-}
-
-function getToneChipShadowClass(tone: DashboardUrgencyTone) {
-  return tone === "green" ? "" : "shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]";
 }
 
 function getToneLabelChipClasses(tone: DashboardUrgencyTone) {
@@ -425,7 +421,7 @@ function getToneLabelChipClasses(tone: DashboardUrgencyTone) {
     case "orange":
       return "border-amber-200/80 bg-amber-50/90 text-amber-700";
     case "green":
-      return "border-emerald-200/80 bg-emerald-50/90 text-emerald-700";
+      return "border-accent/30 bg-accent-light/40 text-accent-dark";
     default:
       return "border-slate-200/80 bg-white/85 text-slate-500";
   }
@@ -437,7 +433,7 @@ function getToneMetaTextClasses(tone: DashboardUrgencyTone, isComplete: boolean,
   }
 
   if (isComplete) {
-    return "text-emerald-700";
+    return "text-accent-dark";
   }
 
   switch (tone) {
@@ -446,7 +442,7 @@ function getToneMetaTextClasses(tone: DashboardUrgencyTone, isComplete: boolean,
     case "orange":
       return "text-amber-700";
     case "green":
-      return "text-emerald-700";
+      return "text-accent-dark";
     default:
       return "text-slate-500";
   }
@@ -474,7 +470,7 @@ function getPanelShellClasses(tone: DashboardUrgencyTone) {
 function getPanelInnerSurfaceClasses(tone: DashboardUrgencyTone) {
   const accent =
     tone === "green"
-      ? "bg-[radial-gradient(circle_at_top_right,rgba(22,163,74,0.09),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.6),transparent)]"
+      ? "bg-[linear-gradient(180deg,rgba(255,255,255,0.7),transparent)]"
       : tone === "orange"
         ? "bg-[radial-gradient(circle_at_top_right,rgba(245,158,11,0.11),transparent_42%),linear-gradient(180deg,rgba(255,250,240,0.55),transparent)]"
         : tone === "red"
@@ -487,7 +483,7 @@ function getPanelInnerSurfaceClasses(tone: DashboardUrgencyTone) {
 function getPanelGlowClasses(tone: DashboardUrgencyTone) {
   switch (tone) {
     case "green":
-      return "bg-emerald-200/30";
+      return "bg-accent-light/40";
     case "orange":
       return "bg-amber-200/32";
     case "red":
@@ -500,7 +496,7 @@ function getPanelGlowClasses(tone: DashboardUrgencyTone) {
 function getPanelRingClasses(tone: DashboardUrgencyTone) {
   switch (tone) {
     case "green":
-      return "ring-1 ring-emerald-100/80";
+      return "ring-1 ring-accent-light";
     case "orange":
       return "ring-1 ring-amber-100/80";
     case "red":
@@ -513,7 +509,7 @@ function getPanelRingClasses(tone: DashboardUrgencyTone) {
 function getRingGlowClasses(tone: DashboardUrgencyTone) {
   switch (tone) {
     case "green":
-      return "bg-emerald-200/18";
+      return "bg-accent-light/40";
     case "orange":
       return "bg-amber-200/20";
     case "red":
@@ -537,8 +533,8 @@ function getRingGradientStops(tone: DashboardUrgencyTone) {
       ];
     case "green":
       return [
-        { offset: "0%", color: "#34d399" },
-        { offset: "100%", color: "#16a34a" }
+        { offset: "0%", color: "var(--app-accent-ring)" },
+        { offset: "100%", color: "var(--app-accent)" }
       ];
     default:
       return [
