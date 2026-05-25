@@ -26,7 +26,7 @@ export function LocalizedCardBackground({
   preserveRightControlZone = true
 }: LocalizedCardBackgroundProps) {
   const isLightTheme = isLightLocalizedCardTheme(theme);
-  const patternOpacities = getPatternOpacities(theme.patternVariant, isLightTheme);
+  const patternOpacities = getPatternOpacities(theme, isLightTheme);
 
   return (
     <div className={`pointer-events-none absolute inset-0 overflow-hidden ${className ?? ""}`.trim()} aria-hidden>
@@ -62,32 +62,20 @@ export function LocalizedCardBackground({
   );
 }
 
-function getPatternOpacities(variant: LocalizedCardTheme["patternVariant"], isLightTheme: boolean) {
+function getPatternOpacities(theme: LocalizedCardTheme, isLightTheme: boolean) {
   if (isLightTheme) {
-    switch (variant) {
-      case "minimal":
-        return [0.36, 0.5, 0.36, 0.14, 0.34, 0.36, 0.12, 0.32, 0.26];
-      case "emblem":
-        return [0.68, 1, 0.98, 0.34, 0.9, 0.98, 0.42, 0.22, 0.2];
-      case "ribbons":
-        return [0.64, 1, 0.96, 0.32, 0.88, 0.96, 0.4, 0.2, 0.18];
-      case "bands":
-      default:
-        return [0.66, 1, 0.96, 0.34, 0.9, 0.98, 0.42, 0.2, 0.18];
+    if (theme.id === "japan") {
+      return [0.86, 1, 0.9, 0.24, 0.82, 0.9, 0.24, 0.64, 0.58];
     }
+
+    return [0.66, 1, 0.96, 0.34, 0.9, 0.98, 0.42, 0.2, 0.18];
   }
 
-  switch (variant) {
-    case "minimal":
-      return [0.24, 0.34, 0.24, 0.08, 0.22, 0.24, 0.08, 0.26, 0.2];
-    case "emblem":
-      return [0.58, 0.98, 0.92, 0.28, 0.8, 0.92, 0.34, 0.16, 0.14];
-    case "ribbons":
-      return [0.5, 0.92, 0.86, 0.26, 0.76, 0.9, 0.32, 0.15, 0.14];
-    case "bands":
-    default:
-      return [0.56, 0.96, 0.9, 0.28, 0.78, 0.92, 0.34, 0.16, 0.14];
+  if (theme.id === "germany") {
+    return [1, 0.96, 0.9, 0.28, 0.78, 0.92, 0.34, 0.16, 0.14];
   }
+
+  return [0.56, 0.96, 0.9, 0.28, 0.78, 0.92, 0.34, 0.16, 0.14];
 }
 
 function getPatternFadeStyle(preserveRightControlZone: boolean): CSSProperties | undefined {

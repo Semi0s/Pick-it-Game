@@ -205,20 +205,21 @@ export const localizedCardThemes = {
   japan: {
     id: "japan",
     label: "Japan",
-    colors: ["#FFFFFF", "#BC002D"],
-    accent: "#BC002D",
+    colors: ["#F1F3F5", "#D0002F"],
+    accent: "#D0002F",
     accentLight: "#FFF4F6",
-    accentDark: "#8E001F",
+    accentDark: "#990022",
     accentText: "#FFFFFF",
-    flagAccent: "#BC002D",
+    flagAccent: "#D0002F",
     useNeutralAccent: true,
-    mainBackground: "#FFFDFB",
+    mainBackground: "#F7F8FA",
     textColor: "#111111",
     secondaryTextColor: "#3F3F46",
     controlSurface: "rgba(255,255,255,0.94)",
     controlText: "#1F2937",
-    borderColor: "#F1B8C6",
+    borderColor: "#E2E5EA",
     controlZoneTint: "rgba(255,255,255,0.06)",
+    patternColors: ["#D0002F", "#8F001F", "#E4E7EC", "#D0002F", "#F1F3F5"],
     patternVariant: "minimal",
     emblemKind: "japan"
   },
@@ -1152,6 +1153,7 @@ export function getAppAccentCssVars(theme: LocalizedCardTheme): CSSProperties {
   const accentSoft = withAlpha(accent, theme.useNeutralAccent ? 0.06 : 0.12);
   const accentBorder = withAlpha(accent, theme.useNeutralAccent ? 0.42 : 0.28);
   const accentRing = withAlpha(accent, theme.useNeutralAccent ? 0.26 : 0.42);
+  const logoSecondaryAccent = getLogoSecondaryAccentColor(theme, accent, fallbackTheme);
 
   return {
     "--app-accent": accent,
@@ -1165,6 +1167,7 @@ export function getAppAccentCssVars(theme: LocalizedCardTheme): CSSProperties {
     "--app-accent-soft": accentSoft,
     "--app-accent-border": accentBorder,
     "--app-accent-ring": accentRing,
+    "--app-logo-secondary-accent": logoSecondaryAccent,
     "--app-accent-rgb": toRgbChannels(accent),
     "--app-accent-light-rgb": toRgbChannels(accentLight),
     "--app-accent-dark-rgb": toRgbChannels(accentDark),
@@ -1196,10 +1199,26 @@ function normalizeKey(value: string | null | undefined) {
 }
 
 function getShadowColor(theme: LocalizedCardTheme) {
+  if (theme.id === "japan") {
+    return "rgba(226, 229, 234, 0.58)";
+  }
+
+  if (theme.id === "ecuador") {
+    return "rgba(0, 56, 147, 0.24)";
+  }
+
   return isLightLocalizedCardTheme(theme) ? withAlpha(getDarkAccentColor(theme), 0.18) : theme.mainBackground;
 }
 
 function getHighlightColor(theme: LocalizedCardTheme) {
+  if (theme.id === "japan") {
+    return "rgba(255, 255, 255, 0.82)";
+  }
+
+  if (theme.id === "ecuador") {
+    return "rgba(255, 255, 255, 0.54)";
+  }
+
   return isLightLocalizedCardTheme(theme) ? withAlpha(getPrimaryAccentColor(theme), 0.18) : "#FFFFFF";
 }
 
@@ -1275,6 +1294,37 @@ function getPreferredFilledAccentHoverColor(accentFill: string, accentDark: stri
   }
 
   return darkenColorToContrast(base, "#FFFFFF", 4.5) ?? base;
+}
+
+function getLogoSecondaryAccentColor(
+  theme: LocalizedCardTheme,
+  accent: string,
+  fallbackTheme: LocalizedCardTheme
+) {
+  const accentKey = normalizeKey(accent);
+  const candidates = [
+    ...(theme.patternColors ?? []),
+    ...theme.colors,
+    theme.flagAccent,
+    theme.mainBackground,
+    fallbackTheme.textColor
+  ].filter((color): color is string => {
+    if (!color || normalizeKey(color) === accentKey) {
+      return false;
+    }
+
+    return Boolean(parseCssColor(color));
+  });
+
+  if (candidates.length === 0) {
+    return "#FFFFFF";
+  }
+
+  return [...new Set(candidates)].sort((left, right) => {
+    const rightContrast = getContrastRatio(right, "#0F0F0F");
+    const leftContrast = getContrastRatio(left, "#0F0F0F");
+    return rightContrast - leftContrast;
+  })[0] ?? "#FFFFFF";
 }
 
 function prefersWhiteAccentText(color: string) {

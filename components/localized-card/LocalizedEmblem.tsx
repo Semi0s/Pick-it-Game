@@ -35,14 +35,14 @@ const VARIANT_CONFIG = {
     assetOpacity: 0.3
   },
   leaderboard: {
-    centerX: 144,
-    centerY: 58,
-    baseScale: 0.5,
-    assetX: 115,
-    assetY: 22,
-    assetWidth: 46,
-    assetHeight: 52,
-    assetOpacity: 0.64
+    centerX: 66,
+    centerY: 45,
+    baseScale: 0.375,
+    assetX: 47.75,
+    assetY: 16.5,
+    assetWidth: 34.5,
+    assetHeight: 39,
+    assetOpacity: 0.72
   }
 } as const;
 
@@ -57,7 +57,9 @@ export function LocalizedEmblem({
 }: LocalizedEmblemProps) {
   const config = VARIANT_CONFIG[variant];
 
-  if (theme.emblemAsset) {
+  const shouldUseEmblemAsset = theme.emblemAsset && !(theme.id === "france" && variant === "leaderboard");
+
+  if (shouldUseEmblemAsset) {
     return (
       <image
         href={theme.emblemAsset}
@@ -115,17 +117,19 @@ function getLocalizedEmblemSpec(
 
   switch (theme.emblemKind) {
     case "usa":
+      const usaStarFill = accentPrefix === "leaderboard-card" ? "rgba(255,255,255,0.94)" : a1;
       return {
         opacity: 0.15,
-        leaderboardOpacity: 0.5,
-        leaderboardScale: 0.72,
+        leaderboardOpacity: 0.78,
+        leaderboardScale: 2.05,
+        leaderboardYOffset: -7,
         node: (
-          <g fill={a1}>
-            <Star x={-24} y={-12} size={8.6} fill={a1} />
-            <Star x={0} y={-22} size={8.8} fill={a1} />
-            <Star x={24} y={-12} size={8.6} fill={a1} />
-            <Star x={-12} y={10} size={7.6} fill={a1} />
-            <Star x={12} y={10} size={7.6} fill={a1} />
+          <g fill={usaStarFill}>
+            <Star x={-24} y={-12} size={8.6} fill={usaStarFill} />
+            <Star x={0} y={-22} size={8.8} fill={usaStarFill} />
+            <Star x={24} y={-12} size={8.6} fill={usaStarFill} />
+            <Star x={-12} y={10} size={7.6} fill={usaStarFill} />
+            <Star x={12} y={10} size={7.6} fill={usaStarFill} />
           </g>
         )
       };
@@ -133,30 +137,46 @@ function getLocalizedEmblemSpec(
       return {
         opacity: 0.23,
         scale: 1.16,
-        leaderboardOpacity: 0.46,
-        leaderboardScale: 0.92,
+        leaderboardOpacity: 0.72,
+        leaderboardScale: 1.62,
+        leaderboardYOffset: -8,
         node: (
           <>
-            {Array.from({ length: 16 }, (_, index) => (
-              <rect
-                key={index}
-                x="-1.1"
-                y="-31"
-                width="2.2"
-                height="11.5"
-                rx="1.1"
-                fill={a2}
-                transform={`rotate(${index * 22.5})`}
-              />
-            ))}
-            <circle r="12.5" fill={a2} />
-            <circle r="5.8" fill="rgba(255,255,255,0.9)" />
+            {Array.from({ length: 16 }, (_, index) => {
+              const isLongRay = index % 2 === 0;
+              return (
+                <path
+                  key={index}
+                  d={isLongRay ? "M0-33 3.5-17h-7Z" : "M0-27 2.7-16h-5.4Z"}
+                  fill="#F6B40E"
+                  transform={`rotate(${index * 22.5})`}
+                />
+              );
+            })}
+            <circle r="15" fill="#F6B40E" />
+            <circle r="10.5" fill="#FFD36A" />
+            <path
+              d="M-5-2.5c1.5-1.2 3-1.2 4.5 0M4.5-2.5c1.5-1.2 3-1.2 4.5 0M-4.5 5.5c2.6 2.1 6.4 2.1 9 0"
+              fill="none"
+              stroke="#8A5A00"
+              strokeLinecap="round"
+              strokeWidth="1.45"
+            />
+            <path
+              d="M0-1.2c1.7 2.4 1.4 4.3-.9 5.8"
+              fill="none"
+              stroke="#8A5A00"
+              strokeLinecap="round"
+              strokeWidth="1.25"
+            />
           </>
         )
       };
     case "uruguay":
       return {
         opacity: 0.17,
+        leaderboardOpacity: 0.58,
+        leaderboardScale: 1.35,
         node: (
           <>
             {[-16, -8, 0, 8, 16].map((rowY) => (
@@ -184,8 +204,9 @@ function getLocalizedEmblemSpec(
       return {
         opacity: 0.18,
         scale: 1.04,
-        leaderboardOpacity: 0.5,
-        leaderboardScale: 0.74,
+        leaderboardOpacity: 0.78,
+        leaderboardScale: 2.1,
+        leaderboardYOffset: -8,
         node: (
           <>
             <path d="M0-28 34 0 0 28-34 0Z" fill={a1} />
@@ -195,9 +216,19 @@ function getLocalizedEmblemSpec(
         )
       };
     case "japan":
+      const japanSunFill = accentPrefix === "leaderboard-card" ? "rgba(255,255,255,0.96)" : a1;
       return {
-        opacity: 0.14,
-        node: <circle r="28" fill={a2} />
+        opacity: 1,
+        scale: 1.18,
+        yOffset: -8,
+        leaderboardOpacity: 1,
+        leaderboardScale: 1.5,
+        leaderboardYOffset: 0,
+        node: (
+          <>
+            <circle r="22" fill={japanSunFill} />
+          </>
+        )
       };
     case "portugal":
       return {
@@ -228,16 +259,20 @@ function getLocalizedEmblemSpec(
         )
       };
     case "france":
+      const francePrimaryFill = accentPrefix === "leaderboard-card" ? "#D8DDE6" : "rgba(255,255,255,0.92)";
+      const franceSecondaryFill = accentPrefix === "leaderboard-card" ? "#AAB2C0" : a2;
       return {
         opacity: 0.2,
+        leaderboardOpacity: 0.52,
+        leaderboardScale: 1.2,
         scale: 1.02,
         node: (
           <>
             <path
               d="M0-30c5.8 0 10.2 4.8 10.2 11.4 0 4.9-2.4 9.5-6.7 13.7 6.4-1.2 13.6-5.6 13.6-14.2 0-6-4.4-10.8-10.1-10.8-3.2 0-5.5 1.4-7 4.1-1.5-2.7-3.8-4.1-7-4.1-5.7 0-10.1 4.8-10.1 10.8 0 8.6 7.2 13 13.6 14.2-4.3-4.2-6.7-8.8-6.7-13.7C-10.2-25.2-5.8-30 0-30Z"
-              fill="rgba(255,255,255,0.92)"
+              fill={francePrimaryFill}
             />
-            <path d="M-8 6 0 13 8 6 5 18l8 6H4l-4 12-4-12h-9l8-6Z" fill={a2} />
+            <path d="M-8 6 0 13 8 6 5 18l8 6H4l-4 12-4-12h-9l8-6Z" fill={franceSecondaryFill} />
           </>
         )
       };
@@ -245,6 +280,8 @@ function getLocalizedEmblemSpec(
       return {
         opacity: 0.17,
         scale: 0.96,
+        leaderboardOpacity: 0.58,
+        leaderboardScale: 1.28,
         node: (
           <>
             <rect x="-24" y="-24" width="48" height="48" rx="10" fill="rgba(255,255,255,0.8)" />
@@ -257,6 +294,8 @@ function getLocalizedEmblemSpec(
       return {
         opacity: 0.16,
         scale: 0.95,
+        leaderboardOpacity: 0.58,
+        leaderboardScale: 1.25,
         node: (
           <>
             <path
@@ -283,6 +322,8 @@ function getLocalizedEmblemSpec(
     case "korea":
       return {
         opacity: 0.16,
+        leaderboardOpacity: 0.56,
+        leaderboardScale: 1.22,
         node: (
           <>
             <circle r="24" fill="rgba(255,255,255,0.92)" />

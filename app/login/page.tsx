@@ -46,9 +46,9 @@ export default async function LoginPage({
           <div className="mx-auto mb-6 max-w-[30rem]">
             <PickItLogo
               alt="PICK-IT! World Cup 2026"
-              sizes="(max-width: 640px) 288px, 352px"
+              sizes="(max-width: 640px) 216px, 264px"
               priority
-              className="mx-auto w-full max-w-[18rem] sm:max-w-[20rem] md:max-w-[22rem]"
+              className="mx-auto w-full max-w-[13.5rem] sm:max-w-[15rem] md:max-w-[16.5rem]"
               imageClassName="object-contain"
             />
           </div>

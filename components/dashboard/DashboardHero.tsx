@@ -54,8 +54,8 @@ export function DashboardHero({
             </Link>
           </div>
         </div>
-        <div className="relative mt-1">
-          <h2 className="text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">{name}</h2>
+        <div className="relative -mt-0.5">
+          <h2 className="text-xl font-black leading-none text-[color:var(--localized-card-text)] sm:text-2xl">{name}</h2>
         </div>
       </div>
     </section>
