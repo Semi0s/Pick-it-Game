@@ -22,6 +22,10 @@ export default async function PlayPreviewPage({
     redirect("/login?next=%2Fstart-playing&mode=signup");
   }
 
+  if (mode === "full_scoring") {
+    redirect(resolvedSearchParams?.onboarding === "1" ? "/bracket-builder?onboarding=1" : "/bracket-builder");
+  }
+
   if (mode !== "full_scoring" && mode !== "easy_bracket" && mode !== "strategy_mode" && mode !== "groups") {
     redirect("/start-playing");
   }

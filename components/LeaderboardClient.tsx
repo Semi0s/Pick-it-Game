@@ -898,6 +898,14 @@ export function LeaderboardClient() {
       { title: t(uiLanguage, "leaderboard.invitedGroups"), items: invitedItems }
     ].filter((section) => section.items.length > 0);
   }, [phaseNavItems, uiLanguage]);
+  const shouldShowPhaseNavMenu = phaseNavItems.length > 1;
+
+  useEffect(() => {
+    if (!shouldShowPhaseNavMenu && isPhaseNavOpen) {
+      setIsPhaseNavOpen(false);
+    }
+  }, [isPhaseNavOpen, shouldShowPhaseNavMenu]);
+
   const leaderboardTitle = useMemo(() => {
     if (activePhase === "global_top10" && activeView === "groups") {
       return t(uiLanguage, "leaderboard.globalTop10Groups");
@@ -1798,47 +1806,49 @@ export function LeaderboardClient() {
           ))}
         </LeaderboardChoiceRail>
 
-        <div className="relative mx-auto w-[87%]">
-          <button
-            type="button"
-            onClick={() => setIsPhaseNavOpen((current) => !current)}
-            className={LEADERBOARD_COCKPIT_TRIGGER_CLASS}
-          >
-            <span className="truncate text-[14px] font-bold text-gray-900">{activePhaseNavLabel}</span>
-            {isPhaseNavOpen ? <ChevronUp className="h-4.5 w-4.5 text-gray-500" /> : <ChevronDown className="h-4.5 w-4.5 text-gray-500" />}
-          </button>
-          {isPhaseNavOpen ? (
-            <div className="mt-1.5 w-full rounded-md border border-gray-200 bg-white p-1.5 shadow-lg">
-              <div className="space-y-2">
-                {groupedPhaseNavItems.map((section) => (
-                  <div key={section.title} className="space-y-1">
-                    <p className="px-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">{section.title}</p>
-                    <div className="space-y-1">
-                      {section.items.map((item) => (
-                        <button
-                          key={item.key}
-                          type="button"
-                          onClick={() => handleSelectPhaseNavItem(item)}
-                          className={`flex min-h-9 w-full items-center justify-between rounded-md border px-3 py-1.5 text-left text-[13px] font-bold transition ${
-                            activePhaseNavKey === item.key
-                              ? "border-accent-light bg-accent-light text-accent-dark"
-                              : "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100"
-                          }`}
-                          title={item.label}
-                        >
-                          <span className="truncate text-[13px] font-bold">{item.label}</span>
-                          {activePhaseNavKey === item.key ? (
-                            <span className="ml-2 shrink-0 text-[10px] font-black uppercase tracking-wide">{t(uiLanguage, "leaderboard.open")}</span>
-                          ) : null}
-                        </button>
-                      ))}
+        {shouldShowPhaseNavMenu ? (
+          <div className="relative mx-auto w-[87%]">
+            <button
+              type="button"
+              onClick={() => setIsPhaseNavOpen((current) => !current)}
+              className={LEADERBOARD_COCKPIT_TRIGGER_CLASS}
+            >
+              <span className="truncate text-[14px] font-bold text-gray-900">{activePhaseNavLabel}</span>
+              {isPhaseNavOpen ? <ChevronUp className="h-4.5 w-4.5 text-gray-500" /> : <ChevronDown className="h-4.5 w-4.5 text-gray-500" />}
+            </button>
+            {isPhaseNavOpen ? (
+              <div className="mt-1.5 w-full rounded-md border border-gray-200 bg-white p-1.5 shadow-lg">
+                <div className="space-y-2">
+                  {groupedPhaseNavItems.map((section) => (
+                    <div key={section.title} className="space-y-1">
+                      <p className="px-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">{section.title}</p>
+                      <div className="space-y-1">
+                        {section.items.map((item) => (
+                          <button
+                            key={item.key}
+                            type="button"
+                            onClick={() => handleSelectPhaseNavItem(item)}
+                            className={`flex min-h-9 w-full items-center justify-between rounded-md border px-3 py-1.5 text-left text-[13px] font-bold transition ${
+                              activePhaseNavKey === item.key
+                                ? "border-accent-light bg-accent-light text-accent-dark"
+                                : "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100"
+                            }`}
+                            title={item.label}
+                          >
+                            <span className="truncate text-[13px] font-bold">{item.label}</span>
+                            {activePhaseNavKey === item.key ? (
+                              <span className="ml-2 shrink-0 text-[10px] font-black uppercase tracking-wide">{t(uiLanguage, "leaderboard.open")}</span>
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          ) : null}
-        </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     );
   }
