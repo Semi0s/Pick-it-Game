@@ -2103,8 +2103,9 @@ function GroupStandingsSection({
   error: string | null;
   language: string;
 }) {
+  const isDirectoryView = groups.some((group) => group.visibility === "directory");
   const topAverage = groups[0]?.avgPoints ?? 0;
-  const allGroupsAreScoreless = groups.length > 0 && groups.every((group) => group.totalPoints <= 0);
+  const allGroupsAreScoreless = !isDirectoryView && groups.length > 0 && groups.every((group) => group.totalPoints <= 0);
 
   return (
       <section className="space-y-2">
@@ -2136,7 +2137,28 @@ function GroupStandingsSection({
         </p>
       ) : null}
 
-      {!isLoading && !error
+      {!isLoading && !error && isDirectoryView
+        ? groups.map((group) => (
+            <div key={group.id} className="ui-card p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-base font-black text-gray-950">{group.name}</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-gray-600">
+                    <span className="font-black text-gray-800">{t(language, "leaderboard.managedBy")}</span>{" "}
+                    {group.managerName}
+                  </p>
+                </div>
+                {group.tag ? (
+                  <span className="ui-chip-sm shrink-0 border border-gray-200 bg-gray-50 font-black text-gray-700">
+                    {group.tag}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ))
+        : null}
+
+      {!isLoading && !error && !isDirectoryView
         ? groups.map((group) => {
             const isScoreless = group.totalPoints <= 0;
             const barWidth = topAverage > 0

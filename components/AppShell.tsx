@@ -23,6 +23,7 @@ import {
   type PendingTrophyCelebration
 } from "@/lib/auth-client";
 import { getAccessLevel, shouldShowAccessBadge } from "@/lib/access-levels";
+import { compareAccessLevels, normalizeAccessLevel, type AccessLevel } from "@/lib/tier-access";
 import { getStartupReadinessSummary, type SystemReadinessReport } from "@/lib/system-readiness";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import { parseJsonResponse } from "@/lib/fetch-json";
@@ -114,6 +115,7 @@ const TROPHY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_TOAST_DURATION_MS = 4200;
 const TIP_TOAST_DURATION_MS = 6200;
 const ERROR_TOAST_DURATION_MS = 7600;
+const ACCESS_LEVEL_WELCOME_STORAGE_PREFIX = "pickit:last-seen-access-level";
 const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
   en: "English",
   es: "Español",
@@ -121,6 +123,24 @@ const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
   pt: "Português",
   de: "Deutsch"
 };
+
+function getAccessLevelLabelKey(accessLevel: AccessLevel) {
+  switch (accessLevel) {
+    case "captain":
+      return "groups.levelCaptainTitle";
+    case "manager":
+      return "groups.levelManagerTitle";
+    case "director":
+      return "groups.levelLeagueTitle";
+    case "managing_director":
+      return "groups.levelLeaguePlusTitle";
+    case "super_admin":
+      return "groups.levelSuperAdminTitle";
+    case "player":
+    default:
+      return "groups.levelPlayerTitle";
+  }
+}
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
@@ -276,6 +296,40 @@ export function AppShell({ children }: AppShellProps) {
       router.replace("/login");
     }
   }, [isLoading, router, user]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || isLoading || !user?.id) {
+      return;
+    }
+
+    const currentAccessLevel = getAccessLevel(user);
+    const storageKey = `${ACCESS_LEVEL_WELCOME_STORAGE_PREFIX}:${user.id}`;
+
+    try {
+      const previousAccessLevel = normalizeAccessLevel(window.localStorage.getItem(storageKey));
+
+      if (!previousAccessLevel) {
+        window.localStorage.setItem(storageKey, currentAccessLevel);
+        return;
+      }
+
+      const isUpgrade = compareAccessLevels(currentAccessLevel, previousAccessLevel) > 0;
+      const shouldWelcome = isUpgrade && currentAccessLevel !== "super_admin";
+      window.localStorage.setItem(storageKey, currentAccessLevel);
+
+      if (shouldWelcome) {
+        showAppToast({
+          tone: "success",
+          text: t(displayLanguage, "profile.levelUpToast", {
+            level: t(displayLanguage, getAccessLevelLabelKey(currentAccessLevel))
+          }),
+          durationMs: 7600
+        });
+      }
+    } catch (error) {
+      console.warn("Could not persist access-level welcome state.", error);
+    }
+  }, [displayLanguage, isLoading, user]);
 
   useEffect(() => {
     if (!isLoading && user?.needsLegalAcceptance) {

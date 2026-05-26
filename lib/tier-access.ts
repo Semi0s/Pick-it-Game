@@ -231,22 +231,9 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
     };
   }
 
-  const explicitCommercialTier = normalizeCommercialTier(context.planTier);
   const commercialTier = resolveCommercialTier(context);
   const definition = COMMERCIAL_TIER_DEFINITIONS[commercialTier];
-  const managerTierDefinition = COMMERCIAL_TIER_DEFINITIONS.manager;
-  const looksLikeLegacyManagerCarryover =
-    Boolean(
-      explicitCommercialTier &&
-        explicitCommercialTier !== "manager" &&
-        context.managerLimits &&
-        context.managerLimits.maxGroups <= managerTierDefinition.maxGroups &&
-        context.managerLimits.maxMembersPerGroup <= managerTierDefinition.maxMembersPerGroup
-    );
-  const shouldApplyLegacyManagerOverride = Boolean(
-    context.managerLimits &&
-      (!explicitCommercialTier || explicitCommercialTier === "manager" || !looksLikeLegacyManagerCarryover)
-  );
+  const shouldApplyLegacyManagerOverride = Boolean(context.managerLimits && commercialTier === "manager");
   const hasLegacyManagerOverride = shouldApplyLegacyManagerOverride;
   const maxGroups = shouldApplyLegacyManagerOverride ? context.managerLimits?.maxGroups ?? definition.maxGroups : definition.maxGroups;
   const maxMembersPerGroup = shouldApplyLegacyManagerOverride
