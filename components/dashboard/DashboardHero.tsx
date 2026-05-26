@@ -8,6 +8,7 @@ type DashboardHeroProps = {
   userId?: string | null;
   name: string;
   dashboardCopy: { hello: string; help: string };
+  visualThemeId?: string | null;
   homeTeamId?: string | null;
   preferredLanguage?: string | null;
 };
@@ -15,10 +16,11 @@ type DashboardHeroProps = {
 export function DashboardHero({
   dashboardCopy,
   name,
+  visualThemeId,
   homeTeamId,
   preferredLanguage
 }: DashboardHeroProps) {
-  const localizedTheme = getLocalizedCardThemeForUserSurface({ homeTeamId, preferredLanguage });
+  const localizedTheme = getLocalizedCardThemeForUserSurface({ visualThemeId, homeTeamId, preferredLanguage });
   const localizedCardVars = getLocalizedCardCssVars(localizedTheme);
 
   return (
@@ -54,7 +56,7 @@ export function DashboardHero({
             </Link>
           </div>
         </div>
-        <div className="relative -mt-0.5">
+        <div className="relative -mt-1.5">
           <h2 className="text-xl font-black leading-none text-[color:var(--localized-card-text)] sm:text-2xl">{name}</h2>
         </div>
       </div>

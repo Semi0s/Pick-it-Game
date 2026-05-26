@@ -6,9 +6,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { acknowledgeEasyBracketMyPicksGateAction } from "@/app/groups/actions";
 import { GroupPredictions } from "@/components/GroupPredictions";
 import { ActionButton } from "@/components/player-management/Shared";
+import { useAppLanguage } from "@/lib/app-language";
 import { showAppToast } from "@/lib/app-toast";
 import type { LightSeedBuilderSnapshot, UserGroupProjectionSource } from "@/lib/group-stage-modes";
 import { useCurrentUser } from "@/lib/use-current-user";
+import { t } from "@/lib/strings";
 import type { MatchWithTeams, Prediction, UserProfile } from "@/lib/types";
 
 type GroupPageClientProps = {
@@ -42,7 +44,18 @@ export function GroupPageClient({
   const searchParams = useSearchParams();
   const shouldUseFallbackUserLoad = !initialUser;
   const { user: fallbackUser, isLoading } = useCurrentUser();
-  const user = initialUser ?? fallbackUser;
+  const { activeLanguage } = useAppLanguage();
+  const user = initialUser
+    ? {
+        ...initialUser,
+        preferredLanguage: activeLanguage,
+        homeTeamId: fallbackUser?.homeTeamId ?? initialUser.homeTeamId,
+        visualThemeId: fallbackUser?.visualThemeId ?? initialUser.visualThemeId,
+        followedTeamIds: fallbackUser?.followedTeamIds ?? initialUser.followedTeamIds
+      }
+    : fallbackUser
+      ? { ...fallbackUser, preferredLanguage: activeLanguage }
+      : null;
   const [hasAcknowledgedGate, setHasAcknowledgedGate] = useState(Boolean(myPicksAcknowledgedAt));
   const [isAcknowledgingGate, setIsAcknowledgingGate] = useState(false);
   const onboardingQuery = searchParams.get("onboarding") === "1" ? "?onboarding=1" : "";
@@ -50,7 +63,7 @@ export function GroupPageClient({
   if ((shouldUseFallbackUserLoad && isLoading) || !user) {
     return (
       <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
-        Loading your group picks...
+        {t(activeLanguage, "bracket.loadingGroupPicks")}
       </div>
     );
   }
@@ -74,14 +87,13 @@ export function GroupPageClient({
     return (
       <div className="mx-auto max-w-xl py-6">
         <section className="rounded-[1.75rem] border border-gray-200 bg-white px-5 py-8 text-center shadow-soft">
-          <p className="text-sm font-black uppercase tracking-[0.16em] text-accent-dark">Group Stage</p>
+          <p className="text-sm font-black uppercase tracking-[0.16em] text-accent-dark">{t(activeLanguage, "bracket.groupStage")}</p>
           <p className="mt-5 text-base font-semibold leading-7 text-gray-700">
-            For launch, regular scoring starts from your Group Stage ladder picks. Match-by-match group score picks are
-            staying behind the scenes for a later league version.
+            {t(activeLanguage, "bracket.groupScoresLaunchNotice")}
           </p>
           <div className="mt-8">
             <ActionButton fullWidth tone="accent" onClick={() => router.push(`/bracket-builder${onboardingQuery}`)}>
-              Open Group Stage
+              {t(activeLanguage, "bracket.openGroupStage")}
             </ActionButton>
           </div>
         </section>
@@ -93,16 +105,16 @@ export function GroupPageClient({
     return (
       <div className="mx-auto max-w-xl py-6">
         <section className="rounded-[1.75rem] border border-gray-200 bg-white px-5 py-8 text-center shadow-soft">
-          <p className="text-sm font-black uppercase tracking-[0.16em] text-accent-dark">Keep in mind!</p>
+          <p className="text-sm font-black uppercase tracking-[0.16em] text-accent-dark">{t(activeLanguage, "bracket.keepInMind")}</p>
           <p className="mt-5 text-base font-semibold leading-7 text-gray-700">
-            You started with “Group Stage” mode. If you want more points, you have to predict all {groupStageMatchCount || 72} games. This could change your original bracket choices.
+            {t(activeLanguage, "bracket.myPicksGateBody", { count: groupStageMatchCount || 72 })}
           </p>
           <div className="mt-8 grid grid-cols-2 gap-3">
             <ActionButton fullWidth onClick={() => router.push(`/bracket-builder${onboardingQuery}`)}>
-              Group Stage
+              {t(activeLanguage, "bracket.groupStage")}
             </ActionButton>
             <ActionButton fullWidth tone="accent" disabled={isAcknowledgingGate} onClick={() => void handleContinueToMyPicks()}>
-              Continue to My Picks
+              {t(activeLanguage, "bracket.continueToMyPicks")}
             </ActionButton>
           </div>
         </section>

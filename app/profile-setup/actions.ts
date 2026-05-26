@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { normalizeLanguage } from "@/lib/i18n";
+import { isSpecialVisualThemeId } from "@/lib/localized-card-themes";
 import { teams } from "@/lib/mock-data";
+import { isMissingColumnError, isMissingRelationError } from "@/lib/schema-safety";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 const DISPLAY_NAME_PATTERN = /^[A-Za-z0-9._ -]{2,30}$/;
@@ -21,6 +23,7 @@ export async function completeProfileSetupAction(input: {
   displayName: string;
   preferredLanguage?: string;
   homeTeamId?: string | null;
+  visualThemeId?: string | null;
 }): Promise<CompleteProfileSetupResult> {
   const supabase = await createServerSupabaseClient();
   const {
@@ -35,6 +38,7 @@ export async function completeProfileSetupAction(input: {
   const normalizedDisplayName = normalizeProfileText(input.displayName);
   const preferredLanguage = normalizeLanguage(input.preferredLanguage);
   const normalizedHomeTeamId = input.homeTeamId?.trim() || null;
+  const normalizedVisualThemeId = input.visualThemeId?.trim().toLowerCase() || null;
 
   if (!DISPLAY_NAME_PATTERN.test(normalizedDisplayName)) {
     return {
@@ -46,6 +50,32 @@ export async function completeProfileSetupAction(input: {
   if (normalizedHomeTeamId && !teams.some((team) => team.id === normalizedHomeTeamId)) {
     return { ok: false, message: "Choose a valid home team." };
   }
+
+  if (normalizedVisualThemeId && !isSpecialVisualThemeId(normalizedVisualThemeId)) {
+    return { ok: false, message: "Choose a valid visual theme." };
+  }
+
+  if (normalizedVisualThemeId) {
+    const { error: settingsError } = await supabase.from("user_settings").upsert(
+      {
+        user_id: user.id,
+        visual_theme_id: normalizedVisualThemeId
+      },
+      { onConflict: "user_id" }
+    );
+
+    if (settingsError) {
+      if (isMissingUserSettingsTableError(settingsError.message) || isMissingVisualThemeIdColumnError(settingsError.message)) {
+        return {
+          ok: false,
+          message: "Visual theme selection is not available yet. Apply the visual theme migration first."
+        };
+      }
+
+      return { ok: false, message: settingsError.message };
+    }
+  }
+
   const generatedUsername = buildProfileSetupUsername({
     displayName: normalizedDisplayName,
     email: user.email ?? "",
@@ -108,4 +138,12 @@ function normalizeUsernameSegment(value: string) {
     .replace(/\s+/g, "-")
     .trim()
     .toLowerCase();
+}
+
+function isMissingUserSettingsTableError(message?: string) {
+  return isMissingRelationError(message, "user_settings");
+}
+
+function isMissingVisualThemeIdColumnError(message?: string) {
+  return isMissingColumnError(message, "user_settings", "visual_theme_id");
 }

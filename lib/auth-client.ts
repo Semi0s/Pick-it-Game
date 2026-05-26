@@ -2,7 +2,17 @@
 
 import { DEFAULT_LEGAL_DOCUMENT_TYPE } from "@/lib/legal";
 import { getAccessCodeBlockedMessage, getAccessCodeFailureReasonFromMessage } from "@/lib/access-codes";
-import { appendLanguageToPath, defaultLanguage, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
+import { getPromoManagerInviteReasonFromMessage } from "@/lib/promo-manager-invite-codes";
+import {
+  APP_LANGUAGE_COOKIE_KEY,
+  APP_LANGUAGE_STORAGE_KEY,
+  HELPER_LANGUAGE_CHANGED_EVENT,
+  PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
+  appendLanguageToPath,
+  defaultLanguage,
+  normalizeLanguage,
+  type SupportedLanguage
+} from "@/lib/i18n";
 import { teams } from "@/lib/mock-data";
 import { getPublicWebPushVapidKey } from "@/lib/push-config";
 import { normalizeCommercialTier, resolveAccessLevel } from "@/lib/tier-access";
@@ -20,6 +30,8 @@ import { createClient } from "@/lib/supabase/client";
 import { parseJsonResponse } from "@/lib/fetch-json";
 import { notifyCurrentUserProfileChanged } from "@/lib/current-user-events";
 import { demoSignIn, demoSignOut, demoSignUp, getDemoCurrentUser } from "@/lib/demo-auth-fallback";
+import { isSpecialVisualThemeId } from "@/lib/localized-card-themes";
+import { getLanguageLabel } from "@/lib/strings";
 import type { UserProfile, UserTrophy } from "@/lib/types";
 
 type AuthMode = "login" | "signup";
@@ -40,6 +52,7 @@ type AuthOptions = {
   flow?: string;
   language?: string;
   accessCode?: string;
+  promoManagerCode?: string;
 };
 
 type UserRow = {
@@ -65,6 +78,8 @@ type ManagerLimitsRow = {
 type UserSettingsRow = {
   notifications_enabled?: boolean | null;
   followed_team_ids?: string[] | null;
+  visual_theme_id?: string | null;
+  dismissed_message_ids?: string[] | null;
 };
 
 type PushTokenRow = {
@@ -164,10 +179,18 @@ export async function authenticateWithEmail(
   const response =
     mode === "login"
       ? await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
-      : await signUpWithInviteContext(supabase, normalizedEmail, password, signupRedirectUrl, options?.accessCode);
+      : await signUpWithInviteContext(
+          supabase,
+          normalizedEmail,
+          password,
+          signupRedirectUrl,
+          options?.accessCode,
+          options?.promoManagerCode,
+          options?.language
+        );
 
   if (response.error) {
-    const metadataKeys = getSignupMetadataKeys(options?.accessCode);
+    const metadataKeys = getSignupMetadataKeys(options?.accessCode, options?.promoManagerCode, options?.language);
     const safeAuthError = getSafeSupabaseErrorInfo(response.error, "Supabase auth returned an unknown error.");
     const authErrorRecord = response.error as Record<string, unknown>;
 
@@ -180,6 +203,7 @@ export async function authenticateWithEmail(
       authErrorKeys: Object.keys(authErrorRecord),
       mode,
       hadAccessCode: Boolean(options?.accessCode?.trim()),
+      hadPromoManagerCode: Boolean(options?.promoManagerCode?.trim()),
       isAuthError:
         typeof authErrorRecord.__isAuthError === "boolean" ? authErrorRecord.__isAuthError : null,
       message: safeAuthError.message,
@@ -193,7 +217,8 @@ export async function authenticateWithEmail(
     return {
       ok: false,
       message: getFriendlyAuthError(safeAuthError.message, mode, {
-        hadAccessCode: Boolean(options?.accessCode?.trim())
+        hadAccessCode: Boolean(options?.accessCode?.trim()),
+        hadPromoManagerCode: Boolean(options?.promoManagerCode?.trim())
       })
     };
   }
@@ -305,6 +330,12 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
   const followedTeamIds = isMissingUserSettingsTableError(userSettingsResult.error?.message)
     ? []
     : normalizeFollowedTeamIds((userSettingsResult.data as UserSettingsRow | null)?.followed_team_ids ?? []);
+  const visualThemeId = isMissingUserSettingsTableError(userSettingsResult.error?.message)
+    ? null
+    : normalizeVisualThemeId((userSettingsResult.data as UserSettingsRow | null)?.visual_theme_id ?? null);
+  const dismissedMessageIds = isMissingUserSettingsTableError(userSettingsResult.error?.message)
+    ? []
+    : normalizeDismissedMessageIds((userSettingsResult.data as UserSettingsRow | null)?.dismissed_message_ids ?? []);
   const pushNotificationsEnabled = isMissingPushTokensTableError(pushTokensResult.error?.message)
     ? false
     : Boolean((pushTokensResult.data as PushTokenRow | null)?.id);
@@ -329,6 +360,8 @@ export async function fetchCurrentProfile(): Promise<UserProfile | null> {
     (managerLimits as ManagerLimitsRow | null) ?? null,
     notificationsEnabled,
     followedTeamIds,
+    visualThemeId,
+    dismissedMessageIds,
     pushNotificationsEnabled,
     {
       needsLegalAcceptance,
@@ -727,6 +760,53 @@ export async function updateCurrentUserHomeTeam(homeTeamId: string | null): Prom
   };
 }
 
+export async function updateCurrentUserVisualTheme(visualThemeId: string | null): Promise<AuthResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Visual theme selection needs a configured Supabase project." };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to update your visual theme." };
+  }
+
+  const normalizedVisualThemeId = normalizeVisualThemeId(visualThemeId);
+  if (visualThemeId?.trim() && !normalizedVisualThemeId) {
+    return { ok: false, message: "Choose a valid visual theme." };
+  }
+
+  const { error } = await supabase.from("user_settings").upsert(
+    {
+      user_id: user.id,
+      visual_theme_id: normalizedVisualThemeId
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error) {
+    if (isMissingUserSettingsTableError(error.message) || isMissingVisualThemeIdColumnError(error.message)) {
+      return {
+        ok: false,
+        message: "Visual theme selection is not available yet. Apply the visual theme migration first."
+      };
+    }
+
+    return { ok: false, message: error.message || "Could not update visual theme right now." };
+  }
+
+  notifyCurrentUserProfileChanged();
+
+  return {
+    ok: true,
+    message: normalizedVisualThemeId ? "Visual theme updated." : "Visual theme reset to Auto/default."
+  };
+}
+
 export async function updateCurrentUserFollowedTeams(teamIds: string[]): Promise<AuthResult> {
   if (!hasSupabaseConfig()) {
     return { ok: false, message: "Followed teams need a configured Supabase project." };
@@ -770,6 +850,77 @@ export async function updateCurrentUserFollowedTeams(teamIds: string[]): Promise
   };
 }
 
+export async function dismissCurrentUserMessageId(messageId: string): Promise<AuthResult> {
+  if (!messageId.trim()) {
+    return { ok: false, message: "Choose a valid message to dismiss." };
+  }
+
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Dismissed messages need a configured Supabase project." };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to dismiss this message." };
+  }
+
+  const settingsResult = await supabase
+    .from("user_settings")
+    .select("dismissed_message_ids")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (settingsResult.error) {
+    if (
+      isMissingUserSettingsTableError(settingsResult.error.message) ||
+      isMissingDismissedMessageIdsColumnError(settingsResult.error.message)
+    ) {
+      return {
+        ok: false,
+        message: "Dismissed message storage is not available yet. Apply the dismissed messages migration first."
+      };
+    }
+
+    return { ok: false, message: settingsResult.error.message || "Could not read dismissed messages right now." };
+  }
+
+  const nextDismissedMessageIds = normalizeDismissedMessageIds([
+    ...(((settingsResult.data as UserSettingsRow | null)?.dismissed_message_ids ?? []) as string[]),
+    messageId
+  ]);
+
+  const { error } = await supabase.from("user_settings").upsert(
+    {
+      user_id: user.id,
+      dismissed_message_ids: nextDismissedMessageIds
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error) {
+    if (isMissingUserSettingsTableError(error.message) || isMissingDismissedMessageIdsColumnError(error.message)) {
+      return {
+        ok: false,
+        message: "Dismissed message storage is not available yet. Apply the dismissed messages migration first."
+      };
+    }
+
+    return { ok: false, message: error.message || "Could not dismiss this message right now." };
+  }
+
+  notifyCurrentUserProfileChanged({ dismissedMessageIds: nextDismissedMessageIds });
+
+  return {
+    ok: true,
+    message: "Message dismissed."
+  };
+}
+
 export async function updateCurrentUserPreferredLanguage(language: string): Promise<AuthResult> {
   if (!hasSupabaseConfig()) {
     return { ok: false, message: "Language preferences need a configured Supabase project." };
@@ -795,11 +946,20 @@ export async function updateCurrentUserPreferredLanguage(language: string): Prom
     return { ok: false, message: error.message };
   }
 
-  notifyCurrentUserProfileChanged();
+  try {
+    window.localStorage.setItem(APP_LANGUAGE_STORAGE_KEY, preferredLanguage);
+    window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, preferredLanguage);
+    window.document.cookie = `${APP_LANGUAGE_COOKIE_KEY}=${preferredLanguage}; path=/; max-age=31536000; samesite=lax`;
+    window.dispatchEvent(new CustomEvent(HELPER_LANGUAGE_CHANGED_EVENT));
+  } catch (storageError) {
+    console.warn("Could not persist preferred language locally.", storageError);
+  }
+
+  notifyCurrentUserProfileChanged({ preferredLanguage });
 
   return {
     ok: true,
-    message: preferredLanguage === "es" ? "Language updated to Spanish." : "Language updated to English."
+    message: `Language updated to ${getLanguageLabel(preferredLanguage)}.`
   };
 }
 
@@ -812,6 +972,8 @@ function mapUserRow(
   managerLimits: ManagerLimitsRow | null,
   notificationsEnabled: boolean,
   followedTeamIds: string[],
+  visualThemeId: string | null,
+  dismissedMessageIds: string[],
   pushNotificationsEnabled: boolean,
   legalStatus?: {
     needsLegalAcceptance: boolean;
@@ -829,7 +991,9 @@ function mapUserRow(
     email: row.email,
     avatarUrl: row.avatar_url ?? undefined,
     homeTeamId: row.home_team_id ?? null,
+    visualThemeId,
     followedTeamIds,
+    dismissedMessageIds,
     preferredLanguage: normalizeLanguage(row.preferred_language),
     role: row.role,
     accessLevel: resolveAccessLevel({
@@ -1064,12 +1228,37 @@ function decodeBase64UrlToUint8Array(value: string) {
   return Uint8Array.from(raw, (char) => char.charCodeAt(0));
 }
 
-function getFriendlyAuthError(message: string, mode: AuthMode, options?: { hadAccessCode?: boolean }) {
+function getFriendlyAuthError(message: string, mode: AuthMode, options?: { hadAccessCode?: boolean; hadPromoManagerCode?: boolean }) {
   const normalized = message.toLowerCase();
   const accessCodeFailure = getAccessCodeFailureReasonFromMessage(message);
+  const promoManagerFailure = getPromoManagerInviteReasonFromMessage(message);
 
   if (accessCodeFailure) {
     return getAccessCodeBlockedMessage(accessCodeFailure);
+  }
+
+  if (promoManagerFailure) {
+    if (promoManagerFailure === "full") {
+      return "This manager promotion is full.";
+    }
+
+    if (promoManagerFailure === "paused") {
+      return "This manager promotion is paused.";
+    }
+
+    if (promoManagerFailure === "expired" || promoManagerFailure === "archived") {
+      return "This manager promotion is no longer available.";
+    }
+
+    if (promoManagerFailure === "not_started") {
+      return "This manager promotion has not started yet.";
+    }
+
+    if (promoManagerFailure === "ineligible") {
+      return "This account is not eligible for this manager promotion.";
+    }
+
+    return "That manager promo code is not valid or is no longer available.";
   }
 
   if (mode === "signup" && options?.hadAccessCode) {
@@ -1091,6 +1280,16 @@ function getFriendlyAuthError(message: string, mode: AuthMode, options?: { hadAc
 
     if (normalized.includes("trigger") || normalized.includes("unexpected_failure")) {
       return "That code looked valid, but signup could not be completed. Ask the pool admin to verify access-code setup.";
+    }
+  }
+
+  if (mode === "signup" && options?.hadPromoManagerCode) {
+    if (normalized.includes("user already registered") || normalized.includes("already been registered")) {
+      return "That email already has an account. Switch to sign in.";
+    }
+
+    if (normalized.includes("database error") || normalized.includes("trigger")) {
+      return "That manager promo looked valid, but signup could not be completed. Try again or contact support.";
     }
   }
 
@@ -1118,15 +1317,26 @@ async function signUpWithInviteContext(
   email: string,
   password: string,
   signupRedirectUrl: string,
-  accessCode?: string
+  accessCode?: string,
+  promoManagerCode?: string,
+  language?: string
 ) {
   const trimmedAccessCode = accessCode?.trim() ?? "";
-  const metadata = getSignupMetadata(trimmedAccessCode);
+  const trimmedPromoManagerCode = promoManagerCode?.trim() ?? "";
+  const metadata = getSignupMetadata(trimmedAccessCode, trimmedPromoManagerCode, language);
   console.info("[access-code:signup] Starting signup flow.", {
     email,
     hasAccessCode: Boolean(trimmedAccessCode),
+    hasPromoManagerCode: Boolean(trimmedPromoManagerCode),
     metadataKeys: Object.keys(metadata ?? {})
   });
+
+  if (trimmedAccessCode && trimmedPromoManagerCode) {
+    return {
+      data: { user: null, session: null },
+      error: { message: "Use either an access code or a promo manager invite code, not both." }
+    };
+  }
 
   if (trimmedAccessCode) {
     console.info("[access-code:signup] Prevalidating access code before auth signup.", {
@@ -1179,6 +1389,48 @@ async function signUpWithInviteContext(
     });
   }
 
+  if (trimmedPromoManagerCode) {
+    console.info("[promo-manager-invite:signup] Prevalidating promo manager invite code before auth signup.", {
+      email,
+      normalizedCodePreview: `${trimmedPromoManagerCode.replace(/\s+/g, "").trim().toLowerCase().slice(0, 4)}...`
+    });
+
+    const validationResponse = await fetch("/api/promo-manager-invite-codes/validate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ code: trimmedPromoManagerCode, email })
+    });
+
+    const validationResult = await parseJsonResponse<
+      | { ok: true }
+      | { ok: false; message?: string }
+    >(validationResponse, "Could not validate that promo code right now.", "promo-manager-invite validation");
+
+    if (!validationResponse.ok || !validationResult.ok) {
+      console.warn("[promo-manager-invite:signup] Promo manager invite prevalidation blocked signup.", {
+        email,
+        status: validationResponse.status,
+        message: validationResult.ok ? null : validationResult.message
+      });
+
+      return {
+        data: { user: null, session: null },
+        error: {
+          message: validationResult.ok
+            ? "Could not validate that promo code right now."
+            : validationResult.message ?? "That promo code is not valid or is no longer available."
+        }
+      };
+    }
+
+    console.info("[promo-manager-invite:signup] Promo manager invite prevalidation passed. Submitting signup metadata.", {
+      email,
+      metadataKeys: Object.keys(metadata ?? {})
+    });
+  }
+
   return supabase.auth.signUp({
     email,
     password,
@@ -1189,12 +1441,25 @@ async function signUpWithInviteContext(
   });
 }
 
-function getSignupMetadata(accessCode: string) {
-  return accessCode ? { access_code: accessCode } : undefined;
+function getSignupMetadata(accessCode: string, promoManagerCode?: string, language?: string) {
+  const metadata: Record<string, string> = {};
+  if (accessCode) {
+    metadata.access_code = accessCode;
+  }
+
+  if (promoManagerCode) {
+    metadata.promo_manager_code = promoManagerCode;
+  }
+
+  if (language) {
+    metadata.language = normalizeLanguage(language);
+  }
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
-function getSignupMetadataKeys(accessCode?: string) {
-  return Object.keys(getSignupMetadata(accessCode?.trim() ?? "") ?? {});
+function getSignupMetadataKeys(accessCode?: string, promoManagerCode?: string, language?: string) {
+  return Object.keys(getSignupMetadata(accessCode?.trim() ?? "", promoManagerCode?.trim() ?? "", language) ?? {});
 }
 
 function safeSerializeAuthError(error: unknown) {
@@ -1294,7 +1559,7 @@ async function fetchCurrentUserSettingsRow(
 ): Promise<{ data: UserSettingsRow | null; error: { message: string } | null }> {
   const fullSettingsQuery = await supabase
     .from("user_settings")
-    .select("notifications_enabled,followed_team_ids")
+    .select("notifications_enabled,followed_team_ids,visual_theme_id,dismissed_message_ids")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -1309,19 +1574,49 @@ async function fetchCurrentUserSettingsRow(
     return { data: null, error: { message: fullSettingsQuery.error.message } };
   }
 
-  if (!isMissingFollowedTeamIdsColumnError(fullSettingsQuery.error.message)) {
+  const missingFollowedTeamIds = isMissingFollowedTeamIdsColumnError(fullSettingsQuery.error.message);
+  const missingVisualThemeId = isMissingVisualThemeIdColumnError(fullSettingsQuery.error.message);
+  const missingDismissedMessageIds = isMissingDismissedMessageIdsColumnError(fullSettingsQuery.error.message);
+
+  if (!missingFollowedTeamIds && !missingVisualThemeId && !missingDismissedMessageIds) {
     return { data: null, error: { message: fullSettingsQuery.error.message } };
   }
 
-  warnOptionalFeatureOnce(
-    "current-user-settings-followed-teams-missing",
-    "Current-user settings are loading without followed_team_ids because the live public.user_settings schema is behind the app.",
-    fullSettingsQuery.error.message
-  );
+  if (missingFollowedTeamIds) {
+    warnOptionalFeatureOnce(
+      "current-user-settings-followed-teams-missing",
+      "Current-user settings are loading without followed_team_ids because the live public.user_settings schema is behind the app.",
+      fullSettingsQuery.error.message
+    );
+  }
+
+  if (missingVisualThemeId) {
+    warnOptionalFeatureOnce(
+      "current-user-settings-visual-theme-missing",
+      "Current-user settings are loading without visual_theme_id because the live public.user_settings schema is behind the app.",
+      fullSettingsQuery.error.message
+    );
+  }
+
+  if (missingDismissedMessageIds) {
+    warnOptionalFeatureOnce(
+      "current-user-settings-dismissed-messages-missing",
+      "Current-user settings are loading without dismissed_message_ids because the live public.user_settings schema is behind the app.",
+      fullSettingsQuery.error.message
+    );
+  }
+
+  const fallbackColumns = [
+    "notifications_enabled",
+    ...(!missingFollowedTeamIds ? ["followed_team_ids"] : []),
+    ...(!missingVisualThemeId ? ["visual_theme_id"] : []),
+    ...(!missingDismissedMessageIds ? ["dismissed_message_ids"] : [])
+  ];
+  const fallbackSelect = fallbackColumns.join(",");
 
   const fallbackSettingsQuery = await supabase
     .from("user_settings")
-    .select("notifications_enabled")
+    .select(fallbackSelect)
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -1332,10 +1627,23 @@ async function fetchCurrentUserSettingsRow(
   return {
     data: {
       notifications_enabled: (fallbackSettingsQuery.data as UserSettingsRow | null)?.notifications_enabled ?? false,
-      followed_team_ids: []
+      followed_team_ids: missingFollowedTeamIds
+        ? []
+        : ((fallbackSettingsQuery.data as UserSettingsRow | null)?.followed_team_ids ?? []),
+      visual_theme_id: missingVisualThemeId
+        ? null
+        : ((fallbackSettingsQuery.data as UserSettingsRow | null)?.visual_theme_id ?? null),
+      dismissed_message_ids: missingDismissedMessageIds
+        ? []
+        : ((fallbackSettingsQuery.data as UserSettingsRow | null)?.dismissed_message_ids ?? [])
     },
     error: null
   };
+}
+
+function normalizeVisualThemeId(visualThemeId: string | null | undefined) {
+  const normalizedVisualThemeId = visualThemeId?.trim().toLowerCase() || null;
+  return isSpecialVisualThemeId(normalizedVisualThemeId) ? normalizedVisualThemeId : null;
 }
 
 function normalizeFollowedTeamIds(teamIds: string[] | null | undefined) {
@@ -1354,6 +1662,10 @@ function normalizeFollowedTeamIds(teamIds: string[] | null | undefined) {
   return normalized;
 }
 
+function normalizeDismissedMessageIds(messageIds: string[] | null | undefined) {
+  return Array.from(new Set((messageIds ?? []).map((messageId) => messageId.trim()).filter(Boolean))).slice(-48);
+}
+
 function isInvalidRefreshTokenError(message: string) {
   const normalized = message.toLowerCase();
   return normalized.includes("invalid refresh token") || normalized.includes("refresh token not found");
@@ -1365,6 +1677,14 @@ function isMissingUserSettingsTableError(message?: string) {
 
 function isMissingFollowedTeamIdsColumnError(message?: string) {
   return isMissingColumnError(message, "user_settings", "followed_team_ids");
+}
+
+function isMissingVisualThemeIdColumnError(message?: string) {
+  return isMissingColumnError(message, "user_settings", "visual_theme_id");
+}
+
+function isMissingDismissedMessageIdsColumnError(message?: string) {
+  return isMissingColumnError(message, "user_settings", "dismissed_message_ids");
 }
 
 function isMissingPlanTierColumnError(message: string) {

@@ -1,0 +1,44 @@
+{
+  "sections": [
+    {
+      "title": "Empieza con la Fase de Grupos",
+      "bullets": [
+        "Ordena cada grupo y elige los equipos que crees que llegarán a Round of 32",
+        "Define los dos primeros de cada grupo",
+        "Elige los terceros clasificados que completan el bracket",
+        "Puedes seguir editando hasta que empiece el torneo"
+      ],
+      "tip": "La Fase de Grupos es el camino inicial para jugadores regulares."
+    },
+    {
+      "title": "Puntuación de Fase de Grupos",
+      "bullets": [
+        "Cada grupo vale hasta 14 puntos",
+        "Ganador correcto: 5 puntos",
+        "Segundo correcto: 3 puntos",
+        "Tercer equipo correcto: 2 puntos",
+        "Top dos correctos en cualquier orden: 1 punto",
+        "Estado correcto de clasificación del tercero: 1 punto",
+        "Orden completo correcto del grupo: 2 puntos"
+      ],
+      "tip": "Doce grupos de 14 puntos dan un máximo de 168 puntos."
+    },
+    {
+      "title": "Round of 32 proyectado",
+      "bullets": [
+        "Tu tabla de Fase de Grupos crea un bracket proyectado de Round of 32",
+        "Antes de la siembra oficial, verás los equipos que tu tabla envía adelante",
+        "Cuando se conozcan los clasificados oficiales, podrás comparar tu camino proyectado con el bracket real",
+        "Después de Round of 32, Knockout usa las tarjetas normales de predicción de partidos"
+      ],
+      "tip": "Este es el puente entre Fase de Grupos y Knockout."
+    }
+  ],
+  "quickTips": [
+    "Termina tu tabla de Fase de Grupos antes del inicio del torneo",
+    "Usa el Round of 32 proyectado para revisar quién avanza según tu tabla",
+    "Knockout abre cuando los clasificados oficiales están sembrados",
+    "Los leaderboards reflejan la puntuación de la fase actual",
+    "Crea y administra grupos para jugar en diferentes pools"
+  ]
+}

@@ -6,18 +6,15 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Network, Sparkles, SquareCheckBig, Trophy } from "lucide-react";
 import { showAppToast } from "@/lib/app-toast";
 import { InlineDisclosureButton, WindowChoiceRail, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
+import { useAppLanguage } from "@/lib/app-language";
 import { buildAutoPickDraft } from "@/lib/auto-pick";
 import { fetchNextAutoPick, fetchNextAutoPickForMatches, restoreStoredAutoPickDraft } from "@/lib/auto-pick-client";
 import { formatDateTimeWithZone } from "@/lib/date-time";
+import { formatDate } from "@/lib/i18n-format";
 import { parseJsonResponse } from "@/lib/fetch-json";
 import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/group-matches";
 import { clearGroupsEntryIntent, readGroupsEntryIntent, type GroupsEntryIntent } from "@/lib/groups-entry-intent";
-import {
-  getExplainerLanguageForUser,
-  normalizeExplainerLanguage,
-  PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
-  type ExplainerLanguage
-} from "@/lib/i18n";
+import { type ExplainerLanguage } from "@/lib/i18n";
 import { applyGroupBracketFromScoresAction } from "@/app/groups/actions";
 import { fetchPlayerPredictions, savePlayerPrediction } from "@/lib/player-predictions";
 import { canEditPrediction } from "@/lib/prediction-state";
@@ -41,6 +38,7 @@ import {
 } from "@/components/GroupStandingsMiniTable";
 import { DismissibleHelperText } from "@/components/DismissibleHelperText";
 import { SocialPredictionList } from "@/components/SocialPredictionList";
+import { t } from "@/lib/strings";
 
 type GroupPredictionsProps = {
   user: UserProfile;
@@ -144,17 +142,26 @@ const HELPER_DISMISS_LABEL_COPY: Record<ExplainerLanguage, string> = {
 
 const AUTO_PICK_LABEL_COPY = {
   en: "Auto Pick Next Match",
-  es: "Auto Elegir Próximo Partido"
+  es: "Auto Elegir Próximo Partido",
+  fr: "Auto Pick prochain match",
+  pt: "Auto Pick próximo jogo",
+  de: "Auto Pick nächstes Spiel"
 } as const;
 
 const AUTO_PICK_LOADING_COPY = {
   en: "Auto Picking...",
-  es: "Eligiendo..."
+  es: "Eligiendo...",
+  fr: "Auto Pick en cours...",
+  pt: "Auto Pick em curso...",
+  de: "Auto Pick läuft..."
 } as const;
 
 const AUTO_PICK_SUCCESS_COPY = {
   en: "Auto Pick suggested this score. Review and save to confirm.",
-  es: "Auto Pick sugirió este marcador. Revísalo y guarda para confirmar."
+  es: "Auto Pick sugirió este marcador. Revísalo y guarda para confirmar.",
+  fr: "Auto Pick a suggéré ce score. Vérifiez et enregistrez pour confirmer.",
+  pt: "Auto Pick sugeriu este resultado. Reveja e guarde para confirmar.",
+  de: "Auto Pick hat dieses Ergebnis vorgeschlagen. Prüfe und speichere zum Bestätigen."
 } as const;
 
 const AUTO_PICK_SOURCE_COPY = {
@@ -167,17 +174,38 @@ const AUTO_PICK_SOURCE_COPY = {
     teamStrength: "Sugerido usando probabilidades de fuerza de equipo.",
     market: "Sugerido usando probabilidades de mercado.",
     neutral: "Sugerido usando probabilidades neutras."
+  },
+  fr: {
+    teamStrength: "Suggéré avec les probabilités de force d’équipe.",
+    market: "Suggéré avec les probabilités du marché.",
+    neutral: "Suggéré avec les probabilités neutres."
+  },
+  pt: {
+    teamStrength: "Sugerido com probabilidades de força das equipas.",
+    market: "Sugerido com probabilidades de mercado.",
+    neutral: "Sugerido com probabilidades neutras."
+  },
+  de: {
+    teamStrength: "Mit Teamstärke-Wahrscheinlichkeiten vorgeschlagen.",
+    market: "Mit Markt-Wahrscheinlichkeiten vorgeschlagen.",
+    neutral: "Mit neutralen Fallback-Wahrscheinlichkeiten vorgeschlagen."
   }
 } as const;
 
 const AUTO_PICK_EMPTY_COPY = {
   en: "Auto Pick Next Match is no longer available. There are no open matches to fill right now.",
-  es: "Auto Pick Next Match ya no está disponible. No hay partidos abiertos para completar en este momento."
+  es: "Auto Pick Next Match ya no está disponible. No hay partidos abiertos para completar en este momento.",
+  fr: "Auto Pick prochain match n’est plus disponible. Aucun match ouvert à remplir pour le moment.",
+  pt: "Auto Pick próximo jogo já não está disponível. Não há jogos abertos para preencher neste momento.",
+  de: "Auto Pick nächstes Spiel ist nicht mehr verfügbar. Es gibt gerade keine offenen Spiele zum Ausfüllen."
 } as const;
 
 const AUTO_PICK_ALL_SAVED_COPY = {
   en: "You have already saved every open match. To change one, use the Auto Pick chip on that match card until kickoff.",
-  es: "Ya guardaste todos los partidos abiertos. Para cambiar uno, usa el chip Auto Pick en esa tarjeta hasta el inicio del partido."
+  es: "Ya guardaste todos los partidos abiertos. Para cambiar uno, usa el chip Auto Pick en esa tarjeta hasta el inicio del partido.",
+  fr: "Vous avez déjà enregistré tous les matchs ouverts. Pour en modifier un, utilisez le chip Auto Pick sur cette carte jusqu’au coup d’envoi.",
+  pt: "Já guardou todos os jogos abertos. Para alterar um, use o chip Auto Pick nesse cartão até ao início.",
+  de: "Du hast bereits jedes offene Spiel gespeichert. Um eines zu ändern, nutze bis zum Anpfiff den Auto-Pick-Chip auf der Spielkarte."
 } as const;
 
 function localizeAutoPickMessage(message: string, language: keyof typeof AUTO_PICK_EMPTY_COPY) {
@@ -196,7 +224,7 @@ const GROUP_FILTER_ALL_KEY = "all";
 const TEAM_FILTER_ALL_KEY = "all";
 
 export function GroupPredictions({
-  user,
+  user: initialUser,
   initialMatches,
   initialPredictions,
   initialKnockoutSeeded,
@@ -206,6 +234,14 @@ export function GroupPredictions({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { activeLanguage } = useAppLanguage();
+  const user = useMemo(
+    () => ({
+      ...initialUser,
+      preferredLanguage: activeLanguage
+    }),
+    [activeLanguage, initialUser]
+  );
   const [predictions, setPredictions] = useState<Prediction[]>(initialPredictions ?? []);
   const [socialPredictions, setSocialPredictions] = useState<SocialPrediction[]>([]);
   const [matches, setMatches] = useState<MatchWithTeams[]>(() => initialMatches ?? getLocalGroupMatches());
@@ -234,20 +270,7 @@ export function GroupPredictions({
   const [groupProjectionSources, setGroupProjectionSources] = useState<Record<string, UserGroupProjectionSource>>(initialGroupProjectionSources);
   const [isApplyingScoreGroup, setIsApplyingScoreGroup] = useState<string | null>(null);
   const [draftPredictionStateByMatchId, setDraftPredictionStateByMatchId] = useState<Record<string, DraftPredictionState>>({});
-  const [explainerLanguage] = useState<ExplainerLanguage>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
-        if (storedValue) {
-          return normalizeExplainerLanguage(storedValue);
-        }
-      } catch (error) {
-        console.warn("Could not restore play explainer language.", error);
-      }
-    }
-
-    return getExplainerLanguageForUser(user);
-  });
+  const explainerLanguage = activeLanguage;
   const [isMoreOpen, setIsMoreOpen] = useSessionDisclosureState(GROUP_PREDICTIONS_MORE_STORAGE_KEY, false);
   const [isPredictionTableOpen, setIsPredictionTableOpen] = useSessionDisclosureState(
     GROUP_PREDICTIONS_TABLE_STORAGE_KEY,
@@ -309,7 +332,7 @@ export function GroupPredictions({
     });
   }, [logGroupsEntryScroll, matches.length]);
 
-  const autoPickLanguage = explainerLanguage === "es" ? "es" : "en";
+  const autoPickLanguage = explainerLanguage;
 
   useEffect(() => {
     if (initialMatches) {
@@ -550,10 +573,10 @@ export function GroupPredictions({
   const shouldPromoteKnockout = !nextPredictionMatchId;
   const shouldShowSecondaryKnockoutButton = !shouldPromoteKnockout;
   const primaryActionLabel = nextPredictionMatchId
-    ? "My Next Pick"
+    ? t(user.preferredLanguage, "bracket.myNextPick")
     : isKnockoutSeeded
-      ? "My Knockout Picks"
-      : "Projected Bracket";
+      ? t(user.preferredLanguage, "bracket.myKnockoutPicks")
+      : t(user.preferredLanguage, "bracket.projectedBracket");
   const selectedTeam = useMemo(
     () => availableTeamsForSelectedGroup.find((team) => team.id === selectedTeamId) ?? null,
     [availableTeamsForSelectedGroup, selectedTeamId]
@@ -624,19 +647,23 @@ export function GroupPredictions({
   const teamFilterLabel = selectedTeamId === TEAM_FILTER_ALL_KEY ? null : selectedTeam?.name ?? null;
   const matchCountSummary = useMemo(() => {
     if (!groupFilterLabel && !teamFilterLabel) {
-      return `Showing ${groupStageMatches.length} matches`;
+      return t(user.preferredLanguage, "bracket.showingMatches", { count: groupStageMatches.length });
     }
 
     const contextParts = [groupFilterLabel, teamFilterLabel].filter(
       (value): value is string => Boolean(value)
     );
 
-    return `Showing ${filteredMatches.length} of ${groupStageMatches.length} matches${contextParts.length > 0 ? ` · ${contextParts.join(" · ")}` : ""}`;
-  }, [filteredMatches.length, groupFilterLabel, groupStageMatches.length, teamFilterLabel]);
-  const groupStageSectionTitle = selectedGroup === GROUP_FILTER_ALL_KEY ? "Group Stage" : formatGroupName(selectedGroup) ?? "Group Stage";
+    const baseSummary = t(user.preferredLanguage, "bracket.showingFilteredMatches", {
+      count: filteredMatches.length,
+      total: groupStageMatches.length
+    });
+    return `${baseSummary}${contextParts.length > 0 ? ` · ${contextParts.join(" · ")}` : ""}`;
+  }, [filteredMatches.length, groupFilterLabel, groupStageMatches.length, teamFilterLabel, user.preferredLanguage]);
+  const groupStageSectionTitle = selectedGroup === GROUP_FILTER_ALL_KEY ? t(user.preferredLanguage, "bracket.groupStage") : formatGroupName(selectedGroup) ?? t(user.preferredLanguage, "bracket.groupStage");
   const groupStageSectionTotalMatches =
     selectedGroup === GROUP_FILTER_ALL_KEY ? groupStageMatches.length : selectedGroupMatches.length;
-  const groupStageSectionBanner = "PREDICTIONS ARE EDITABLE UNTIL KICKOFF";
+  const groupStageSectionBanner = t(user.preferredLanguage, "bracket.predictionsEditableUntilKickoff");
   const predictionByMatchId = useMemo(
     () => new Map(predictions.map((prediction) => [prediction.matchId, prediction])),
     [predictions]
@@ -1327,7 +1354,7 @@ export function GroupPredictions({
     }));
     showAppToast({
       tone: "tip",
-      text: `Group Stage kept. Start rescoring ${getGroupShortLabel(groupName)} from this match.`
+      text: t(user.preferredLanguage, "bracket.groupStageKeptRescore", { groupName: getGroupShortLabel(groupName) })
     });
   }
 
@@ -1584,7 +1611,7 @@ export function GroupPredictions({
               Matches {matchWindowStart + 1}-{matchWindowStart + visibleMatches.length}
             </p>
             <p className="mt-0.5 text-[11px] font-semibold leading-none text-gray-500">
-              Starting {formatDateLabel(getMatchDateKey(visibleMatches[0]!.kickoffTime))}
+              {t(user.preferredLanguage, "bracket.startingDate", { date: formatDateLabel(getMatchDateKey(visibleMatches[0]!.kickoffTime), user.preferredLanguage) })}
             </p>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -1708,7 +1735,7 @@ export function GroupPredictions({
                       className="inline-flex min-h-[88px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-center text-[11px] font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light sm:text-xs"
                     >
                       <Network aria-hidden className="h-6 w-6 shrink-0 text-accent-dark" />
-                      <span className="leading-tight">{isKnockoutSeeded ? "My Knockout Picks" : "Projected Bracket"}</span>
+                      <span className="leading-tight">{isKnockoutSeeded ? t(user.preferredLanguage, "bracket.myKnockoutPicks") : t(user.preferredLanguage, "bracket.projectedBracket")}</span>
                     </Link>
                   ) : null}
                   <Link
@@ -1719,7 +1746,7 @@ export function GroupPredictions({
                       <Trophy aria-hidden className="h-6 w-6 shrink-0" />
                       <SquareCheckBig aria-hidden className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-[2px] bg-white" />
                     </span>
-                    <span className="leading-tight">My Side Picks</span>
+                    <span className="leading-tight">{t(user.preferredLanguage, "bracket.mySidePicks")}</span>
                   </Link>
                 </div>
               </div>
@@ -1821,7 +1848,7 @@ export function GroupPredictions({
                 </div>
               ) : (
                 <p className="text-[10px] font-semibold text-gray-500">
-                  Save your first group picks to start building your knockout field.
+                  {t(user.preferredLanguage, "bracket.saveFirstGroupPicks")}
                 </p>
               )}
             </div>
@@ -1843,7 +1870,7 @@ export function GroupPredictions({
                         : "text-accent-dark hover:text-accent"
                     }`}
                   >
-                    See How Picks Affect Tables
+                    {t(user.preferredLanguage, "bracket.seeHowPicksAffectTables")}
                   </button>
                   {selectedTeamQualifierStatus ? (
                     <span
@@ -1858,21 +1885,21 @@ export function GroupPredictions({
                       }`}
                     >
                       {selectedTeamQualifierStatus === "projected-r32"
-                        ? "Projected R32"
+                        ? t(user.preferredLanguage, "bracket.projectedR32")
                         : selectedTeamQualifierStatus === "best-third"
-                          ? "Best 3rd"
+                          ? t(user.preferredLanguage, "bracket.bestThird")
                           : selectedTeamQualifierStatus === "eliminated"
-                            ? "Eliminated"
-                            : "Outside"}
+                            ? t(user.preferredLanguage, "knockout.eliminated")
+                            : t(user.preferredLanguage, "bracket.outside")}
                     </span>
                   ) : null}
                   {selectedScoreAwareGroupState?.state === "score_applied" ? (
                     <span className="inline-flex rounded-md bg-cyan-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-cyan-900">
-                      From Scores
+                      {t(user.preferredLanguage, "bracket.fromScores")}
                     </span>
                   ) : selectedScoreAwareGroupState?.state === "scores_in_progress" ? (
                     <span className="inline-flex rounded-md bg-gray-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-700">
-                      Scores In Progress
+                      {t(user.preferredLanguage, "bracket.scoresInProgress")}
                     </span>
                   ) : null}
                 </div>
@@ -1888,11 +1915,11 @@ export function GroupPredictions({
                   {selectedScoreAwareGroupState?.state === "score_conflict" ? (
                     <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2">
                       <p className="text-[10px] font-semibold text-amber-950">
-                        Group Stage and your current picks don&apos;t match.
+                        {t(user.preferredLanguage, "bracket.groupStageMismatch")}
                       </p>
                       <div className="grid grid-cols-2 gap-3 text-[10px] font-semibold text-gray-700">
                         <div className="space-y-1">
-                          <p className="font-black uppercase tracking-wide text-gray-900">Group Stage</p>
+                          <p className="font-black uppercase tracking-wide text-gray-900">{t(user.preferredLanguage, "bracket.groupStage")}</p>
                           {selectedScoreAwareGroupState.builderRows.map((row) => (
                             <div
                               key={`builder-${row.teamId}`}
@@ -1914,12 +1941,12 @@ export function GroupPredictions({
                               }}
                               className="w-full rounded-full bg-accent px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-accent-text transition hover:bg-accent-dark"
                             >
-                              Keep Bracket
+                              {t(user.preferredLanguage, "bracket.keepBracket")}
                             </button>
                           </div>
                         </div>
                         <div className="space-y-1">
-                          <p className="font-black uppercase tracking-wide text-gray-900">My Picks</p>
+                          <p className="font-black uppercase tracking-wide text-gray-900">{t(user.preferredLanguage, "dashboard.myPicks")}</p>
                           {selectedScoreAwareGroupState.scoreRows.map((row) => (
                             <div
                               key={`score-${row.teamId}`}
@@ -1942,7 +1969,7 @@ export function GroupPredictions({
                               }}
                               className="w-full rounded-full bg-accent px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-accent-text transition hover:bg-accent-dark disabled:opacity-60"
                             >
-                              {isApplyingScoreGroup === miniTableGroup ? "Updating..." : "Keep My Picks"}
+                              {isApplyingScoreGroup === miniTableGroup ? t(user.preferredLanguage, "profile.sending") : t(user.preferredLanguage, "bracket.keepMyPicks")}
                             </button>
                           </div>
                         </div>
@@ -1951,13 +1978,13 @@ export function GroupPredictions({
                   ) : (
                     <>
                       <p className="text-[9px] font-semibold text-gray-500">
-                        Top 2 + best 3rd-place teams advance
+                        {t(user.preferredLanguage, "bracket.topTwoBestThirdAdvance")}
                       </p>
                       <GroupStandingsMiniTable
                         rows={groupPredictionRows}
                         movementByTeamId={movementByTeamId}
                         showPlayedColumn={false}
-                        emptyState="Make picks in this group to build your projected table."
+                        emptyState={t(user.preferredLanguage, "bracket.makePicksProjectedTable")}
                       />
                     </>
                   )}
@@ -1984,12 +2011,12 @@ export function GroupPredictions({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center justify-center rounded-md bg-accent-light px-2.5 py-1.5 text-xs font-semibold text-accent-dark sm:px-3 sm:py-2">
-                    {formatWeekdayLabel(date)}
+                    {formatWeekdayLabel(date, user.preferredLanguage)}
                   </span>
-                  <h3 className="text-xl font-black">{formatDateLabel(date)}</h3>
+                  <h3 className="text-xl font-black">{formatDateLabel(date, user.preferredLanguage)}</h3>
                 </div>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-700">
-                  {dateMatches.length} match{dateMatches.length === 1 ? "" : "es"}
+                  {t(user.preferredLanguage, "common.matchCount", { count: dateMatches.length })}
                 </p>
               </div>
             </div>
@@ -2005,10 +2032,11 @@ export function GroupPredictions({
                 >
                   {focusedMatchId === match.id && dateMatches[0]?.id !== match.id ? (
                     <div className="rounded-md bg-gray-100 px-3 py-2 text-sm font-bold text-gray-700">
-                      {formatDateLabel(date)}
+                      {formatDateLabel(date, user.preferredLanguage)}
                     </div>
                   ) : null}
                   <GroupPredictionCard
+                    language={user.preferredLanguage}
                     match={match}
                     matchNumber={filteredMatches.findIndex((item) => item.id === match.id) + 1}
                     grouped
@@ -2073,6 +2101,7 @@ export function GroupPredictions({
                       predictions={socialPredictions.filter((item) => item.matchId === match.id)}
                       currentUserId={user.id}
                       currentUserPoints={user.totalPoints}
+                      language={user.preferredLanguage}
                     />
                   ) : null}
                 </div>
@@ -2084,7 +2113,7 @@ export function GroupPredictions({
 
       {filteredMatches.length === 0 ? (
         <p className="rounded-lg bg-gray-100 px-4 py-3 text-center text-sm font-semibold text-gray-700">
-          No matches found for this filter
+          {t(user.preferredLanguage, "bracket.noMatchesForFilter")}
         </p>
       ) : null}
 
@@ -2172,18 +2201,18 @@ function sortMatchesByKickoff(left: MatchWithTeams, right: MatchWithTeams) {
   return left.kickoffTime.localeCompare(right.kickoffTime);
 }
 
-function formatDateLabel(date: string) {
-  return new Intl.DateTimeFormat("en-US", {
+function formatDateLabel(date: string, language?: string | null) {
+  return formatDate(`${date}T12:00:00Z`, language, {
     month: "short",
     day: "numeric",
     year: "numeric"
-  }).format(new Date(`${date}T12:00:00Z`));
+  });
 }
 
-function formatWeekdayLabel(date: string) {
-  return new Intl.DateTimeFormat("en-US", {
+function formatWeekdayLabel(date: string, language?: string | null) {
+  return formatDate(`${date}T12:00:00Z`, language, {
     weekday: "short"
-  }).format(new Date(`${date}T12:00:00Z`));
+  });
 }
 
 function formatSavedPredictionSummary(match: MatchWithTeams | undefined, prediction: Prediction) {
@@ -2194,7 +2223,7 @@ function formatSavedPredictionSummary(match: MatchWithTeams | undefined, predict
   return `${homeCode} ${homeScore} vs. ${awayCode} ${awayScore}`;
 }
 
-function getAutoPickSourceText(source: string, language: "en" | "es") {
+function getAutoPickSourceText(source: string, language: ExplainerLanguage) {
   if (source === "manual" || source === "polymarket") {
     return AUTO_PICK_SOURCE_COPY[language].market;
   }

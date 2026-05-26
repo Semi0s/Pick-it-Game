@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchDashboardGroupAccessDataForCurrentUser } from "@/app/my-groups/actions";
+import { fetchDashboardGroupAccessDataForCurrentUser } from "@/lib/dashboard-group-access";
 
 export async function GET() {
   try {

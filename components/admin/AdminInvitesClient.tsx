@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createAdminInviteAction } from "@/app/admin/actions";
 import { fetchInviteAutocompleteAction, type InviteAutocompleteOption } from "@/app/invites/actions";
 import { AdminAccessCodesSection } from "@/components/admin/AdminAccessCodesSection";
+import { AdminPromoManagerInviteCodesSection } from "@/components/admin/AdminPromoManagerInviteCodesSection";
 import { fetchAdminInvites, type AdminInvite } from "@/lib/admin-data";
 import { getRoleBadgeLabel } from "@/lib/access-levels";
 import { formatDateOnly, formatDateTimeWithZone } from "@/lib/date-time";
@@ -253,7 +254,12 @@ export function AdminInvitesSection({
         </form>
       </ManagementCard>
 
-      {user?.accessLevel === "super_admin" ? <AdminAccessCodesSection /> : null}
+      {user?.accessLevel === "super_admin" ? (
+        <>
+          <AdminPromoManagerInviteCodesSection />
+          <AdminAccessCodesSection />
+        </>
+      ) : null}
 
       {showInviteList ? (
         <section className="space-y-3">

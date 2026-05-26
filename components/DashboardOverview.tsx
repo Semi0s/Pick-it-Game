@@ -34,22 +34,11 @@ import { buildGroupStandingsByGroup, buildQualifiedTeamSeeds } from "@/lib/knock
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { shouldHideStrategyModeForLaunch } from "@/lib/group-prediction-mode";
 import { normalizeInviteTokenInput } from "@/components/player-management/Shared";
-import {
-  getExplainerLanguageForUser,
-  normalizeExplainerLanguage,
-  PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
-  type ExplainerLanguage
-} from "@/lib/i18n";
+import { useAppLanguage } from "@/lib/app-language";
+import { t } from "@/lib/strings";
+import { dismissCurrentUserMessageId } from "@/lib/auth-client";
 import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
-
-const DASHBOARD_DISPLAY_COPY: Record<ExplainerLanguage, { hello: string; help: string }> = {
-  en: { hello: "Hello", help: "RULES" },
-  es: { hello: "Hola", help: "RULES" },
-  fr: { hello: "Bonjour", help: "RULES" },
-  pt: { hello: "Olá", help: "RULES" },
-  de: { hello: "Hallo", help: "RULES" }
-};
 
 const DASHBOARD_LOGO_HINT_MESSAGE_ID = "dashboard-logo-hint-v2";
 const DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-dismissed";
@@ -57,13 +46,6 @@ const DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX = "pickit:dashboard-logo-
 const DASHBOARD_STANDINGS_GROUP_STORAGE_KEY = "dashboard-standings-group";
 const DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY = "dashboard-standings-disclosure";
 const DASHBOARD_HOW_TO_PLAY_DISCLOSURE_STORAGE_KEY = "dashboard-how-to-play-disclosure";
-const DASHBOARD_LOGO_HINT_COPY: Record<ExplainerLanguage, string> = {
-  en: "Tap the PICK-IT logo above to return to this page again.",
-  es: "Toca el logo de PICK-IT! para volver aquí.",
-  fr: "Touchez le logo PICK-IT! pour revenir ici.",
-  pt: "Toque no logo do PICK-IT! para voltar aqui.",
-  de: "Tippe auf das PICK-IT!-Logo, um hierher zurückzukehren."
-};
 const DASHBOARD_GROUP_MATCH_REFRESH_INTERVAL_MS = 15000;
 type DashboardGroupAccessResponse = {
   ok: true;
@@ -108,6 +90,7 @@ export function DashboardOverview({
 }) {
   const router = useRouter();
   const { user, isLoading: isCurrentUserLoading } = useCurrentUser();
+  const { activeLanguage: displayLanguage } = useAppLanguage();
   const currentUserId = user?.id ?? null;
   const [groupMatches, setGroupMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
   const [adminCounts, setAdminCounts] = useState<AdminCounts | null>(null);
@@ -120,7 +103,6 @@ export function DashboardOverview({
   } | null>(initialGroupAccess);
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
-  const [displayLanguage] = usePersistentExplainerLanguage(user);
   const [showDashboardLogoHint, setShowDashboardLogoHint] = useState(false);
   const [selectedStandingsGroup, setSelectedStandingsGroup, selectedStandingsGroupState] = useSessionJsonState<string>(
     DASHBOARD_STANDINGS_GROUP_STORAGE_KEY,
@@ -296,7 +278,12 @@ export function DashboardOverview({
 
     return normalizeGroupKey(homeTeamMatch?.groupName) ?? null;
   }, [groupMatches, user?.homeTeamId]);
-  const dashboardCopy = DASHBOARD_DISPLAY_COPY[displayLanguage];
+  const dashboardCopy = {
+    hello: t(displayLanguage, "dashboard.hello"),
+    help: t(displayLanguage, "dashboard.help")
+  };
+  const dashboardLogoHintMessageId = DASHBOARD_LOGO_HINT_MESSAGE_ID;
+  const legacyLanguageScopedLogoHintMessageId = `${DASHBOARD_LOGO_HINT_MESSAGE_ID}:${displayLanguage}`;
   const { selectedGroup: resolvedStandingsGroup } = resolvePreferredStandingsGroupSelection({
     availableGroups: availableStandingsGroups,
     storedGroup: selectedStandingsGroup,
@@ -402,26 +389,42 @@ export function DashboardOverview({
       : null;
 
     try {
-      const dismissedIds = parseDismissedMessageIds(window.localStorage.getItem(messageStorageKey));
+      const dismissedIds = Array.from(
+        new Set([
+          ...parseDismissedMessageIds(window.localStorage.getItem(messageStorageKey)),
+          ...(user?.dismissedMessageIds ?? [])
+        ])
+      );
       const dismissedInLegacyStorage =
         window.localStorage.getItem(sharedPersistentStorageKey) === "true" ||
         window.sessionStorage.getItem(sharedSessionStorageKey) === "true" ||
         (legacyPersistentStorageKey ? window.localStorage.getItem(legacyPersistentStorageKey) === "true" : false) ||
-        (legacySessionStorageKey ? window.sessionStorage.getItem(legacySessionStorageKey) === "true" : false);
-      const nextDismissedIds = dismissedInLegacyStorage
-        ? dismissMessageId(dismissedIds, DASHBOARD_LOGO_HINT_MESSAGE_ID)
+        (legacySessionStorageKey ? window.sessionStorage.getItem(legacySessionStorageKey) === "true" : false) ||
+        isMessageDismissed(dismissedIds, legacyLanguageScopedLogoHintMessageId);
+      const nextDismissedIds = dismissedInLegacyStorage || isMessageDismissed(dismissedIds, legacyLanguageScopedLogoHintMessageId)
+        ? dismissMessageId(dismissedIds, dashboardLogoHintMessageId)
         : dismissedIds;
 
       if (nextDismissedIds.length !== dismissedIds.length) {
         window.localStorage.setItem(messageStorageKey, serializeDismissedMessageIds(nextDismissedIds));
       }
 
-      setShowDashboardLogoHint(!isMessageDismissed(nextDismissedIds, DASHBOARD_LOGO_HINT_MESSAGE_ID));
+      if (currentUserId && dismissedInLegacyStorage && !isMessageDismissed(user?.dismissedMessageIds ?? [], dashboardLogoHintMessageId)) {
+        void dismissCurrentUserMessageId(dashboardLogoHintMessageId);
+      }
+
+      setShowDashboardLogoHint(!isMessageDismissed(nextDismissedIds, dashboardLogoHintMessageId));
     } catch (error) {
       console.warn("Could not restore dashboard logo hint dismissal state.", error);
       setShowDashboardLogoHint(true);
     }
-  }, [currentUserId, isCurrentUserLoading]);
+  }, [
+    currentUserId,
+    dashboardLogoHintMessageId,
+    legacyLanguageScopedLogoHintMessageId,
+    isCurrentUserLoading,
+    user?.dismissedMessageIds
+  ]);
 
   const dismissDashboardLogoHint = useCallback(() => {
     const messageStorageKey = getDashboardHomeMessageStorageKey({
@@ -434,14 +437,17 @@ export function DashboardOverview({
 
     try {
       const dismissedIds = parseDismissedMessageIds(window.localStorage.getItem(messageStorageKey));
-      const nextDismissedIds = dismissMessageId(dismissedIds, DASHBOARD_LOGO_HINT_MESSAGE_ID);
+      const nextDismissedIds = dismissMessageId(dismissedIds, dashboardLogoHintMessageId);
       window.localStorage.setItem(messageStorageKey, serializeDismissedMessageIds(nextDismissedIds));
+      if (currentUserId) {
+        void dismissCurrentUserMessageId(dashboardLogoHintMessageId);
+      }
     } catch (error) {
       console.warn("Could not persist dashboard logo hint dismissal state.", error);
     }
 
     setShowDashboardLogoHint(false);
-  }, [currentUserId, isCurrentUserLoading]);
+  }, [currentUserId, dashboardLogoHintMessageId, isCurrentUserLoading]);
 
   function handleInviteEntrySubmit() {
     const token = normalizeInviteTokenInput(inviteEntryValue);
@@ -460,12 +466,12 @@ export function DashboardOverview({
         <section className="rounded-md border border-amber-200 bg-amber-100 px-2.5 py-1.5">
           <div className="flex items-start justify-between gap-2">
             <p className="min-w-0 text-[11px] font-medium leading-4 text-amber-900">
-              {DASHBOARD_LOGO_HINT_COPY[displayLanguage]}
+              {t(displayLanguage, "dashboard.logoHint")}
             </p>
             <button
               type="button"
               onClick={dismissDashboardLogoHint}
-              aria-label="Dismiss dashboard hint"
+              aria-label={t(displayLanguage, "updates.dismiss")}
               className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-amber-700 transition hover:bg-amber-200 hover:text-amber-900"
             >
               <X aria-hidden className="h-3 w-3" />
@@ -478,6 +484,7 @@ export function DashboardOverview({
         userId={user?.id ?? null}
         name={user?.name ?? "Player"}
         dashboardCopy={dashboardCopy}
+        visualThemeId={user?.visualThemeId ?? null}
         homeTeamId={user?.homeTeamId ?? null}
         preferredLanguage={user?.preferredLanguage ?? null}
       />
@@ -488,45 +495,47 @@ export function DashboardOverview({
         <section className="rounded-[1.15rem] border border-accent-light bg-accent-light/20 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Global Challenge</p>
-              <h2 className="mt-2 text-xl font-black text-gray-950">Group Strategy + Knockout Picks</h2>
+              <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(displayLanguage, "dashboard.globalChallenge")}</p>
+              <h2 className="mt-2 text-xl font-black text-gray-950">{t(displayLanguage, "dashboard.globalChallengeTitle")}</h2>
               <p className="mt-2 text-sm font-semibold leading-6 text-gray-700">
-                {initialGlobalChallengeSummary.prompt ?? "Build a Group Strategy before kickoff, then score the knockout phase match by match."}
+                {initialGlobalChallengeSummary.prompt ?? t(displayLanguage, "dashboard.globalChallengePrompt")}
               </p>
             </div>
             <Link
               href="/strategy"
               className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-2.5 text-sm font-black text-accent-text transition hover:bg-accent/95"
             >
-              {initialGlobalChallengeSummary.groupStrategy.status === "draft" ? "Build Group Strategy" : "Open Group Strategy"}
+              {initialGlobalChallengeSummary.groupStrategy.status === "draft"
+                ? t(displayLanguage, "dashboard.buildGroupStrategy")
+                : t(displayLanguage, "dashboard.openGroupStrategy")}
             </Link>
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl border border-white/70 bg-white/80 px-4 py-3">
-              <p className="text-xs font-black uppercase tracking-wide text-gray-500">Group Strategy</p>
+              <p className="text-xs font-black uppercase tracking-wide text-gray-500">{t(displayLanguage, "dashboard.groupStrategy")}</p>
               <p className="mt-2 text-2xl font-black text-gray-950">
                 {initialGlobalChallengeSummary.groupStrategy.points !== null
                   ? `${initialGlobalChallengeSummary.groupStrategy.points} / ${initialGlobalChallengeSummary.groupStrategy.maxPoints}`
                   : initialGlobalChallengeSummary.groupStrategy.status === "draft"
-                    ? "Draft"
-                    : "Pending"}
+                    ? t(displayLanguage, "dashboard.draft")
+                    : t(displayLanguage, "dashboard.pending")}
               </p>
             </div>
             <div className="rounded-xl border border-white/70 bg-white/80 px-4 py-3">
-              <p className="text-xs font-black uppercase tracking-wide text-gray-500">Knockout Picks</p>
+              <p className="text-xs font-black uppercase tracking-wide text-gray-500">{t(displayLanguage, "dashboard.knockoutPicks")}</p>
               <p className="mt-2 text-2xl font-black text-gray-950">
                 {initialGlobalChallengeSummary.knockout.points !== null
                   ? `${initialGlobalChallengeSummary.knockout.points} / ${initialGlobalChallengeSummary.knockout.maxPoints}`
-                  : "Pending"}
+                  : t(displayLanguage, "dashboard.pending")}
               </p>
             </div>
             <div className="rounded-xl border border-white/70 bg-white/80 px-4 py-3">
-              <p className="text-xs font-black uppercase tracking-wide text-gray-500">Global Score</p>
+              <p className="text-xs font-black uppercase tracking-wide text-gray-500">{t(displayLanguage, "dashboard.globalScore")}</p>
               <p className="mt-2 text-2xl font-black text-gray-950">
                 {initialGlobalChallengeSummary.totalPoints !== null
                   ? `${initialGlobalChallengeSummary.totalPoints} / ${initialGlobalChallengeSummary.totalMaxPoints}`
-                  : "Pending"}
+                  : t(displayLanguage, "dashboard.pending")}
               </p>
             </div>
           </div>
@@ -543,6 +552,7 @@ export function DashboardOverview({
 
       {user && groupAccess && !groupAccess.hasAnyGroups ? (
         <DashboardNoGroupsPanel
+          language={displayLanguage}
           inviteEntryValue={inviteEntryValue}
           inviteEntryError={inviteEntryError}
           onInviteEntryChange={(value) => {
@@ -555,12 +565,12 @@ export function DashboardOverview({
         />
       ) : null}
 
-      <DashboardCommandCenter summary={initialCommandCenterSummary} />
+      <DashboardCommandCenter summary={initialCommandCenterSummary} language={displayLanguage} />
 
       {availableStandingsGroups.length > 0 ? (
         <section className="space-y-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Tournament Standings</p>
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(displayLanguage, "dashboard.tournamentStandings")}</p>
             <InlineDisclosureButton
               isOpen={isStandingsOpen}
               variant="subtle"
@@ -594,7 +604,7 @@ export function DashboardOverview({
                       }`}
                     >
                       <span className="inline-flex items-center gap-1 text-[12px] font-black leading-none">
-                        <span>Group</span>
+                        <span>{t(displayLanguage, "dashboard.groupLabel")}</span>
                         <span>{getGroupShortLabel(groupName)}</span>
                       </span>
                     </button>
@@ -604,10 +614,10 @@ export function DashboardOverview({
 
               <GroupStandingsMiniTable
                 rows={tournamentStandingsRows}
-                emptyState="Standings will appear as group matches go final."
+                emptyState={t(displayLanguage, "dashboard.standingsEmpty")}
               />
               <p className="text-[11px] font-semibold text-gray-500">
-                Top 2 + best 3rd-place teams advance
+                {t(displayLanguage, "dashboard.standingsAdvanceRule")}
               </p>
             </>
           ) : null}
@@ -618,58 +628,58 @@ export function DashboardOverview({
         <DashboardLinkCard
           href="/trophies"
           icon={Trophy}
-          title="Additional Trophies"
-          copy="Tournament winner, Golden Boot, and MVP picks."
+          title={t(displayLanguage, "dashboard.additionalTrophies")}
+          copy={t(displayLanguage, "dashboard.additionalTrophiesCopy")}
         />
       </section>
 
       <section className="ui-card p-4">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">How To Play</p>
+        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(displayLanguage, "dashboard.howToPlay")}</p>
         {isHowToPlayOpen ? (
           <div className="mt-3 space-y-4 text-sm leading-6 text-gray-600">
             <div>
-              <p className="font-bold text-gray-950">Start with Group Stage</p>
-              <p>Rank each group and pick which teams qualify for the Round of 32.</p>
-              <p>You can keep editing until the tournament starts.</p>
+              <p className="font-bold text-gray-950">{t(displayLanguage, "dashboard.startWithGroupStage")}</p>
+              <p>{t(displayLanguage, "dashboard.startWithGroupStageBody")}</p>
+              <p>{t(displayLanguage, "dashboard.startWithGroupStageNote")}</p>
             </div>
 
             <div>
-              <p className="font-bold uppercase tracking-wide text-gray-950">Group Stage Scoring</p>
-              <p>Each group is worth up to 14 points.</p>
+              <p className="font-bold uppercase tracking-wide text-gray-950">{t(displayLanguage, "dashboard.groupStageScoring")}</p>
+              <p>{t(displayLanguage, "dashboard.groupStageScoringIntro")}</p>
               <div className="pl-4">
-                <p>Correct winner: 5 points</p>
-                <p>Correct runner-up: 3 points</p>
-                <p>Correct third-place team: 2 points</p>
-                <p>Correct top two teams, any order: 1 point</p>
-                <p>Correct third-place qualification status: 1 point</p>
-                <p>Correct full group order: 2 points</p>
+                <p>{t(displayLanguage, "dashboard.scoringCorrectWinner")}</p>
+                <p>{t(displayLanguage, "dashboard.scoringCorrectRunnerUp")}</p>
+                <p>{t(displayLanguage, "dashboard.scoringCorrectThirdPlaceTeam")}</p>
+                <p>{t(displayLanguage, "dashboard.scoringCorrectTopTwoAnyOrder")}</p>
+                <p>{t(displayLanguage, "dashboard.scoringCorrectThirdPlaceQualification")}</p>
+                <p>{t(displayLanguage, "dashboard.scoringCorrectFullGroupOrder")}</p>
               </div>
             </div>
 
             <div>
-              <p className="font-bold uppercase tracking-wide text-gray-950">Projected Bracket</p>
-              <p>Your Group Stage picks build a projected Round of 32 path.</p>
-              <p>That preview helps you see who your ladder sends into Knockout.</p>
+              <p className="font-bold uppercase tracking-wide text-gray-950">{t(displayLanguage, "dashboard.projectedBracket")}</p>
+              <p>{t(displayLanguage, "dashboard.projectedBracketBody1")}</p>
+              <p>{t(displayLanguage, "dashboard.projectedBracketBody2")}</p>
             </div>
 
             <div>
-              <p className="font-bold uppercase tracking-wide text-gray-950">Knockout Stage</p>
-              <p>Once the official bracket is seeded, you predict knockout winners and scores match by match.</p>
+              <p className="font-bold uppercase tracking-wide text-gray-950">{t(displayLanguage, "dashboard.knockoutStage")}</p>
+              <p>{t(displayLanguage, "dashboard.knockoutStageBody")}</p>
               <div className="pl-4">
-                <p>Round of 32: 3 winner + 5 Perfect Pick = 8</p>
-                <p>Round of 16: 5 winner + 5 Perfect Pick = 10</p>
-                <p>Quarterfinals: 8 winner + 5 Perfect Pick = 13</p>
-                <p>Semifinals: 10 winner + 5 Perfect Pick = 15</p>
-                <p>Third-place: 5 winner + 5 Perfect Pick = 10</p>
-                <p>Final: 15 winner + 10 Perfect Pick = 25</p>
+                <p>{t(displayLanguage, "dashboard.knockoutScoringRoundOf32")}</p>
+                <p>{t(displayLanguage, "dashboard.knockoutScoringRoundOf16")}</p>
+                <p>{t(displayLanguage, "dashboard.knockoutScoringQuarterfinals")}</p>
+                <p>{t(displayLanguage, "dashboard.knockoutScoringSemifinals")}</p>
+                <p>{t(displayLanguage, "dashboard.knockoutScoringThirdPlace")}</p>
+                <p>{t(displayLanguage, "dashboard.knockoutScoringFinal")}</p>
               </div>
             </div>
 
             <div>
-              <p className="font-bold uppercase tracking-wide text-gray-950">Leaderboards</p>
-              <p>Use Group Stage Leaderboard to compare ladder picks.</p>
-              <p>Use Knockout Stage Leaderboard once the bracket opens.</p>
-              <p>Global Top 10 shows the combined prestige board.</p>
+              <p className="font-bold uppercase tracking-wide text-gray-950">{t(displayLanguage, "dashboard.leaderboardsTitle")}</p>
+              <p>{t(displayLanguage, "dashboard.leaderboardsBody1")}</p>
+              <p>{t(displayLanguage, "dashboard.leaderboardsBody2")}</p>
+              <p>{t(displayLanguage, "dashboard.leaderboardsBody3")}</p>
             </div>
           </div>
         ) : null}
@@ -677,7 +687,7 @@ export function DashboardOverview({
           <InlineDisclosureButton
             isOpen={isHowToPlayOpen}
             onClick={() => setIsHowToPlayOpen((current) => !current)}
-            label={isHowToPlayOpen ? "Less" : "More"}
+            label={isHowToPlayOpen ? t(displayLanguage, "common.less") : t(displayLanguage, "common.more")}
             variant="subtle"
           />
         </div>
@@ -704,54 +714,4 @@ function DashboardLinkCard({ href, icon: Icon, title, copy }: DashboardLinkCardP
       <p className="mt-1 text-sm leading-6 text-gray-600">{copy}</p>
     </Link>
   );
-}
-
-function usePersistentExplainerLanguage(user: { preferredLanguage?: string | null } | null | undefined) {
-  const [displayLanguage, setDisplayLanguage] = useState<ExplainerLanguage>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
-        if (storedValue) {
-          return normalizeExplainerLanguage(storedValue);
-        }
-      } catch (error) {
-        console.warn("Could not restore dashboard helper language.", error);
-      }
-    }
-
-    return getExplainerLanguageForUser(user);
-  });
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    try {
-      const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
-      if (storedValue) {
-        setDisplayLanguage(normalizeExplainerLanguage(storedValue));
-        return;
-      }
-    } catch (error) {
-      console.warn("Could not restore dashboard helper language.", error);
-    }
-
-    setDisplayLanguage(getExplainerLanguageForUser(user));
-  }, [user]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    try {
-      window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, displayLanguage);
-      window.dispatchEvent(new CustomEvent("pickit:helper-language-changed"));
-    } catch (error) {
-      console.warn("Could not persist dashboard helper language.", error);
-    }
-  }, [displayLanguage]);
-
-  return [displayLanguage, setDisplayLanguage] as const;
 }

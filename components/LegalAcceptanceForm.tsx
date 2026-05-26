@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { acceptCurrentLegalDocumentAction } from "@/app/legal/actions";
 import { showAppToast } from "@/lib/app-toast";
-import { getLanguageLabel, getStrings } from "@/lib/strings";
+import { getLanguageLabel, getStrings, t } from "@/lib/strings";
 import type { SupportedLanguage } from "@/lib/i18n";
 
 type LegalAcceptanceDocument = {
@@ -40,7 +40,7 @@ export function LegalAcceptanceForm({
   const [openLanguages, setOpenLanguages] = useState<Partial<Record<SupportedLanguage, boolean>>>({});
   const [openedLanguages, setOpenedLanguages] = useState<Partial<Record<SupportedLanguage, boolean>>>({});
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(
-    alreadyAccepted ? { tone: "success", text: "You already accepted the current version." } : null
+    alreadyAccepted ? { tone: "success", text: t(uiLanguage, "legal.alreadyAccepted") } : null
   );
   const hasOpenedAtLeastOneVersion = Object.values(openedLanguages).some(Boolean);
   const orderedDocuments = useMemo(() => {
@@ -65,7 +65,7 @@ export function LegalAcceptanceForm({
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{copy.termsOfUse}</p>
         <h1 className="mt-2 text-3xl font-black leading-tight text-gray-950">{title}</h1>
         <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">
-          Version {currentVersion}. We need your agreement before you can keep using PICK-IT!
+          {t(uiLanguage, "legal.versionNotice", { version: currentVersion })}
         </p>
       </div>
 
@@ -115,7 +115,7 @@ export function LegalAcceptanceForm({
           onSubmit={async (event) => {
             event.preventDefault();
             if (!hasOpenedAtLeastOneVersion) {
-              setMessage({ tone: "error", text: "Open at least one language card before continuing." });
+              setMessage({ tone: "error", text: t(uiLanguage, "legal.openLanguageBeforeContinue") });
               return;
             }
             setIsSubmitting(true);
@@ -145,7 +145,7 @@ export function LegalAcceptanceForm({
 
           {!hasOpenedAtLeastOneVersion ? (
             <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
-              Open at least one language card before accepting.
+              {t(uiLanguage, "legal.openLanguageBeforeAccepting")}
             </p>
           ) : null}
 
@@ -154,7 +154,7 @@ export function LegalAcceptanceForm({
             disabled={!checked || !hasOpenedAtLeastOneVersion || isSubmitting}
             className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white shadow-soft disabled:cursor-not-allowed disabled:bg-gray-300"
           >
-            {isSubmitting ? "Saving..." : copy.acceptAndContinue}
+            {isSubmitting ? t(uiLanguage, "common.saving") : copy.acceptAndContinue}
           </button>
         </form>
       )}

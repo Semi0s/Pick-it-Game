@@ -9,14 +9,17 @@ import {
   markAppUpdateReadAction,
   updateDashboardUpdatesEnabledAction
 } from "@/app/dashboard/actions";
+import { useAppLanguage } from "@/lib/app-language";
 import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import { canManageAppUpdates, getAppUpdatesCardDisplayState } from "@/lib/dashboard-updates";
+import { t } from "@/lib/strings";
 import type { AppUpdateCardTone, AppUpdateWithReadState } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
 export function AppUpdatesCard() {
   const router = useRouter();
   const { user } = useCurrentUser();
+  const { activeLanguage: language } = useAppLanguage();
   const [updates, setUpdates] = useState<AppUpdateWithReadState[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -112,14 +115,14 @@ export function AppUpdatesCard() {
       <section className="rounded-[1.15rem] border border-amber-200 bg-amber-50 p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">Updates</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-amber-800">Admin only</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">{t(language, "updates.title")}</p>
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-amber-800">{t(language, "updates.adminOnly")}</p>
           </div>
           <span className="ui-chip-sm border border-amber-200 bg-white font-semibold text-amber-800">
-            Hidden from users
+            {t(language, "updates.hiddenFromUsers")}
           </span>
         </div>
-        <p className="mt-2 text-[10px] leading-5 text-amber-900">{error ?? "Could not load updates."}</p>
+        <p className="mt-2 text-[10px] leading-5 text-amber-900">{error ?? t(language, "updates.couldNotLoad")}</p>
       </section>
     );
   }
@@ -129,8 +132,8 @@ export function AppUpdatesCard() {
       <section className="rounded-[1.15rem] border border-gray-200 bg-gray-50 p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">Updates</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-600">Admin only</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">{t(language, "updates.title")}</p>
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-600">{t(language, "updates.adminOnly")}</p>
           </div>
           <button
             type="button"
@@ -155,11 +158,11 @@ export function AppUpdatesCard() {
             disabled={isUpdatingEnabled}
             className="ui-chip-sm border border-accent-light bg-white font-semibold text-accent-dark transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isUpdatingEnabled ? "Saving..." : "On"}
+            {isUpdatingEnabled ? t(language, "common.saving") : t(language, "common.on")}
           </button>
         </div>
         <p className="mt-2 text-[10px] leading-5 text-gray-600">
-          This card is currently hidden from players.
+          {t(language, "updates.hiddenFromPlayers")}
           {activeUpdate ? ` Hidden update: ${activeUpdate.title}.` : ""}
         </p>
       </section>
@@ -171,15 +174,15 @@ export function AppUpdatesCard() {
       <section className="rounded-[1.15rem] border border-gray-200 bg-gray-50 p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">Updates</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-600">Admin only</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">{t(language, "updates.title")}</p>
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-600">{t(language, "updates.adminOnly")}</p>
           </div>
           <span className="ui-chip-sm border border-gray-200 bg-white font-semibold text-gray-700">
-            No live update
+            {t(language, "updates.noLiveUpdate")}
           </span>
         </div>
         <p className="mt-2 text-[10px] leading-5 text-gray-600">
-          The Updates card is on, but there is no currently published message for players.
+          {t(language, "updates.noPublishedMessage")}
         </p>
       </section>
     );
@@ -192,7 +195,7 @@ export function AppUpdatesCard() {
       } ${getUpdateCardSurfaceClasses(activeUpdate.cardTone, hasUnreadImportantUpdate)}`}
     >
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">Updates</p>
+        <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">{t(language, "updates.title")}</p>
         <div className="flex shrink-0 items-center gap-2">
           {canArchiveUpdates ? (
             <button
@@ -219,7 +222,7 @@ export function AppUpdatesCard() {
               className="ui-chip-sm border border-gray-200 bg-white font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Turn this update off for everyone"
             >
-              {isUpdatingEnabled ? "Saving..." : "Off"}
+              {isUpdatingEnabled ? t(language, "common.saving") : t(language, "common.off")}
             </button>
           ) : null}
           <div
@@ -231,7 +234,7 @@ export function AppUpdatesCard() {
             {formatUpdateTimestamp(activeUpdate.publishedAt)}
           </div>
           {isForcedOpen ? (
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-accent-dark">Pinned open</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-accent-dark">{t(language, "updates.pinnedOpen")}</span>
           ) : (
             <InlineDisclosureButton isOpen={resolvedIsOpen} variant="subtle" onClick={() => setIsOpen((current) => !current)} />
           )}
@@ -250,7 +253,7 @@ export function AppUpdatesCard() {
                 onClick={() => setActiveIndex((current) => Math.max(0, current - 1))}
                 disabled={activeIndex === 0}
                 className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2 py-1.5 text-[10px] text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
-                aria-label="Show previous update"
+                aria-label={t(language, "updates.previousUpdate")}
               >
                 <ChevronLeft aria-hidden className="h-4 w-4" />
               </button>
@@ -259,12 +262,12 @@ export function AppUpdatesCard() {
                 onClick={() => setActiveIndex((current) => Math.min(updates.length - 1, current + 1))}
                 disabled={activeIndex === updates.length - 1}
                 className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2 py-1.5 text-[10px] text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50"
-                aria-label="Show next update"
+                aria-label={t(language, "updates.nextUpdate")}
               >
                 <ChevronRight aria-hidden className="h-4 w-4" />
               </button>
               <p className="text-sm font-semibold text-gray-600">
-                {activeIndex + 1} of {updates.length}
+                {t(language, "updates.itemCount", { current: activeIndex + 1, total: updates.length })}
               </p>
             </div>
 
@@ -274,7 +277,7 @@ export function AppUpdatesCard() {
                   href={activeUpdate.linkUrl}
                   className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3.5 py-1.5 text-[10px] font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
                 >
-                  {activeUpdate.linkLabel || "Learn more"}
+                  {activeUpdate.linkLabel || t(language, "common.learnMore")}
                 </Link>
               ) : (
                 <a
@@ -283,7 +286,7 @@ export function AppUpdatesCard() {
                   rel="noreferrer"
                   className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3.5 py-1.5 text-[10px] font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
                 >
-                  {activeUpdate.linkLabel || "Learn more"}
+                  {activeUpdate.linkLabel || t(language, "common.learnMore")}
                 </a>
               )
             ) : null}

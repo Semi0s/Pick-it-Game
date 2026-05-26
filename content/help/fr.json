@@ -1,0 +1,44 @@
+{
+  "sections": [
+    {
+      "title": "Commencez par la Phase de groupes",
+      "bullets": [
+        "Classez chaque groupe et choisissez les équipes qui atteindront le Round of 32",
+        "Définissez les deux premiers de chaque groupe",
+        "Choisissez les troisièmes qualifiés pour compléter le bracket",
+        "Vous pouvez modifier vos choix jusqu'au début du tournoi"
+      ],
+      "tip": "La Phase de groupes est le parcours de lancement par défaut."
+    },
+    {
+      "title": "Score de la Phase de groupes",
+      "bullets": [
+        "Chaque groupe vaut jusqu'à 14 points",
+        "Vainqueur correct : 5 points",
+        "Deuxième correct : 3 points",
+        "Troisième équipe correcte : 2 points",
+        "Deux premiers corrects dans n'importe quel ordre : 1 point",
+        "Statut de qualification du troisième correct : 1 point",
+        "Ordre complet du groupe correct : 2 points"
+      ],
+      "tip": "Douze groupes à 14 points donnent un maximum de 168 points."
+    },
+    {
+      "title": "Round of 32 projeté",
+      "bullets": [
+        "Votre classement de groupes crée un bracket Round of 32 projeté",
+        "Avant le tirage officiel, la vue projetée montre les équipes que vous envoyez plus loin",
+        "Quand les qualifiés officiels sont connus, vous pouvez comparer votre chemin projeté au vrai bracket",
+        "Après Round of 32, Knockout utilise les cartes de prédiction de match standard"
+      ],
+      "tip": "C'est le pont entre la Phase de groupes et Knockout."
+    }
+  ],
+  "quickTips": [
+    "Terminez votre classement de groupes avant le coup d'envoi du tournoi",
+    "Utilisez le Round of 32 projeté pour vérifier les équipes que votre classement envoie en Knockout",
+    "Knockout ouvre quand les qualifiés officiels sont placés",
+    "Les classements reflètent le score de la phase actuelle",
+    "Créez et gérez des groupes pour jouer dans plusieurs pools"
+  ]
+}

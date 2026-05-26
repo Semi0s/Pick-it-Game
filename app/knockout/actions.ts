@@ -11,6 +11,8 @@ import {
   saveBracketPrediction,
   saveProjectedBracketPrediction
 } from "@/lib/bracket-predictions";
+import { normalizeLanguage } from "@/lib/i18n";
+import { t } from "@/lib/strings";
 import type { KnockoutBracketEditorView } from "@/lib/bracket-predictions";
 import type { BracketPrediction } from "@/lib/types";
 
@@ -21,6 +23,7 @@ type SaveBracketPredictionInput = {
   awayScore: number;
   mode?: "official" | "projected";
   confirmClearDownstream?: boolean;
+  language?: string | null;
 };
 
 export type SaveBracketPredictionResult =
@@ -43,13 +46,14 @@ export async function previewBracketPredictionImpactAction(
   input: SaveBracketPredictionInput
 ): Promise<{ ok: true; affectedCount: number } | { ok: false; message: string }> {
   const supabase = await createServerSupabaseClient();
+  const language = normalizeLanguage(input.language);
   const {
     data: { user },
     error
   } = await supabase.auth.getUser();
 
   if (error || !user) {
-    return { ok: false, message: "You must be signed in to review knockout picks." };
+    return { ok: false, message: t(language, "knockout.mustSignInReview") };
   }
 
   try {
@@ -61,9 +65,8 @@ export async function previewBracketPredictionImpactAction(
       mode: input.mode === "projected" ? "projected" : "official"
     });
     return { ok: true, affectedCount: impact.affectedCount };
-  } catch (caughtError) {
-    const message = caughtError instanceof Error ? caughtError.message : "Could not review the knockout change.";
-    return { ok: false, message };
+  } catch {
+    return { ok: false, message: t(language, "knockout.couldNotReviewChange") };
   }
 }
 
@@ -71,13 +74,14 @@ export async function saveBracketPredictionAction(
   input: SaveBracketPredictionInput
 ): Promise<SaveBracketPredictionResult> {
   const supabase = await createServerSupabaseClient();
+  const language = normalizeLanguage(input.language);
   const {
     data: { user },
     error
   } = await supabase.auth.getUser();
 
   if (error || !user) {
-    return { ok: false, message: "You must be signed in to save knockout picks." };
+    return { ok: false, message: t(language, "knockout.mustSignInSave") };
   }
 
   try {
@@ -116,13 +120,12 @@ export async function saveBracketPredictionAction(
         ok: false,
         message:
           caughtError.affectedCount > 0
-            ? `This will clear ${caughtError.affectedCount} future ${caughtError.affectedCount === 1 ? "pick" : "picks"}.`
-            : "This change may clear future-round picks that depend on your previous winner.",
+            ? t(language, "knockout.clearFuturePicksNotice", { count: caughtError.affectedCount })
+            : t(language, "knockout.futureRoundPicksMayClear"),
         requiresConfirmation: true,
         affectedCount: caughtError.affectedCount
       };
     }
-    const message = caughtError instanceof Error ? caughtError.message : "Could not save the knockout pick.";
-    return { ok: false, message };
+    return { ok: false, message: t(language, "knockout.couldNotSavePick") };
   }
 }

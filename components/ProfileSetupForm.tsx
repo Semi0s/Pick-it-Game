@@ -2,20 +2,32 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchGroupInvitePreviewAction } from "@/app/my-groups/actions";
+import { fetchGroupInvitePreviewAction } from "@/app/group-invite-preview/actions";
 import { completeProfileSetupAction } from "@/app/profile-setup/actions";
+import { VisualThemeMenu } from "@/components/VisualThemeMenu";
 import { showAppToast } from "@/lib/app-toast";
-import { PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY } from "@/lib/i18n";
+import {
+  APP_LANGUAGE_COOKIE_KEY,
+  APP_LANGUAGE_STORAGE_KEY,
+  normalizeLanguage,
+  PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
+  type AppLanguage
+} from "@/lib/i18n";
 import { teams } from "@/lib/mock-data";
-import { getStrings } from "@/lib/strings";
+import { getSupportedLanguageOptions, t } from "@/lib/strings";
 import { useCurrentUser } from "@/lib/use-current-user";
+import {
+  getVisualThemeSelectOptions,
+  getVisualThemeSelectValue,
+  parseVisualThemeSelectValue
+} from "@/lib/visual-theme-options";
 
 export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
   const router = useRouter();
   const { user, isLoading } = useCurrentUser();
   const [displayName, setDisplayName] = useState("");
-  const [preferredLanguage, setPreferredLanguage] = useState<"en" | "es" | "">("");
-  const [homeTeamId, setHomeTeamId] = useState("");
+  const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage | "">("");
+  const [visualThemeSelection, setVisualThemeSelection] = useState("");
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inviteGroupName, setInviteGroupName] = useState<string | null>(null);
@@ -31,6 +43,7 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
     () => [...teams].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" })),
     []
   );
+  const visualThemeOptions = useMemo(() => getVisualThemeSelectOptions(sortedTeams), [sortedTeams]);
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -63,7 +76,14 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
 
     setDisplayName((current) => current || placeholderName);
     setPreferredLanguage((current) => current || user.preferredLanguage || "en");
-    setHomeTeamId((current) => current || user.homeTeamId || "");
+    setVisualThemeSelection(
+      (current) =>
+        current ||
+        getVisualThemeSelectValue({
+          homeTeamId: user.homeTeamId ?? null,
+          visualThemeId: user.visualThemeId ?? null
+        })
+    );
   }, [placeholderName, user]);
 
   useEffect(() => {
@@ -87,8 +107,8 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
 
   if (isLoading || !user || user.needsLegalAcceptance) {
     return (
-      <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
-        Loading profile setup...
+      <div className="rounded-[1rem] bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
+        {t(user?.preferredLanguage, "profile.loadingSetup")}
       </div>
     );
   }
@@ -97,11 +117,13 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
     event.preventDefault();
     setMessage(null);
     setIsSubmitting(true);
+    const parsedVisualThemeSelection = parseVisualThemeSelectValue(visualThemeSelection);
 
     const result = await completeProfileSetupAction({
       displayName: displayName || placeholderName,
       preferredLanguage: preferredLanguage || "en",
-      homeTeamId: homeTeamId || null
+      homeTeamId: parsedVisualThemeSelection.homeTeamId,
+      visualThemeId: parsedVisualThemeSelection.visualThemeId
     });
 
     setIsSubmitting(false);
@@ -112,7 +134,10 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
     }
 
     try {
-      window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, preferredLanguage || "en");
+      const nextLanguage = preferredLanguage || "en";
+      window.localStorage.setItem(APP_LANGUAGE_STORAGE_KEY, nextLanguage);
+      window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, nextLanguage);
+      window.document.cookie = `${APP_LANGUAGE_COOKIE_KEY}=${nextLanguage}; path=/; max-age=31536000; samesite=lax`;
     } catch (error) {
       console.warn("Could not persist preferred language during profile setup.", error);
     }
@@ -121,75 +146,72 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
     router.refresh();
   }
 
-  const copy = getStrings(preferredLanguage || user.preferredLanguage);
+  const uiLanguage = normalizeLanguage(preferredLanguage || user.preferredLanguage);
 
   return (
     <section className="mx-auto max-w-md space-y-5">
-      <div className="rounded-lg bg-gray-100 p-5">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Profile setup</p>
-        <h1 className="mt-2 text-3xl font-black leading-tight">Choose how you appear in the app.</h1>
+      <div className="rounded-[1.15rem] bg-gray-100 p-5">
+        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(uiLanguage, "profile.profileSetup")}</p>
+        <h1 className="mt-2 text-3xl font-black leading-tight">{t(uiLanguage, "profile.chooseAppearance")}</h1>
         <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">
-          Finish this once so your picks, groups, and leaderboard show the right identity from the start.
+          {t(uiLanguage, "profile.setupIntro")}
         </p>
         {inviteGroupName ? (
           <p className="mt-2 text-sm font-semibold leading-6 text-accent-dark">
-            Choose your display name to finish joining {inviteGroupName}.
+            {t(uiLanguage, "profile.finishJoiningGroup", { groupName: inviteGroupName })}
           </p>
         ) : null}
-        <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Your email stays as your sign-in.</p>
+        <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">{t(uiLanguage, "profile.emailSignIn")}</p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-gray-200 bg-white p-5">
+      <form onSubmit={handleSubmit} className="space-y-4 rounded-[1.15rem] border border-gray-200 bg-white p-5">
         <label className="block">
-          <span className="text-sm font-bold text-gray-800">Display name</span>
+          <span className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.displayName")}</span>
           <input
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
             placeholder={placeholderName}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            className="mt-2 w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
             required
           />
-          <p className="mt-2 text-sm font-semibold text-gray-500">This is how other players will see you.</p>
+          <p className="mt-2 text-sm font-semibold text-gray-500">{t(uiLanguage, "profile.displayNameHelp")}</p>
         </label>
 
         <label className="block">
-          <span className="text-sm font-bold text-gray-800">Preferred language</span>
-          <p className="mt-1 text-sm font-semibold text-gray-500">Choose the language you want to use in the app.</p>
+          <span className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.preferredLanguage")}</span>
+          <p className="mt-1 text-sm font-semibold text-gray-500">{t(uiLanguage, "profile.languageHelp")}</p>
           <select
             value={preferredLanguage}
-            onChange={(event) => setPreferredLanguage(event.target.value === "es" ? "es" : "en")}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            onChange={(event) => setPreferredLanguage(normalizeLanguage(event.target.value))}
+            className="mt-2 w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
           >
-            <option value="en">{copy.english}</option>
-            <option value="es">{copy.spanish}</option>
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="text-sm font-bold text-gray-800">Home team</span>
-          <p className="mt-1 text-sm font-semibold text-gray-500">
-            Pick a team to follow and highlight throughout the game.
-          </p>
-          <select
-            value={homeTeamId}
-            onChange={(event) => setHomeTeamId(event.target.value)}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-          >
-            <option value="">Skip for now</option>
-            {sortedTeams.map((team) => (
-              <option key={team.id} value={team.id}>
-                {team.flagEmoji} {team.name}
+            {getSupportedLanguageOptions(uiLanguage).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
               </option>
             ))}
           </select>
+        </label>
+
+        <label className="block">
+          <span className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.visualTheme")}</span>
+          <p className="mt-1 text-sm font-semibold text-gray-500">
+            {t(uiLanguage, "profile.visualThemeHelp")}
+          </p>
+          <VisualThemeMenu
+            value={visualThemeSelection}
+            options={visualThemeOptions}
+            placeholder={t(uiLanguage, "profile.autoDefaultTheme")}
+            onChange={setVisualThemeSelection}
+          />
           <p className="mt-2 text-sm font-semibold text-gray-500">
-            You can always change this later.
+            {t(uiLanguage, "profile.changeLater")}
           </p>
         </label>
 
         {message ? (
           <p
-            className={`rounded-md border px-3 py-2 text-sm font-semibold ${
+            className={`rounded-[0.9rem] border px-3 py-2 text-sm font-semibold ${
               message.tone === "success"
                 ? "border-accent-light bg-accent-light text-accent-dark"
                 : "border-red-200 bg-red-50 text-red-700"
@@ -202,9 +224,9 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white shadow-soft"
+          className="w-full rounded-[0.9rem] bg-accent px-4 py-3 text-base font-bold text-white shadow-soft"
         >
-          {isSubmitting ? "Saving..." : "Enter PICK-IT!"}
+          {isSubmitting ? t(uiLanguage, "common.saving") : t(uiLanguage, "profile.enterPickIt")}
         </button>
       </form>
     </section>

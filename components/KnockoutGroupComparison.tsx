@@ -4,14 +4,16 @@ import Link from "next/link";
 import { useEffect, useMemo } from "react";
 import { HorizontalChoiceRail, InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import type { GroupBracketComparisonView, BracketHealthStatus } from "@/lib/bracket-predictions";
+import { t } from "@/lib/strings";
 const KNOCKOUT_GROUP_COMPARISON_STORAGE_KEY = "knockout-group-comparison";
 const KNOCKOUT_GROUP_DETAIL_STORAGE_KEY = "knockout-group-detail";
 
 type KnockoutGroupComparisonProps = {
   view: GroupBracketComparisonView;
+  language?: string | null;
 };
 
-export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) {
+export function KnockoutGroupComparison({ view, language }: KnockoutGroupComparisonProps) {
   const [isExpanded, setIsExpanded] = useSessionDisclosureState(KNOCKOUT_GROUP_COMPARISON_STORAGE_KEY, false);
   const [isDetailOpen, setIsDetailOpen] = useSessionDisclosureState(KNOCKOUT_GROUP_DETAIL_STORAGE_KEY, false);
 
@@ -22,10 +24,10 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
   if (view.groups.length === 0) {
     return (
       <section className="ui-card p-5">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Group Standings</p>
-        <h2 className="mt-2 text-2xl font-black leading-tight">No group bracket view yet.</h2>
+        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(language, "knockout.groupStandings")}</p>
+        <h2 className="mt-2 text-2xl font-black leading-tight">{t(language, "knockout.noGroupBracketView")}</h2>
         <p className="mt-3 text-base leading-7 text-gray-600">
-          Join a group to compare knockout picks with other players once bracket selections are available.
+          {t(language, "knockout.joinGroupToCompare")}
         </p>
       </section>
     );
@@ -36,16 +38,16 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
       <div className="ui-card p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Group Bracket Comparison</p>
-            <h2 className="mt-2 text-2xl font-black leading-tight">{view.selectedGroupName ?? "Choose a group"}</h2>
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(language, "knockout.groupBracketComparison")}</p>
+            <h2 className="mt-2 text-2xl font-black leading-tight">{view.selectedGroupName ?? t(language, "knockout.chooseGroup")}</h2>
             {view.mostPickedChampion ? (
               <p className="mt-3 text-sm font-semibold text-gray-700">
-                Most-picked champion: <span className="font-black text-gray-950">{view.mostPickedChampion.name}</span>{" "}
-                <span className="text-gray-500">({view.mostPickedChampion.count} picks)</span>
+                {t(language, "knockout.mostPickedChampion")} <span className="font-black text-gray-950">{view.mostPickedChampion.name}</span>{" "}
+                <span className="text-gray-500">({t(language, "knockout.championPickCount", { count: view.mostPickedChampion.count })})</span>
               </p>
             ) : (
               <p className="mt-3 text-sm font-semibold text-gray-700">
-                {view.selectedGroupId ? "No champion picks have been saved for this group yet." : "Choose a group to compare bracket picks."}
+                {view.selectedGroupId ? t(language, "knockout.noChampionPicksGroup") : t(language, "knockout.chooseGroupToCompare")}
               </p>
             )}
             <HorizontalChoiceRail className="mt-4" showControls={view.groups.length > 1}>
@@ -75,8 +77,8 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
             <>
               <div className="space-y-3">
                 {view.members.map((member) => {
-                  const badge = getStatusBadge(member.status);
-                  const finalistsLabel = member.finalistNames.length > 0 ? member.finalistNames.join(" vs ") : "No finalists yet";
+                  const badge = getStatusBadge(member.status, language);
+                  const finalistsLabel = member.finalistNames.length > 0 ? member.finalistNames.join(` ${t(language, "knockout.vs")} `) : t(language, "knockout.noFinalistsYet");
                   const isActive = member.userId === view.selectedPlayerId;
                   return (
                     <Link
@@ -92,16 +94,16 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
                         <div className="min-w-0">
                           <h3 className="truncate text-lg font-black text-gray-950">{member.name}</h3>
                           <p className="mt-1 text-sm font-semibold text-gray-700">
-                            Champion: <span className="font-black text-gray-950">{member.championPickName ?? "Not picked yet"}</span>
+                            {t(language, "knockout.championLabel")} <span className="font-black text-gray-950">{member.championPickName ?? t(language, "knockout.notPickedYet")}</span>
                           </p>
-                          <p className="mt-1 text-sm font-semibold text-gray-600">Finalists: {finalistsLabel}</p>
+                          <p className="mt-1 text-sm font-semibold text-gray-600">{t(language, "knockout.finalistsLabel")} {finalistsLabel}</p>
                           {member.championPickName ? (
                             <p className="mt-2 text-xs font-bold uppercase tracking-wide text-gray-500">
-                              {member.isUniqueChampionPick ? "Unique pick" : `${member.championPickCount} players picked this champion`}
+                              {member.isUniqueChampionPick ? t(language, "knockout.uniquePick") : t(language, "knockout.playersPickedChampion", { count: member.championPickCount, teamName: member.championPickName })}
                             </p>
                           ) : null}
                           {isActive ? (
-                            <p className="mt-2 text-xs font-bold uppercase tracking-wide text-accent-dark">Bracket detail selected</p>
+                            <p className="mt-2 text-xs font-bold uppercase tracking-wide text-accent-dark">{t(language, "knockout.bracketDetailSelected")}</p>
                           ) : null}
                         </div>
                         <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm font-black ${badge.className}`}>
@@ -119,16 +121,17 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
                   selectedPlayerBracket={view.selectedPlayerBracket}
                   isOpen={isDetailOpen}
                   onToggle={() => setIsDetailOpen((current) => !current)}
+                  language={language}
                 />
               ) : (
                 <section className="ui-card p-4">
-                  <p className="text-sm font-semibold text-gray-600">Tap a player to open that bracket detail.</p>
+                  <p className="text-sm font-semibold text-gray-600">{t(language, "knockout.tapPlayerForBracketDetail")}</p>
                 </section>
               )}
             </>
           ) : (
             <section className="ui-card p-4">
-              <p className="text-sm font-semibold text-gray-600">Choose a group above to open its bracket comparison.</p>
+              <p className="text-sm font-semibold text-gray-600">{t(language, "knockout.chooseGroupAbove")}</p>
             </section>
           )}
         </>
@@ -140,13 +143,15 @@ export function KnockoutGroupComparison({ view }: KnockoutGroupComparisonProps) 
 function SelectedBracketDetail({
   selectedPlayerBracket,
   isOpen,
-  onToggle
+  onToggle,
+  language
 }: {
   selectedPlayerBracket: NonNullable<GroupBracketComparisonView["selectedPlayerBracket"]>;
   isOpen: boolean;
   onToggle: () => void;
+  language?: string | null;
 }) {
-  const badge = getStatusBadge(selectedPlayerBracket.status);
+  const badge = getStatusBadge(selectedPlayerBracket.status, language);
   const meaningfulMatches = useMemo(
     () =>
       selectedPlayerBracket.matches.filter(
@@ -164,16 +169,16 @@ function SelectedBracketDetail({
     <section className="ui-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Bracket Detail</p>
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(language, "knockout.bracketDetail")}</p>
           <h3 className="mt-1 text-2xl font-black leading-tight text-gray-950">{selectedPlayerBracket.name}</h3>
           <p className="mt-2 text-sm font-semibold text-gray-700">
-            Champion:{" "}
+            {t(language, "knockout.championLabel")}{" "}
             <span className="font-black text-gray-950">
-              {selectedPlayerBracket.championPickName ?? "No champion pick yet"}
+              {selectedPlayerBracket.championPickName ?? t(language, "knockout.noChampionPickYet")}
             </span>
           </p>
           <p className="mt-1 text-sm font-semibold text-gray-600">
-            Finalists: {selectedPlayerBracket.finalistNames.length > 0 ? selectedPlayerBracket.finalistNames.join(" vs ") : "No finalists yet"}
+            {t(language, "knockout.finalistsLabel")} {selectedPlayerBracket.finalistNames.length > 0 ? selectedPlayerBracket.finalistNames.join(` ${t(language, "knockout.vs")} `) : t(language, "knockout.noFinalistsYet")}
           </p>
         </div>
         <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm font-black ${badge.className}`}>
@@ -185,9 +190,9 @@ function SelectedBracketDetail({
       <div className="ui-card-soft mt-4 p-3">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-bold uppercase tracking-wide text-gray-700">Round-by-round picks</p>
+            <p className="text-sm font-bold uppercase tracking-wide text-gray-700">{t(language, "knockout.roundByRoundPicks")}</p>
             <p className="mt-1 text-sm font-semibold text-gray-600">
-              {meaningfulMatches.length} meaningful match{meaningfulMatches.length === 1 ? "" : "es"} shown
+              {t(language, "knockout.meaningfulMatchesShown", { count: meaningfulMatches.length })}
             </p>
           </div>
           <InlineDisclosureButton isOpen={isOpen} onClick={onToggle} />
@@ -201,22 +206,22 @@ function SelectedBracketDetail({
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{match.stageLabel}</p>
                     <span className="text-xs font-bold uppercase tracking-wide text-gray-500">
-                      {match.status === "scheduled" ? "Open" : match.status === "final" ? "Final" : "Locked"}
+                      {match.status === "scheduled" ? t(language, "common.open") : match.status === "final" ? t(language, "common.final") : t(language, "common.locked")}
                     </span>
                   </div>
                   <p className="mt-2 text-sm font-semibold text-gray-700">
-                    {match.homeTeamName} vs {match.awayTeamName}
+                    {match.homeTeamName} {t(language, "knockout.vs")} {match.awayTeamName}
                   </p>
                   <p className="mt-2 text-sm font-semibold text-gray-700">
-                    Picked winner: <span className="font-black text-gray-950">{match.predictedWinnerName ?? "No pick yet"}</span>
+                    {t(language, "knockout.pickedWinner")} <span className="font-black text-gray-950">{match.predictedWinnerName ?? t(language, "knockout.noPick")}</span>
                   </p>
                   <p className="mt-1 text-sm font-semibold text-gray-600">
-                    Actual winner: {match.actualWinnerName ?? "Not decided yet"}
+                    {t(language, "knockout.actualWinner")} {match.actualWinnerName ?? t(language, "knockout.notDecidedYet")}
                   </p>
                 </div>
               ))
             ) : (
-              <p className="text-sm font-semibold text-gray-600">No meaningful bracket picks to show yet.</p>
+              <p className="text-sm font-semibold text-gray-600">{t(language, "knockout.noMeaningfulPicks")}</p>
             )}
           </div>
         ) : null}
@@ -225,11 +230,11 @@ function SelectedBracketDetail({
   );
 }
 
-function getStatusBadge(status: BracketHealthStatus) {
+function getStatusBadge(status: BracketHealthStatus, language?: string | null) {
   if (status === "alive") {
     return {
       icon: "🔥",
-      label: "Alive",
+      label: t(language, "knockout.alive"),
       className: "bg-emerald-100 text-emerald-900"
     };
   }
@@ -237,14 +242,14 @@ function getStatusBadge(status: BracketHealthStatus) {
   if (status === "eliminated") {
     return {
       icon: "❌",
-      label: "Eliminated",
+      label: t(language, "knockout.eliminated"),
       className: "bg-rose-100 text-rose-900"
     };
   }
 
   return {
     icon: "⚠️",
-    label: "At Risk",
+    label: t(language, "knockout.atRisk"),
     className: "bg-amber-100 text-amber-900"
   };
 }

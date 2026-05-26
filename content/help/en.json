@@ -1,0 +1,96 @@
+{
+  "sections": [
+    {
+      "title": "Start with Group Stage",
+      "bullets": [
+        "Rank each group and pick the teams you believe will reach the Round of 32",
+        "Set the top two finishers in every group",
+        "Choose the qualifying third-place teams to finish the bracket",
+        "You can keep editing until the tournament starts"
+      ],
+      "tip": "Group Stage is the default launch path for regular players."
+    },
+    {
+      "title": "Group Stage Scoring",
+      "bullets": [
+        "Each group is worth up to 14 points",
+        "Correct winner: 5 points",
+        "Correct runner-up: 3 points",
+        "Correct third-place team: 2 points",
+        "Correct top two teams in any order: 1 point",
+        "Correct third-place qualification status: 1 point",
+        "Correct complete group order: 2 points"
+      ],
+      "tip": "Twelve groups at 14 points each gives Group Stage a 168-point max."
+    },
+    {
+      "title": "Projected Round of 32",
+      "bullets": [
+        "Your Group Stage ladder creates a projected Round of 32 bracket",
+        "Before official seeding, the projected side shows the teams your ladder sends forward",
+        "Once official qualifiers are known, Round of 32 lets you compare your projected path with the real bracket",
+        "After Round of 32, Knockout Stage uses the standard match-pick cards only"
+      ],
+      "tip": "This is the bridge between Group Stage and Knockout Stage."
+    },
+    {
+      "title": "Knockout Stage Scoring",
+      "bullets": [
+        "Knockout Stage opens once the official bracket is seeded",
+        "You predict winners and scores match by match",
+        "Round of 32: 3 winner + 5 Perfect Pick = 8",
+        "Round of 16: 5 winner + 5 Perfect Pick = 10",
+        "Quarterfinals: 8 winner + 5 Perfect Pick = 13",
+        "Semifinals: 10 winner + 5 Perfect Pick = 15",
+        "Third-place: 5 winner + 5 Perfect Pick = 10",
+        "Final: 15 winner + 10 Perfect Pick = 25"
+      ],
+      "tip": "Later rounds are worth more, so staying alive in Knockout matters."
+    },
+    {
+      "title": "Leaderboards",
+      "bullets": [
+        "Group Stage Leaderboard compares ladder prediction scores",
+        "Knockout Stage Leaderboard compares knockout match scores",
+        "Global Top 10 is the compact prestige board",
+        "Your group leaderboards still compare you directly with friends in each group"
+      ]
+    },
+    {
+      "title": "Play in Groups",
+      "bullets": [
+        "You can join one group or multiple groups",
+        "Each group has its own leaderboard",
+        "Invite friends and compete inside your own pool"
+      ]
+    },
+    {
+      "title": "See Your Results",
+      "bullets": [
+        "Check Group Stage, Knockout Stage, and Global leaderboard views",
+        "Open the selector to move between Global, Managed, and Invited boards"
+      ]
+    },
+    {
+      "title": "Your Profile",
+      "bullets": [
+        "See your name, role, and home team",
+        "Manage notifications and password settings"
+      ]
+    },
+    {
+      "title": "Need Another Invite?",
+      "bullets": [
+        "Didn't get in properly? Try the invite link again",
+        "Still stuck? Ask your group admin for a new invite"
+      ]
+    }
+  ],
+  "quickTips": [
+    "Finish your Group Stage ladder before tournament kickoff",
+    "Use the projected Round of 32 to check who your ladder sends into Knockout",
+    "Knockout Stage opens after official qualifiers are seeded",
+    "Leaderboard chips and rows now reflect the current phase score",
+    "Create and manage groups to build different pools"
+  ]
+}

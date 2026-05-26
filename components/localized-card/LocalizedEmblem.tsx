@@ -203,7 +203,7 @@ function getLocalizedEmblemSpec(
     case "brazil":
       return {
         opacity: 0.18,
-        scale: 1.04,
+        scale: 1.42,
         leaderboardOpacity: 0.78,
         leaderboardScale: 2.1,
         leaderboardYOffset: -8,

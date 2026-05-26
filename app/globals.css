@@ -17,6 +17,7 @@
   --app-accent-border: #bedfba;
   --app-accent-ring: #88c783;
   --app-logo-secondary-accent: #ffffff;
+  --app-logo-check-accent: #56a24f;
   --app-accent-rgb: 86 162 79;
   --app-accent-light-rgb: 220 239 216;
   --app-accent-dark-rgb: 63 140 57;
@@ -89,6 +90,11 @@ select {
 
   .ui-chip-icon-sm {
     @apply inline-flex h-6 w-6 items-center justify-center rounded-full text-[9px] leading-none;
+  }
+
+  .triptych-compact-type {
+    font-family: "Avenir Next Condensed", "DIN Condensed", "Roboto Condensed", ui-sans-serif, sans-serif;
+    font-stretch: condensed;
   }
 
   .ui-cockpit-button {

@@ -29,6 +29,7 @@ export default async function LoginPage({
   const language = typeof resolvedSearchParams.lang === "string" ? resolvedSearchParams.lang : undefined;
   const callbackError = typeof resolvedSearchParams.error === "string" ? resolvedSearchParams.error : undefined;
   const next = typeof resolvedSearchParams.next === "string" ? resolvedSearchParams.next : undefined;
+  const promoManagerCode = typeof resolvedSearchParams.promoCode === "string" ? resolvedSearchParams.promoCode : undefined;
   const inviteToken = extractInviteTokenFromNextPath(next);
 
   return (
@@ -42,7 +43,7 @@ export default async function LoginPage({
       />
       <div className="absolute inset-0 bg-black/30" aria-hidden />
       <section className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] max-w-[17.85rem] flex-col justify-center">
-        <div className="mb-8 rounded-lg border border-white/60 bg-white/90 p-4 shadow-2xl shadow-black/25">
+        <div className="mb-8 rounded-[1.35rem] border border-white/60 bg-white/90 p-4 shadow-2xl shadow-black/25">
           <div className="mx-auto mb-6 max-w-[30rem]">
             <PickItLogo
               alt="PICK-IT! World Cup 2026"
@@ -62,6 +63,7 @@ export default async function LoginPage({
             callbackError={callbackError}
             nextPath={next}
             inviteToken={inviteToken}
+            promoManagerCode={promoManagerCode}
           />
         </div>
 
