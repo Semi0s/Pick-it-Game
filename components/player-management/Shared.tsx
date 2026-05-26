@@ -863,10 +863,10 @@ export function ActionButton({
 }) {
   const className =
     tone === "accent"
-      ? "border-accent bg-accent text-white hover:bg-accent-dark"
+      ? "ui-button-accent"
       : tone === "danger"
         ? "border-red-200 bg-white text-red-700 hover:bg-red-50"
-        : "border-gray-300 bg-gray-50 text-gray-800 hover:border-accent hover:bg-accent-light";
+        : "ui-button-neutral-accent";
 
   return (
     <button

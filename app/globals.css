@@ -88,6 +88,30 @@ select {
     @apply inline-flex items-center justify-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] leading-none;
   }
 
+  .ui-button-accent {
+    border-color: var(--app-accent-fill);
+    background-color: var(--app-accent-fill);
+    color: var(--app-accent-fill-text);
+  }
+
+  .ui-button-accent:hover {
+    border-color: var(--app-accent-fill-hover);
+    background-color: var(--app-accent-fill-hover);
+    color: var(--app-accent-fill-hover-text);
+  }
+
+  .ui-button-neutral-accent {
+    border-color: rgb(209 213 219);
+    background-color: rgb(249 250 251);
+    color: rgb(31 41 55);
+  }
+
+  .ui-button-neutral-accent:hover {
+    border-color: var(--app-accent-border);
+    background-color: var(--app-accent-soft);
+    color: var(--app-accent-dark);
+  }
+
   .ui-chip-icon-sm {
     @apply inline-flex h-6 w-6 items-center justify-center rounded-full text-[9px] leading-none;
   }
@@ -264,9 +288,13 @@ select {
   }
 
   .bg-accent.text-white,
+  .bg-accent.text-accent-text,
   .bg-accent-dark.text-white,
+  .bg-accent-dark.text-accent-text,
   .bg-accent .text-white,
-  .bg-accent-dark .text-white {
+  .bg-accent .text-accent-text,
+  .bg-accent-dark .text-white,
+  .bg-accent-dark .text-accent-text {
     color: rgb(var(--app-accent-fill-text-rgb) / 1);
   }
 }

@@ -180,6 +180,7 @@ export type GroupStandingItem = {
   recentActivityCount: number | null;
   tag: string | null;
   scoringScope: "standard";
+  visibility: "standings" | "directory";
 };
 
 export type TeamStandingItem = {
@@ -371,6 +372,10 @@ async function fetchGroupStandingsForAccessibleGroups(
   perfectPickEnabled: boolean
 ): Promise<GroupStandingItem[]> {
   const adminSupabase = createAdminClient();
+  if (accessLevel === "super_admin") {
+    return fetchSuperAdminGroupDirectory(adminSupabase);
+  }
+
   if (accessLevel === "player" || accessibleGroupIds.length === 0) {
     return [];
   }
@@ -387,11 +392,9 @@ async function fetchGroupStandingsForAccessibleGroups(
     .select("group_id")
     .eq("scope_type", "group");
 
-  const scopedGroupsQuery = accessLevel === "super_admin" ? groupsQuery : groupsQuery.in("id", accessibleGroupIds);
-  const scopedMembershipsQuery =
-    accessLevel === "super_admin" ? membershipsQuery : membershipsQuery.in("group_id", accessibleGroupIds);
-  const scopedActivityCountsQuery =
-    accessLevel === "super_admin" ? activityCountsQuery : activityCountsQuery.in("group_id", accessibleGroupIds);
+  const scopedGroupsQuery = groupsQuery.in("id", accessibleGroupIds);
+  const scopedMembershipsQuery = membershipsQuery.in("group_id", accessibleGroupIds);
+  const scopedActivityCountsQuery = activityCountsQuery.in("group_id", accessibleGroupIds);
 
   const [
     { data: groupsData, error: groupsError },
@@ -490,7 +493,8 @@ async function fetchGroupStandingsForAccessibleGroups(
         perfectPickCount,
         recentActivityCount,
         tag: deriveGroupStandingTag({ avgPoints, playerCount, perfectPickCount }),
-        scoringScope: "standard"
+        scoringScope: "standard",
+        visibility: "standings"
       } satisfies GroupStandingItem;
     })
     .filter(Boolean)
@@ -505,6 +509,39 @@ async function fetchGroupStandingsForAccessibleGroups(
       ...(group as GroupStandingItem),
       rank: index + 1
     }));
+}
+
+async function fetchSuperAdminGroupDirectory(
+  adminSupabase: ReturnType<typeof createAdminClient>
+): Promise<GroupStandingItem[]> {
+  const { data, error } = await adminSupabase
+    .from("groups")
+    .select("id,name,status,owner_user_id,owner:users!groups_owner_user_id_fkey(id,name,email)")
+    .order("name", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return ((data as GroupRow[] | null) ?? []).map((group, index) => {
+    const owner = Array.isArray(group.owner) ? group.owner[0] : group.owner;
+    return {
+      id: group.id,
+      rank: index + 1,
+      name: group.status === "archived" ? `${group.name} (Archived)` : group.name,
+      managerName: owner?.name ?? owner?.email ?? "Group manager",
+      totalPoints: 0,
+      avgPoints: 0,
+      playerCount: 0,
+      topPlayerName: "",
+      topPlayerPoints: 0,
+      perfectPickCount: null,
+      recentActivityCount: null,
+      tag: group.status === "archived" ? "Archived" : null,
+      scoringScope: "standard",
+      visibility: "directory"
+    } satisfies GroupStandingItem;
+  });
 }
 
 async function fetchTeamStandings(): Promise<TeamStandingItem[]> {
@@ -825,25 +862,17 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
     user.id,
     accessLevel
   );
-  const managerOptions = accessLevel === "super_admin" ? await fetchManagerOptions(adminSupabase) : [];
 
-  const tabs: LeaderboardSwitcherContext["tabs"] =
-    accessLevel === "super_admin"
-      ? [
-          { value: "global", label: "Global Standings" },
-          { value: "managers", label: "Managers" },
-          { value: "groups", label: "Group Standings" },
-          { value: "teams", label: "Team Standings" }
-        ]
-      : [
-          ...(hasOrganizerAccess(accessLevel) && managedGroups.length > 0
-            ? [{ value: "managed_groups" as const, label: "My Managed Groups" }]
-            : []),
-          ...(joinedGroups.length > 0
-            ? [{ value: "my_groups" as const, label: "Invited / Joined Groups" }]
-            : []),
-          { value: "global", label: "Global Standings" }
-        ];
+  const tabs: LeaderboardSwitcherContext["tabs"] = [
+    ...(hasOrganizerAccess(accessLevel) && managedGroups.length > 0
+      ? [{ value: "managed_groups" as const, label: "My Managed Groups" }]
+      : []),
+    ...(joinedGroups.length > 0
+      ? [{ value: "my_groups" as const, label: "Invited / Joined Groups" }]
+      : []),
+    { value: "global", label: "Global Standings" },
+    ...(accessLevel === "super_admin" ? [{ value: "groups" as const, label: "Group Directory" }] : [])
+  ];
 
   return {
     accessLevel,
@@ -851,7 +880,7 @@ async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherCon
     groups: groupOptions,
     joinedGroups,
     managedGroups,
-    managers: managerOptions
+    managers: []
   };
 }
 
@@ -971,26 +1000,6 @@ async function fetchAccessibleGroupOptions(
   userId: string,
   accessLevel: AccessLevel
 ) {
-  if (accessLevel === "super_admin") {
-    const { data, error } = await adminSupabase
-      .from("groups")
-      .select("id,name,status")
-      .order("name", { ascending: true });
-
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    return {
-      groups: (((data as GroupRow[] | null) ?? []).map((group) => ({
-        id: group.id,
-        label: group.status === "archived" ? `${group.name} (Archived)` : group.name
-      }))),
-      joinedGroups: [],
-      managedGroups: []
-    };
-  }
-
   const { data: groupMemberships, error: membershipError } = await adminSupabase
     .from("group_members")
     .select("group_id,role")
@@ -1017,8 +1026,31 @@ async function fetchAccessibleGroupOptions(
   const relevantGroupIds = Array.from(
     new Set(hasOrganizerAccess(accessLevel) ? [...joinedGroupIds, ...managedGroupIds] : joinedGroupIds)
   );
+  const allGroupOptionsPromise =
+    accessLevel === "super_admin"
+      ? adminSupabase
+          .from("groups")
+          .select("id,name,status")
+          .order("name", { ascending: true })
+      : null;
 
   if (relevantGroupIds.length === 0) {
+    if (allGroupOptionsPromise) {
+      const { data: allGroups, error: allGroupsError } = await allGroupOptionsPromise;
+      if (allGroupsError) {
+        throw new Error(allGroupsError.message);
+      }
+
+      return {
+        groups: (((allGroups as GroupRow[] | null) ?? []).map((group) => ({
+          id: group.id,
+          label: group.status === "archived" ? `${group.name} (Archived)` : group.name
+        }))),
+        joinedGroups: [],
+        managedGroups: []
+      };
+    }
+
     return {
       groups: [],
       joinedGroups: [],
@@ -1026,7 +1058,7 @@ async function fetchAccessibleGroupOptions(
     };
   }
 
-  const [{ data: groups, error: groupsError }, joinedGroups, managedGroups] = await Promise.all([
+  const [{ data: groups, error: groupsError }, joinedGroups, managedGroups, allGroupOptionsResult] = await Promise.all([
     adminSupabase
       .from("groups")
       .select("id,name,status")
@@ -1041,15 +1073,24 @@ async function fetchAccessibleGroupOptions(
           rankScopeGroupIds: relevantGroupIds,
           ownedGroupIds: new Set(ownedGroupIds)
         })
-      : Promise.resolve([])
+      : Promise.resolve([]),
+    allGroupOptionsPromise ?? Promise.resolve({ data: null, error: null })
   ]);
 
   if (groupsError) {
     throw new Error(groupsError.message);
   }
+  if (allGroupOptionsResult.error) {
+    throw new Error(allGroupOptionsResult.error.message);
+  }
+
+  const directoryGroups =
+    accessLevel === "super_admin"
+      ? ((allGroupOptionsResult.data as GroupRow[] | null) ?? [])
+      : ((groups as GroupRow[] | null) ?? []);
 
   return {
-    groups: (((groups as GroupRow[] | null) ?? []).map((group) => ({
+    groups: (directoryGroups.map((group) => ({
       id: group.id,
       label: group.status === "archived" ? `${group.name} (Archived)` : group.name
     }))),
@@ -1250,36 +1291,6 @@ async function fetchGroupNavigationItems(
       (right.points ?? 0) - (left.points ?? 0) ||
       left.label.localeCompare(right.label)
     );
-}
-
-async function fetchManagerOptions(adminSupabase: ReturnType<typeof createAdminClient>) {
-  const { data: managerLimits, error: managerLimitsError } = await adminSupabase
-    .from("manager_limits")
-    .select("user_id");
-
-  if (managerLimitsError) {
-    throw new Error(managerLimitsError.message);
-  }
-
-  const managerUserIds = Array.from(new Set((((managerLimits as ManagerLimitRow[] | null) ?? []).map((row) => row.user_id))));
-  if (managerUserIds.length === 0) {
-    return [];
-  }
-
-  const usersById = await fetchUsersByIds(adminSupabase, managerUserIds);
-  return managerUserIds
-    .map((userId) => {
-      const manager = usersById.get(userId);
-      if (!manager) {
-        return null;
-      }
-
-      return {
-        id: manager.id,
-        label: manager.name
-      };
-    })
-    .filter(Boolean) as LeaderboardSwitcherOption[];
 }
 
 async function fetchLatestSnapshotMatchId(

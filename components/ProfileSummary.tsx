@@ -361,7 +361,7 @@ export function ProfileSummary({
               type="button"
               disabled={isUploadingAvatar}
               onClick={() => avatarInputRef.current?.click()}
-              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
             >
               {isUploadingAvatar
                 ? t(uiLanguage, "profile.uploading")
@@ -474,7 +474,7 @@ export function ProfileSummary({
                           );
                           setFollowedTeamSelection("");
                         }}
-                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
                       >
                         {t(uiLanguage, "profile.addTeam")}
                       </button>
@@ -563,7 +563,7 @@ export function ProfileSummary({
                         }
                         setIsUpdatingFollowedTeams(false);
                       }}
-                      className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                      className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
                     >
                       {isUpdatingFollowedTeams ? t(user.preferredLanguage, "common.saving") : t(user.preferredLanguage, "profile.saveFollowedTeams")}
                     </button>
@@ -608,7 +608,7 @@ export function ProfileSummary({
                     router.replace("/login");
                     router.refresh();
                   }}
-                  className="inline-flex rounded-[0.9rem] border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
+                  className="inline-flex rounded-[0.9rem] border ui-button-accent px-4 py-3 text-sm font-bold transition"
                 >
                   {t(uiLanguage, "profile.signOut")}
                 </button>

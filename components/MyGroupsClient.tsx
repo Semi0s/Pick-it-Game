@@ -34,7 +34,6 @@ import {
   type MyManagedGroup
 } from "@/app/my-groups/actions";
 import { Avatar } from "@/components/Avatar";
-import { DismissibleHelperText, useDismissedHelperState } from "@/components/DismissibleHelperText";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { OrganizationBrandingPanel } from "@/components/OrganizationBrandingPanel";
@@ -93,7 +92,6 @@ const GROUP_PEOPLE_SECTION_STORAGE_KEY = "my-groups-expanded-group-people-sectio
 const GROUP_TROPHY_SECTION_STORAGE_KEY = "my-groups-expanded-group-trophy-sections";
 const GROUP_INFO_SECTION_STORAGE_KEY = "my-groups-expanded-group-info-sections";
 const CREATE_GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-create-group";
-const GROUP_LIMIT_WARNING_DISMISS_PREFIX = "pickit:tip:my-groups-group-limit-warning";
 const TROPHY_PROMPTS = [
   { name: "Office Oracle", icon: "🧠", description: "Sees the result before the rest of the room does." },
   { name: "The Messi of Marketing", icon: "🐐", description: "Turns bold calls into highlight reels." },
@@ -668,8 +666,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   );
   const canCreateGroups = Boolean(summary?.ok && summary.tierAccess.capabilities.canCreateGroup);
   const canManageSocialTrophies = Boolean(summary?.ok && summary.tierAccess.capabilities.canManageSocialTrophies);
-  const groupLimitWarningStorageKey = `${GROUP_LIMIT_WARNING_DISMISS_PREFIX}:${currentUserId ?? "guest"}`;
-  const groupLimitWarningState = useDismissedHelperState(groupLimitWarningStorageKey);
+  const createGroupMaxGroups = summary?.ok ? summary.tierAccess.limits.maxGroups : null;
+  const createGroupMaxMembers = summary?.ok ? summary.tierAccess.limits.maxMembersPerGroup : null;
+  const createGroupMaxPlayers = summary?.ok ? summary.tierAccess.limits.maxTotalPlayers : null;
   const managedSummaryGroups = useMemo(() => summaryGroups.filter((group) => group.canManage), [summaryGroups]);
   const filteredGroups = useMemo(() => {
     const orderedGroups = [...managedSummaryGroups];
@@ -1386,7 +1385,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   {invitePreview.existingAccount ? (
                     <Link
                       href={inviteLoginPath}
-                      className="inline-flex w-full items-center justify-center rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
+                      className="inline-flex w-full items-center justify-center rounded-md border ui-button-accent px-4 py-3 text-center text-sm font-bold transition"
                     >
                       Switch Account
                     </Link>
@@ -1394,7 +1393,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     <div className="grid grid-cols-2 gap-3">
                       <Link
                         href={inviteSignupPath}
-                        className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
+                        className="rounded-md border ui-button-accent px-4 py-3 text-center text-sm font-bold transition"
                       >
                         Create Account
                       </Link>
@@ -1427,7 +1426,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   {invitePreview.status !== "pending" ? null : invitePreview.existingAccount ? (
                     <Link
                       href={inviteLoginPath}
-                      className="inline-flex w-full items-center justify-center rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
+                      className="inline-flex w-full items-center justify-center rounded-md border ui-button-accent px-4 py-3 text-center text-sm font-bold transition"
                     >
                       Sign In To Join
                     </Link>
@@ -1435,7 +1434,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     <div className="grid grid-cols-2 gap-3">
                       <Link
                         href={inviteSignupPath}
-                        className="rounded-md border border-accent bg-accent px-4 py-3 text-center text-sm font-bold text-white transition hover:bg-accent-dark"
+                        className="rounded-md border ui-button-accent px-4 py-3 text-center text-sm font-bold transition"
                       >
                         Create Account
                       </Link>
@@ -1531,70 +1530,101 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
       {canCreateGroups ? (
         managerGroupLimitReached ? (
-          groupLimitWarningState.hasHydrated && !groupLimitWarningState.isDismissed ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <div className="ui-card space-y-3 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-bold">{tg("createGroup")}</h3>
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-amber-800">
+                {t(groupsLanguage, "common.locked")}
+              </span>
+            </div>
             <div className="flex items-center gap-2 text-amber-800">
               <Info aria-hidden className="h-3.5 w-3.5 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <DismissibleHelperText
-                  storageKey={groupLimitWarningStorageKey}
-                  dismissLabel={t(groupsLanguage, "common.close")}
-                >
-                  <p className="text-[11px] font-semibold leading-4 text-amber-800">
-                    {tg("tierGroupsAllowed", { count: summary?.ok ? summary.tierAccess.limits.maxGroups : 0 })}
-                  </p>
-                </DismissibleHelperText>
-              </div>
+              <p className="text-[11px] font-semibold leading-4">
+                {tg("tierGroupsAllowed", { count: summary?.ok ? summary.tierAccess.limits.maxGroups : 0 })}
+              </p>
             </div>
           </div>
-          ) : null
         ) : (
           <form
             onSubmit={handleCreateGroup}
-            className="space-y-4 rounded-[1.15rem] border border-accent-light bg-accent-light/20 p-4 transition-colors"
+            className="ui-card space-y-4 p-4"
           >
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-lg font-bold">
-                {summary?.ok && summary.currentUser.role === "admin" ? tg("createGroupUnlimited") : tg("createGroup")}
-              </h3>
-              <InlineDisclosureButton
-                isOpen={isCreateGroupOpen}
-                onClick={() => setIsCreateGroupOpen((current) => !current)}
-              />
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-lg font-black leading-tight">
+                    {summary?.ok && summary.currentUser.role === "admin" ? tg("createGroupUnlimited") : tg("createGroup")}
+                  </h3>
+                  {tierAccess ? (
+                    <ManagementBadge label={tg(getAccessLevelLabelKey(tierAccess.accessLevel))} tone="accent" />
+                  ) : null}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {createGroupMaxGroups === null ? (
+                    <span className="rounded-[0.65rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-700">
+                      {tg("newGroupLimitUnlimited")}
+                    </span>
+                  ) : (
+                    <span className="rounded-[0.65rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-700">
+                      {tg("managedGroupsDetail", { count: summary?.ok ? summary.groupAccess.managedGroupCount : 0, limit: createGroupMaxGroups })}
+                    </span>
+                  )}
+                  {createGroupMaxMembers ? (
+                    <span className="rounded-[0.65rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-700">
+                      {tg("groupMemberCapDetail", { count: createGroupMaxMembers })}
+                    </span>
+                  ) : null}
+                  {createGroupMaxPlayers ? (
+                    <span className="rounded-[0.65rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-700">
+                      {tg("leaguePlayerCapDetail", { count: createGroupMaxPlayers })}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-start gap-2">
+                <span className="rounded-[0.7rem] border border-accent-border bg-accent-soft px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-accent-dark">
+                  {t(groupsLanguage, "common.ready")}
+                </span>
+                <InlineDisclosureButton
+                  isOpen={isCreateGroupOpen}
+                  variant="subtle"
+                  onClick={() => setIsCreateGroupOpen((current) => !current)}
+                />
+              </div>
             </div>
             {isCreateGroupOpen ? (
-              <>
-                <label className="block">
-                  <span className="text-sm font-bold text-gray-800">{tg("groupName")}</span>
+              <div className="space-y-4 border-t border-gray-100 pt-4">
+                <label className="block rounded-[1rem] border border-gray-200 bg-gray-50/70 p-3">
+                  <span className="text-xs font-black uppercase tracking-[0.14em] text-gray-600">{tg("groupName")}</span>
                   <input
                     required
                     value={groupName}
                     onChange={(event) => setGroupName(event.target.value)}
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                    className="mt-2 w-full rounded-[0.85rem] border border-gray-300 bg-white px-3 py-3 text-base font-semibold outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                   />
                 </label>
-                <label className="block">
-                  <span className="text-sm font-bold text-gray-800">{tg("shortDescription")}</span>
+                <label className="block rounded-[1rem] border border-gray-200 bg-gray-50/70 p-3">
+                  <span className="text-xs font-black uppercase tracking-[0.14em] text-gray-600">{tg("shortDescription")}</span>
                   <textarea
                     value={groupDescription}
                     onChange={(event) => setGroupDescription(event.target.value)}
                     rows={2}
                     maxLength={250}
                     placeholder={tg("groupDescriptionPlaceholder")}
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                    className="mt-2 w-full rounded-[0.85rem] border border-gray-300 bg-white px-3 py-3 text-base font-semibold outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                   />
                   <p className="mt-2 text-xs font-semibold text-gray-500">
                     {tg("optionalShortFriendly")}
                   </p>
                 </label>
-                <label className="block">
-                  <span className="text-sm font-bold text-gray-800">{tg("membershipLimit")}</span>
+                <label className="block rounded-[1rem] border border-gray-200 bg-gray-50/70 p-3">
+                  <span className="text-xs font-black uppercase tracking-[0.14em] text-gray-600">{tg("membershipLimit")}</span>
                   <input
                     type="number"
                     min={1}
                     value={membershipLimit}
                     onChange={(event) => setMembershipLimit(event.target.value)}
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                    className="mt-2 w-full rounded-[0.85rem] border border-gray-300 bg-white px-3 py-3 text-base font-semibold outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                     placeholder={
                       summary?.ok && summary.currentUser.role !== "admin" && tierAccess?.limits.maxMembersPerGroup
                         ? tg("upToMembers", { count: tierAccess.limits.maxMembersPerGroup })
@@ -1607,13 +1637,13 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     </p>
                   ) : null}
                 </label>
-                <label className="block">
-                  <span className="text-sm font-bold text-gray-800">{tg("inviteSpecificPlayers")}</span>
+                <label className="block rounded-[1rem] border border-gray-200 bg-gray-50/70 p-3">
+                  <span className="text-xs font-black uppercase tracking-[0.14em] text-gray-600">{tg("inviteSpecificPlayers")}</span>
                   <textarea
                     value={createGroupInviteEmails}
                     onChange={(event) => setCreateGroupInviteEmails(event.target.value)}
                     rows={3}
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                    className="mt-2 w-full rounded-[0.85rem] border border-gray-300 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                     placeholder="name@example.com, teammate@example.com"
                   />
                   <p className="mt-2 text-xs font-semibold text-gray-500">
@@ -1626,7 +1656,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                 <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
                   {isCreatingGroup ? tg("creating") : tg("createGroupButton")}
                 </ActionButton>
-              </>
+              </div>
             ) : null}
           </form>
         )
