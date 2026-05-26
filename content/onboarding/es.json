@@ -1,0 +1,5 @@
+{
+  "version": "v1",
+  "fallback": true,
+  "notes": "El texto de onboarding está preparado para cargarse desde archivos de contenido en la siguiente extracción."
+}

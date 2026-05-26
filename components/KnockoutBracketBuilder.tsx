@@ -1,13 +1,16 @@
 "use client";
 
 import { Check, CheckSquare, Trophy, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { previewBracketPredictionImpactAction, saveBracketPredictionAction } from "@/app/knockout/actions";
 import { WindowChoiceRail, useSessionJsonState } from "@/components/player-management/Shared";
+import { useAppLanguage } from "@/lib/app-language";
 import { showAppToast } from "@/lib/app-toast";
-import { formatDateTimeWithZone } from "@/lib/date-time";
+import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
+import { formatDateTime } from "@/lib/i18n-format";
 import { shouldShowProjectedComparisonRound } from "@/lib/knockout-display";
+import { t, type TranslationParams } from "@/lib/strings";
 import {
   type BracketTeamOption,
   type KnockoutBracketEditorView,
@@ -18,6 +21,7 @@ import type { BracketPrediction } from "@/lib/types";
 type KnockoutBracketBuilderProps = {
   initialView: KnockoutBracketEditorView;
   projectedComparisonView?: KnockoutBracketEditorView | null;
+  language?: string | null;
 };
 
 type BracketSlideView = {
@@ -42,7 +46,19 @@ const KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY = "knockout-active-slide";
 const KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY = "knockout-active-country-filter";
 const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
 
-export function KnockoutBracketBuilder({ initialView, projectedComparisonView = null }: KnockoutBracketBuilderProps) {
+const KnockoutLanguageContext = createContext<SupportedLanguage>("en");
+
+function useKnockoutLanguage() {
+  return useContext(KnockoutLanguageContext);
+}
+
+function kt(language: SupportedLanguage, key: string, params?: TranslationParams) {
+  return t(language, `knockout.${key}`, params);
+}
+
+export function KnockoutBracketBuilder({ initialView, projectedComparisonView = null, language }: KnockoutBracketBuilderProps) {
+  const { activeLanguage } = useAppLanguage();
+  const uiLanguage = normalizeLanguage(activeLanguage ?? language);
   const searchParams = useSearchParams();
   const [baseView, setBaseView] = useState<KnockoutBracketEditorView>(initialView);
   const [predictions, setPredictions] = useState<BracketPrediction[]>(initialView.predictions);
@@ -71,7 +87,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     () => deriveEditorView(baseView, predictions, draftWinnerByMatchId, draftScoreByMatchId),
     [baseView, draftScoreByMatchId, draftWinnerByMatchId, predictions]
   );
-  const slides = useMemo(() => buildBracketSlides(view), [view]);
+  const slides = useMemo(() => buildBracketSlides(view, uiLanguage), [uiLanguage, view]);
   const activeSlide = slides[activeSlideIndex] ?? null;
   const activeFilterTeam = useMemo(() => {
     if (!selectedCountryFilter || !activeSlide) {
@@ -186,19 +202,20 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
   if (baseView.mode === "official" && !baseView.isSeeded) {
     return (
       <section className="rounded-lg border border-gray-200 bg-white p-5">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Knockout Bracket</p>
-        <h2 className="mt-2 text-2xl font-black leading-tight">Knockout picks coming soon.</h2>
+        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{kt(uiLanguage, "title")}</p>
+        <h2 className="mt-2 text-2xl font-black leading-tight">{kt(uiLanguage, "empty")}</h2>
         <p className="mt-3 text-base leading-7 text-gray-600">
-          We’ll open bracket picks once the knockout field is fully seeded.
+          {kt(uiLanguage, "officialPendingDescription")}
         </p>
       </section>
     );
   }
 
   return (
+    <KnockoutLanguageContext.Provider value={uiLanguage}>
     <section className="space-y-3">
       <div
-        className="sticky z-[14] w-full overflow-x-hidden rounded-lg bg-white px-0 py-1.5 sm:border sm:border-gray-200 sm:px-4"
+        className="sticky z-[14] w-full overflow-x-hidden rounded-lg bg-white px-3 py-1.5 sm:border sm:border-gray-200 sm:px-4"
         style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px) + 10px)" }}
       >
         <KnockoutPhaseChoiceRail
@@ -234,14 +251,14 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
         {selectedCountryFilter ? (
           <div className="mt-1.5 flex items-center justify-between gap-2 rounded-md bg-gray-100 px-2.5 py-1">
             <p className="min-w-0 text-[10px] font-bold uppercase tracking-wide leading-none text-gray-600">
-              Filtering for {activeFilterTeam?.shortName ?? "team"}
+              {kt(uiLanguage, "filteringForTeam", { teamName: activeFilterTeam?.shortName ?? kt(uiLanguage, "thisTeam") })}
             </p>
             <button
               type="button"
               onClick={() => setSelectedCountryFilter("")}
               className="ui-chip-sm border border-gray-300 bg-white font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light"
             >
-              All Teams
+              {kt(uiLanguage, "allTeams")}
             </button>
           </div>
         ) : null}
@@ -266,6 +283,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
         </div>
       </div>
     </section>
+    </KnockoutLanguageContext.Provider>
   );
 
   function goToSlide(index: number) {
@@ -351,7 +369,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     const teamId = sourceMatch.predictedWinnerTeamId;
 
     if (homeScore === awayScore && !teamId) {
-      setMessage({ tone: "error", text: "Select a winner for tied knockout predictions." });
+      setMessage({ tone: "error", text: kt(uiLanguage, "selectWinnerForTiedPredictions") });
       return;
     }
 
@@ -371,7 +389,8 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
       teamId,
       homeScore,
       awayScore,
-      mode: baseView.mode
+      mode: baseView.mode,
+      language: uiLanguage
     });
     if (!previewResult.ok) {
       setMessage({ tone: "error", text: previewResult.message });
@@ -388,7 +407,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
       });
       setMessage({
         tone: "tip",
-        text: `This will clear ${previewResult.affectedCount} future ${previewResult.affectedCount === 1 ? "pick" : "picks"}.`
+        text: kt(uiLanguage, "clearFuturePicksNotice", { count: previewResult.affectedCount })
       });
       return;
     }
@@ -412,7 +431,8 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
       homeScore: input.homeScore,
       awayScore: input.awayScore,
       mode: baseView.mode,
-      confirmClearDownstream: input.confirmClearDownstream
+      confirmClearDownstream: input.confirmClearDownstream,
+      language: uiLanguage
     });
     if (!result.ok) {
       if ("requiresConfirmation" in result && result.requiresConfirmation) {
@@ -425,7 +445,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
         });
         setMessage({
           tone: "tip",
-          text: `This will clear ${result.affectedCount} future ${result.affectedCount === 1 ? "pick" : "picks"}.`
+          text: kt(uiLanguage, "clearFuturePicksNotice", { count: result.affectedCount })
         });
       } else {
         setMessage({ tone: "error", text: result.message });
@@ -461,10 +481,10 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
       tone: "success",
       text:
         result.clearedDescendantCount > 0
-          ? "Prediction updated. Affected future picks were cleared."
+          ? kt(uiLanguage, "predictionUpdatedCleared")
           : baseView.mode === "projected"
-            ? "Prediction saved."
-            : "Prediction saved."
+            ? kt(uiLanguage, "predictionSaved")
+            : kt(uiLanguage, "predictionSaved")
     });
     setPendingMatchId(null);
   }
@@ -501,6 +521,7 @@ function BracketStageViewport({
   onSave: (matchId: string) => void | Promise<void>;
   selectedCountryFilter: string | null;
 }) {
+  const language = useKnockoutLanguage();
   const filteredSlide = useMemo(() => {
     if (!selectedCountryFilter) {
       return slide;
@@ -550,18 +571,20 @@ function BracketStageViewport({
   if (selectedCountryFilter && filteredSlide.currentMatches.length === 0) {
     return (
       <section className="w-full max-w-full overflow-x-clip overflow-y-visible">
-        <div className="border-b border-gray-200/80 px-0 py-3 sm:py-4">
+        <div className="border-b border-gray-200/80 px-2.5 py-3 sm:px-0 sm:py-4">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <h3 className="text-3xl font-extrabold leading-none text-gray-950 sm:text-4xl">{slide.title}</h3>
             </div>
             <div className="shrink-0 pt-1 text-right">
-              <p className="text-sm font-bold uppercase tracking-wide text-gray-950 sm:text-base">0 matches</p>
+              <p className="text-sm font-bold uppercase tracking-wide text-gray-950 sm:text-base">
+                {kt(language, "matchesCount", { count: 0 })}
+              </p>
             </div>
           </div>
         </div>
         <div className="px-0 py-5 text-center text-sm font-semibold text-gray-600">
-          No matches in this round for {activeFilterTeamLabel(slide, selectedCountryFilter)}.
+          {kt(language, "noMatchesForTeam", { teamName: activeFilterTeamLabel(slide, selectedCountryFilter, language) })}
         </div>
       </section>
     );
@@ -570,14 +593,14 @@ function BracketStageViewport({
   return (
     <section className="w-full max-w-full overflow-x-clip overflow-y-visible">
       {!usesComparisonView ? (
-        <div className="border-b border-gray-200/80 px-0 py-3 sm:py-4">
+        <div className="border-b border-gray-200/80 px-2.5 py-3 sm:px-0 sm:py-4">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <h3 className="text-3xl font-extrabold leading-none text-gray-950 sm:text-4xl">{slide.title}</h3>
             </div>
             <div className="shrink-0 pt-1 text-right">
               <p className="text-sm font-bold uppercase tracking-wide text-gray-950 sm:text-base">
-                {filteredSlide.currentMatches.length} matches
+                {kt(language, "matchesCount", { count: filteredSlide.currentMatches.length })}
               </p>
             </div>
           </div>
@@ -648,14 +671,16 @@ function KnockoutPhaseChoiceRail({
   activeItemKey?: string;
   onActiveItemChange?: (key: string) => void;
 }) {
+  const language = useKnockoutLanguage();
+
   return (
     <WindowChoiceRail
       motionMode="anchored"
       allowAnchoredTouchScroll
       className={className}
       showControls={showControls}
-      prevLabel="Show previous knockout phase"
-      nextLabel="Show next knockout phase"
+      prevLabel={kt(language, "showPreviousPhase")}
+      nextLabel={kt(language, "showNextPhase")}
       activeItemKey={activeItemKey}
       onActiveItemChange={onActiveItemChange}
     >
@@ -744,6 +769,7 @@ function ProjectedAndOfficialRoundView({
   onAdjustScore: (matchId: string, side: "home" | "away", delta: 1 | -1) => void;
   onSave: (matchId: string) => void | Promise<void>;
 }) {
+  const language = useKnockoutLanguage();
   const viewportRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const trackRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pointerStartRef = useRef<{ x: number; y: number; bias: number } | null>(null);
@@ -1008,9 +1034,9 @@ function ProjectedAndOfficialRoundView({
       <div className="flex items-center justify-center gap-3 px-1 sm:hidden">
         <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white/90 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.05em] text-gray-500 shadow-sm">
           <span aria-hidden>‹</span>
-          <span>My Pick</span>
+          <span>{kt(language, "myPick")}</span>
           <span className="text-gray-300">|</span>
-          <span>Qualifying Teams</span>
+          <span>{kt(language, "qualifyingTeams")}</span>
           <span aria-hidden>›</span>
         </span>
       </div>
@@ -1026,11 +1052,11 @@ function ProjectedAndOfficialRoundView({
                   />
                 ) : null}
                 <span className="truncate text-[11px] font-bold uppercase tracking-wide text-gray-500">
-                  {getStageDisplayName(pair.official.stage)}
+                  {getStageDisplayName(pair.official.stage, language)}
                 </span>
               </div>
               <p className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-gray-500">
-                {formatCompactKickoff(pair.official.kickoffTime)}
+                {formatCompactKickoff(pair.official.kickoffTime, language)}
               </p>
             </div>
             <div className="relative">
@@ -1093,7 +1119,7 @@ function ProjectedAndOfficialRoundView({
                     style={isNarrowViewport ? { width: `${mobileCardWidthPx}px` } : undefined}
                   >
                     <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">
-                      Group Picks
+                      {kt(language, "groupPicks")}
                     </div>
                     {pair.projected ? (
                       <CurrentRoundMatchCard
@@ -1111,8 +1137,8 @@ function ProjectedAndOfficialRoundView({
                     ) : (
                       <ComparisonPlaceholderCard
                         tone="projected"
-                        title="Projected slot incomplete"
-                        body="Built from your group-stage picks."
+                        title={kt(language, "projectedSlotIncomplete")}
+                        body={kt(language, "builtFromGroupPicks")}
                       />
                     )}
                   </div>
@@ -1138,7 +1164,7 @@ function ProjectedAndOfficialRoundView({
         style={isNarrowViewport ? { width: `${mobileCardWidthPx}px` } : undefined}
       >
         <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide text-gray-600">
-          Qualifying Teams
+          {kt(language, "qualifyingTeams")}
         </div>
         {officialState === "live" && isOfficialRound ? (
           <CurrentRoundMatchCard
@@ -1285,10 +1311,12 @@ function CurrentRoundMatchCard({
   showHeader?: boolean;
   showMatchIdentity?: boolean;
 }) {
+  const language = useKnockoutLanguage();
   const isCompact = density === "compact";
   const isHero = density === "hero";
   const isEmbeddedCenterCard = side === "center" && !showHeader;
   const matchNumber = getKnockoutMatchNumber(match.title);
+  const shouldShowStageLabel = match.stage === "r32";
   const hasOfficialTeams = Boolean(match.seededHomeTeam && match.seededAwayTeam);
   const shellState = getKnockoutMatchShellState(match);
   const currentHomeScore = match.predictedHomeScore;
@@ -1327,54 +1355,55 @@ function CurrentRoundMatchCard({
   const shouldShowScoreArea = match.viewMode === "official" ? shouldShowOfficialScoreArea : shouldShowProjectedScoreArea;
   const isAwaitingClearConfirmation = pendingConfirmation?.matchId === match.matchId;
   const hasUserPrediction = Boolean(match.savedAt || hasUnsavedPredictionChange);
-  const finalStatusMessage = hasActualFinalScores
+  const finalStatusKind = hasActualFinalScores
     ? hasUserPrediction
       ? match.isCorrectWinner == null
         ? match.viewMode === "projected"
-          ? "Projected comparison available after results finalize."
-          : "Scoring update pending."
+          ? "projectedComparisonAfterFinal"
+          : "scoringPending"
         : null
-      : "No pick saved."
+      : "noPickSaved"
     : null;
+  const finalStatusMessage = finalStatusKind ? kt(language, finalStatusKind) : null;
   const gradedPointsLabel =
     match.isCorrectWinner == null
       ? null
       : match.viewMode === "projected"
         ? match.isCorrectWinner
           ? match.exactScorePoints && match.exactScorePoints > 0
-            ? "Perfect projected hit"
-            : "Projected winner matched the real result"
-          : "Projected winner missed the real result"
+            ? kt(language, "perfectProjectedHit")
+            : kt(language, "projectedWinnerMatched")
+          : kt(language, "projectedWinnerMissed")
         : match.isCorrectWinner === true
           ? match.awardedPoints == null
-            ? "Winner correct · Points updating"
+            ? kt(language, "winnerCorrectPointsUpdating")
             : match.exactScorePoints && match.exactScorePoints > 0
-              ? `Exact score · +${match.awardedPoints} pts`
+              ? kt(language, "exactScorePoints", { points: match.awardedPoints })
               : match.awardedPoints > 0
-                ? `Winner correct · +${match.awardedPoints} pts`
-                : "Winner correct · 0 pts"
+                ? kt(language, "winnerCorrectPoints", { points: match.awardedPoints })
+                : kt(language, "winnerCorrectNoPoints")
           : match.awardedPoints == null
-            ? "Scoring update pending."
+            ? kt(language, "scoringPending")
             : match.awardedPoints > 0
-              ? `+${match.awardedPoints} pts`
-              : "No points earned · 0 pts";
+              ? kt(language, "pointsEarned", { points: match.awardedPoints })
+              : kt(language, "noPointsEarned");
   const statusBadge =
     shellState === "final" ? (
-      <span className="ui-chip-sm shrink-0 bg-gray-200 font-bold text-gray-700">Final</span>
+      <span className="ui-chip-sm shrink-0 bg-gray-200 font-bold text-gray-700">{kt(language, "finalStatus")}</span>
     ) : shellState === "wait" && match.viewMode === "projected" ? (
       <ProjectedMatchStatusChip hasOfficialTeams={hasOfficialTeams} />
     ) : shellState === "closed" ? (
-      <span className="ui-chip-sm shrink-0 bg-gray-950 font-bold text-white">Locked</span>
+      <span className="ui-chip-sm shrink-0 bg-gray-950 font-bold text-white">{kt(language, "locked")}</span>
     ) : shellState === "open" ? (
       <span
         className={`ui-chip-sm shrink-0 font-bold ${
           match.viewMode === "projected" ? "bg-amber-50 text-amber-700" : "bg-accent-light text-accent-dark"
         }`}
       >
-        Open
+        {kt(language, "open")}
       </span>
     ) : (
-      <span className="ui-chip-sm shrink-0 bg-amber-50 font-bold text-amber-700">Pending</span>
+      <span className="ui-chip-sm shrink-0 bg-amber-50 font-bold text-amber-700">{kt(language, "pending")}</span>
     );
   const isReadOnly = shellState === "closed" || shellState === "final" || shellState === "wait";
   const displayWinnerTeamId =
@@ -1403,7 +1432,7 @@ function CurrentRoundMatchCard({
           : "miss"
         : null
       : null;
-  const footerContextChips = buildMatchContextChips(match);
+  const footerContextChips = buildMatchContextChips(match, language);
 
   return (
     <div
@@ -1426,9 +1455,11 @@ function CurrentRoundMatchCard({
             {showMatchIdentity && matchNumber ? (
               <div className="flex items-center gap-2">
                 <KnockoutMatchNumberBadge number={matchNumber} compact={isCompact} />
-                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">
-                  {getStageDisplayName(match.stage)}
-                </span>
+                {shouldShowStageLabel ? (
+                  <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">
+                    {getStageDisplayName(match.stage, language)}
+                  </span>
+                ) : null}
               </div>
             ) : showMatchIdentity ? (
               <p className={`${isCompact ? "text-xs" : "text-sm"} font-bold text-gray-950`}>{match.title}</p>
@@ -1437,7 +1468,9 @@ function CurrentRoundMatchCard({
             )}
           </div>
           <p className="min-w-0 truncate text-[10px] font-bold uppercase tracking-wide text-gray-500">
-            {shellState === "open" ? `Pick before: ${formatCompactKickoff(match.kickoffTime)}` : formatCompactKickoff(match.kickoffTime)}
+            {shellState === "open"
+              ? kt(language, "pickBefore", { date: formatCompactKickoff(match.kickoffTime, language) })
+              : formatCompactKickoff(match.kickoffTime, language)}
           </p>
           <div className="min-w-0 justify-self-end">{statusBadge}</div>
         </div>
@@ -1482,7 +1515,7 @@ function CurrentRoundMatchCard({
                   : "border-gray-200 bg-white text-gray-400"
             }`}
           >
-            VS
+            {kt(language, "vs")}
           </span>
           <KnockoutTeamPanel
             team={match.awayTeam}
@@ -1555,15 +1588,15 @@ function CurrentRoundMatchCard({
                 {hasActualFinalScores ? match.homeScore : "—"}
               </span>
               <span className="min-w-0 truncate text-sm font-semibold leading-none text-gray-500">
-                {match.seededHomeTeam?.shortName ?? match.homeTeam?.shortName ?? "Home"}
+                {match.seededHomeTeam?.shortName ?? match.homeTeam?.shortName ?? kt(language, "home")}
               </span>
             </div>
             <div className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              {hasActualFinalScores ? "<- Final Scores ->" : "Final Scores: Awaiting score"}
+              {hasActualFinalScores ? kt(language, "finalScores") : kt(language, "finalScoresAwaiting")}
             </div>
             <div className="flex min-w-0 items-center justify-end gap-2">
               <span className="min-w-0 truncate text-sm font-semibold leading-none text-gray-500">
-                {match.seededAwayTeam?.shortName ?? match.awayTeam?.shortName ?? "Away"}
+                {match.seededAwayTeam?.shortName ?? match.awayTeam?.shortName ?? kt(language, "away")}
               </span>
               <span className="text-sm font-bold leading-none tabular-nums text-gray-800">
                 {hasActualFinalScores ? match.awayScore : "—"}
@@ -1582,11 +1615,11 @@ function CurrentRoundMatchCard({
           ) : null}
           {finalStatusMessage ? (
             <div className="mt-1 flex items-center justify-center gap-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-400">
-              {finalStatusMessage === "No pick saved." ? (
+              {finalStatusKind === "noPickSaved" ? (
                 <>
                   <X aria-hidden className="h-4 w-4 text-rose-600" />
-                  <span>No pick saved.</span>
-                  <span className="text-gray-500">No points</span>
+                  <span>{kt(language, "noPickSaved")}</span>
+                  <span className="text-gray-500">{kt(language, "noPoints")}</span>
                 </>
               ) : (
                 <span>{finalStatusMessage}</span>
@@ -1598,7 +1631,7 @@ function CurrentRoundMatchCard({
         <div className="mt-1.5 border-t border-amber-200/80 px-1 pt-2 text-center">
           {shouldShowProjectedScoreArea && match.savedHomeScore !== null && match.savedAwayScore !== null ? (
             <div className="text-[10px] font-bold uppercase tracking-wide text-amber-800">
-              Projected score: {match.savedHomeScore}-{match.savedAwayScore}
+              {kt(language, "projectedScore", { homeScore: match.savedHomeScore, awayScore: match.savedAwayScore })}
             </div>
           ) : null}
           {match.isCorrectWinner != null ? (
@@ -1613,11 +1646,11 @@ function CurrentRoundMatchCard({
           ) : null}
           {finalStatusMessage ? (
             <div className="mt-1 flex items-center justify-center gap-2 text-center text-[10px] font-bold uppercase tracking-wide text-amber-800">
-              {finalStatusMessage === "No pick saved." ? (
+              {finalStatusKind === "noPickSaved" ? (
                 <>
                   <X aria-hidden className="h-4 w-4 text-rose-600" />
-                  <span>No pick saved.</span>
-                  <span className="text-amber-900">No points</span>
+                  <span>{kt(language, "noPickSaved")}</span>
+                  <span className="text-amber-900">{kt(language, "noPoints")}</span>
                 </>
               ) : (
                 <span>{finalStatusMessage}</span>
@@ -1634,15 +1667,15 @@ function CurrentRoundMatchCard({
                   {match.homeScore}
                 </span>
                 <span className="min-w-0 truncate text-sm font-semibold leading-none text-gray-500">
-                  {match.seededHomeTeam?.shortName ?? match.homeTeam?.shortName ?? "Home"}
+                  {match.seededHomeTeam?.shortName ?? match.homeTeam?.shortName ?? kt(language, "home")}
                 </span>
               </div>
               <div className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                {"<- Live Score ->"}
+                {kt(language, "liveScore")}
               </div>
               <div className="flex min-w-0 items-center justify-end gap-2">
                 <span className="min-w-0 truncate text-sm font-semibold leading-none text-gray-500">
-                  {match.seededAwayTeam?.shortName ?? match.awayTeam?.shortName ?? "Away"}
+                  {match.seededAwayTeam?.shortName ?? match.awayTeam?.shortName ?? kt(language, "away")}
                 </span>
                 <span className="text-sm font-bold leading-none tabular-nums text-orange-500">
                   {match.awayScore}
@@ -1652,22 +1685,22 @@ function CurrentRoundMatchCard({
           ) : null}
           <div className={`${hasActualLiveScores ? "mt-1" : ""} text-center text-[10px] font-bold uppercase tracking-wide text-gray-500`}>
             {hasSavedSelection
-              ? `Saved on: ${formatSavedTimestamp(match.savedAt)}`
+              ? kt(language, "savedOn", { date: formatSavedTimestamp(match.savedAt, language) })
               : hasOfficialTeams
-                ? "Predictions locked at kickoff"
-                : "Official bracket pending"}
+                ? kt(language, "predictionsLockedAtKickoff")
+                : kt(language, "officialBracketPending")}
           </div>
         </div>
       ) : showSaveButton ? (
         <>
           {isAwaitingClearConfirmation ? (
             <div className="mt-1.5 flex min-h-[28px] items-center justify-center overflow-hidden border-t border-amber-200/80 bg-amber-50/70 px-1.5 text-center text-[10px] font-bold uppercase leading-none tracking-[0.02em] text-amber-800">
-              {`This will clear ${pendingConfirmation.affectedCount} future ${pendingConfirmation.affectedCount === 1 ? "pick" : "picks"}`}
+              {kt(language, "confirmClear", { count: pendingConfirmation.affectedCount })}
             </div>
           ) : requiresWinnerSelection && !localWinnerTeamId ? (
             <div className="mt-1 flex min-h-[22px] items-center justify-center overflow-hidden border-t border-amber-300 bg-amber-100/90 px-1.5 py-0 text-center text-amber-900">
               <span className="flex min-h-[22px] w-full min-w-0 items-center justify-center truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
-                You picked these teams
+                {kt(language, "youPickedTeams")}
               </span>
             </div>
           ) : null}
@@ -1682,15 +1715,17 @@ function CurrentRoundMatchCard({
             }`}
           >
             {isPending
-              ? "Saving..."
+              ? t(language, "common.saving")
               : isAwaitingClearConfirmation
-                ? "Confirm clear and save"
-                : `Save Match ${matchNumber ?? ""}`.trim()}
+                ? kt(language, "confirmClearAndSave")
+                : matchNumber
+                  ? kt(language, "saveMatch", { matchNumber })
+                  : kt(language, "saveMatchFallback")}
           </button>
         </>
       ) : hasSavedSelection ? (
         <div className="mt-1.5 border-t border-gray-100 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-400">
-          Saved on: {formatSavedTimestamp(match.savedAt)}
+          {kt(language, "savedOn", { date: formatSavedTimestamp(match.savedAt, language) })}
         </div>
       ) : isProjectedEditable ? (
         <div
@@ -1704,13 +1739,13 @@ function CurrentRoundMatchCard({
             {requiresWinnerSelection && !localWinnerTeamId ? (
               <span className="flex min-h-[22px] w-full min-w-0 items-center justify-center overflow-hidden px-1.5 py-0">
                 <span className="block w-full min-w-0 truncate text-center text-[10px] font-semibold uppercase leading-none tracking-[0.04em] text-amber-900 [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:text-xs">
-                  You picked these teams
+                  {kt(language, "youPickedTeams")}
                 </span>
               </span>
             ) : !hasValidPrediction ? (
-              "You picked these teams"
+              kt(language, "youPickedTeams")
             ) : (
-              "Adjust the score or winner to save this projected match"
+              kt(language, "adjustScoreWinnerToSave")
             )}
           </div>
         </div>
@@ -1722,19 +1757,19 @@ function CurrentRoundMatchCard({
               : "border-gray-100 bg-accent-light/30 text-accent-dark"
           }`}
         >
-          Editable until kickoff
+          {kt(language, "editableUntilKickoff")}
         </div>
       ) : (
         <div className="mt-1.5 border-t border-gray-300 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-400">
           {match.viewMode === "projected"
             ? !match.homeTeam || !match.awayTeam
-              ? "Not picked"
+              ? kt(language, "notPicked")
               : hasOfficialTeams
-                ? "Side-pick scoring coming soon"
-                : "Match not seeded"
+                ? kt(language, "sidePickScoringComingSoon")
+                : kt(language, "matchNotSeeded")
             : hasOfficialTeams
-              ? "Predictions locked at kickoff"
-              : "Official bracket pending"}
+              ? kt(language, "predictionsLockedAtKickoff")
+              : kt(language, "officialBracketPending")}
         </div>
       )}
     </div>
@@ -1742,13 +1777,15 @@ function CurrentRoundMatchCard({
 }
 
 function ProjectedMatchStatusChip({ hasOfficialTeams }: { hasOfficialTeams: boolean }) {
+  const language = useKnockoutLanguage();
+
   if (hasOfficialTeams) {
-    return <span className="ui-chip-sm shrink-0 bg-amber-50 font-bold text-amber-700">Locked</span>;
+    return <span className="ui-chip-sm shrink-0 bg-amber-50 font-bold text-amber-700">{kt(language, "locked")}</span>;
   }
 
   return (
     <span className="ui-chip-sm shrink-0 bg-gray-100 font-bold text-gray-500">
-      Pending
+      {kt(language, "pending")}
     </span>
   );
 }
@@ -1861,22 +1898,23 @@ function KnockoutTeamPanel({
   onDecrement: () => void;
   showScoreArea: boolean;
 }) {
+  const language = useKnockoutLanguage();
   const isCompact = density === "compact";
   const userTeam = team;
   const isProjectedTone = viewMode === "projected";
   const isProjectedReadOnly = viewMode === "projected" && isReadOnly;
   const unresolvedLabel =
-    viewMode === "official" && !team && !officialTeam ? formatRoundOf32PlaceholderLabel(placeholderLabel) : null;
+    viewMode === "official" && !team && !officialTeam ? formatRoundOf32PlaceholderLabel(placeholderLabel, language) : null;
   const displayLabel =
     viewMode === "projected"
-      ? team?.name ?? "Not Picked"
-      : team?.name ?? officialTeam?.name ?? unresolvedLabel?.primary ?? "TBD";
+      ? team?.name ?? kt(language, "notPicked")
+      : team?.name ?? officialTeam?.name ?? unresolvedLabel?.primary ?? kt(language, "tbd");
   const displayFlag =
     viewMode === "projected"
       ? team?.flagEmoji ?? null
       : team?.flagEmoji ?? officialTeam?.flagEmoji ?? null;
   const scoreValue = matchScoreDisplay({ predictedScore });
-  const ariaTeamName = officialTeam?.name ?? userTeam?.name ?? placeholderLabel ?? "this team";
+  const ariaTeamName = officialTeam?.name ?? userTeam?.name ?? placeholderLabel ?? kt(language, "thisTeam");
   const showProjectedSlotHitOverlay = viewMode === "projected" && slotComparisonState === "match";
   const showProjectedSlotMissOverlay = viewMode === "projected" && slotComparisonState === "miss";
   const showCombinedHitOverlay =
@@ -1892,12 +1930,12 @@ function KnockoutTeamPanel({
   const projectedPositiveClass = isProjectedTone ? "text-amber-800" : "text-accent-dark";
   const projectedMutedClass = isProjectedTone ? "text-amber-500/70" : "text-accent/45";
   const ariaLabel = isProjectedReadOnly
-    ? `Projected knockout preview for ${ariaTeamName}.`
+    ? kt(language, "projectedPreviewForTeam", { teamName: ariaTeamName })
     : isReadOnly || isDisabled
-      ? `${ariaTeamName} is locked for this matchup.`
+      ? kt(language, "teamLockedForMatchup", { teamName: ariaTeamName })
       : canSelectByTap
-        ? `Tap ${ariaTeamName} to choose who advances.`
-        : `${ariaTeamName} score controls are editable.`;
+        ? kt(language, "chooseTeamAdvances", { teamName: ariaTeamName })
+        : kt(language, "teamScoreControlsEditable", { teamName: ariaTeamName });
 
   const content = (
     <span
@@ -2043,7 +2081,7 @@ function KnockoutTeamPanel({
             onIncrement();
           }}
           className={`inline-flex h-5 w-7 items-center justify-center ${isProjectedTone ? "hover:text-amber-800" : "hover:text-accent-dark"}`}
-          aria-label={`Increase ${ariaTeamName} score`}
+          aria-label={kt(language, "increaseTeamScore", { teamName: ariaTeamName })}
         >
           <ChevronUpSmall />
         </button>
@@ -2056,7 +2094,7 @@ function KnockoutTeamPanel({
           className={`inline-flex h-5 w-7 items-center justify-center border-t border-gray-200 ${
             isProjectedTone ? "hover:text-amber-800" : "hover:text-accent-dark"
           }`}
-          aria-label={`Decrease ${ariaTeamName} score`}
+          aria-label={kt(language, "decreaseTeamScore", { teamName: ariaTeamName })}
         >
           <ChevronDownSmall />
         </button>
@@ -2081,13 +2119,13 @@ function KnockoutTeamPanel({
 
 }
 
-function activeFilterTeamLabel(slide: BracketSlideView, selectedCountryFilter: string) {
+function activeFilterTeamLabel(slide: BracketSlideView, selectedCountryFilter: string, language: SupportedLanguage) {
   const team =
     slide.currentMatches
       .flatMap((match) => [match.homeTeam, match.awayTeam, match.seededHomeTeam, match.seededAwayTeam])
       .find((candidate) => candidate?.id === selectedCountryFilter) ?? null;
 
-  return team?.shortName ?? "that team";
+  return team?.shortName ?? kt(language, "thisTeam");
 }
 
 function KnockoutMatchNumberBadge({ number, compact = false }: { number: number; compact?: boolean }) {
@@ -2112,22 +2150,22 @@ function getKnockoutMatchNumber(title: string) {
   return Number.isFinite(value) ? value : null;
 }
 
-function getStageDisplayName(stage: KnockoutBracketMatchView["stage"]) {
+function getStageDisplayName(stage: KnockoutBracketMatchView["stage"], language: SupportedLanguage) {
   switch (stage) {
     case "r32":
-      return "Round of 32";
+      return kt(language, "roundOf32");
     case "r16":
-      return "Round of 16";
+      return kt(language, "roundOf16");
     case "qf":
-      return "Quarter-finals";
+      return kt(language, "quarterfinals");
     case "sf":
-      return "Semi-finals";
+      return kt(language, "semifinals");
     case "final":
-      return "Final";
+      return kt(language, "final");
     case "third":
-      return "Third Place";
+      return kt(language, "thirdPlace");
     default:
-      return "Knockout";
+      return kt(language, "title");
   }
 }
 
@@ -2136,51 +2174,54 @@ type MatchContextChip = {
   secondary?: string | null;
 };
 
-function formatRoundOf32PlaceholderLabel(placeholderLabel: string | null): MatchContextChip {
+function formatRoundOf32PlaceholderLabel(placeholderLabel: string | null, language: SupportedLanguage): MatchContextChip {
   if (!placeholderLabel) {
-    return { primary: "TBD" };
+    return { primary: kt(language, "tbd") };
   }
 
   const normalized = placeholderLabel.replace(/\s+/g, " ").trim();
   const groupMatch = normalized.match(/^Group\s+([A-Z])\s+(Winner|Runner-up)$/i);
   if (groupMatch) {
     return {
-      primary: `Group ${groupMatch[1].toUpperCase()} ${groupMatch[2].toLowerCase() === "winner" ? "1st" : "2nd"}`
+      primary: kt(language, "groupSeedLabel", {
+        groupName: groupMatch[1].toUpperCase(),
+        rank: groupMatch[2].toLowerCase() === "winner" ? kt(language, "groupWinnerRank") : kt(language, "groupRunnerUpRank")
+      })
     };
   }
 
-  const stageLabel = getPlaceholderStageLabel(normalized);
+  const stageLabel = getPlaceholderStageLabel(normalized, language);
   const matchNumber = getPlaceholderMatchNumber(normalized);
   if (stageLabel && matchNumber) {
     return {
       primary: stageLabel,
-      secondary: `Win Match: ${matchNumber}`
+      secondary: kt(language, "winMatch", { matchNumber })
     };
   }
 
   const tbdGroupMatch = normalized.match(/^TBD(?:\s+from)?\s+Group\s+([A-Z])$/i);
   if (tbdGroupMatch) {
-    return { primary: `TBD Group ${tbdGroupMatch[1].toUpperCase()}` };
+    return { primary: kt(language, "tbdGroup", { groupName: tbdGroupMatch[1].toUpperCase() }) };
   }
 
   return { primary: normalized };
 }
 
-function getPlaceholderStageLabel(label: string) {
+function getPlaceholderStageLabel(label: string, language: SupportedLanguage) {
   if (/Round of 32/i.test(label) || /^Winner of R32/i.test(label)) {
-    return "R32";
+    return kt(language, "roundOf32Short");
   }
 
   if (/Round of 16/i.test(label) || /^Winner of R16/i.test(label)) {
-    return "R16";
+    return kt(language, "roundOf16Short");
   }
 
   if (/Quarter-?final/i.test(label) || /^Winner of QF/i.test(label)) {
-    return "QF";
+    return kt(language, "quarterfinalsShort");
   }
 
   if (/Semi-?final/i.test(label) || /^Winner of SF/i.test(label)) {
-    return "SF";
+    return kt(language, "semifinalsShort");
   }
 
   return null;
@@ -2201,6 +2242,8 @@ function getPlaceholderMatchNumber(label: string) {
 }
 
 function ChampionCard({ champion }: { champion: BracketTeamOption | null }) {
+  const language = useKnockoutLanguage();
+
   return (
     <div className="overflow-hidden rounded-lg border border-amber-200 bg-amber-50 p-5">
       <div className="flex items-center gap-3">
@@ -2208,9 +2251,9 @@ function ChampionCard({ champion }: { champion: BracketTeamOption | null }) {
           <Trophy aria-hidden className="h-5 w-5" />
         </div>
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">Champion</p>
-          <p className="mt-1 text-2xl font-extrabold text-gray-950">{champion?.name ?? "Choose your champion"}</p>
-          <p className="mt-1 text-sm font-semibold text-gray-600">Your final winner lands here.</p>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">{kt(language, "champion")}</p>
+          <p className="mt-1 text-2xl font-extrabold text-gray-950">{champion?.name ?? kt(language, "chooseChampion")}</p>
+          <p className="mt-1 text-sm font-semibold text-gray-600">{kt(language, "finalWinnerLandsHere")}</p>
         </div>
       </div>
     </div>
@@ -2492,18 +2535,19 @@ function ActualComparisonMatchCard({
   pendingOnly?: boolean;
   showHeader?: boolean;
 }) {
+  const language = useKnockoutLanguage();
   const matchNumber = getKnockoutMatchNumber(match.title);
   const actualHomeTeam = match.seededHomeTeam;
   const actualAwayTeam = match.seededAwayTeam;
   const actualWinnerTeamId = match.actualWinnerTeamId ?? null;
   const hasActualFinalScores = !pendingOnly && match.homeScore !== null && match.awayScore !== null;
   const statusLabel = pendingOnly
-    ? "Pending"
+    ? kt(language, "pending")
     : match.status === "final"
-      ? "Final"
+      ? kt(language, "finalStatus")
       : actualHomeTeam && actualAwayTeam
-        ? "Pending"
-        : "Waiting";
+        ? kt(language, "pending")
+        : kt(language, "waiting");
 
   return (
     <div className="box-border w-full max-w-full overflow-hidden rounded-[1.15rem] border border-gray-200 bg-white p-2">
@@ -2512,7 +2556,7 @@ function ActualComparisonMatchCard({
           <div className="min-w-0">
             {matchNumber ? (
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">Match</span>
+                <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-gray-500">{kt(language, "match")}</span>
                 <KnockoutMatchNumberBadge number={matchNumber} compact />
               </div>
             ) : (
@@ -2520,7 +2564,7 @@ function ActualComparisonMatchCard({
             )}
           </div>
           <p className="min-w-0 truncate text-[10px] font-bold uppercase tracking-wide text-gray-500">
-            {formatCompactKickoff(match.kickoffTime)}
+            {formatCompactKickoff(match.kickoffTime, language)}
           </p>
           <div className="min-w-0 justify-self-end">
             <span className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[10px] font-bold text-gray-600">
@@ -2557,7 +2601,7 @@ function ActualComparisonMatchCard({
             showScoreArea={Boolean(actualHomeTeam && actualAwayTeam)}
           />
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-[8px] font-bold uppercase text-gray-400">
-            VS
+            {kt(language, "vs")}
           </span>
           <KnockoutTeamPanel
             team={actualAwayTeam}
@@ -2585,20 +2629,20 @@ function ActualComparisonMatchCard({
       {match.status === "final" && hasActualFinalScores ? (
         <div className="mt-1.5 border-t border-gray-300 px-2 pt-2 text-center">
           <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">
-            Actual result finalized
+            {kt(language, "actualResultFinalized")}
           </div>
         </div>
       ) : pendingOnly ? (
         <div className="mt-1.5 border-t border-gray-100 bg-gray-50/60 px-2 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">
-          Official bracket pending
+          {kt(language, "officialBracketPending")}
         </div>
       ) : actualHomeTeam && actualAwayTeam ? (
         <div className="mt-1.5 border-t border-gray-100 bg-gray-50/60 px-2 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">
-          Result pending
+          {kt(language, "resultPending")}
         </div>
       ) : (
         <div className="mt-1.5 border-t border-gray-100 bg-gray-50/60 px-1 pt-2 text-center text-[10px] font-bold uppercase tracking-wide text-gray-400">
-          Official bracket pending
+          {kt(language, "officialBracketPending")}
         </div>
       )}
     </div>
@@ -2630,22 +2674,12 @@ function ComparisonPlaceholderCard({
   );
 }
 
-function formatCompactKickoff(kickoffTime: string) {
-  const formatted = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date(kickoffTime));
-
-  return formatted
-    .replace(",", " ·")
-    .replace(" AM", "A")
-    .replace(" PM", "P");
+function formatCompactKickoff(kickoffTime: string, language: SupportedLanguage) {
+  return formatDateTime(kickoffTime, language).replace(",", " ·");
 }
 
-function formatSavedTimestamp(savedAt: string | null) {
-  return savedAt ? formatDateTimeWithZone(savedAt) : "";
+function formatSavedTimestamp(savedAt: string | null, language: SupportedLanguage) {
+  return savedAt ? formatDateTime(savedAt, language) : "";
 }
 
 function formatTeamToken(team: BracketTeamOption | null): MatchContextChip | null {
@@ -2658,7 +2692,7 @@ function formatTeamToken(team: BracketTeamOption | null): MatchContextChip | nul
   };
 }
 
-function buildMatchContextChips(match: KnockoutBracketMatchView) {
+function buildMatchContextChips(match: KnockoutBracketMatchView, language: SupportedLanguage) {
   if (match.viewMode === "projected") {
     const shouldHideProjectedReferences =
       match.stage !== "r32" &&
@@ -2669,11 +2703,11 @@ function buildMatchContextChips(match: KnockoutBracketMatchView) {
       left: shouldHideProjectedReferences
         ? null
         : formatTeamToken(match.seededHomeTeam) ??
-          (match.homeSourceLabel ? formatRoundOf32PlaceholderLabel(match.homeSourceLabel) : null),
+          (match.homeSourceLabel ? formatRoundOf32PlaceholderLabel(match.homeSourceLabel, language) : null),
       right: shouldHideProjectedReferences
         ? null
         : formatTeamToken(match.seededAwayTeam) ??
-          (match.awaySourceLabel ? formatRoundOf32PlaceholderLabel(match.awaySourceLabel) : null)
+          (match.awaySourceLabel ? formatRoundOf32PlaceholderLabel(match.awaySourceLabel, language) : null)
     };
   }
 
@@ -2683,7 +2717,7 @@ function buildMatchContextChips(match: KnockoutBracketMatchView) {
   };
 }
 
-function buildBracketSlides(view: KnockoutBracketEditorView): BracketSlideView[] {
+function buildBracketSlides(view: KnockoutBracketEditorView, language: SupportedLanguage): BracketSlideView[] {
   const stageMap = new Map(view.stages.map((stage) => [stage.stage, stage]));
   const r32 = stageMap.get("r32");
   const r16 = stageMap.get("r16");
@@ -2695,16 +2729,16 @@ function buildBracketSlides(view: KnockoutBracketEditorView): BracketSlideView[]
   const slides: BracketSlideView[] = [
     {
       id: "r32",
-      title: "Round of 32",
-      eyebrow: "Opening round",
-      subtitle: "Start wide. Pick each side of the field before the bracket narrows.",
+      title: kt(language, "roundOf32"),
+      eyebrow: kt(language, "openingRound"),
+      subtitle: kt(language, "roundOf32Subtitle"),
       currentStage: "r32",
       currentMatches: r32?.matches ?? [],
       previousStage: null,
       previousLabel: null,
       previousMatches: [],
       nextStage: "r16",
-      nextLabel: r16?.label ?? "Round of 16",
+      nextLabel: kt(language, "roundOf16"),
       nextMatches: r16?.matches ?? [],
       champion: null,
       thirdPlaceMatch: null,
@@ -2712,16 +2746,16 @@ function buildBracketSlides(view: KnockoutBracketEditorView): BracketSlideView[]
     },
     {
       id: "r16",
-      title: "Round of 16",
-      eyebrow: "Center focus",
-      subtitle: "Keep the last thirty-two on the rails while you shape the final sixteen in the center.",
+      title: kt(language, "roundOf16"),
+      eyebrow: kt(language, "centerFocus"),
+      subtitle: kt(language, "roundOf16Subtitle"),
       currentStage: "r16",
       currentMatches: r16?.matches ?? [],
       previousStage: "r32",
-      previousLabel: r32?.label ?? "Round of 32",
+      previousLabel: kt(language, "roundOf32"),
       previousMatches: r32?.matches ?? [],
       nextStage: "qf",
-      nextLabel: qf?.label ?? "Quarter-finals",
+      nextLabel: kt(language, "quarterfinals"),
       nextMatches: qf?.matches ?? [],
       champion: null,
       thirdPlaceMatch: null,
@@ -2729,16 +2763,16 @@ function buildBracketSlides(view: KnockoutBracketEditorView): BracketSlideView[]
     },
     {
       id: "qf",
-      title: "Quarter-finals",
-      eyebrow: "Tighten the path",
-      subtitle: "The middle lane stays generous while the surrounding rails keep the route legible.",
+      title: kt(language, "quarterfinals"),
+      eyebrow: kt(language, "tightenPath"),
+      subtitle: kt(language, "quarterfinalsSubtitle"),
       currentStage: "qf",
       currentMatches: qf?.matches ?? [],
       previousStage: "r16",
-      previousLabel: r16?.label ?? "Round of 16",
+      previousLabel: kt(language, "roundOf16"),
       previousMatches: r16?.matches ?? [],
       nextStage: "sf",
-      nextLabel: sf?.label ?? "Semi-finals",
+      nextLabel: kt(language, "semifinals"),
       nextMatches: sf?.matches ?? [],
       champion: null,
       thirdPlaceMatch: null,
@@ -2746,16 +2780,16 @@ function buildBracketSlides(view: KnockoutBracketEditorView): BracketSlideView[]
     },
     {
       id: "sf",
-      title: "Semi-finals",
-      eyebrow: "Near the summit",
-      subtitle: "This is where the bracket starts to feel inevitable. Set the finalists here.",
+      title: kt(language, "semifinals"),
+      eyebrow: kt(language, "nearTheSummit"),
+      subtitle: kt(language, "semifinalsSubtitle"),
       currentStage: "sf",
       currentMatches: sf?.matches ?? [],
       previousStage: "qf",
-      previousLabel: qf?.label ?? "Quarter-finals",
+      previousLabel: kt(language, "quarterfinals"),
       previousMatches: qf?.matches ?? [],
       nextStage: "final",
-      nextLabel: final?.label ?? "Final",
+      nextLabel: kt(language, "final"),
       nextMatches: final?.matches ?? [],
       champion: null,
       thirdPlaceMatch: null,
@@ -2763,16 +2797,16 @@ function buildBracketSlides(view: KnockoutBracketEditorView): BracketSlideView[]
     },
     {
       id: "third",
-      title: "Third Place",
-      eyebrow: "One more podium spot",
-      subtitle: "Set the bronze-medal match before the tournament closes.",
+      title: kt(language, "thirdPlace"),
+      eyebrow: kt(language, "oneMorePodiumSpot"),
+      subtitle: kt(language, "thirdPlaceSubtitle"),
       currentStage: "third",
       currentMatches: thirdStage?.matches ?? (view.thirdPlace ? [view.thirdPlace] : []),
       previousStage: "sf",
-      previousLabel: sf?.label ?? "Semi-finals",
+      previousLabel: kt(language, "semifinals"),
       previousMatches: sf?.matches ?? [],
       nextStage: "final",
-      nextLabel: final?.label ?? "Final",
+      nextLabel: kt(language, "final"),
       nextMatches: final?.matches ?? [],
       champion: null,
       thirdPlaceMatch: null,
@@ -2780,13 +2814,13 @@ function buildBracketSlides(view: KnockoutBracketEditorView): BracketSlideView[]
     },
     {
       id: "final",
-      title: "Final & Champion",
-      eyebrow: "Finish strong",
-      subtitle: "Set the last match in the center and let your champion step forward.",
+      title: kt(language, "finalAndChampion"),
+      eyebrow: kt(language, "finishStrong"),
+      subtitle: kt(language, "finalSubtitle"),
       currentStage: "final",
       currentMatches: final?.matches ?? [],
       previousStage: "sf",
-      previousLabel: sf?.label ?? "Semi-finals",
+      previousLabel: kt(language, "semifinals"),
       previousMatches: sf?.matches ?? [],
       nextStage: null,
       nextLabel: null,

@@ -5,6 +5,7 @@ import { Check, ChevronDown, ChevronUp, LockKeyhole, X } from "lucide-react";
 import { formatDateTimeWithZone } from "@/lib/date-time";
 import { scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { canEditPrediction } from "@/lib/prediction-state";
+import { t } from "@/lib/strings";
 import type { AutoPickDraft, MatchWithTeams, Prediction } from "@/lib/types";
 
 type ScoreOutcome = "home" | "draw" | "away";
@@ -32,6 +33,7 @@ type GroupPredictionCardProps = {
     }
   ) => void;
   footerAnchorRef?: (node: HTMLDivElement | null) => void;
+  language?: string | null;
   userId: string;
   onSave: (prediction: Prediction) => Promise<Prediction>;
 };
@@ -49,6 +51,7 @@ export function GroupPredictionCard({
   highlightHomeTeamId,
   onDraftStateChange,
   footerAnchorRef,
+  language,
   userId,
   onSave
 }: GroupPredictionCardProps) {
@@ -56,7 +59,7 @@ export function GroupPredictionCard({
   const locked = !canEdit;
   const isFinal = match.status === "final";
   const isLive = match.status === "live" || match.status === "locked";
-  const predictionStateLabel = isFinal ? "Final" : isLive || locked ? "Locked" : "Open";
+  const predictionStateLabel = isFinal ? t(language, "common.final") : isLive || locked ? t(language, "common.locked") : t(language, "common.open");
   const [homeScore, setHomeScore] = useState(getInitialScore(prediction?.predictedHomeScore));
   const [awayScore, setAwayScore] = useState(getInitialScore(prediction?.predictedAwayScore));
   const [isSaving, setIsSaving] = useState(false);
@@ -76,7 +79,7 @@ export function GroupPredictionCard({
   const canSubmitNewPrediction = Boolean(prediction) ? hasUnsavedScoreChange : true;
   const usePrimaryButton = !prediction || hasUnsavedScoreChange;
   const isSavedState = Boolean(lastSavedAt) && !hasUnsavedScoreChange && !isSaving && !saveError && canEdit;
-  const matchLabel = matchNumber ? `Match ${matchNumber}` : "Match";
+  const matchLabel = matchNumber ? t(language, "bracket.saveMatch", { matchNumber }) : t(language, "bracket.saveMatchFallback");
   const matchIncludesHomeTeam = Boolean(
     highlightHomeTeamId && (match.homeTeamId === highlightHomeTeamId || match.awayTeamId === highlightHomeTeamId)
   );
@@ -117,6 +120,7 @@ export function GroupPredictionCard({
         )
       : null;
   const finalStatusMessage = getFinalStatusMessage({
+    language,
     prediction,
     hasSavedPrediction,
     scoreBreakdown,
@@ -214,9 +218,9 @@ export function GroupPredictionCard({
 
     if (locked || isSaving || !canSubmitNewPrediction) {
       if (locked) {
-        setSaveError("Predictions locked.");
+        setSaveError(t(language, "bracket.predictionsLocked"));
       } else if (!canSubmitNewPrediction) {
-        setSaveError("Adjust a score before saving again.");
+        setSaveError(t(language, "bracket.adjustScoreBeforeSavingAgain"));
       }
       return;
     }
@@ -241,7 +245,7 @@ export function GroupPredictionCard({
       setLastSavedAt(savedPrediction.updatedAt ?? new Date().toISOString());
     } catch (error) {
       console.error("Failed to save pick.", { matchId: match.id, userId, error });
-      setSaveError(error instanceof Error ? error.message : "Could not save this pick. Please try again.");
+      setSaveError(error instanceof Error ? error.message : t(language, "bracket.couldNotSavePick"));
     } finally {
       setIsSaving(false);
     }
@@ -281,7 +285,7 @@ export function GroupPredictionCard({
               </span>
             ) : null}
             <p className={`text-sm font-bold uppercase tracking-wide ${isFinal ? "text-gray-700" : "text-accent-dark"}`}>
-              Pick before:
+              {t(language, "common.pickBefore")}
             </p>
             <p
               className={`text-[10px] font-semibold uppercase tracking-wide ${
@@ -300,7 +304,7 @@ export function GroupPredictionCard({
               disabled={autoPickAgainDisabled || isAutoFilling}
               className="inline-flex items-center rounded-md bg-amber-100 px-2 py-1 text-xs font-bold uppercase tracking-wide text-amber-900 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Auto Pick
+              {t(language, "bracket.autoPick")}
             </button>
           ) : null}
           <span
@@ -343,6 +347,7 @@ export function GroupPredictionCard({
             side="left"
             flag={match.homeTeam?.flagEmoji}
             fullName={match.homeTeam?.name ?? match.homeTeam?.shortName ?? "Home"}
+            language={language}
             value={displayPredictionHomeScore}
             disabled={locked || isAutoFilling}
             isFinal={isFinal}
@@ -359,12 +364,13 @@ export function GroupPredictionCard({
                   : "border-gray-200 bg-white text-gray-400"
             }`}
           >
-            vs
+            {t(language, "knockout.vs")}
           </span>
           <ScoreInput
             side="right"
             flag={match.awayTeam?.flagEmoji}
             fullName={match.awayTeam?.name ?? match.awayTeam?.shortName ?? "Away"}
+            language={language}
             value={displayPredictionAwayScore}
             disabled={locked || isAutoFilling}
             isFinal={isFinal}
@@ -388,7 +394,7 @@ export function GroupPredictionCard({
               </span>
             </div>
             <div className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              {actualFinalScoreLabel ? "<- Final Score ->" : "Final Score: Awaiting score"}
+              {actualFinalScoreLabel ? `<- ${t(language, "bracket.finalScore")} ->` : t(language, "bracket.finalScoreAwaiting")}
             </div>
             <div className="flex min-w-0 items-center justify-end gap-2">
               <span className="text-sm font-black uppercase leading-none text-gray-500">
@@ -424,7 +430,7 @@ export function GroupPredictionCard({
               </span>
             </div>
             <div className="text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-              {hasActualLiveScores ? "<- Live Score ->" : "Live Score: Awaiting score"}
+              {hasActualLiveScores ? `<- ${t(language, "bracket.liveScore")} ->` : t(language, "bracket.liveScoreAwaiting")}
             </div>
             <div className="flex min-w-0 items-center justify-end gap-2">
               <span className="text-sm font-black uppercase leading-none text-gray-500">
@@ -436,7 +442,7 @@ export function GroupPredictionCard({
             </div>
           </div>
           <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-gray-600">
-            Pick locked.
+            {t(language, "bracket.pickLocked")}
           </p>
         </div>
       ) : (
@@ -455,21 +461,21 @@ export function GroupPredictionCard({
             {isSavedState ? (
               <span className="flex flex-col items-center justify-center leading-tight">
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                  Saved on: {formatSavedAt(lastSavedAt!)}
+                  {t(language, "knockout.savedOn", { date: formatSavedAt(lastSavedAt!) })}
                 </span>
               </span>
             ) : (
               <>
                 {!isSaving && !saveError && lastSavedAt && !hasUnsavedScoreChange ? <Check aria-hidden className="h-5 w-5" /> : null}
                 {!canEdit
-                  ? "Pick locked"
+                  ? t(language, "bracket.pickLocked")
                   : isSaving
-                    ? "Saving..."
+                    ? t(language, "common.saving")
                     : isAutoFilling
-                      ? "Auto Picking..."
+                      ? t(language, "bracket.autoPicking")
                       : saveError
-                        ? "Failed to save"
-                        : `Save ${matchLabel}`}
+                        ? t(language, "bracket.failedToSave")
+                        : matchLabel}
               </>
             )}
           </button>
@@ -478,7 +484,7 @@ export function GroupPredictionCard({
 
       {!isFinal && !isLive && canEdit && !usePrimaryButton && !saveError ? (
         <div className="mt-1 rounded-md bg-accent-light px-3 py-1 text-center text-[10px] font-bold uppercase tracking-wide text-accent-dark">
-          Editable until kickoff
+          {t(language, "bracket.editableUntilKickoff")}
         </div>
       ) : null}
 
@@ -494,15 +500,15 @@ export function GroupPredictionCard({
         <div className="mt-3 min-h-[3rem]">
           {isSaving ? (
           <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
-            Saving...
+            {t(language, "common.saving")}
           </p>
         ) : saveError ? (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
-            Failed to save. {saveError}
+            {t(language, "bracket.failedToSave")}. {saveError}
           </p>
         ) : !canEdit && !isLive && !isFinal ? (
           <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700">
-            Pick locked.
+            {t(language, "bracket.pickLocked")}
           </p>
           ) : null}
         </div>
@@ -524,6 +530,7 @@ type ScoreInputProps = {
   side: "left" | "right";
   flag?: string;
   fullName: string;
+  language?: string | null;
   value: string;
   disabled: boolean;
   isFinal?: boolean;
@@ -536,6 +543,7 @@ function ScoreInput({
   side,
   flag,
   fullName,
+  language,
   value,
   disabled,
   isFinal,
@@ -560,8 +568,8 @@ function ScoreInput({
           isFinal ? "text-gray-800" : isLive ? "text-gray-900" : "text-gray-900"
         }`}
       >
-        {fullName}
-      </span>
+                {fullName}
+              </span>
     </span>
   );
 
@@ -603,7 +611,7 @@ function ScoreInput({
       type="button"
       disabled={disabled || numericValue <= 0}
       onClick={() => onChange(String(Math.max(0, numericValue - 1)))}
-      aria-label={`Decrease score for ${fullName}`}
+      aria-label={t(language, "knockout.decreaseTeamScore", { teamName: fullName })}
       className={`${adjustButtonClassName} border-t border-gray-200`}
     >
       <ChevronDown aria-hidden className="h-3.5 w-3.5" />
@@ -615,7 +623,7 @@ function ScoreInput({
       type="button"
       disabled={disabled}
       onClick={() => onChange(String(Math.max(0, numericValue + 1)))}
-      aria-label={`Increase score for ${fullName}`}
+      aria-label={t(language, "knockout.increaseTeamScore", { teamName: fullName })}
       className={adjustButtonClassName}
     >
       <ChevronUp aria-hidden className="h-3.5 w-3.5" />
@@ -737,35 +745,37 @@ function toNumericScore(value: string) {
 }
 
 function getFinalStatusMessage({
+  language,
   prediction,
   hasSavedPrediction,
   scoreBreakdown,
   actualFinalScoreLabel
 }: {
+  language?: string | null;
   prediction?: Prediction;
   hasSavedPrediction: boolean;
   scoreBreakdown: ReturnType<typeof scoreGroupStagePrediction> | null;
   actualFinalScoreLabel: string | null;
 }) {
   if (!actualFinalScoreLabel) {
-    return { icon: null as "check" | "x" | null, text: "Scoring update pending." };
+    return { icon: null as "check" | "x" | null, text: t(language, "bracket.scoringPending") };
   }
 
   if (!prediction || !hasSavedPrediction) {
-    return { icon: "x" as const, text: "No pick saved / No points" };
+    return { icon: "x" as const, text: t(language, "bracket.noPickSavedNoPoints") };
   }
 
   if (!scoreBreakdown) {
-    return { icon: null as "check" | "x" | null, text: "Scoring update pending." };
+    return { icon: null as "check" | "x" | null, text: t(language, "bracket.scoringPending") };
   }
 
   if (scoreBreakdown.exact_score_points > 0) {
-    return { icon: "check" as const, text: `Exact score · +${scoreBreakdown.points} pts` };
+    return { icon: "check" as const, text: t(language, "bracket.exactScorePoints", { points: scoreBreakdown.points }) };
   }
 
   if (scoreBreakdown.outcome_points > 0) {
-    return { icon: "check" as const, text: `Correct outcome · +${scoreBreakdown.points} pts` };
+    return { icon: "check" as const, text: t(language, "bracket.correctOutcomePoints", { points: scoreBreakdown.points }) };
   }
 
-  return { icon: "x" as const, text: "No points earned · 0 pts" };
+  return { icon: "x" as const, text: t(language, "bracket.noPointsEarned") };
 }

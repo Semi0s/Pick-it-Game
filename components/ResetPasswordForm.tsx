@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { normalizeLanguage, type AppLanguage } from "@/lib/i18n";
+import { t } from "@/lib/strings";
 import { createClient } from "@/lib/supabase/client";
 
 export function ResetPasswordForm() {
@@ -13,9 +15,12 @@ export function ResetPasswordForm() {
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [uiLanguage, setUiLanguage] = useState<AppLanguage>("en");
 
   useEffect(() => {
     const supabase = createClient();
+    const language = normalizeLanguage(new URLSearchParams(window.location.search).get("lang"));
+    setUiLanguage(language);
 
     async function prepareRecoverySession() {
       try {
@@ -70,15 +75,15 @@ export function ResetPasswordForm() {
         } = await supabase.auth.getSession();
 
         if (!session) {
-          setError("This password reset link is missing or has expired. Request a new reset email.");
+          setError(t(language, "auth.resetLinkExpired"));
           return;
         }
 
-        setNotice("Your reset link is ready. Choose a new password below.");
+        setNotice(t(language, "auth.resetLinkReady"));
         setIsReady(true);
       } catch (caughtError) {
         console.error("Unexpected error while preparing recovery session.", caughtError);
-        setError("We couldn't prepare your password reset session. Request a new reset email and try again.");
+        setError(t(language, "auth.resetPrepareFailed"));
       }
     }
 
@@ -91,12 +96,12 @@ export function ResetPasswordForm() {
     setNotice(null);
 
     if (password.length < 6) {
-      setError("Use at least 6 characters for your new password.");
+      setError(t(uiLanguage, "auth.passwordTooShort"));
       return;
     }
 
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
+      setError(t(uiLanguage, "auth.passwordsDoNotMatch"));
       return;
     }
 
@@ -118,13 +123,13 @@ export function ResetPasswordForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <label className="block">
-        <span className="text-sm font-semibold text-gray-800">New password</span>
+        <span className="text-sm font-semibold text-gray-800">{t(uiLanguage, "auth.newPassword")}</span>
         <input
           type="password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-          placeholder="At least 6 characters"
+          placeholder={t(uiLanguage, "auth.passwordMinPlaceholder")}
           autoComplete="new-password"
           required
           disabled={!isReady || isSubmitting}
@@ -132,13 +137,13 @@ export function ResetPasswordForm() {
       </label>
 
       <label className="block">
-        <span className="text-sm font-semibold text-gray-800">Confirm new password</span>
+        <span className="text-sm font-semibold text-gray-800">{t(uiLanguage, "auth.confirmNewPassword")}</span>
         <input
           type="password"
           value={confirmPassword}
           onChange={(event) => setConfirmPassword(event.target.value)}
           className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-          placeholder="Repeat your new password"
+          placeholder={t(uiLanguage, "auth.repeatNewPasswordPlaceholder")}
           autoComplete="new-password"
           required
           disabled={!isReady || isSubmitting}
@@ -162,13 +167,13 @@ export function ResetPasswordForm() {
         disabled={!isReady || isSubmitting}
         className="w-full rounded-md bg-accent px-4 py-3 text-base font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
       >
-        {isSubmitting ? "Updating..." : "Update password"}
+        {isSubmitting ? t(uiLanguage, "auth.updatingPassword") : t(uiLanguage, "auth.updatePassword")}
       </button>
 
       <p className="text-sm leading-6 text-gray-600">
-        Already back in?{" "}
+        {t(uiLanguage, "auth.alreadyBackIn")}{" "}
         <Link href="/login" className="font-bold text-accent-dark underline-offset-2 hover:underline">
-          Return to sign in
+          {t(uiLanguage, "auth.returnToSignIn")}
         </Link>
       </p>
     </form>

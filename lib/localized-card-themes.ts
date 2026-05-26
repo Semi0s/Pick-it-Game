@@ -1,5 +1,4 @@
 import type { CSSProperties } from "react";
-import type { SupportedLanguage } from "@/lib/i18n";
 
 export type LocalizedCardPatternVariant = "bands" | "ribbons" | "emblem" | "minimal";
 export type LocalizedCardEmblemKind =
@@ -53,6 +52,15 @@ export type LocalizedCardEmblemKind =
   | "ghana"
   | "panama";
 
+export const ORANJEKOORTS_VISUAL_THEME_ID = "oranjekoorts" as const;
+export type SpecialVisualThemeId = typeof ORANJEKOORTS_VISUAL_THEME_ID;
+
+export type SpecialVisualThemeOption = {
+  id: SpecialVisualThemeId;
+  label: string;
+  icon: string;
+};
+
 export type LocalizedCardTheme = {
   id: string;
   label: string;
@@ -78,10 +86,11 @@ export type LocalizedCardTheme = {
 };
 
 export type LocalizedCardThemeInput = {
+  visualThemeId?: string | null;
   homeTeamId?: string | null;
   countryCode?: string | null;
   marketCode?: string | null;
-  preferredLanguage?: SupportedLanguage | string | null;
+  preferredLanguage?: string | null;
 };
 
 type LocalizedCardThemeSeed = {
@@ -629,6 +638,22 @@ export const localizedCardThemes = {
     mainBackground: "#21468B",
     borderColor: "#1D4ED8"
   }),
+  oranjekoorts: createDarkFlagTheme({
+    id: ORANJEKOORTS_VISUAL_THEME_ID,
+    label: "Oranjekoorts",
+    colors: ["#FF7900", "#FFFFFF", "#21468B"],
+    patternColors: ["#FFFFFF", "#21468B", "#FF7900", "#FFFFFF", "#21468B"],
+    accent: "#FF7900",
+    accentLight: "#FFE1C2",
+    accentDark: "#9A3500",
+    accentText: "#FFFFFF",
+    flagAccent: "#21468B",
+    mainBackground: "#F97316",
+    secondaryTextColor: "rgba(255,255,255,0.9)",
+    borderColor: "#FF7900",
+    controlZoneTint: "rgba(255,255,255,0.14)",
+    emblemKind: "none"
+  }),
   sweden: createDarkFlagTheme({
     id: "sweden",
     label: "Sweden",
@@ -852,6 +877,14 @@ export const localizedCardThemes = {
   })
 } satisfies Record<string, LocalizedCardTheme>;
 
+export const specialVisualThemeOptions: readonly SpecialVisualThemeOption[] = [
+  {
+    id: ORANJEKOORTS_VISUAL_THEME_ID,
+    label: "Oranjekoorts",
+    icon: "🟧"
+  }
+];
+
 const teamThemeById: Record<string, keyof typeof localizedCardThemes> = {
   rsa: "southafrica",
   cze: "czechia",
@@ -901,14 +934,6 @@ const teamThemeById: Record<string, keyof typeof localizedCardThemes> = {
   bel: "belgium",
   fra: "france",
   eng: "england"
-};
-
-const localeDefaultThemeByLanguage: Partial<Record<SupportedLanguage | string, keyof typeof localizedCardThemes>> = {
-  en: "usa",
-  es: "colombia",
-  pt: "brazil",
-  de: "germany",
-  fr: "france"
 };
 
 const countryAliases: Record<string, keyof typeof localizedCardThemes> = {
@@ -1062,6 +1087,11 @@ const countryAliases: Record<string, keyof typeof localizedCardThemes> = {
 };
 
 export function resolveLocalizedCardThemeId(input: LocalizedCardThemeInput): keyof typeof localizedCardThemes {
+  const normalizedVisualThemeId = normalizeKey(input.visualThemeId);
+  if (isSpecialVisualThemeId(normalizedVisualThemeId) && localizedCardThemes[normalizedVisualThemeId]) {
+    return normalizedVisualThemeId;
+  }
+
   const normalizedHomeTeamId = normalizeKey(input.homeTeamId);
   if (normalizedHomeTeamId && teamThemeById[normalizedHomeTeamId]) {
     return teamThemeById[normalizedHomeTeamId];
@@ -1077,11 +1107,6 @@ export function resolveLocalizedCardThemeId(input: LocalizedCardThemeInput): key
     return countryAliases[explicitMarketKey];
   }
 
-  const localeKey = normalizeKey(input.preferredLanguage);
-  if (localeKey && localeDefaultThemeByLanguage[localeKey]) {
-    return localeDefaultThemeByLanguage[localeKey] ?? "generic";
-  }
-
   return "generic";
 }
 
@@ -1091,7 +1116,10 @@ export function getLocalizedCardTheme(input: LocalizedCardThemeInput): Localized
 
 export function getLocalizedCardThemeForUserSurface(input: LocalizedCardThemeInput): LocalizedCardTheme {
   const hasExplicitVisualIdentity = Boolean(
-    normalizeKey(input.homeTeamId) || normalizeKey(input.countryCode) || normalizeKey(input.marketCode)
+    normalizeKey(input.visualThemeId) ||
+      normalizeKey(input.homeTeamId) ||
+      normalizeKey(input.countryCode) ||
+      normalizeKey(input.marketCode)
   );
 
   if (!hasExplicitVisualIdentity) {
@@ -1099,6 +1127,15 @@ export function getLocalizedCardThemeForUserSurface(input: LocalizedCardThemeInp
   }
 
   return getLocalizedCardTheme(input);
+}
+
+export function isSpecialVisualThemeId(value?: string | null): value is SpecialVisualThemeId {
+  return value === ORANJEKOORTS_VISUAL_THEME_ID;
+}
+
+export function getSpecialVisualThemeOption(value?: string | null): SpecialVisualThemeOption | null {
+  const normalizedValue = normalizeKey(value);
+  return specialVisualThemeOptions.find((option) => option.id === normalizedValue) ?? null;
 }
 
 export function isLightLocalizedCardTheme(theme: LocalizedCardTheme) {
@@ -1154,6 +1191,7 @@ export function getAppAccentCssVars(theme: LocalizedCardTheme): CSSProperties {
   const accentBorder = withAlpha(accent, theme.useNeutralAccent ? 0.42 : 0.28);
   const accentRing = withAlpha(accent, theme.useNeutralAccent ? 0.26 : 0.42);
   const logoSecondaryAccent = getLogoSecondaryAccentColor(theme, accent, fallbackTheme);
+  const logoCheckAccent = getLogoCheckAccentColor(theme, accent, logoSecondaryAccent, fallbackTheme);
 
   return {
     "--app-accent": accent,
@@ -1168,6 +1206,7 @@ export function getAppAccentCssVars(theme: LocalizedCardTheme): CSSProperties {
     "--app-accent-border": accentBorder,
     "--app-accent-ring": accentRing,
     "--app-logo-secondary-accent": logoSecondaryAccent,
+    "--app-logo-check-accent": logoCheckAccent,
     "--app-accent-rgb": toRgbChannels(accent),
     "--app-accent-light-rgb": toRgbChannels(accentLight),
     "--app-accent-dark-rgb": toRgbChannels(accentDark),
@@ -1325,6 +1364,41 @@ function getLogoSecondaryAccentColor(
     const leftContrast = getContrastRatio(left, "#0F0F0F");
     return rightContrast - leftContrast;
   })[0] ?? "#FFFFFF";
+}
+
+function getLogoCheckAccentColor(
+  theme: LocalizedCardTheme,
+  accent: string,
+  logoSecondaryAccent: string,
+  fallbackTheme: LocalizedCardTheme
+) {
+  const accentKey = normalizeKey(accent);
+  const secondaryKey = normalizeKey(logoSecondaryAccent);
+  const candidates = [
+    theme.flagAccent,
+    ...(theme.patternColors ?? []),
+    ...theme.colors,
+    theme.accentDark,
+    fallbackTheme.accent
+  ].filter((color): color is string => {
+    if (!color) {
+      return false;
+    }
+
+    const colorKey = normalizeKey(color);
+    if (!colorKey || colorKey === accentKey || colorKey === secondaryKey) {
+      return false;
+    }
+
+    return Boolean(parseCssColor(color));
+  });
+
+  const uniqueCandidates = [...new Set(candidates)];
+  return (
+    uniqueCandidates.find((candidate) => getContrastRatio(candidate, logoSecondaryAccent) >= 2.4) ??
+    uniqueCandidates[0] ??
+    accent
+  );
 }
 
 function prefersWhiteAccentText(color: string) {

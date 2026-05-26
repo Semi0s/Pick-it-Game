@@ -9,6 +9,8 @@ import {
   getLocalizedCardThemeForUserSurface,
   type LocalizedCardThemeInput
 } from "@/lib/localized-card-themes";
+import { useAppLanguage } from "@/lib/app-language";
+import { t, type TranslationParams } from "@/lib/strings";
 import type { AccessLevel } from "@/lib/tier-access";
 import { useCurrentUser } from "@/lib/use-current-user";
 
@@ -35,8 +37,16 @@ export function InlineDisclosureButton({
   variant?: "chip" | "subtle";
   className?: string;
 }) {
+  const { activeLanguage } = useAppLanguage();
   const resolvedLabel =
-    label ?? (variant === "subtle" ? (isOpen ? "Less" : "More") : isOpen ? "Close" : "Open");
+    label ??
+    (variant === "subtle"
+      ? isOpen
+        ? t(activeLanguage, "common.less")
+        : t(activeLanguage, "common.more")
+      : isOpen
+        ? t(activeLanguage, "common.close")
+        : t(activeLanguage, "common.open"));
   const baseClassName =
     variant === "subtle"
       ? "inline-flex items-center gap-1 px-0 py-0 text-[10px] font-semibold uppercase tracking-wide text-gray-700 transition hover:text-accent-dark"
@@ -132,8 +142,8 @@ export function HorizontalChoiceRail({
   className,
   contentClassName,
   showControls = true,
-  prevLabel = "Show previous options",
-  nextLabel = "Show more options"
+  prevLabel,
+  nextLabel
 }: {
   children: ReactNode;
   className?: string;
@@ -142,6 +152,9 @@ export function HorizontalChoiceRail({
   prevLabel?: string;
   nextLabel?: string;
 }) {
+  const { activeLanguage } = useAppLanguage();
+  const resolvedPrevLabel = prevLabel ?? t(activeLanguage, "common.previous");
+  const resolvedNextLabel = nextLabel ?? t(activeLanguage, "common.next");
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const baseScrollerClassName =
     "flex min-w-max gap-1.5 px-0.5 pb-0.5 snap-x snap-proximity scroll-px-1 touch-pan-x overflow-y-hidden [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch]";
@@ -167,7 +180,7 @@ export function HorizontalChoiceRail({
             type="button"
             onClick={() => nudge("prev")}
             className="inline-flex w-5 shrink-0 self-stretch items-center justify-center px-0 text-gray-700 transition active:scale-95 hover:bg-accent-light hover:text-accent-dark"
-            aria-label={prevLabel}
+            aria-label={resolvedPrevLabel}
           >
             <ChevronLeft className="h-4 w-4" aria-hidden />
           </button>
@@ -189,7 +202,7 @@ export function HorizontalChoiceRail({
             type="button"
             onClick={() => nudge("next")}
             className="inline-flex w-5 shrink-0 self-stretch items-center justify-center px-0 text-gray-700 transition active:scale-95 hover:bg-accent-light hover:text-accent-dark"
-            aria-label={nextLabel}
+            aria-label={resolvedNextLabel}
           >
             <ChevronRight className="h-4 w-4" aria-hidden />
           </button>
@@ -204,8 +217,8 @@ export function WindowChoiceRail({
   className,
   contentClassName,
   showControls = true,
-  prevLabel = "Show previous options",
-  nextLabel = "Show more options",
+  prevLabel,
+  nextLabel,
   activeItemKey,
   onActiveItemChange,
   motionMode = "floating",
@@ -222,6 +235,9 @@ export function WindowChoiceRail({
   motionMode?: "floating" | "anchored";
   allowAnchoredTouchScroll?: boolean;
 }) {
+  const { activeLanguage } = useAppLanguage();
+  const resolvedPrevLabel = prevLabel ?? t(activeLanguage, "common.previous");
+  const resolvedNextLabel = nextLabel ?? t(activeLanguage, "common.next");
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const beltRef = useRef<HTMLDivElement | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -371,7 +387,7 @@ export function WindowChoiceRail({
             disabled={!canScrollPrev}
             className="absolute inset-y-0 left-0 z-10 inline-flex w-6 items-center justify-center bg-white text-gray-700 transition active:scale-95 hover:bg-accent-light hover:text-accent-dark disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-white"
             style={{ width: edgeControlWidth }}
-            aria-label={prevLabel}
+            aria-label={resolvedPrevLabel}
           >
             <span aria-hidden>‹</span>
           </button>
@@ -435,7 +451,7 @@ export function WindowChoiceRail({
             disabled={!canScrollNext}
             className="absolute inset-y-0 right-0 z-10 inline-flex w-6 items-center justify-center bg-white text-gray-700 transition active:scale-95 hover:bg-accent-light hover:text-accent-dark disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-white"
             style={{ width: edgeControlWidth }}
-            aria-label={nextLabel}
+            aria-label={resolvedNextLabel}
           >
             <span aria-hidden>›</span>
           </button>
@@ -462,15 +478,27 @@ export function normalizeInviteTokenInput(value: string) {
 
 export function ManagementIntro({
   eyebrow,
+  eyebrowKey,
+  eyebrowParams,
   title,
+  titleKey,
+  titleParams,
   statusChip,
+  statusChipKey,
+  statusChipParams,
   statusChipPlacement = "top-right",
   localizedThemeInput
 }: {
   eyebrow?: string;
-  title: string;
+  eyebrowKey?: string;
+  eyebrowParams?: TranslationParams;
+  title?: string;
+  titleKey?: string;
+  titleParams?: TranslationParams;
   description: string;
   statusChip?: string | null;
+  statusChipKey?: string;
+  statusChipParams?: TranslationParams;
   secondaryNote?: string | null;
   disclosureStorageKey?: string;
   disclosureVariant?: "chip" | "subtle";
@@ -480,14 +508,19 @@ export function ManagementIntro({
   localizedThemeInput?: LocalizedCardThemeInput;
 }) {
   const { user } = useCurrentUser();
+  const { activeLanguage } = useAppLanguage();
   const localizedTheme = getLocalizedCardThemeForUserSurface({
+    visualThemeId: localizedThemeInput?.visualThemeId ?? user?.visualThemeId,
     homeTeamId: localizedThemeInput?.homeTeamId ?? user?.homeTeamId,
     countryCode: localizedThemeInput?.countryCode,
     marketCode: localizedThemeInput?.marketCode,
     preferredLanguage: localizedThemeInput?.preferredLanguage ?? user?.preferredLanguage
   });
   const localizedCardVars = getLocalizedCardCssVars(localizedTheme);
-  const shouldShowTopRightChip = Boolean(statusChip) && statusChipPlacement === "top-right";
+  const resolvedEyebrow = eyebrowKey ? t(activeLanguage, eyebrowKey, eyebrowParams) : eyebrow;
+  const resolvedTitle = titleKey ? t(activeLanguage, titleKey, titleParams) : title;
+  const resolvedStatusChip = statusChipKey ? t(activeLanguage, statusChipKey, statusChipParams) : statusChip;
+  const shouldShowTopRightChip = Boolean(resolvedStatusChip) && statusChipPlacement === "top-right";
   const controlSurfaceStyle = {
     backgroundColor: "var(--localized-card-control-surface)",
     color: "var(--localized-card-control-text)"
@@ -505,9 +538,9 @@ export function ManagementIntro({
     >
       <LocalizedCardBackground theme={localizedTheme} preserveRightControlZone={shouldShowTopRightChip} />
       <div className="flex items-start justify-between gap-3">
-        {eyebrow ? (
+        {resolvedEyebrow ? (
           <p className="relative text-sm font-bold uppercase tracking-wide text-[color:var(--localized-card-secondary-text)]">
-            {eyebrow}
+            {resolvedEyebrow}
           </p>
         ) : (
           <div />
@@ -517,19 +550,19 @@ export function ManagementIntro({
             className="ui-chip-sm relative shrink-0 font-semibold"
             style={controlSurfaceStyle}
           >
-            {statusChip}
+            {resolvedStatusChip}
           </div>
         ) : null}
       </div>
-      <div className="relative mt-3 min-w-0">
-        <h2 className="text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">{title}</h2>
-        {statusChip && statusChipPlacement === "below-title" ? (
+      <div className="relative mt-1 min-w-0">
+        <h2 className="text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">{resolvedTitle}</h2>
+        {resolvedStatusChip && statusChipPlacement === "below-title" ? (
           <div className="mt-3 flex justify-start">
             <div
               className="ui-chip-sm shrink-0 font-semibold"
               style={controlSurfaceStyle}
             >
-              {statusChip}
+              {resolvedStatusChip}
             </div>
           </div>
         ) : null}
@@ -546,6 +579,8 @@ export function HierarchyPanel({
   activeDetails?: string[];
 }) {
   const [isOpen, setIsOpen] = useSessionDisclosureState("my-groups:levels-section", false);
+  const { activeLanguage } = useAppLanguage();
+  const gt = (key: string, params?: TranslationParams) => t(activeLanguage, `groups.${key}`, params);
   const levels: Array<{
     key: AccessLevel;
     title: string;
@@ -555,37 +590,37 @@ export function HierarchyPanel({
   }> = [
     {
       key: "player",
-      title: "Player",
-      badge: "Gameplay only",
-      copy: "Can join groups, make picks, and follow leaderboards.",
+      title: gt("levelPlayerTitle"),
+      badge: gt("levelPlayerBadge"),
+      copy: gt("levelPlayerCopy"),
       tone: "success"
     },
     {
       key: "captain",
-      title: "Captain",
-      badge: "1 group",
-      copy: "Can run one group with lightweight invite and membership tools.",
+      title: gt("levelCaptainTitle"),
+      badge: gt("levelCaptainBadge"),
+      copy: gt("levelCaptainCopy"),
       tone: "neutral"
     },
     {
       key: "manager",
-      title: "Manager",
-      badge: "3 groups",
-      copy: "Can manage standard groups, invites, and social group tooling, without the League custom scoring layer.",
+      title: gt("levelManagerTitle"),
+      badge: gt("levelManagerBadge"),
+      copy: gt("levelManagerCopy"),
       tone: "warning"
     },
     {
       key: "director",
-      title: "League [L]",
-      badge: "10 groups · 100 seats",
-      copy: "Can manage a League, use League rules and local custom scoring, enable side-pick packages, and view League standings.",
+      title: gt("levelLeagueTitle"),
+      badge: gt("levelLeagueBadge"),
+      copy: gt("levelLeagueCopy"),
       tone: "warning"
     },
     {
       key: "managing_director",
-      title: "League Plus [L+]",
-      badge: "25 groups · 100 seats",
-      copy: "Can run a larger branded League with branding access and expanded League tooling, while keeping custom scoring local.",
+      title: gt("levelLeaguePlusTitle"),
+      badge: gt("levelLeaguePlusBadge"),
+      copy: gt("levelLeaguePlusCopy"),
       tone: "warning"
     }
   ];
@@ -594,7 +629,7 @@ export function HierarchyPanel({
     <section className="space-y-3">
       <div className="ui-card px-4 py-3">
         <div className="flex items-start justify-between gap-3">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">LEVELS</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-accent-dark">{gt("levels")}</p>
           <InlineDisclosureButton
             isOpen={isOpen}
             variant="subtle"
@@ -619,7 +654,7 @@ export function HierarchyPanel({
                 title={
                   <>
                     {level.title}{" "}
-                    {isActive ? <span className={`text-sm font-black ${accentClass}`}>(YOU)</span> : null}
+                    {isActive ? <span className={`text-sm font-black ${accentClass}`}>({gt("levelYou")})</span> : null}
                   </>
                 }
                 badge={level.badge}
@@ -756,7 +791,7 @@ export function ManagementCard({
           </div>
         ) : null}
       </div>
-      <div className="mt-4">{children}</div>
+      {children ? <div className="mt-4">{children}</div> : null}
       {actions ? <div className="mt-4 flex flex-wrap gap-2">{actions}</div> : null}
     </div>
   );
@@ -854,13 +889,15 @@ export function ManagementEmptyState({ message }: { message: string }) {
 }
 
 export function InviteEntryForm({
+  language,
   value,
   onValueChange,
   onSubmit,
-  submitLabel = "Open Invite",
+  submitLabel,
   isPending = false,
-  description = "Paste a full invite link or just the invite token."
+  description
 }: {
+  language?: string | null;
   value: string;
   onValueChange: (value: string) => void;
   onSubmit: () => void;
@@ -868,23 +905,26 @@ export function InviteEntryForm({
   isPending?: boolean;
   description?: string;
 }) {
+  const resolvedSubmitLabel = submitLabel ?? t(language, "groups.openInvite");
+  const resolvedDescription = description ?? t(language, "groups.inviteDescription");
+
   return (
     <div className="ui-card p-4">
-      <p className="text-sm font-black text-gray-950">Use an invite link</p>
-      <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">{description}</p>
+      <p className="text-sm font-black text-gray-950">{t(language, "groups.useInviteLink")}</p>
+      <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">{resolvedDescription}</p>
       <label className="mt-4 block">
-        <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Invite link or token</span>
+        <span className="text-xs font-bold uppercase tracking-wide text-gray-500">{t(language, "groups.inviteLinkOrToken")}</span>
         <input
           autoFocus
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
-          placeholder="Paste a link or token"
+          placeholder={t(language, "groups.pasteLinkOrToken")}
           className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
         />
       </label>
       <div className="mt-4">
         <ActionButton onClick={onSubmit} disabled={isPending} tone="accent" fullWidth>
-          {isPending ? "Opening..." : submitLabel}
+          {isPending ? t(language, "onboarding.opening") : resolvedSubmitLabel}
         </ActionButton>
       </div>
     </div>

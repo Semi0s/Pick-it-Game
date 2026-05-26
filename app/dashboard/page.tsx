@@ -1,6 +1,6 @@
 import { AppShell } from "@/components/AppShell";
 import { DashboardOverview } from "@/components/DashboardOverview";
-import { fetchDashboardGroupAccessDataForCurrentUser } from "@/app/my-groups/actions";
+import { fetchDashboardGroupAccessForUser } from "@/lib/dashboard-group-access";
 import { fetchDashboardCommandCenterData } from "@/lib/dashboard-home-data";
 import { fetchGlobalChallengeSummaryForUser } from "@/lib/global-challenge-data";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
@@ -25,7 +25,7 @@ export default async function DashboardPage() {
     ? await fetchDashboardCommandCenterData(user.id).catch(() => null)
     : null;
   const groupAccessResult = user
-    ? await fetchDashboardGroupAccessDataForCurrentUser().catch(() => null)
+    ? await fetchDashboardGroupAccessForUser(user.id).catch(() => null)
     : null;
 
   return (

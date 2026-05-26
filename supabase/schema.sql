@@ -324,6 +324,10 @@ create table public.user_settings (
   group_strategy_heart_pick_team_id text,
   onboarding_version_seen integer,
   followed_team_ids text[] not null default '{}',
+  dismissed_message_ids text[] not null default '{}',
+  visual_theme_id text
+    constraint user_settings_visual_theme_id_check
+    check (visual_theme_id is null or visual_theme_id in ('oranjekoorts')),
   projected_knockout_source text not null default 'seed_builder'
     constraint user_settings_projected_knockout_source_check
     check (projected_knockout_source in ('seed_builder', 'score_predictions')),

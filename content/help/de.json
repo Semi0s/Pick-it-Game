@@ -1,0 +1,44 @@
+{
+  "sections": [
+    {
+      "title": "Beginne mit der Gruppenphase",
+      "bullets": [
+        "Ordne jede Gruppe und wähle die Teams, die deiner Meinung nach den Round of 32 erreichen",
+        "Lege die ersten zwei Teams in jeder Gruppe fest",
+        "Wähle die qualifizierten Drittplatzierten, um das Bracket zu vervollständigen",
+        "Du kannst bis zum Turnierstart weiter bearbeiten"
+      ],
+      "tip": "Die Gruppenphase ist der Standard-Startpfad."
+    },
+    {
+      "title": "Punkte in der Gruppenphase",
+      "bullets": [
+        "Jede Gruppe ist bis zu 14 Punkte wert",
+        "Korrekter Sieger: 5 Punkte",
+        "Korrekter Zweiter: 3 Punkte",
+        "Korrektes drittes Team: 2 Punkte",
+        "Korrekte Top zwei in beliebiger Reihenfolge: 1 Punkt",
+        "Korrekter Qualifikationsstatus des Dritten: 1 Punkt",
+        "Komplette Gruppenreihenfolge korrekt: 2 Punkte"
+      ],
+      "tip": "Zwölf Gruppen mit je 14 Punkten ergeben maximal 168 Punkte."
+    },
+    {
+      "title": "Projizierter Round of 32",
+      "bullets": [
+        "Deine Gruppenphase-Tabelle erzeugt ein projiziertes Round-of-32-Bracket",
+        "Vor der offiziellen Setzung zeigt die projizierte Ansicht, welche Teams du weiterschickst",
+        "Sobald die offiziellen Qualifikanten bekannt sind, kannst du deinen Weg mit dem echten Bracket vergleichen",
+        "Nach Round of 32 nutzt Knockout nur noch die normalen Match-Pick-Karten"
+      ],
+      "tip": "Das ist die Brücke zwischen Gruppenphase und Knockout."
+    }
+  ],
+  "quickTips": [
+    "Schließe deine Gruppenphase-Tabelle vor Turnierbeginn ab",
+    "Nutze den projizierten Round of 32, um deine Knockout-Teams zu prüfen",
+    "Knockout öffnet, sobald die offiziellen Qualifikanten gesetzt sind",
+    "Ranglisten spiegeln die Punktzahl der aktuellen Phase wider",
+    "Erstelle und verwalte Gruppen für verschiedene Pools"
+  ]
+}

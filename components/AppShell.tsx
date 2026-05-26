@@ -8,16 +8,18 @@ import { NotificationsBell } from "@/components/NotificationsBell";
 import { TierIconBadge } from "@/components/TierIconBadge";
 import { PickItLogo } from "@/components/PickItLogo";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
-import { APP_TOAST_EVENT, markAppToastsReady, type AppToastDetail } from "@/lib/app-toast";
-import { getStrings } from "@/lib/strings";
+import { AppLanguageProvider, useResolvedAppLanguage } from "@/lib/app-language";
+import { APP_TOAST_EVENT, markAppToastsReady, showAppToast, type AppToastDetail } from "@/lib/app-toast";
+import { getStrings, t } from "@/lib/strings";
 import { getAppAccentCssVars, getLocalizedCardThemeForUserSurface } from "@/lib/localized-card-themes";
-import { PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, normalizeExplainerLanguage, type ExplainerLanguage, type SupportedLanguage } from "@/lib/i18n";
+import { type ExplainerLanguage } from "@/lib/i18n";
 import { shouldHideDockForPath } from "@/lib/play-mode";
 import { getConfiguredGroupPredictionMode, isFullScoresModeEnabled } from "@/lib/group-prediction-mode";
 import {
   fetchCurrentUserTrophies,
   fetchPendingTrophyCelebrations,
   markTrophyCelebrationRead,
+  updateCurrentUserPreferredLanguage,
   type PendingTrophyCelebration
 } from "@/lib/auth-client";
 import { getAccessLevel, shouldShowAccessBadge } from "@/lib/access-levels";
@@ -112,7 +114,6 @@ const TROPHY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_TOAST_DURATION_MS = 4200;
 const TIP_TOAST_DURATION_MS = 6200;
 const ERROR_TOAST_DURATION_MS = 7600;
-const HELPER_LANGUAGE_CHANGED_EVENT = "pickit:helper-language-changed";
 const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
   en: "English",
   es: "Español",
@@ -126,24 +127,14 @@ export function AppShell({ children }: AppShellProps) {
   const router = useRouter();
   const { user, isLoading } = useCurrentUser();
   const [onboardingFlag, setOnboardingFlag] = useState<string | null>(null);
-  const [dockLanguage, setDockLanguage] = useState<SupportedLanguage>(user?.preferredLanguage === "es" ? "es" : "en");
-  const [displayLanguage, setDisplayLanguage] = useState<ExplainerLanguage>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
-        if (storedValue) {
-          return normalizeExplainerLanguage(storedValue);
-        }
-      } catch (error) {
-        console.warn("Could not restore helper language in app shell.", error);
-      }
-    }
-
-    return "en";
-  });
+  const { activeLanguage, setActiveLanguage } = useResolvedAppLanguage(user, isLoading);
+  const dockLanguage = activeLanguage;
+  const displayLanguage = activeLanguage;
+  const [isUpdatingLanguage, setIsUpdatingLanguage] = useState(false);
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const copy = getStrings(dockLanguage);
   const accentTheme = getLocalizedCardThemeForUserSurface({
+    visualThemeId: user?.visualThemeId ?? null,
     homeTeamId: user?.homeTeamId ?? null,
     preferredLanguage: user?.preferredLanguage ?? null
   });
@@ -167,7 +158,7 @@ export function AppShell({ children }: AppShellProps) {
   const [headerHeight, setHeaderHeight] = useState(72);
   const isOnboardingExperience = shouldHideDockForPath(pathname, onboardingFlag);
   const onboardingExitHref = pathname === "/start-playing" ? "/dashboard" : "/start-playing";
-  const onboardingExitLabel = pathname === "/start-playing" ? "Exit" : "Back";
+  const onboardingExitLabel = pathname === "/start-playing" ? t(displayLanguage, "common.close") : t(displayLanguage, "common.back");
   const shouldShowOnboardingHeaderExit = isOnboardingExperience && pathname !== "/start-playing";
   const shouldShowAccountButton = pathname !== "/start-playing";
 
@@ -218,51 +209,6 @@ export function AppShell({ children }: AppShellProps) {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isLanguageMenuOpen]);
-
-  useEffect(() => {
-    if (!user) {
-      setDisplayLanguage("en");
-      return;
-    }
-
-    const syncDisplayLanguage = () => {
-      if (typeof window === "undefined") {
-        return;
-      }
-
-      try {
-        const storedValue = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
-        if (storedValue) {
-          setDisplayLanguage(normalizeExplainerLanguage(storedValue));
-          return;
-        }
-      } catch (error) {
-        console.warn("Could not read helper language in app shell.", error);
-      }
-
-      setDisplayLanguage(user.preferredLanguage === "es" ? "es" : "en");
-    };
-
-    syncDisplayLanguage();
-
-    const handleStorage = (event: StorageEvent) => {
-      if (!event.key || event.key === PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY) {
-        syncDisplayLanguage();
-      }
-    };
-
-    const handleHelperLanguageChange = () => {
-      syncDisplayLanguage();
-    };
-
-    window.addEventListener("storage", handleStorage);
-    window.addEventListener(HELPER_LANGUAGE_CHANGED_EVENT, handleHelperLanguageChange as EventListener);
-
-    return () => {
-      window.removeEventListener("storage", handleStorage);
-      window.removeEventListener(HELPER_LANGUAGE_CHANGED_EVENT, handleHelperLanguageChange as EventListener);
-    };
-  }, [user]);
 
   useEffect(() => {
     const dismissToastLater = (id: string, durationMs?: number) => {
@@ -330,56 +276,6 @@ export function AppShell({ children }: AppShellProps) {
       router.replace("/login");
     }
   }, [isLoading, router, user]);
-
-  useEffect(() => {
-    if (!user) {
-      setDockLanguage("en");
-      return;
-    }
-
-    const fallbackLanguage: SupportedLanguage = user.preferredLanguage === "es" ? "es" : "en";
-
-    const syncDockLanguage = () => {
-      if (typeof window === "undefined") {
-        setDockLanguage(fallbackLanguage);
-        return;
-      }
-
-      try {
-        const helperLanguage = window.localStorage.getItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY);
-        if (helperLanguage === "en" || helperLanguage === "es") {
-          setDockLanguage(helperLanguage);
-          return;
-        }
-      } catch (error) {
-        console.warn("Could not read helper language for dock labels.", error);
-      }
-
-      setDockLanguage(fallbackLanguage);
-    };
-
-    syncDockLanguage();
-
-    const handleStorage = (event: StorageEvent) => {
-      if (!event.key || event.key === PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY) {
-        syncDockLanguage();
-      }
-    };
-
-    const handleHelperLanguageChange = () => {
-      syncDockLanguage();
-    };
-
-    window.addEventListener("storage", handleStorage);
-    window.addEventListener("focus", handleHelperLanguageChange);
-    window.addEventListener(HELPER_LANGUAGE_CHANGED_EVENT, handleHelperLanguageChange as EventListener);
-
-    return () => {
-      window.removeEventListener("storage", handleStorage);
-      window.removeEventListener("focus", handleHelperLanguageChange);
-      window.removeEventListener(HELPER_LANGUAGE_CHANGED_EVENT, handleHelperLanguageChange as EventListener);
-    };
-  }, [user]);
 
   useEffect(() => {
     if (!isLoading && user?.needsLegalAcceptance) {
@@ -573,27 +469,28 @@ export function AppShell({ children }: AppShellProps) {
   if (isLoading || !user || user.needsProfileSetup || user.needsLegalAcceptance) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-white px-5">
-        <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
-          Loading PICK-IT!...
+        <div className="rounded-[1rem] bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
+          {t(displayLanguage, "common.loading")}
         </div>
       </main>
     );
   }
 
   return (
-    <div
-      className="min-h-screen overflow-x-clip bg-white text-gray-950"
-      style={
-        {
-          paddingBottom: isOnboardingExperience ? "0px" : "calc(4.85rem + env(safe-area-inset-bottom, 0px))",
-          "--app-header-height": `${headerHeight}px`,
-          ...getAppAccentCssVars(accentTheme)
-        } as CSSProperties
-      }
-    >
+    <AppLanguageProvider activeLanguage={activeLanguage} setActiveLanguage={setActiveLanguage}>
+      <div
+        className="min-h-screen overflow-x-clip bg-white text-gray-950"
+        style={
+          {
+            paddingBottom: isOnboardingExperience ? "0px" : "calc(4.85rem + env(safe-area-inset-bottom, 0px))",
+            "--app-header-height": `${headerHeight}px`,
+            ...getAppAccentCssVars(accentTheme)
+          } as CSSProperties
+        }
+      >
       <header ref={headerRef} className="sticky top-0 z-20 bg-white">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-2.5 px-3 py-2 sm:px-4">
-          <Link href="/dashboard" className="shrink-0" aria-label="PICK-IT! World Cup 2026 home">
+          <Link href="/dashboard" className="shrink-0" aria-label={t(displayLanguage, "dashboard.homeAria")}>
             <PickItLogo
               alt="PICK-IT! World Cup 2026"
               sizes="(max-width: 430px) 119px, (max-width: 640px) 148px, 187px"
@@ -605,7 +502,7 @@ export function AppShell({ children }: AppShellProps) {
             {shouldShowOnboardingHeaderExit ? (
               <Link
                 href={onboardingExitHref}
-                className="inline-flex h-8 items-center rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light max-[399px]:px-2.5 max-[399px]:text-[10px] sm:h-9 sm:px-3"
+                className="inline-flex h-8 items-center rounded-[0.85rem] border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light max-[399px]:px-2.5 max-[399px]:text-[10px] sm:h-9 sm:px-3"
               >
                 {onboardingExitLabel}
               </Link>
@@ -618,34 +515,40 @@ export function AppShell({ children }: AppShellProps) {
               <button
                 type="button"
                 onClick={() => setIsLanguageMenuOpen((current) => !current)}
-                className="inline-flex h-8 items-center gap-1 rounded-md border border-gray-300 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light max-[399px]:h-8 max-[399px]:gap-1.5 max-[399px]:px-2.5 max-[399px]:text-[10px] sm:h-9 sm:px-2"
+                className="inline-flex h-8 items-center gap-1 rounded-[0.85rem] border border-gray-300 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light max-[399px]:h-8 max-[399px]:gap-1.5 max-[399px]:px-2.5 max-[399px]:text-[10px] sm:h-9 sm:px-2"
                 aria-haspopup="menu"
                 aria-expanded={isLanguageMenuOpen}
-                aria-label={`Translate helper copy. Current language: ${EXPLAINER_LANGUAGE_LABELS[displayLanguage]}`}
+                aria-label={t(displayLanguage, "common.language")}
               >
                 <Globe aria-hidden className="h-[18px] w-[18px] text-accent-dark max-[399px]:h-[15px] max-[399px]:w-[15px]" />
                 <span>{displayLanguage.toUpperCase()}</span>
                 <ChevronDown aria-hidden className="h-3 w-3 text-gray-500 max-[399px]:h-2.5 max-[399px]:w-2.5" />
               </button>
               {isLanguageMenuOpen ? (
-                <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
+                <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-[1rem] border border-gray-200 bg-white p-1 shadow-lg">
                   {(Object.keys(EXPLAINER_LANGUAGE_LABELS) as ExplainerLanguage[]).map((language) => (
                     <button
                       key={language}
                       type="button"
-                      onClick={() => {
-                        setDisplayLanguage(language);
+                      disabled={isUpdatingLanguage}
+                      onClick={async () => {
+                        setActiveLanguage(language);
                         setIsLanguageMenuOpen(false);
-                        try {
-                          window.localStorage.setItem(PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY, language);
-                          window.dispatchEvent(new CustomEvent(HELPER_LANGUAGE_CHANGED_EVENT));
-                        } catch (error) {
-                          console.warn("Could not persist helper language in app shell.", error);
+
+                        if (user) {
+                          setIsUpdatingLanguage(true);
+                          const result = await updateCurrentUserPreferredLanguage(language);
+                          if (!result.ok) {
+                            showAppToast({ tone: "error", text: result.message });
+                          } else {
+                            router.refresh();
+                          }
+                          setIsUpdatingLanguage(false);
                         }
                       }}
-                      className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm font-semibold transition ${
+                      className={`flex w-full items-center justify-between rounded-[0.75rem] px-3 py-2 text-left text-sm font-semibold transition ${
                         language === displayLanguage ? "bg-accent-light text-accent-dark" : "text-gray-700 hover:bg-gray-50"
-                      }`}
+                      } disabled:cursor-not-allowed disabled:opacity-60`}
                       role="menuitem"
                     >
                       <span>{EXPLAINER_LANGUAGE_LABELS[language]}</span>
@@ -658,11 +561,11 @@ export function AppShell({ children }: AppShellProps) {
             {shouldShowAccountButton ? (
               <Link
                 href="/profile"
-                aria-label="Account"
-                className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1.5 text-[11px] font-semibold text-gray-700 max-[399px]:h-8 max-[399px]:gap-1 max-[399px]:px-2.25 max-[399px]:py-0 max-[399px]:text-[10px] sm:px-2.5"
+                aria-label={copy.myProfile}
+                className="inline-flex items-center gap-1.5 rounded-[0.85rem] border border-gray-300 px-2 py-1.5 text-[11px] font-semibold text-gray-700 max-[399px]:h-8 max-[399px]:gap-1 max-[399px]:px-2.25 max-[399px]:py-0 max-[399px]:text-[10px] sm:px-2.5"
               >
                 <CircleUserRound aria-hidden className="h-[17.5px] w-[17.5px] max-[399px]:h-[15px] max-[399px]:w-[15px]" />
-                <span className="max-[430px]:hidden">Account</span>
+                <span className="max-[430px]:hidden">{t(dockLanguage, "profile.profile")}</span>
               </Link>
             ) : null}
           </div>
@@ -671,7 +574,7 @@ export function AppShell({ children }: AppShellProps) {
 
       <main className="mx-auto w-full max-w-4xl px-4 pb-5 pt-6">
         {readinessBanner ? (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+          <div className="mb-4 rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
             {readinessBanner}
           </div>
         ) : null}
@@ -748,6 +651,7 @@ export function AppShell({ children }: AppShellProps) {
         </nav>
       )}
     </div>
+    </AppLanguageProvider>
   );
 }
 

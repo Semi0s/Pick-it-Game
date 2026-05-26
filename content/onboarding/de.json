@@ -1,0 +1,5 @@
+{
+  "version": "v1",
+  "fallback": true,
+  "notes": "Onboarding-Inhalte können im nächsten Extraktionsschritt aus Content-Dateien geladen werden."
+}

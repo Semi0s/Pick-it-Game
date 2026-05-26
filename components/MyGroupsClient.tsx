@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChangeEvent, Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Info } from "lucide-react";
+import { fetchGroupInvitePreviewAction } from "@/app/group-invite-preview/actions";
 import {
   acceptGroupInviteAction,
   assignCaptainsPassAction,
@@ -17,7 +18,6 @@ import {
   deactivateManagedGroupInviteCodeAction,
   deleteManagedGroupAction,
   fetchManagedGroupDetailAction,
-  fetchGroupInvitePreviewAction,
   fetchMyGroupsAction,
   removeManagedGroupAllowedEmailAction,
   removeManagedGroupAvatarAction,
@@ -41,15 +41,18 @@ import { OrganizationBrandingPanel } from "@/components/OrganizationBrandingPane
 import { TierIconBadge } from "@/components/TierIconBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { showAppToast } from "@/lib/app-toast";
+import { useAppLanguage } from "@/lib/app-language";
 import { formatDateOnly } from "@/lib/date-time";
 import {
   appendExplainerLanguageToPath,
   appendLanguageToPath,
   normalizeExplainerLanguage,
   normalizeLanguage,
+  PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY,
   type ExplainerLanguage,
   type SupportedLanguage
 } from "@/lib/i18n";
+import { t, type TranslationParams } from "@/lib/strings";
 import {
   ActionButton,
   HierarchyPanel,
@@ -83,7 +86,6 @@ type MyGroupsClientProps = {
 };
 
 type ToastState = { tone: "success" | "error" | "tip"; text: string } | null;
-const PLAY_EXPLAINER_LANGUAGE_STORAGE_KEY = "pickit:play-explainer-language";
 const GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-expanded-groups";
 const GROUP_INVITE_CODE_SECTION_STORAGE_KEY = "my-groups-expanded-group-invite-code-sections";
 const GROUP_LIMIT_SECTION_STORAGE_KEY = "my-groups-expanded-group-limit-sections";
@@ -99,6 +101,24 @@ const TROPHY_PROMPTS = [
   { name: "Drama King", icon: "🎭", description: "Never met a chaotic scoreline they didn't love." }
 ] as const;
 
+function getAccessLevelLabelKey(accessLevel: string) {
+  switch (accessLevel) {
+    case "captain":
+      return "levelCaptainTitle";
+    case "manager":
+      return "levelManagerTitle";
+    case "director":
+      return "levelLeagueTitle";
+    case "managing_director":
+      return "levelLeaguePlusTitle";
+    case "super_admin":
+      return "levelSuperAdminTitle";
+    case "player":
+    default:
+      return "levelPlayerTitle";
+  }
+}
+
 type GroupAvatarDraft = {
   file: File | null;
   previewUrl: string | null;
@@ -107,6 +127,7 @@ type GroupAvatarDraft = {
 
 export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLanguage, forceCreateGroupOpen }: MyGroupsClientProps) {
   const router = useRouter();
+  const { activeLanguage } = useAppLanguage();
   const [summary, setSummary] = useState<FetchMyGroupsResult | null>(null);
   const [message, setMessage] = useState<ToastState>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -585,7 +606,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const summaryGroups = useMemo(() => (summary?.ok ? summary.groups : []), [summary]);
   const currentUserId = summary?.ok ? summary.currentUser.userId : null;
   const canSelfAwardTrophies = summary?.ok ? summary.currentUser.role === "admin" : false;
-  const currentUser = summary?.ok ? summary.currentUser : null;
+  const currentUser = summary?.ok ? { ...summary.currentUser, preferredLanguage: activeLanguage } : null;
+  const groupsLanguage = currentUser?.preferredLanguage ?? activeLanguage;
+  const tg = (key: string, params?: TranslationParams) => t(groupsLanguage, `groups.${key}`, params);
   const isSignedIn = Boolean(currentUser);
   const hasAnyGroups = summary?.ok ? summary.groupAccess.hasAnyGroups : false;
   const tierAccess = summary?.ok ? summary.tierAccess : null;
@@ -594,43 +617,48 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       ? summary.currentUser.accessLevel
       : undefined;
   const hierarchyActiveDetails = useMemo(() => {
+    const tr = (key: string, params?: TranslationParams) => t(groupsLanguage, `groups.${key}`, params);
+
     if (isLoading) {
-      return ["Loading your access..."];
+      return [tr("loadingAccess")];
     }
 
     if (!summary?.ok) {
-      return [summary?.message ?? "Sign in to manage groups."];
+      return [summary?.message ?? tr("signInToManageGroups")];
     }
 
     if (summary.currentUser.accessLevel === "super_admin") {
       return [
-        `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
-        "Managed groups: Unlimited",
-        "New group limit: Unlimited",
-        "Scope: All groups"
+        tr("joinedGroupsDetail", { count: summary.groupAccess.joinedGroupCount }),
+        tr("managedGroupsUnlimited"),
+        tr("newGroupLimitUnlimited"),
+        tr("scopeAllGroups")
       ];
     }
 
     if (summary.tierAccess.capabilities.canSeeOrganizerControls) {
       return [
-        `Tier: ${summary.tierAccess.label}`,
-        `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
-        `Managed groups: ${summary.groupAccess.managedGroupCount} / ${summary.tierAccess.limits.maxGroups}`,
-        `Group member cap: ${summary.tierAccess.limits.maxMembersPerGroup} members`,
+        tr("tierDetail", { level: tr(getAccessLevelLabelKey(summary.tierAccess.accessLevel)) }),
+        tr("joinedGroupsDetail", { count: summary.groupAccess.joinedGroupCount }),
+        tr("managedGroupsDetail", {
+          count: summary.groupAccess.managedGroupCount,
+          limit: summary.tierAccess.limits.maxGroups ?? 0
+        }),
+        tr("groupMemberCapDetail", { count: summary.tierAccess.limits.maxMembersPerGroup }),
         summary.tierAccess.limits.maxTotalPlayers
-          ? `League player cap: ${summary.tierAccess.limits.maxTotalPlayers} total players`
-          : "League player cap: Not applied at this tier",
-        "Scope: Assigned groups only"
+          ? tr("leaguePlayerCapDetail", { count: summary.tierAccess.limits.maxTotalPlayers })
+          : tr("leaguePlayerCapNotApplied"),
+        tr("scopeAssignedGroupsOnly")
       ];
     }
 
     return [
-      `Joined groups: ${summary.groupAccess.joinedGroupCount}`,
-      "Managed groups: None",
-      "New group limit: Not enabled",
-      "Scope: Joined groups only"
+      tr("joinedGroupsDetail", { count: summary.groupAccess.joinedGroupCount }),
+      tr("managedGroupsNone"),
+      tr("newGroupLimitNotEnabled"),
+      tr("scopeJoinedGroupsOnly")
     ];
-  }, [isLoading, summary]);
+  }, [groupsLanguage, isLoading, summary]);
   const isSuperAdmin = summary?.ok && summary.currentUser.role === "admin";
   const managerGroupLimitReached = Boolean(
     summary?.ok &&
@@ -1263,12 +1291,15 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   return (
     <section className="space-y-5">
       <ManagementIntro
-        eyebrow="My Groups"
-        title="Play with friends"
-        description="Players see the groups they belong to. Organizers get the group controls their tier allows."
+        eyebrow={t(currentUser?.preferredLanguage, "groups.myGroups")}
+        title={t(currentUser?.preferredLanguage, "groups.playWithFriends")}
+        description={t(currentUser?.preferredLanguage, "groups.introDescription")}
         statusChip={
           summary?.ok
-            ? `${summary.groupAccess.joinedGroupCount} joined · ${summary.groupAccess.managedGroupCount} managed`
+            ? t(currentUser?.preferredLanguage, "groups.joinedManagedSummary", {
+                joinedCount: summary.groupAccess.joinedGroupCount,
+                managedCount: summary.groupAccess.managedGroupCount
+              })
             : null
         }
         disclosureStorageKey="my-groups-intro"
@@ -1483,6 +1514,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               Ask a manager for a fresh invite link when you are ready to join your next group.
             </p>
             <InviteEntryForm
+              language={currentUser?.preferredLanguage}
               value={inviteEntryValue}
               onValueChange={(value) => {
                 setInviteEntryValue(value);
@@ -1491,7 +1523,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                 }
               }}
               onSubmit={handleInviteEntrySubmit}
-              submitLabel="Open Invite"
+              submitLabel={t(currentUser?.preferredLanguage, "groups.openInvite")}
             />
           </div>
         </ManagementCard>
@@ -1506,11 +1538,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               <div className="min-w-0 flex-1">
                 <DismissibleHelperText
                   storageKey={groupLimitWarningStorageKey}
-                  dismissLabel="Hide this limit note"
+                  dismissLabel={t(groupsLanguage, "common.close")}
                 >
                   <p className="text-[11px] font-semibold leading-4 text-amber-800">
-                    Your current tier allows {summary?.ok ? summary.tierAccess.limits.maxGroups : 0} group
-                    {summary?.ok && summary.tierAccess.limits.maxGroups === 1 ? "" : "s"}.
+                    {tg("tierGroupsAllowed", { count: summary?.ok ? summary.tierAccess.limits.maxGroups : 0 })}
                   </p>
                 </DismissibleHelperText>
               </div>
@@ -1520,11 +1551,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         ) : (
           <form
             onSubmit={handleCreateGroup}
-            className="space-y-4 rounded-lg border border-accent-light bg-accent-light/20 p-4 transition-colors"
+            className="space-y-4 rounded-[1.15rem] border border-accent-light bg-accent-light/20 p-4 transition-colors"
           >
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-lg font-bold">
-                {summary?.ok && summary.currentUser.role === "admin" ? "Create a group (Unlimited)" : "Create a group"}
+                {summary?.ok && summary.currentUser.role === "admin" ? tg("createGroupUnlimited") : tg("createGroup")}
               </h3>
               <InlineDisclosureButton
                 isOpen={isCreateGroupOpen}
@@ -1534,7 +1565,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             {isCreateGroupOpen ? (
               <>
                 <label className="block">
-                  <span className="text-sm font-bold text-gray-800">Group name</span>
+                  <span className="text-sm font-bold text-gray-800">{tg("groupName")}</span>
                   <input
                     required
                     value={groupName}
@@ -1543,21 +1574,21 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   />
                 </label>
                 <label className="block">
-                  <span className="text-sm font-bold text-gray-800">Short description</span>
+                  <span className="text-sm font-bold text-gray-800">{tg("shortDescription")}</span>
                   <textarea
                     value={groupDescription}
                     onChange={(event) => setGroupDescription(event.target.value)}
                     rows={2}
                     maxLength={250}
-                    placeholder="The family World Cup pool - winner gets eternal bragging rights."
+                    placeholder={tg("groupDescriptionPlaceholder")}
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                   />
                   <p className="mt-2 text-xs font-semibold text-gray-500">
-                    Optional. Keep it short and friendly.
+                    {tg("optionalShortFriendly")}
                   </p>
                 </label>
                 <label className="block">
-                  <span className="text-sm font-bold text-gray-800">Membership limit</span>
+                  <span className="text-sm font-bold text-gray-800">{tg("membershipLimit")}</span>
                   <input
                     type="number"
                     min={1}
@@ -1566,18 +1597,18 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                     placeholder={
                       summary?.ok && summary.currentUser.role !== "admin" && tierAccess?.limits.maxMembersPerGroup
-                        ? `Up to ${tierAccess.limits.maxMembersPerGroup}`
-                        : "Leave blank for the default"
+                        ? tg("upToMembers", { count: tierAccess.limits.maxMembersPerGroup })
+                        : tg("leaveBlankDefault")
                     }
                   />
                   {summary?.ok && summary.currentUser.role !== "admin" && tierAccess?.limits.maxMembersPerGroup ? (
                     <p className="mt-2 text-xs font-semibold text-gray-500">
-                      Your current tier allows up to {tierAccess.limits.maxMembersPerGroup} members per group.
+                      {tg("tierMembersPerGroup", { count: tierAccess.limits.maxMembersPerGroup })}
                     </p>
                   ) : null}
                 </label>
                 <label className="block">
-                  <span className="text-sm font-bold text-gray-800">Invite specific players by email</span>
+                  <span className="text-sm font-bold text-gray-800">{tg("inviteSpecificPlayers")}</span>
                   <textarea
                     value={createGroupInviteEmails}
                     onChange={(event) => setCreateGroupInviteEmails(event.target.value)}
@@ -1586,14 +1617,14 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     placeholder="name@example.com, teammate@example.com"
                   />
                   <p className="mt-2 text-xs font-semibold text-gray-500">
-                    Optional. Use commas or new lines. We&apos;ll create pending email invites without changing the invite-code flow.
+                    {tg("inviteEmailsHelp")}
                   </p>
                 </label>
                 <p className="text-xs font-semibold text-gray-500">
-                  You can add an avatar, access settings, and a Captain&apos;s Pass after the group is created.
+                  {tg("afterCreateGroupHelp")}
                 </p>
                 <ActionButton type="submit" disabled={isCreatingGroup} tone="accent" fullWidth>
-                  {isCreatingGroup ? "Creating..." : "Create Group"}
+                  {isCreatingGroup ? tg("creating") : tg("createGroupButton")}
                 </ActionButton>
               </>
             ) : null}
@@ -1603,29 +1634,29 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
       <section className="space-y-3">
         <div>
-          <h3 className="text-xl font-black">Managed Groups</h3>
+          <h3 className="text-xl font-black">{tg("managedGroupsHeading")}</h3>
         </div>
         {isSuperAdmin ? (
           <label className="ui-card block p-4">
-            <span className="text-sm font-bold text-gray-800">Find a group</span>
+            <span className="text-sm font-bold text-gray-800">{tg("findGroup")}</span>
             <input
               value={superAdminGroupQuery}
               onChange={(event) => setSuperAdminGroupQuery(event.target.value)}
-              placeholder="Search by group name"
+              placeholder={tg("searchByGroupName")}
               className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
             />
           </label>
         ) : null}
         {isLoading ? (
-          <ManagementEmptyState message="Loading groups..." />
+          <ManagementEmptyState message={tg("loadingGroups")} />
         ) : filteredGroups.length === 0 ? (
           <ManagementEmptyState
             message={
               isSuperAdmin && superAdminGroupQuery.trim()
-                ? "No groups match that search."
+                ? tg("noGroupsMatchSearch")
                 : summary?.ok && !summary.groupAccess.managedGroupCount
-                  ? "No managed groups yet. Create one if your tier includes group management."
-                  : "No managed groups available right now."
+                  ? tg("noManagedGroupsYet")
+                  : tg("noManagedGroupsAvailable")
             }
           />
         ) : (
@@ -1679,7 +1710,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const captainPass = detailedGroup?.captainPass ?? null;
             const isCaptainInviteHelperVisible = Boolean(captainPass?.canCurrentUserUseInvites && !group.canManage);
             const inviteAccessChipLabel =
-              group.accessMode === "restricted_by_email" ? "Email" : group.accessMode === "closed" ? "Closed" : "Code";
+              group.accessMode === "restricted_by_email" ? tg("accessEmail") : group.accessMode === "closed" ? tg("accessClosed") : tg("accessCode");
 
             return (
               <ManagementCard
@@ -1694,7 +1725,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         </div>
                       </div>
                       <div className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-gray-700">
-                        {compactMemberCount} member{compactMemberCount === 1 ? "" : "s"}
+                        {tg("membersCount", { count: compactMemberCount })}
                       </div>
                     </div>
                     <div className="mt-3 flex items-center justify-between gap-3">
@@ -1711,7 +1742,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     </div>
                   </div>
                 }
-                className="bg-gray-50"
+                className="bg-gray-50 !pb-2.5"
               >
                 {isExpanded ? (
                   <>
@@ -1720,7 +1751,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         href={getGroupLeaderboardHref(group)}
                         className="inline-flex rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
                       >
-                        Leaderboard
+                        {tg("leaderboard")}
                       </Link>
                     </div>
                     {group.canManage ? (
@@ -1728,9 +1759,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         <div className="ui-card p-4">
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group Profile</h4>
+                              <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">{tg("groupProfile")}</h4>
                               <p className="mt-1 text-xs font-semibold text-gray-500">
-                                Update the group name, avatar, and short description.
+                                {tg("groupProfileHelp")}
                               </p>
                             </div>
                             <Avatar name={groupProfileDraft.name || group.name} avatarUrl={avatarPreviewUrl} size="md" />
@@ -1756,19 +1787,19 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 <div className="min-w-0 flex-1">
                                   <p className="text-sm font-bold text-gray-900">
                                     {avatarDraft.file
-                                      ? "Avatar selected"
+                                      ? tg("avatarSelected")
                                       : avatarDraft.removeCurrent
-                                        ? "Avatar will be removed"
+                                        ? tg("avatarWillBeRemoved")
                                         : group.avatarUrl
-                                          ? "Avatar saved"
-                                          : "No avatar yet"}
+                                          ? tg("avatarSaved")
+                                          : tg("noAvatarYet")}
                                   </p>
                                   <p className="mt-1 text-xs font-semibold text-gray-500">
                                     {avatarDraft.file
-                                      ? "Local preview shown. Save Group Profile to apply it."
+                                      ? tg("avatarSelectedHelp")
                                       : avatarDraft.removeCurrent
-                                        ? "Save Group Profile to remove this avatar."
-                                        : "Optional. If you skip it, your initials stay in place."}
+                                        ? tg("avatarRemoveHelp")
+                                        : tg("avatarOptionalHelp")}
                                   </p>
                                 </div>
                               </div>
@@ -1779,7 +1810,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                   onClick={() => groupAvatarInputRefs.current[group.id]?.click()}
                                   fullWidth
                                 >
-                                  Upload Avatar
+                                  {tg("uploadAvatar")}
                                 </ActionButton>
                                 {group.avatarUrl || avatarDraft.previewUrl ? (
                                   <ActionButton
@@ -1790,7 +1821,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     }}
                                     fullWidth
                                   >
-                                    Remove Avatar
+                                    {tg("removeAvatar")}
                                   </ActionButton>
                                 ) : (
                                   <div />
@@ -1798,7 +1829,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               </div>
                             </div>
                             <label className="block">
-                              <span className="text-sm font-bold text-gray-800">Group name</span>
+                              <span className="text-sm font-bold text-gray-800">{tg("groupName")}</span>
                               <input
                                 value={groupProfileDraft.name}
                                 onChange={(event) =>
@@ -1814,7 +1845,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               />
                             </label>
                             <label className="block">
-                              <span className="text-sm font-bold text-gray-800">Short description</span>
+                              <span className="text-sm font-bold text-gray-800">{tg("shortDescription")}</span>
                               <textarea
                                 value={groupProfileDraft.description}
                                 onChange={(event) =>
@@ -1837,7 +1868,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               tone={isGroupProfileSaveReady ? "accent" : "neutral"}
                               fullWidth
                             >
-                              {actionKey === `save-group-profile-${group.id}` ? "Saving..." : "Save Group Profile"}
+                              {actionKey === `save-group-profile-${group.id}` ? tg("saving") : tg("saveGroupProfile")}
                             </ActionButton>
                           </div>
                         </div>
@@ -1845,19 +1876,19 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         <div className="ui-card p-4">
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Restricted Email List</h4>
+                              <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">{tg("restrictedEmailList")}</h4>
                               <p className="mt-1 text-xs font-semibold text-gray-500">
-                                Approved emails for restricted groups. Existing members stay in place if you turn restriction on later.
+                                {tg("restrictedEmailListHelp")}
                               </p>
                             </div>
                             <ManagementBadge
-                              label={`${detailedGroup?.allowedEmails.length ?? 0} approved`}
+                              label={tg("approvedCount", { count: detailedGroup?.allowedEmails.length ?? 0 })}
                               tone={group.accessMode === "restricted_by_email" ? "accent" : "neutral"}
                             />
                           </div>
                           <div className="mt-3 space-y-3">
                             <label className="block">
-                              <span className="text-sm font-bold text-gray-800">Add approved emails</span>
+                              <span className="text-sm font-bold text-gray-800">{tg("addApprovedEmails")}</span>
                               <textarea
                                 value={allowedEmailsDrafts[group.id] ?? ""}
                                 onChange={(event) =>
@@ -1872,7 +1903,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               />
                             </label>
                             <label className="block">
-                              <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Upload CSV</span>
+                              <span className="text-xs font-bold uppercase tracking-wide text-gray-500">{tg("uploadCsv")}</span>
                               <input
                                 type="file"
                                 accept=".csv,text/csv"
@@ -1893,7 +1924,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               />
                             </label>
                             <p className="text-xs font-semibold text-gray-500">
-                              CSV support uses the <code>email</code> column when present. XLSX can follow later if we add it cleanly.
+                              {tg("csvSupportHelp")}
                             </p>
                             <ActionButton
                               type="button"
@@ -1901,7 +1932,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               onClick={() => void handleSaveAllowedEmails(group)}
                               fullWidth
                             >
-                              {actionKey === `save-allowed-emails-${group.id}` ? "Saving..." : "Save Approved Emails"}
+                              {actionKey === `save-allowed-emails-${group.id}` ? tg("saving") : tg("saveApprovedEmails")}
                             </ActionButton>
                             <div className="space-y-2">
                               {(detailedGroup?.allowedEmails ?? []).length > 0 ? (
@@ -1910,7 +1941,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     <div className="min-w-0">
                                       <p className="truncate text-sm font-black text-gray-950">{entry.email}</p>
                                       <p className="mt-1 text-xs font-semibold text-gray-500">
-                                        {entry.status === "joined" ? `Joined as ${entry.joinedUserName ?? "player"}` : "Allowed"}
+                                        {entry.status === "joined" ? tg("joinedAsPlayer", { name: entry.joinedUserName ?? "player" }) : tg("allowed")}
                                       </p>
                                     </div>
                                     <ActionButton
@@ -1919,13 +1950,13 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                       disabled={actionKey === `remove-allowed-email-${entry.id}`}
                                       onClick={() => void handleRemoveAllowedEmail(group, entry.id)}
                                     >
-                                      Remove
+                                      {tg("remove")}
                                     </ActionButton>
                                   </div>
                                 ))
                               ) : (
                                 <p className="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
-                                  No approved emails yet.
+                                  {tg("noApprovedEmails")}
                                 </p>
                               )}
                             </div>

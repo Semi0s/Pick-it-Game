@@ -35,6 +35,8 @@ export type LeaderboardActivityItem = {
   eventId: string | null;
   eventType: LeaderboardEventRow["event_type"];
   message: string;
+  messageKey?: string | null;
+  messageParams?: Record<string, string | number | null>;
   createdAt: string;
   pointsDelta?: number | null;
   userName?: string | null;
@@ -125,6 +127,7 @@ async function fetchRecentLeaderboardActivity(options: {
       eventId: event.id,
       eventType: event.event_type,
       message: event.message ?? formatFallbackMessage(event),
+      ...getFallbackMessageDescriptor(event),
       createdAt: event.created_at,
       pointsDelta: event.points_delta,
       userName: userRow?.name ?? null,
@@ -159,6 +162,8 @@ function buildDailyWinnerActivityItems(winners: DailyWinner[]): LeaderboardActiv
     eventId: null,
     eventType: "daily_winner",
     message: `${winner.name} is today's Daily Winner`,
+    messageKey: "leaderboard.dailyWinner",
+    messageParams: { name: winner.name, points: winner.points },
     createdAt,
     pointsDelta: winner.points,
     userName: winner.name,
@@ -169,6 +174,18 @@ function buildDailyWinnerActivityItems(winners: DailyWinner[]): LeaderboardActiv
     canReact: false,
     canComment: false
   }));
+}
+
+function getFallbackMessageDescriptor(event: LeaderboardEventRow): Pick<LeaderboardActivityItem, "messageKey" | "messageParams"> {
+  if (event.message) {
+    return {};
+  }
+
+  if (event.event_type === "daily_winner") {
+    return { messageKey: "leaderboard.dailyWinner", messageParams: { name: "A player", points: event.points_delta ?? 0 } };
+  }
+
+  return {};
 }
 
 function formatFallbackMessage(event: LeaderboardEventRow) {

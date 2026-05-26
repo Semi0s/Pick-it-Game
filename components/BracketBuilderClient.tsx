@@ -6,7 +6,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, GripVertical, TriangleAlert, X } from "lucide-react";
 import { saveLightSeedBuilderAction } from "@/app/groups/actions";
 import { ActionButton, InlineDisclosureButton } from "@/components/player-management/Shared";
+import { useAppLanguage } from "@/lib/app-language";
 import { showAppToast } from "@/lib/app-toast";
+import { formatDate, formatTime } from "@/lib/i18n-format";
 import { storeGroupsEntryIntent } from "@/lib/groups-entry-intent";
 import {
   buildDefaultLightSeedBuilderSnapshot,
@@ -23,6 +25,7 @@ import {
 import type { KnockoutBracketEditorView } from "@/lib/bracket-predictions";
 import type { MatchWithTeams, Team } from "@/lib/types";
 import { getLocalGroupMatches } from "@/lib/group-matches";
+import { t } from "@/lib/strings";
 
 type RankedTeam = {
   id: string;
@@ -43,6 +46,18 @@ type BracketBuilderClientProps = {
   groupStageDueAt?: string | null;
   knockoutProjectedPreview?: KnockoutBracketEditorView | null;
   fullScoresEnabled?: boolean;
+  language?: string | null;
+};
+
+type CustomDragGhost = {
+  kind: "group" | "third";
+  teamId: string;
+  x: number;
+  y: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
 };
 
 type BracketPreviewSide = {
@@ -83,11 +98,8 @@ function formatProjectedSeedLabel(sourceLabel: string | null | undefined) {
   return normalized;
 }
 
-function formatSavedTimeLabel(timestamp: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date(timestamp));
+function formatSavedTimeLabel(timestamp: string, language?: string | null) {
+  return formatTime(timestamp, language);
 }
 
 function moveItem<T>(items: T[], index: number, direction: -1 | 1) {
@@ -149,10 +161,13 @@ export function BracketBuilderClient({
   roundOf32Placeholders,
   groupStageDueAt = null,
   knockoutProjectedPreview = null,
-  fullScoresEnabled = true
+  fullScoresEnabled = true,
+  language: initialLanguage = null
 }: BracketBuilderClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { activeLanguage } = useAppLanguage();
+  const language = activeLanguage ?? initialLanguage;
   const groupSwipeTouchRef = useRef<{ startX: number | null; startY: number | null; enabled: boolean }>({
     startX: null,
     startY: null,
@@ -165,6 +180,12 @@ export function BracketBuilderClient({
     pointerId: number;
     startX: number;
     startY: number;
+    currentX: number;
+    currentY: number;
+    offsetX: number;
+    offsetY: number;
+    width: number;
+    height: number;
     isDragging: boolean;
     targetId: string;
   } | null>(null);
@@ -235,6 +256,7 @@ export function BracketBuilderClient({
   const [dragOverTeamId, setDragOverTeamId] = useState<string | null>(null);
   const [draggedThirdPlaceTeamId, setDraggedThirdPlaceTeamId] = useState<string | null>(null);
   const [dragOverThirdPlaceTeamId, setDragOverThirdPlaceTeamId] = useState<string | null>(null);
+  const [customDragGhost, setCustomDragGhost] = useState<CustomDragGhost | null>(null);
   const [supportsNativeRowDrag, setSupportsNativeRowDrag] = useState(false);
   const [isThirdPlaceListOpen, setIsThirdPlaceListOpen] = useState(false);
   const [groupProjectionSources, setGroupProjectionSources] = useState<Record<string, UserGroupProjectionSource>>(initialGroupProjectionSources);
@@ -263,6 +285,7 @@ export function BracketBuilderClient({
       ),
     [teams]
   );
+  const customDragGhostTeam = customDragGhost ? teamsById.get(customDragGhost.teamId) ?? null : null;
 
   const sortedGroupNames = useMemo(
     () =>
@@ -468,12 +491,8 @@ export function BracketBuilderClient({
       return null;
     }
 
-    return new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      timeZone: "UTC"
-    }).format(new Date(deadline));
-  }, [groupStageDueAt, isComplete, isReadOnly]);
+    return formatDate(deadline, language, { month: "short", day: "numeric", timeZone: "UTC" });
+  }, [groupStageDueAt, isComplete, isReadOnly, language]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -523,6 +542,27 @@ export function BracketBuilderClient({
     setDragOverTeamId(null);
     setDraggedThirdPlaceTeamId(null);
     setDragOverThirdPlaceTeamId(null);
+    setCustomDragGhost(null);
+  }
+
+  function activateCustomTouchDrag(state: NonNullable<typeof customDragStateRef.current>) {
+    state.isDragging = true;
+    if (state.kind === "group") {
+      setDraggedTeamId(state.teamId);
+    } else {
+      setDraggedThirdPlaceTeamId(state.teamId);
+    }
+
+    setCustomDragGhost({
+      kind: state.kind,
+      teamId: state.teamId,
+      x: state.currentX,
+      y: state.currentY,
+      offsetX: state.offsetX,
+      offsetY: state.offsetY,
+      width: state.width,
+      height: state.height
+    });
   }
 
   function beginCustomTouchDrag(
@@ -542,6 +582,7 @@ export function BracketBuilderClient({
 
     event.preventDefault();
     clearCustomTouchDragState();
+    const rect = event.currentTarget.getBoundingClientRect();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     customDragStateRef.current = {
       kind,
@@ -549,6 +590,12 @@ export function BracketBuilderClient({
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
+      currentX: event.clientX,
+      currentY: event.clientY,
+      offsetX: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+      offsetY: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+      width: rect.width,
+      height: rect.height,
       isDragging: false,
       targetId: teamId
     };
@@ -559,12 +606,7 @@ export function BracketBuilderClient({
         return;
       }
 
-      state.isDragging = true;
-      if (kind === "group") {
-        setDraggedTeamId(teamId);
-      } else {
-        setDraggedThirdPlaceTeamId(teamId);
-      }
+      activateCustomTouchDrag(state);
     }, CUSTOM_TOUCH_DRAG_HOLD_MS);
   }
 
@@ -583,18 +625,26 @@ export function BracketBuilderClient({
           customDragHoldTimeoutRef.current = null;
         }
 
-        state.isDragging = true;
-        if (state.kind === "group") {
-          setDraggedTeamId(state.teamId);
-        } else {
-          setDraggedThirdPlaceTeamId(state.teamId);
-        }
+        state.currentX = event.clientX;
+        state.currentY = event.clientY;
+        activateCustomTouchDrag(state);
       } else {
         return;
       }
     }
 
     event.preventDefault();
+    state.currentX = event.clientX;
+    state.currentY = event.clientY;
+    setCustomDragGhost((current) =>
+      current
+        ? {
+            ...current,
+            x: event.clientX,
+            y: event.clientY
+          }
+        : current
+    );
     const element = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
     if (!element) {
       return;
@@ -840,7 +890,7 @@ export function BracketBuilderClient({
 
     setIsFinalizingBracket(true);
     setSaveState("saving");
-    setSaveMessage("Saving automatically...");
+    setSaveMessage(t(language, "common.saving"));
 
     const result = await saveLightSeedBuilderAction({
       groupRankings: touchedRankingsInput,
@@ -859,7 +909,7 @@ export function BracketBuilderClient({
     }
 
     setSaveState("saved");
-    setSaveMessage("Saved automatically");
+    setSaveMessage(t(language, "bracket.savedAutomatically"));
     setFinalBracketSavedAt(new Date().toISOString());
 
     if (!hasSeenCompletionThisSession) {
@@ -873,7 +923,7 @@ export function BracketBuilderClient({
       return;
     }
 
-    showAppToast({ tone: "tip", text: "Your bracket is complete." });
+    showAppToast({ tone: "tip", text: t(language, "bracket.completionTitle") });
   }
 
   const leftBracketMatches = bracketPreviewMatches.slice(0, 8);
@@ -948,16 +998,16 @@ export function BracketBuilderClient({
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-accent-light text-accent-dark">
             <CheckCircle2 className="h-8 w-8" />
           </div>
-          <h1 className="mt-5 text-3xl font-black text-gray-950">Your bracket is complete.</h1>
+          <h1 className="mt-5 text-3xl font-black text-gray-950">{t(language, "bracket.completionTitle")}</h1>
           <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">
-            You can keep editing until the start of the Tournament.
+            {t(language, "bracket.completionBody")}
           </p>
           <div className="mt-8 grid grid-cols-2 gap-3">
             <ActionButton fullWidth onClick={() => setShowCompletionScreen(false)}>
-              Stay Here
+              {t(language, "bracket.stayHere")}
             </ActionButton>
             <ActionButton fullWidth tone="accent" onClick={() => router.push("/dashboard")}>
-              <span className="block w-full text-center">Home</span>
+              <span className="block w-full text-center">{t(language, "common.home")}</span>
             </ActionButton>
           </div>
         </section>
@@ -967,20 +1017,44 @@ export function BracketBuilderClient({
 
   return (
     <div className="space-y-1.5 pb-4">
+      {customDragGhost && customDragGhostTeam ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed z-[100] grid grid-cols-[1.55rem_2.2rem_minmax(0,1fr)] items-center gap-x-1 rounded-[1rem] border border-accent/30 bg-white/95 px-2 py-1.5 text-gray-950 shadow-2xl shadow-black/20 ring-1 ring-white/70 backdrop-blur-sm"
+          style={{
+            left: customDragGhost.x - customDragGhost.offsetX,
+            top: customDragGhost.y - customDragGhost.offsetY,
+            width: customDragGhost.width,
+            minHeight: customDragGhost.height,
+            transform: "scale(1.025)",
+            transformOrigin: `${customDragGhost.offsetX}px ${customDragGhost.offsetY}px`
+          }}
+        >
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-text">
+            {customDragGhost.kind === "group"
+              ? (activeGroupTeams.findIndex((team) => team.id === customDragGhost.teamId) + 1 || "")
+              : normalizedThirdPlaceRankings.indexOf(customDragGhost.teamId) + 1}
+          </span>
+          <span className="flex items-center justify-center text-[1.6rem] leading-none">{customDragGhostTeam.flagEmoji}</span>
+          <span className="block truncate text-[11px] font-black">{customDragGhostTeam.name}</span>
+        </div>
+      ) : null}
       {nearDeadlineMessage ? (
         <section className="rounded-[1.5rem] border border-amber-200 bg-amber-50 px-4 py-4 text-center text-amber-950">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
             <TriangleAlert className="h-7 w-7" />
           </div>
-          <p className="mt-3 text-xl font-black leading-tight">FINISH BUILDING YOUR BRACKET PREDICTIONS BEFORE: {nearDeadlineMessage}</p>
+          <p className="mt-3 text-xl font-black leading-tight">
+            {t(language, "bracket.finishBeforeDeadline", { deadline: nearDeadlineMessage })}
+          </p>
         </section>
       ) : null}
 
       {isReadOnly ? (
         <section className="rounded-[1.05rem] border border-gray-200 bg-gray-50 px-3 py-2 text-center text-[11px] font-semibold text-gray-600">
           {initialKnockoutSeeded
-            ? "Group Stage is locked because the knockout bracket has already been seeded."
-            : "Group Stage is locked because the tournament has started."}
+            ? t(language, "bracket.groupLockedSeeded")
+            : t(language, "bracket.groupLockedStarted")}
         </section>
       ) : null}
 
@@ -993,19 +1067,19 @@ export function BracketBuilderClient({
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <h1 className="truncate text-xl font-black leading-tight text-gray-950 text-left">
-                {activeGroupName ? formatGroupName(activeGroupName) : "Group"}
+                {activeGroupName ? formatGroupName(activeGroupName) : t(language, "dashboard.groupLabel")}
               </h1>
               {isActiveGroupScoreApplied ? (
                 <div className="mt-1 space-y-1">
                   <span className="inline-flex rounded-md bg-cyan-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.12em] text-cyan-900">
-                    From Scores
+                    {t(language, "bracket.fromScores")}
                   </span>
-                  <p className="text-[10px] font-semibold text-gray-500">Update this group through score picks.</p>
+                  <p className="text-[10px] font-semibold text-gray-500">{t(language, "bracket.updateGroupThroughScores")}</p>
                 </div>
               ) : null}
             </div>
             <div className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.12em] ${isReadOnly ? "bg-gray-100 text-gray-600" : "bg-cyan-50 text-accent-dark"}`}>
-              {isReadOnly ? "Locked" : "Open"}
+              {isReadOnly ? t(language, "common.locked") : t(language, "common.open")}
             </div>
           </div>
           <div className="grid grid-cols-[1.9rem_minmax(0,1fr)_1.9rem] items-center gap-0">
@@ -1014,13 +1088,13 @@ export function BracketBuilderClient({
               onClick={() => goToGroup(activeGroupIndex - 1)}
               disabled={activeGroupIndex === 0}
               className="inline-flex h-8 w-[1.9rem] items-center justify-center text-accent-dark disabled:opacity-30"
-              aria-label="Previous group"
+              aria-label={t(language, "bracket.previousGroup")}
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
             <div className="flex justify-center">
               <p className="ui-chip-sm-pill border border-gray-200 bg-white px-4 font-black uppercase tracking-[0.14em] text-gray-700 shadow-sm">
-                Swipe for more
+                {t(language, "bracket.swipeForMore")}
               </p>
             </div>
             <button
@@ -1028,17 +1102,17 @@ export function BracketBuilderClient({
               onClick={() => goToGroup(activeGroupIndex + 1)}
               disabled={activeGroupIndex === sortedGroupNames.length - 1}
               className="inline-flex h-8 w-[1.9rem] items-center justify-center text-accent-dark disabled:opacity-30"
-              aria-label="Next group"
+              aria-label={t(language, "bracket.nextGroup")}
             >
               <ArrowRight className="h-5 w-5" />
             </button>
           </div>
           <div className={`rounded-[1rem] border px-3 py-2 text-center text-xs font-black uppercase tracking-[0.08em] ${isThirdPlacePhase ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
             {isComplete
-              ? "TOP TWO TEAMS QUALIFY PER GROUP"
+              ? t(language, "bracket.topTwoQualify")
               : isThirdPlacePhase
-                ? `PICK ${requiredThirdPlaceQualifierCount} THIRD-PLACE QUALIFIERS TO FINISH THE BRACKET`
-                : "TOP TWO TEAMS QUALIFY PER GROUP"}
+                ? t(language, "bracket.pickThirdPlaceQualifiers", { count: requiredThirdPlaceQualifierCount })
+                : t(language, "bracket.topTwoQualify")}
           </div>
         </div>
 
@@ -1112,7 +1186,7 @@ export function BracketBuilderClient({
                   event.preventDefault();
                   handleDropReorder(team.id);
                 }}
-                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_3.6rem_2rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1 last:border-b-0 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "[touch-action:none]" : "[touch-action:manipulation]"} ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
+                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_3.6rem_2rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1 last:border-b-0 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "[touch-action:none]" : "[touch-action:manipulation]"} ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <div className="flex justify-start">
                   <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-text">
@@ -1150,7 +1224,7 @@ export function BracketBuilderClient({
                         type="button"
                         draggable={false}
                       data-no-row-drag="true"
-                      aria-label={`Move ${team.name} up`}
+                      aria-label={t(language, "bracket.moveTeamUp", { teamName: team.name })}
                       disabled={!canMoveUp}
                       onClick={() => activeGroupName && updateGroupRanking(activeGroupName, moveItem(teamOrder, index, -1))}
                         className="inline-flex h-7 w-7 items-center justify-center border-r border-gray-200 text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
@@ -1161,7 +1235,7 @@ export function BracketBuilderClient({
                         type="button"
                         draggable={false}
                         data-no-row-drag="true"
-                      aria-label={`Move ${team.name} down`}
+                      aria-label={t(language, "bracket.moveTeamDown", { teamName: team.name })}
                       disabled={!canMoveDown}
                       onClick={() => activeGroupName && updateGroupRanking(activeGroupName, moveItem(teamOrder, index, 1))}
                         className="inline-flex h-7 w-7 items-center justify-center text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
@@ -1186,7 +1260,7 @@ export function BracketBuilderClient({
         {isThirdPlacePhase ? (
           <div className="rounded-[1.15rem] border border-gray-200 bg-gray-50 px-3 py-3">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-accent-dark">Third-place qualifiers</p>
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-accent-dark">{t(language, "bracket.thirdPlaceQualifiers")}</p>
               <InlineDisclosureButton
                 isOpen={isThirdPlaceListOpen}
                 onClick={() => setIsThirdPlaceListOpen((current) => !current)}
@@ -1250,10 +1324,10 @@ export function BracketBuilderClient({
                   >
                     {index === requiredThirdPlaceQualifierCount ? (
                       <div className="pb-1 pt-1 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-rose-600">
-                        Cutoff
+                        {t(language, "bracket.cutoff")}
                       </div>
                     ) : null}
-                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly ? "[touch-action:none]" : "[touch-action:manipulation]"} ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-95" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
+                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly ? "[touch-action:none]" : "[touch-action:manipulation]"} ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
                       <div className="flex justify-start">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-text">
                           {index + 1}
@@ -1273,7 +1347,7 @@ export function BracketBuilderClient({
                           disabled={isReadOnly || index === 0}
                           onClick={() => moveThirdPlaceTeam(index, -1)}
                           className={COMPACT_ICON_BUTTON_CLASS}
-                          aria-label={`Move ${team.name} up`}
+                          aria-label={t(language, "bracket.moveTeamUp", { teamName: team.name })}
                         >
                           <ChevronUp className="h-5 w-5" />
                         </button>
@@ -1284,7 +1358,7 @@ export function BracketBuilderClient({
                           disabled={isReadOnly || index === normalizedThirdPlaceRankings.length - 1}
                           onClick={() => moveThirdPlaceTeam(index, 1)}
                           className={COMPACT_ICON_BUTTON_CLASS}
-                          aria-label={`Move ${team.name} down`}
+                          aria-label={t(language, "bracket.moveTeamDown", { teamName: team.name })}
                         >
                           <ChevronDown className="h-5 w-5" />
                         </button>
@@ -1310,10 +1384,10 @@ export function BracketBuilderClient({
                 onClick={handleFinalizeBracket}
               >
                 {isFinalizingBracket
-                  ? "Finishing Bracket..."
+                  ? t(language, "bracket.finishingBracket")
                   : isFinishButtonQuiet && finalBracketSavedAt
-                    ? `Saved ${formatSavedTimeLabel(finalBracketSavedAt)}`
-                    : "Finish Bracket"}
+                    ? t(language, "bracket.savedAt", { time: formatSavedTimeLabel(finalBracketSavedAt, language) })
+                    : t(language, "bracket.finishBracket")}
               </ActionButton>
             </div>
           </div>
@@ -1322,8 +1396,8 @@ export function BracketBuilderClient({
 
       <section className="px-0 pt-3 pb-0">
         <div className="mb-1 flex items-center justify-between gap-3">
-          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500">Projected bracket</p>
-          <p className="text-xs font-semibold text-gray-600">Updates live</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500">{t(language, "bracket.projectedBracket")}</p>
+          <p className="text-xs font-semibold text-gray-600">{t(language, "bracket.updatesLive")}</p>
         </div>
 
         <div className="mt-2 px-0 py-2">
@@ -1486,15 +1560,15 @@ export function BracketBuilderClient({
 
         <div className="mt-3">
           <p className="mb-2 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">
-            {fullScoresEnabled ? "Pick scores, earn more points" : "Finish Group Stage, then return for Knockout"}
+            {fullScoresEnabled ? t(language, "bracket.pickScoresEarnMorePoints") : t(language, "bracket.finishGroupThenKnockout")}
           </p>
           <div className={`grid gap-3 ${fullScoresEnabled ? "grid-cols-2" : "grid-cols-1"}`}>
           <ActionButton fullWidth disabled={!canAdvanceFromEasyBracket} onClick={() => router.push("/dashboard")}>
-            Home
+            {t(language, "common.home")}
           </ActionButton>
           {fullScoresEnabled ? (
             <ActionButton fullWidth tone="accent" disabled={!canAdvanceFromEasyBracket} onClick={handleGoToFullScoring}>
-              Pick Full Scores
+              {t(language, "bracket.pickFullScores")}
             </ActionButton>
           ) : null}
           </div>

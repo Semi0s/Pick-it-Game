@@ -1,9 +1,11 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { fetchGroupInvitePreviewAction } from "@/app/my-groups/actions";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { fetchGroupInvitePreviewAction } from "@/app/group-invite-preview/actions";
 import { authenticateWithEmail, isUsingDemoAuthFallback, sendCurrentUserPasswordReset } from "@/lib/auth-client";
+import { normalizeLanguage } from "@/lib/i18n";
+import { getSupportedLanguageOptions, t } from "@/lib/strings";
 
 type AuthMode = "login" | "signup";
 
@@ -15,7 +17,8 @@ export function LoginForm({
   language,
   callbackError,
   nextPath,
-  inviteToken
+  inviteToken,
+  promoManagerCode
 }: {
   confirmed?: boolean;
   reset?: boolean;
@@ -25,14 +28,18 @@ export function LoginForm({
   callbackError?: string;
   nextPath?: string;
   inviteToken?: string | null;
+  promoManagerCode?: string | null;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const uiLanguage = normalizeLanguage(language);
   const inviteFlow = flow === "invite";
   const signupContext = initialMode === "signup";
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [accessCode, setAccessCode] = useState("");
+  const [accessCode, setAccessCode] = useState(promoManagerCode ? "" : "");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -98,7 +105,8 @@ export function LoginForm({
       nextPath,
       flow,
       language,
-      accessCode: mode === "signup" ? accessCode : undefined
+      accessCode: mode === "signup" && !promoManagerCode ? accessCode : undefined,
+      promoManagerCode: mode === "signup" ? promoManagerCode ?? undefined : undefined
     });
     setIsSubmitting(false);
 
@@ -109,7 +117,7 @@ export function LoginForm({
 
     if (result.needsEmailConfirmation) {
       setMode("login");
-      setNotice(result.message ?? "Check your email to confirm your account, then sign in.");
+      setNotice(result.message ?? t(uiLanguage, "auth.confirmAccountFallback"));
       return;
     }
 
@@ -129,12 +137,21 @@ export function LoginForm({
     router.refresh();
   }
 
+  function handleLanguageChange(nextLanguage: string) {
+    const normalizedLanguage = normalizeLanguage(nextLanguage);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("lang", normalizedLanguage);
+    params.set("mode", mode);
+    router.replace(`${pathname}?${params.toString()}`);
+    router.refresh();
+  }
+
   async function handlePasswordReset() {
     setError(null);
     setNotice(null);
 
     if (!email.trim()) {
-      setError("Enter your email first, then tap Forgot password?");
+      setError(t(uiLanguage, "auth.enterEmailForReset"));
       return;
     }
 
@@ -147,105 +164,125 @@ export function LoginForm({
       return;
     }
 
-    setNotice(result.message ?? "Check your email for the password reset link.");
+    setNotice(result.message ?? t(uiLanguage, "auth.resetLinkSent"));
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 rounded-lg bg-white p-1">
-        <ModeButton label="Sign in" isActive={mode === "login"} onClick={() => setMode("login")} />
-        <ModeButton label="Sign up" isActive={mode === "signup"} onClick={() => setMode("signup")} />
+      <label className="block">
+        <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">{t(uiLanguage, "common.language")}</span>
+        <select
+          value={uiLanguage}
+          onChange={(event) => handleLanguageChange(event.target.value)}
+          className="mt-2 w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-2.5 text-sm font-bold text-gray-900 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+          aria-label={t(uiLanguage, "common.language")}
+        >
+          {getSupportedLanguageOptions(uiLanguage).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="grid grid-cols-2 gap-2 rounded-[1rem] bg-white p-1">
+        <ModeButton label={t(uiLanguage, "auth.signIn")} mode="login" isActive={mode === "login"} onClick={() => setMode("login")} />
+        <ModeButton label={t(uiLanguage, "auth.signUp")} mode="signup" isActive={mode === "signup"} onClick={() => setMode("signup")} />
       </div>
 
       {isEmailConfirmationNotice ? (
-        <div className="rounded-xl border-2 border-green-300 bg-green-100 px-4 py-4 text-center shadow-soft">
-          <p className="text-[11px] font-black uppercase tracking-[0.24em] text-green-700">Almost there</p>
+        <div className="rounded-[1.1rem] border-2 border-green-300 bg-green-100 px-4 py-4 text-center shadow-soft">
+          <p className="text-[11px] font-black uppercase tracking-[0.24em] text-green-700">{t(uiLanguage, "auth.almostThere")}</p>
           <p className="mt-2 text-lg font-black leading-tight text-green-900">
-            Check your email to confirm your account.
+            {t(uiLanguage, "auth.checkEmailToConfirm")}
           </p>
-          <p className="mt-2 text-sm font-semibold text-green-800">Then come back here and sign in.</p>
+          <p className="mt-2 text-sm font-semibold text-green-800">{t(uiLanguage, "auth.thenComeBack")}</p>
         </div>
       ) : null}
 
       {confirmed ? (
-        <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700">
-          Your email has been confirmed. Sign in below.
+        <p className="rounded-[0.9rem] border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700">
+          {t(uiLanguage, "auth.confirmed")}
         </p>
       ) : null}
 
       {!confirmed && reset ? (
-        <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700">
-          Your password has been updated. Sign in below.
+        <p className="rounded-[0.9rem] border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700">
+          {t(uiLanguage, "auth.passwordUpdated")}
         </p>
       ) : null}
 
       {!isEmailConfirmationNotice && emailBoundInviteFlow && inviteContext ? (
-        <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
+        <p className="rounded-[0.9rem] border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
           {inviteContext.status !== "pending"
-            ? "This invite is no longer active. Ask the organizer for a fresh link if you still need access."
+            ? t(uiLanguage, "auth.inactiveInvite")
             : confirmed
-              ? `Your email is confirmed. Sign in to finish joining ${inviteContext.groupName}.`
+              ? t(uiLanguage, "auth.confirmedJoinGroup", { groupName: inviteContext.groupName })
               : mode === "login"
-                ? `You've been invited to join ${inviteContext.groupName}. Sign in with ${inviteContext.email} to continue.`
-                : `You've been invited to join ${inviteContext.groupName}. Create an account with ${inviteContext.email} to continue.`}
+                ? t(uiLanguage, "auth.invitedToGroupSignIn", { groupName: inviteContext.groupName, email: inviteContext.email })
+                : t(uiLanguage, "auth.invitedToGroupCreate", { groupName: inviteContext.groupName, email: inviteContext.email })}
+        </p>
+      ) : !isEmailConfirmationNotice && !confirmed && promoManagerCode ? (
+        <p className="rounded-[0.9rem] border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
+          {t(uiLanguage, "promoInvite.signupNotice")}
         </p>
       ) : !isEmailConfirmationNotice && !confirmed && (inviteFlow || signupContext) ? (
-        <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
+        <p className="rounded-[0.9rem] border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
           {inviteFlow && mode === "login"
-            ? "Use the invited email to sign in and complete your group join."
-            : "Use your invited email or the access code from your group organizer to create your account."}
+            ? t(uiLanguage, "auth.useInvitedEmailToJoin")
+            : t(uiLanguage, "auth.useInviteOrAccessCode")}
         </p>
       ) : null}
 
       {callbackError ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+        <p className="rounded-[0.9rem] border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
           {callbackError}
         </p>
       ) : null}
 
       <label className="block">
-        <span className="text-sm font-semibold text-gray-800">Email</span>
+        <span className="text-sm font-semibold text-gray-800">{t(uiLanguage, "auth.email")}</span>
         <input
           type="email"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
-          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+          className="mt-2 w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
           placeholder="you@example.com"
           autoComplete="email"
           required
         />
         {emailBoundInviteFlow && inviteContext?.email ? (
           <p className="mt-2 text-sm font-medium text-gray-600">
-            Use the invited email: {inviteContext.email}
+            {t(uiLanguage, "auth.useInvitedEmail", { email: inviteContext.email })}
           </p>
         ) : null}
       </label>
 
       <label className="block">
-        <span className="text-sm font-semibold text-gray-800">Password</span>
+        <span className="text-sm font-semibold text-gray-800">{t(uiLanguage, "auth.password")}</span>
         <input
           type="password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-          placeholder="At least 6 characters"
+          className="mt-2 w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+          placeholder={t(uiLanguage, "auth.passwordPlaceholder")}
           autoComplete="current-password"
           required
         />
       </label>
 
-      {mode === "signup" && !emailBoundInviteFlow ? (
+      {mode === "signup" && !emailBoundInviteFlow && !promoManagerCode ? (
         <label className="block">
-          <span className="text-sm font-semibold text-gray-800">Access code</span>
+          <span className="text-sm font-semibold text-gray-800">{t(uiLanguage, "auth.accessCode")}</span>
           <input
             value={accessCode}
             onChange={(event) => setAccessCode(event.target.value)}
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-            placeholder="Enter your access code"
+            className="mt-2 w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+            placeholder={t(uiLanguage, "auth.accessCodePlaceholder")}
             autoComplete="one-time-code"
           />
           <p className="mt-2 text-sm font-medium text-gray-600">
-            Enter the access code provided by your group organizer.
+            {t(uiLanguage, "auth.accessCodeHelp")}
           </p>
         </label>
       ) : null}
@@ -258,19 +295,19 @@ export function LoginForm({
             disabled={isSendingReset || isSubmitting}
             className="text-sm font-bold text-accent-dark"
           >
-            {isSendingReset ? "Sending reset..." : "Forgot password?"}
+            {isSendingReset ? t(uiLanguage, "auth.sendingReset") : t(uiLanguage, "auth.forgotPassword")}
           </button>
         </div>
       ) : null}
 
       {error ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+        <p className="rounded-[0.9rem] border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
           {error}
         </p>
       ) : null}
 
       {notice && !isEmailConfirmationNotice ? (
-        <p className="rounded-md border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
+        <p className="rounded-[0.9rem] border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
           {notice}
         </p>
       ) : null}
@@ -278,28 +315,28 @@ export function LoginForm({
       <button
         type="submit"
         disabled={isSubmitting}
-        className={`w-full rounded-md px-4 py-3 text-base font-bold text-white shadow-soft ${
+        className={`w-full rounded-[0.9rem] px-4 py-3 text-base font-bold text-white shadow-soft ${
           mode === "signup" ? "bg-orange-500 hover:bg-orange-500/95" : "bg-accent hover:bg-accent/95"
         }`}
       >
         {isSubmitting
-          ? "Working..."
+          ? t(uiLanguage, "auth.working")
           : emailBoundInviteFlow
             ? mode === "login"
               ? confirmed
-                ? "Sign in to finish joining"
-                : "Sign in to join"
-              : "Create account to join"
+                ? t(uiLanguage, "auth.signInToFinishJoining")
+                : t(uiLanguage, "auth.signInToJoin")
+              : t(uiLanguage, "auth.createAccountToJoin")
             : mode === "login"
-              ? "Sign in"
-              : "Create account"}
+              ? t(uiLanguage, "auth.signIn")
+              : t(uiLanguage, "auth.createAccount")}
       </button>
       {!isDemoFallback ? (
-        <div className="rounded-md border border-accent-light bg-white/95 px-2.5 py-2 text-accent-dark">
+        <div className="rounded-[1rem] border border-accent-light bg-white/95 px-2.5 py-2 text-accent-dark">
           <div className="flex flex-col items-center text-center">
             <p className="text-[11px] font-black uppercase tracking-wide">
-              <span className="block">Request Access And</span>
-              <span className="block">Provide Feedback</span>
+              <span className="block">{t(uiLanguage, "auth.requestAccessLine1")}</span>
+              <span className="block">{t(uiLanguage, "auth.requestAccessLine2")}</span>
             </p>
           </div>
           <div className="mt-2 flex justify-center">
@@ -307,9 +344,9 @@ export function LoginForm({
               href="https://www.semiosdesign.com/pick-it-game"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-gray-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
+              className="inline-flex items-center justify-center rounded-[0.75rem] border border-gray-300 bg-gray-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
             >
-              Contact Us
+              {t(uiLanguage, "auth.contactUs")}
             </a>
           </div>
         </div>
@@ -326,19 +363,18 @@ export function LoginForm({
 
 type ModeButtonProps = {
   label: string;
+  mode: AuthMode;
   isActive: boolean;
   onClick: () => void;
 };
 
-function ModeButton({ label, isActive, onClick }: ModeButtonProps) {
-  const isSignupButton = label.toLowerCase() === "sign up";
-
+function ModeButton({ label, mode, isActive, onClick }: ModeButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-md px-3 py-2 text-sm font-bold ${
-        isActive ? (isSignupButton ? "bg-orange-500 text-white" : "bg-accent text-white") : "text-gray-600"
+      className={`rounded-[0.85rem] px-3 py-2 text-sm font-bold ${
+        isActive ? (mode === "signup" ? "bg-orange-500 text-white" : "bg-accent text-white") : "text-gray-600"
       }`}
     >
       {label}

@@ -2,9 +2,9 @@
 
 import { ChevronDown } from "lucide-react";
 import { Avatar } from "@/components/Avatar";
-import { getPredictionStateLabel } from "@/lib/prediction-state";
 import { getScoreLabel } from "@/lib/scoring";
 import type { SocialPrediction } from "@/lib/social-predictions";
+import { t } from "@/lib/strings";
 import type { MatchWithTeams } from "@/lib/types";
 
 type SocialPredictionListProps = {
@@ -12,12 +12,20 @@ type SocialPredictionListProps = {
   predictions: SocialPrediction[];
   currentUserId: string;
   currentUserPoints: number;
+  language?: string | null;
 };
 
 const COLLAPSED_COUNT = 4;
 
-export function SocialPredictionList({ match, predictions, currentUserId, currentUserPoints }: SocialPredictionListProps) {
-  const predictionStateLabel = match.status === "final" ? "Unlocked" : getPredictionStateLabel(match.status);
+export function SocialPredictionList({ match, predictions, currentUserId, currentUserPoints, language }: SocialPredictionListProps) {
+  const predictionStateLabel =
+    match.status === "final"
+      ? t(language, "bracket.unlocked")
+      : match.status === "live"
+        ? t(language, "common.live")
+        : match.status === "locked"
+          ? t(language, "common.locked")
+          : t(language, "common.open");
   const otherPredictions = predictions
     .filter((prediction) => prediction.userId !== currentUserId)
     .sort((left, right) => {
@@ -44,13 +52,13 @@ export function SocialPredictionList({ match, predictions, currentUserId, curren
     <details className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wide text-gray-900">
         <span className="flex items-center gap-2">
-          <span>Group Picks</span>
+          <span>{t(language, "bracket.groupPicks")}</span>
           <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600">
             {predictionStateLabel}
           </span>
         </span>
         <span className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600">
-          {otherPredictions.length} {otherPredictions.length === 1 ? "pick" : "picks"}
+          {t(language, "common.pickCount", { count: otherPredictions.length })}
           <ChevronDown aria-hidden className="h-4 w-4" />
         </span>
       </summary>
@@ -62,12 +70,12 @@ export function SocialPredictionList({ match, predictions, currentUserId, curren
           ))}
           {otherPredictions.length > COLLAPSED_COUNT ? (
             <p className="text-xs font-semibold text-gray-500">
-              {otherPredictions.length - COLLAPSED_COUNT} more picks hidden for readability.
+              {t(language, "bracket.morePicksHidden", { count: otherPredictions.length - COLLAPSED_COUNT })}
             </p>
           ) : null}
         </div>
       ) : (
-        <p className="mt-1.5 text-sm font-semibold text-gray-500">No one else has picked this match yet.</p>
+        <p className="mt-1.5 text-sm font-semibold text-gray-500">{t(language, "bracket.noOtherPicks")}</p>
       )}
     </details>
   );

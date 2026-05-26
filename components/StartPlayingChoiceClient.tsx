@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeftRight } from "lucide-react";
 import { completeLaunchOnboardingAction, savePlayerStartModeAction } from "@/app/start-playing/actions";
 import { showAppToast } from "@/lib/app-toast";
+import { t } from "@/lib/strings";
 
 type StepVisual = "group-stage" | "third-place" | "knockout" | "leaderboard" | "groups";
 type TutorialIcon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -19,7 +20,7 @@ type OnboardingStep = {
 
 const SWIPE_THRESHOLD_PX = 40;
 
-export function StartPlayingChoiceClient() {
+export function StartPlayingChoiceClient({ language = "en" }: { language?: string | null }) {
   const router = useRouter();
   const [isSavingMode, setIsSavingMode] = useState(false);
   const [isGoingHome, setIsGoingHome] = useState(false);
@@ -32,38 +33,38 @@ export function StartPlayingChoiceClient() {
   const steps = useMemo<OnboardingStep[]>(
     () => [
       {
-        title: "Group Stage predictions",
-        body: "Start by predicting which teams will qualify to the Knockout Stage. Guess the order and earn more points the more accurate your prediction.",
+        title: t(language, "onboarding.step1Title"),
+        body: t(language, "onboarding.step1Body"),
         icon: GroupStagePredictionsIcon,
         visual: "group-stage"
       },
       {
-        title: "Keep editing until the World Cup starts",
-        body: "Predictions lock June 11 when the tournament starts. Final results for the Group Stage after June 27.",
+        title: t(language, "onboarding.step2Title"),
+        body: t(language, "onboarding.step2Body"),
         icon: TrophyBadgeIcon,
         visual: "third-place"
       },
       {
-        title: "Predict every match during Knockout Stage",
-        body: "Predict who wins and the final scores* and you can earn big.",
-        note: "*Penalty shoot-outs excluded",
+        title: t(language, "onboarding.step3Title"),
+        body: t(language, "onboarding.step3Body"),
+        note: t(language, "onboarding.step3Note"),
         icon: KnockoutScoreIcon,
         visual: "knockout"
       },
       {
-        title: "Visit the Leaderboards",
-        body: "See how you rank against everyone else and interact with players in real time during a live match.",
+        title: t(language, "onboarding.step4Title"),
+        body: t(language, "onboarding.step4Body"),
         icon: LeaderboardPodiumIcon,
         visual: "leaderboard"
       },
       {
-        title: "Make your own group",
-        body: "As a player you compete with everyone else but if you are a Manager you can make your own private groups to compare easily.",
+        title: t(language, "onboarding.step5Title"),
+        body: t(language, "onboarding.step5Body"),
         icon: MyGroupsFlagIcon,
         visual: "groups"
       }
     ],
-    []
+    [language]
   );
 
   const isFirstStep = stepIndex === 0;
@@ -174,13 +175,13 @@ export function StartPlayingChoiceClient() {
 
   return (
     <section className="mx-auto max-w-3xl space-y-4">
-      <OnboardingIntroCard />
+      <OnboardingIntroCard language={language} />
 
       <div
-        className="rounded-2xl border border-gray-200 bg-white p-4 shadow-[0_1px_0_rgba(15,23,42,0.02)] sm:p-5"
+        className="rounded-[1.35rem] border border-gray-200 bg-white p-4 shadow-[0_1px_0_rgba(15,23,42,0.02)] sm:p-5"
         role="region"
         aria-roledescription="carousel"
-        aria-label="PICK-IT onboarding tutorial"
+        aria-label={t(language, "onboarding.tutorialAria")}
         tabIndex={0}
         onKeyDown={handleKeyDown}
       >
@@ -198,7 +199,7 @@ export function StartPlayingChoiceClient() {
                   key={item.title}
                   className="w-full shrink-0 px-0.5"
                   aria-hidden={index !== stepIndex}
-                  aria-label={`${index + 1} of ${steps.length}: ${item.title}`}
+                  aria-label={t(language, "onboarding.stepAria", { current: index + 1, total: steps.length, title: item.title })}
                 >
                   <div className="flex items-start gap-3">
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent text-accent-text shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
@@ -218,6 +219,7 @@ export function StartPlayingChoiceClient() {
                       visual={item.visual}
                       animationEpoch={animationEpoch}
                       playbackEpoch={index === stepIndex ? stepOpenEpoch : 0}
+                      language={language}
                     />
                   </div>
                 </article>
@@ -232,36 +234,36 @@ export function StartPlayingChoiceClient() {
               type="button"
               onClick={() => goToStep(stepIndex - 1)}
               disabled={isFirstStep}
-              aria-label="Go to previous onboarding step"
-              className="inline-flex min-h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label={t(language, "onboarding.previousStep")}
+              className="inline-flex min-h-10 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Back
+              {t(language, "common.back")}
             </button>
             <p className="min-w-[3.5rem] text-center text-xs font-black uppercase tracking-[0.14em] text-gray-400" aria-live="polite">
-              {stepIndex + 1} / {steps.length}
+              {t(language, "onboarding.stepLabel", { current: stepIndex + 1, total: steps.length })}
             </p>
             <button
               type="button"
               onClick={() => goToStep(stepIndex + 1)}
-              aria-label="Go to next onboarding step"
-              className="inline-flex min-h-10 items-center justify-center rounded-xl border border-accent bg-accent-light px-4 py-2 text-sm font-bold text-accent-dark transition hover:border-accent-dark hover:bg-accent-light/80"
+              aria-label={t(language, "onboarding.nextStep")}
+              className="inline-flex min-h-10 items-center justify-center rounded-[0.9rem] border border-accent bg-accent-light px-4 py-2 text-sm font-bold text-accent-dark transition hover:border-accent-dark hover:bg-accent-light/80"
             >
-              Next
+              {t(language, "common.next")}
             </button>
           </div>
         ) : (
           <div className="mt-4 space-y-3">
             <p className="text-center text-xs font-black uppercase tracking-[0.14em] text-gray-400" aria-live="polite">
-              {stepIndex + 1} / {steps.length}
+              {t(language, "onboarding.stepLabel", { current: stepIndex + 1, total: steps.length })}
             </p>
             <div className="grid grid-cols-3 items-center gap-2">
               <button
                 type="button"
                 onClick={() => goToStep(stepIndex - 1)}
-                aria-label="Go to previous onboarding step"
-                className="inline-flex w-full min-h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                aria-label={t(language, "onboarding.previousStep")}
+                className="inline-flex w-full min-h-10 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
               >
-                Back
+                {t(language, "common.back")}
               </button>
               <button
                 type="button"
@@ -269,10 +271,10 @@ export function StartPlayingChoiceClient() {
                 onClick={() => {
                   void handleStartGroupPhase();
                 }}
-                aria-label="Start Group Stage"
-                className="inline-flex w-full min-h-10 items-center justify-center rounded-xl bg-accent px-4 py-2 text-sm font-black text-accent-text transition hover:bg-accent/95 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label={t(language, "onboarding.startGroupStage")}
+                className="inline-flex w-full min-h-10 items-center justify-center rounded-[0.9rem] bg-accent px-4 py-2 text-sm font-black text-accent-text transition hover:bg-accent/95 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isSavingMode ? "Opening..." : "Start"}
+                {isSavingMode ? t(language, "onboarding.opening") : t(language, "onboarding.getStarted")}
               </button>
               <button
                 type="button"
@@ -280,10 +282,10 @@ export function StartPlayingChoiceClient() {
                 onClick={() => {
                   void handleHome();
                 }}
-                aria-label="Go home"
-                className="inline-flex w-full min-h-10 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label={t(language, "onboarding.goHome")}
+                className="inline-flex w-full min-h-10 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isGoingHome ? "Opening..." : "Home"}
+                {isGoingHome ? t(language, "onboarding.opening") : t(language, "onboarding.home")}
               </button>
             </div>
           </div>
@@ -293,14 +295,14 @@ export function StartPlayingChoiceClient() {
   );
 }
 
-function OnboardingIntroCard() {
+function OnboardingIntroCard({ language }: { language?: string | null }) {
   return (
-    <section className="rounded-2xl border border-gray-200 bg-white p-5">
-      <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">WELCOME TO PIK•IT!</p>
+    <section className="rounded-[1.35rem] border border-gray-200 bg-white p-5">
+      <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(language, "onboarding.welcome")}</p>
       <h1 className="mt-2 text-[2rem] font-black leading-[1.05] text-gray-950 sm:text-[2.45rem]">
-        Predict the 2026 World Cup winner.
+        {t(language, "onboarding.headline")}
       </h1>
-      <p className="mt-3 text-sm font-normal leading-6 text-gray-600">Earn points, compete and have fun!</p>
+      <p className="mt-3 text-sm font-normal leading-6 text-gray-600">{t(language, "onboarding.subheadline")}</p>
     </section>
   );
 }
@@ -385,14 +387,16 @@ function MyGroupsFlagIcon(props: SVGProps<SVGSVGElement>) {
 function TutorialHelperStage({
   visual,
   animationEpoch,
-  playbackEpoch
+  playbackEpoch,
+  language
 }: {
   visual: StepVisual;
   animationEpoch: number;
   playbackEpoch: number;
+  language?: string | null;
 }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 px-3 py-3">
+    <div className="relative overflow-hidden rounded-[1.25rem] border border-gray-200 bg-gray-50 px-3 py-3">
       <div key={`${visual}-${animationEpoch}-${playbackEpoch}`} className="flex h-[316px] items-center justify-center sm:h-[338px]">
         {visual === "group-stage" ? <GroupStageHelperMock /> : null}
         {visual === "third-place" ? <ThirdPlaceHelperMock /> : null}
@@ -402,7 +406,7 @@ function TutorialHelperStage({
       </div>
       <div className="pointer-events-none absolute bottom-3 right-3 inline-flex items-center gap-1 rounded-full bg-white/92 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-500 shadow-sm animate-pulse">
         <ArrowLeftRight className="h-3 w-3" />
-        Swipe
+        {t(language, "common.swipe")}
       </div>
     </div>
   );
@@ -412,7 +416,7 @@ function MockPhoneFrame({ children }: { children: React.ReactNode }) {
   return (
     <div className="w-[170px] rounded-[22px] border border-gray-300 bg-white p-2 shadow-[0_8px_24px_rgba(15,23,42,0.08)]">
       <div className="mx-auto mb-2 h-1.5 w-12 rounded-full bg-gray-200" />
-      <div className="min-h-[238px] rounded-[16px] border border-gray-100 bg-gray-50 px-2 py-2">{children}</div>
+      <div className="min-h-[238px] rounded-[1rem] border border-gray-100 bg-gray-50 px-2 py-2">{children}</div>
     </div>
   );
 }
@@ -426,23 +430,23 @@ function GroupStageHelperMock() {
           {["1st", "2nd", "3rd", "4th"].map((rank, index) => (
             <div
               key={rank}
-              className="absolute left-0 right-0 flex items-center justify-between rounded-lg border border-transparent px-1.5 py-1"
+              className="absolute left-0 right-0 flex items-center justify-between rounded-[0.85rem] border border-transparent px-1.5 py-1"
               style={{ top: `${index * 28}px` }}
             >
               <span className="text-[10px] font-bold text-gray-400">{rank}</span>
             </div>
           ))}
 
-          <div className="gs-team gs-team-x absolute left-10 right-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-black text-gray-700">
+          <div className="gs-team gs-team-x absolute left-10 right-1 rounded-[0.85rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black text-gray-700">
             TEAM X
           </div>
-          <div className="gs-team gs-team-y absolute left-10 right-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-black text-gray-700">
+          <div className="gs-team gs-team-y absolute left-10 right-1 rounded-[0.85rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black text-gray-700">
             TEAM Y
           </div>
-          <div className="gs-team absolute left-10 right-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-black text-gray-700" style={{ top: "56px" }}>
+          <div className="gs-team absolute left-10 right-1 rounded-[0.85rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black text-gray-700" style={{ top: "56px" }}>
             TEAM Z
           </div>
-          <div className="gs-team absolute left-10 right-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-black text-gray-700" style={{ top: "84px" }}>
+          <div className="gs-team absolute left-10 right-1 rounded-[0.85rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black text-gray-700" style={{ top: "84px" }}>
             TEAM L
           </div>
 
@@ -598,7 +602,7 @@ function ThirdPlaceHelperMock() {
           {["Group A 3rd", "Group C 3rd", "Group F 3rd", "Group H 3rd"].map((item, index) => (
             <div
               key={item}
-              className={`tp-row flex items-center justify-between rounded-lg border px-2 py-1 ${
+              className={`tp-row flex items-center justify-between rounded-[0.85rem] border px-2 py-1 ${
                 index < 2 ? "border-accent-light bg-accent-light/40" : "border-gray-200 bg-white"
               } ${index === 2 ? "tp-row-three" : index === 3 ? "tp-row-four" : ""}`}
             >
@@ -612,7 +616,7 @@ function ThirdPlaceHelperMock() {
             <MiniHandTapIcon className="h-12 w-12" />
           </span>
         </div>
-        <div className="tp-finish mt-2 rounded-lg bg-accent px-2 py-1.5 text-center text-[10px] font-black uppercase tracking-wide text-white">
+        <div className="tp-finish mt-2 rounded-[0.85rem] bg-accent px-2 py-1.5 text-center text-[10px] font-black uppercase tracking-wide text-white">
           Finish Bracket
         </div>
         <style jsx>{`
@@ -821,7 +825,7 @@ function KnockoutHelperMock() {
       <MockPhoneFrame>
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-accent-dark">Knockout</p>
         <div className="relative mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-          <div className="rounded-xl border border-gray-200 bg-white px-2 py-2 text-center">
+          <div className="rounded-[1rem] border border-gray-200 bg-white px-2 py-2 text-center">
             <div className="mx-auto grid w-fit grid-cols-[auto_1fr] items-center gap-1">
               <div className="flex flex-col items-center justify-center gap-0.5 text-[7px] font-black leading-none text-gray-300">
                 <span>▲</span>
@@ -831,7 +835,7 @@ function KnockoutHelperMock() {
             </div>
           </div>
           <div className="text-[10px] font-black uppercase tracking-wide text-gray-400">v.</div>
-          <div className="ko-team-b rounded-xl border border-gray-200 bg-white px-2 py-2 text-center">
+          <div className="ko-team-b rounded-[1rem] border border-gray-200 bg-white px-2 py-2 text-center">
             <div className="mx-auto grid w-fit grid-cols-[1fr_auto] items-center gap-1">
               <div className="relative h-[20px] overflow-hidden text-xl font-black leading-none text-gray-800">
                 <div className="ko-score-roll">
@@ -1002,7 +1006,7 @@ function LeaderboardHelperMock() {
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-accent-dark">Leaderboard</p>
         <div className="relative mt-2 space-y-1">
           {["PLAYER A", "PLAYER B", "PLAYER C", "PLAYER D", "PLAYER E", "PLAYER F", "PLAYER G"].map((name, index) => (
-            <div key={name} className="relative flex items-center rounded-lg border border-gray-200 bg-white px-2 py-1">
+            <div key={name} className="relative flex items-center rounded-[0.85rem] border border-gray-200 bg-white px-2 py-1">
               <span className="w-6 text-[10px] font-bold text-gray-400">#{index + 1}</span>
               <span className="flex-1 text-left text-[10px] font-black text-gray-700">{name}</span>
               <span
@@ -1222,19 +1226,19 @@ function GroupsHelperMock() {
     <div className="groups-loop-shell flex w-full items-center justify-center gap-3">
       <MockPhoneFrame>
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-accent-dark">My Groups</p>
-        <div className="mt-2 rounded-lg border border-gray-200 bg-white px-2 py-1">
+        <div className="mt-2 rounded-[0.85rem] border border-gray-200 bg-white px-2 py-1">
           <p className="text-[10px] font-black text-gray-700">1. The Family</p>
         </div>
-        <div className="groups-add mt-1.5 rounded-lg border border-dashed border-accent bg-accent-light px-2 py-1 text-[10px] font-black text-accent-dark">
+        <div className="groups-add mt-1.5 rounded-[0.85rem] border border-dashed border-accent bg-accent-light px-2 py-1 text-[10px] font-black text-accent-dark">
           <span className="groups-add-text">Add John</span>
         </div>
         <div className="groups-list relative mt-1.5 space-y-1">
           {["Mom", "Dad"].map((name) => (
-            <div key={name} className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-700">
+            <div key={name} className="rounded-[0.85rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-700">
               {name}
             </div>
           ))}
-          <div className="groups-john rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-700">
+          <div className="groups-john rounded-[0.85rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-bold text-gray-700">
             John
           </div>
           <span className="groups-hand pointer-events-none absolute -right-1 -top-8 z-20 inline-flex h-12 w-12 items-center justify-center text-gray-400" aria-hidden>

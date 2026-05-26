@@ -19,6 +19,8 @@ import { getRequiredThirdPlaceQualifierCount, type KnockoutPlaceholderMatch } fr
 import { getConfiguredGroupPredictionMode, isFullScoresModeEnabled } from "@/lib/group-prediction-mode";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
+import { normalizeLanguage } from "@/lib/i18n";
+import { t } from "@/lib/strings";
 import { logSafeSupabaseError } from "@/lib/supabase-errors";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
@@ -41,6 +43,17 @@ export default async function BracketBuilderPage() {
 
   const adminSupabase = createAdminClient();
   const fullScoresEnabled = isFullScoresModeEnabled(getConfiguredGroupPredictionMode());
+  let preferredLanguage = normalizeLanguage(null);
+  try {
+    const { data: userProfile } = await adminSupabase
+      .from("users")
+      .select("preferred_language")
+      .eq("id", authUser.id)
+      .maybeSingle();
+    preferredLanguage = normalizeLanguage((userProfile as { preferred_language?: string | null } | null)?.preferred_language);
+  } catch (error) {
+    logSafeSupabaseError("bracket-builder-language-load", error, { userId: authUser.id, recoverable: true });
+  }
   const localMatches = getGroupMatches().map((match) => ({
     ...match,
     homeTeam: getTeam(match.homeTeamId),
@@ -113,11 +126,11 @@ export default async function BracketBuilderPage() {
     <AppShell>
       <div className="mx-auto max-w-3xl space-y-5 pb-4 pt-0">
         <ManagementIntro
-          eyebrow="Start Here"
-          title="Group Stage"
-          description="Pick qualifying teams only."
-          secondaryNote={fullScoresEnabled ? "Pick scores, earn more points." : "Finish Group Stage, then return for Knockout."}
-          statusChip={knockoutStatus.isFullySeeded ? "Locked" : "Open"}
+          eyebrowKey="bracket.startHere"
+          titleKey="bracket.groupStage"
+          description={t(preferredLanguage, "bracket.pickQualifyingTeamsOnly")}
+          secondaryNote={fullScoresEnabled ? t(preferredLanguage, "bracket.pickScoresEarnMorePoints") : t(preferredLanguage, "bracket.finishGroupThenKnockout")}
+          statusChipKey={knockoutStatus.isFullySeeded ? "common.locked" : "common.open"}
           disclosureStorageKey="group-stage-top-card"
           disclosurePlacement="bottom-right"
           collapseBodyWhenClosed
@@ -133,6 +146,7 @@ export default async function BracketBuilderPage() {
         groupStageDueAt={GROUP_PHASE_START_AT}
         knockoutProjectedPreview={projectedKnockoutComparisonView}
         fullScoresEnabled={fullScoresEnabled || authUser.role === "admin"}
+        language={preferredLanguage}
         />
       </div>
     </AppShell>

@@ -5,6 +5,7 @@ import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import { TrophyBadge } from "@/components/TrophyBadge";
+import { VisualThemeMenu } from "@/components/VisualThemeMenu";
 import { clearCurrentUserTestPredictionsAction } from "@/app/admin/actions";
 import {
   clearCurrentUserAvatar,
@@ -19,18 +20,26 @@ import {
   updateCurrentUserFollowedTeams,
   updateCurrentUserPreferredLanguage,
   updateCurrentUserNotificationPreferences,
+  updateCurrentUserVisualTheme,
   uploadCurrentUserAvatar
 } from "@/lib/auth-client";
 import { getAccessLevel } from "@/lib/access-levels";
 import { showAppToast } from "@/lib/app-toast";
+import { normalizeLanguage } from "@/lib/i18n";
+import { getSpecialVisualThemeOption } from "@/lib/localized-card-themes";
 import type { LegalDocument } from "@/lib/legal";
-import { getStrings } from "@/lib/strings";
+import { getLanguageLabel, getStrings, getSupportedLanguageOptions, t } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
 import { resolveTierAccess } from "@/lib/tier-access";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import type { UserTrophy } from "@/lib/types";
 import type { CurrentLegalDocument } from "@/lib/auth-client";
 import { useCurrentUser } from "@/lib/use-current-user";
+import {
+  getVisualThemeSelectOptions,
+  getVisualThemeSelectValue,
+  parseVisualThemeSelectValue
+} from "@/lib/visual-theme-options";
 
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 
@@ -92,6 +101,7 @@ export function ProfileSummary({
     () => [...teams].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" })),
     []
   );
+  const visualThemeOptions = useMemo(() => getVisualThemeSelectOptions(sortedTeams), [sortedTeams]);
   const selectedFollowedTeams = useMemo(
     () => sortedTeams.filter((team) => followedTeamIdsDraft.includes(team.id)),
     [followedTeamIdsDraft, sortedTeams]
@@ -216,12 +226,13 @@ export function ProfileSummary({
   if (isLoading || !user) {
     return (
       <div className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
-        Loading profile...
+        {t(null, "profile.loadingProfile")}
       </div>
     );
   }
 
   const copy = getStrings(user.preferredLanguage);
+  const uiLanguage = user.preferredLanguage;
   const currentAccessLevel = getAccessLevel(user);
   const currentTierAccess = resolveTierAccess({
     role: user.role,
@@ -235,23 +246,65 @@ export function ProfileSummary({
   const hasPendingFollowedTeamsChanges =
     JSON.stringify(followedTeamIdsDraft) !== JSON.stringify(user.followedTeamIds ?? []);
   const allTeamsFollowed = sortedTeams.length > 0 && followedTeamIdsDraft.length === sortedTeams.length;
+  const selectedSpecialVisualTheme = getSpecialVisualThemeOption(user.visualThemeId ?? null);
   const membershipSummaryLines = currentTierAccess.limits.isUnlimited
-    ? ["Unlimited groups", "Unlimited members per group", "Unlimited total players"]
+    ? [
+        t(uiLanguage, "profile.membershipUnlimitedGroups"),
+        t(uiLanguage, "profile.membershipUnlimitedMembers"),
+        t(uiLanguage, "profile.membershipUnlimitedPlayers")
+      ]
     : currentTierAccess.accessLevel === "player"
       ? []
       : [
-          `Up to ${currentTierAccess.limits.maxGroups ?? 0} groups`,
-          `${currentTierAccess.limits.maxMembersPerGroup ?? 0} members per group`,
-          `${currentTierAccess.limits.maxTotalPlayers ?? 0} total players`
+          t(uiLanguage, "profile.membershipMaxGroups", { count: currentTierAccess.limits.maxGroups ?? 0 }),
+          t(uiLanguage, "profile.membershipMaxMembersPerGroup", { count: currentTierAccess.limits.maxMembersPerGroup ?? 0 }),
+          t(uiLanguage, "profile.membershipMaxTotalPlayers", { count: currentTierAccess.limits.maxTotalPlayers ?? 0 })
         ];
+
+  async function handleVisualThemeSelectionChange(value: string) {
+    const selection = parseVisualThemeSelectValue(value);
+
+    setIsUpdatingHomeTeam(true);
+    setNotificationMessage(null);
+
+    const updateSteps = selection.visualThemeId
+      ? [() => updateCurrentUserVisualTheme(selection.visualThemeId), () => updateCurrentUserHomeTeam(null)]
+      : [
+          () => updateCurrentUserHomeTeam(selection.homeTeamId),
+          ...(user?.visualThemeId ? [() => updateCurrentUserVisualTheme(null)] : [])
+        ];
+
+    for (const updateStep of updateSteps) {
+      const result = await updateStep();
+      if (!result.ok) {
+        setNotificationMessage({
+          tone: "error",
+          text: result.message ?? t(user?.preferredLanguage, "errors.generic")
+        });
+        setIsUpdatingHomeTeam(false);
+        return;
+      }
+    }
+
+    setNotificationMessage({
+      tone: "success",
+      text: selection.visualThemeId
+        ? "Visual theme updated."
+        : selection.homeTeamId
+          ? "Home team updated."
+          : "Visual theme reset to Auto/default."
+    });
+    await refresh();
+    setIsUpdatingHomeTeam(false);
+  }
 
   return (
     <section className="space-y-5">
       <div className="rounded-[1.15rem] bg-gray-100 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Profile</p>
-          <div className="rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
-            Active
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(uiLanguage, "profile.profile")}</p>
+          <div className="rounded-[0.75rem] bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
+            {t(uiLanguage, "profile.active")}
           </div>
         </div>
         <div className="mt-4 flex min-w-0 items-center gap-4">
@@ -269,8 +322,12 @@ export function ProfileSummary({
             <div className="mt-2">
               {user.homeTeamId ? (
                 <HomeTeamBadge teamId={user.homeTeamId} />
+              ) : selectedSpecialVisualTheme ? (
+                <span className="ui-chip-sm border border-gray-200 bg-white font-bold text-gray-700">
+                  {selectedSpecialVisualTheme.icon} {selectedSpecialVisualTheme.label}
+                </span>
               ) : (
-                <p className="text-sm text-gray-500">No home team selected</p>
+                <p className="text-sm text-gray-500">{t(uiLanguage, "profile.noHomeTeamSelected")}</p>
               )}
             </div>
           </div>
@@ -304,9 +361,13 @@ export function ProfileSummary({
               type="button"
               disabled={isUploadingAvatar}
               onClick={() => avatarInputRef.current?.click()}
-              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
             >
-              {isUploadingAvatar ? "Uploading..." : user.avatarUrl ? "Update Avatar" : "Upload Avatar"}
+              {isUploadingAvatar
+                ? t(uiLanguage, "profile.uploading")
+                : user.avatarUrl
+                  ? t(uiLanguage, "profile.updateAvatar")
+                  : t(uiLanguage, "profile.uploadAvatar")}
             </button>
             {user.avatarUrl ? (
               <button
@@ -326,21 +387,21 @@ export function ProfileSummary({
                   }
                   setIsUploadingAvatar(false);
                 }}
-                className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
               >
-                {isUploadingAvatar ? "Working..." : "Remove Avatar"}
+                {isUploadingAvatar ? t(uiLanguage, "auth.working") : t(uiLanguage, "profile.removeAvatar")}
               </button>
             ) : (
               <div />
             )}
           </div>
-          <p className="mt-2 text-center text-xs text-gray-500">Optional. If upload fails, your initials stay in place.</p>
+          <p className="mt-2 text-center text-xs text-gray-500">{t(uiLanguage, "profile.avatarUploadHelp")}</p>
         </div>
       </div>
 
       <div className="ui-card p-4">
         <div className="flex items-start justify-between gap-3">
-          <h3 className="text-lg font-bold">Profile editing</h3>
+          <h3 className="text-lg font-bold">{t(uiLanguage, "profile.profileEditing")}</h3>
           <InlineDisclosureButton
             isOpen={isProfileEditingOpen}
             variant="subtle"
@@ -351,42 +412,29 @@ export function ProfileSummary({
         {isProfileEditingOpen ? (
           <>
             <label className="mt-4 block">
-              <span className="text-sm font-bold text-gray-800">Home Team</span>
-              <p className="mt-1 text-sm font-semibold text-gray-500">Choose the team you&apos;re backing.</p>
-              <select
-                value={user.homeTeamId ?? ""}
+              <span className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.visualTheme")}</span>
+              <p className="mt-1 text-sm font-semibold text-gray-500">{t(uiLanguage, "profile.visualThemeHelp")}</p>
+              <VisualThemeMenu
+                value={getVisualThemeSelectValue({
+                  homeTeamId: user.homeTeamId ?? null,
+                  visualThemeId: user.visualThemeId ?? null
+                })}
                 disabled={isUpdatingHomeTeam}
-                onChange={async (event) => {
-                  setIsUpdatingHomeTeam(true);
-                  setNotificationMessage(null);
-                  const result = await updateCurrentUserHomeTeam(event.target.value || null);
-                  setNotificationMessage({
-                    tone: result.ok ? "success" : "error",
-                    text: result.message ?? "Something went wrong."
-                  });
-                  if (result.ok) {
-                    await refresh();
-                  }
-                  setIsUpdatingHomeTeam(false);
+                options={visualThemeOptions}
+                placeholder={t(uiLanguage, "profile.autoDefaultTheme")}
+                onChange={(nextValue) => {
+                  void handleVisualThemeSelectionChange(nextValue);
                 }}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
-              >
-                <option value="">No home team selected</option>
-                {sortedTeams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.flagEmoji} {team.name}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
             <div id="followed-teams" className="mt-4 rounded-[1.15rem] border border-gray-200 bg-gray-50/70 p-3 scroll-mt-24">
               <div className="flex items-start justify-between gap-3">
-                <p className="text-sm font-bold text-gray-800">Followed Teams</p>
+                <p className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.followedTeams")}</p>
                 <div className="ui-chip-sm border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-700">
-                  {allTeamsFollowed ? "All" : selectedFollowedTeams.length}
+                  {allTeamsFollowed ? t(uiLanguage, "profile.allTeams") : selectedFollowedTeams.length}
                 </div>
               </div>
-              <p className="mt-1 text-sm font-normal text-gray-500">App focus and reminders will follow these teams.</p>
+              <p className="mt-1 text-sm font-normal text-gray-500">{t(uiLanguage, "profile.appFocusReminders")}</p>
               <div className="mt-2 flex justify-end">
                 <InlineDisclosureButton
                   isOpen={isFollowedTeamsOpen}
@@ -398,13 +446,13 @@ export function ProfileSummary({
                 <>
                   <div className="mt-3 flex flex-col gap-3 sm:flex-row">
                     <label className="min-w-0 flex-1">
-                      <span className="sr-only">Choose a team to follow</span>
+                      <span className="sr-only">{t(uiLanguage, "profile.chooseTeamToFollow")}</span>
                       <select
                         value={followedTeamSelection}
                         onChange={(event) => setFollowedTeamSelection(event.target.value)}
-                        className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                        className="w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                       >
-                        <option value="">Add a team</option>
+                        <option value="">{t(uiLanguage, "profile.addTeam")}</option>
                         {availableFollowedTeamOptions.map((team) => (
                           <option key={team.id} value={team.id}>
                             {team.groupName} · {team.name}
@@ -426,9 +474,9 @@ export function ProfileSummary({
                           );
                           setFollowedTeamSelection("");
                         }}
-                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
                       >
-                        Add Team
+                        {t(uiLanguage, "profile.addTeam")}
                       </button>
                       <button
                         type="button"
@@ -437,9 +485,9 @@ export function ProfileSummary({
                           setFollowedTeamIdsDraft(sortedTeams.map((team) => team.id));
                           setFollowedTeamSelection("");
                         }}
-                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
                       >
-                        Add All Teams
+                        {t(uiLanguage, "profile.addAllTeams")}
                       </button>
                     </div>
                   </div>
@@ -450,7 +498,7 @@ export function ProfileSummary({
                         onClick={() => setFollowedTeamIdsDraft((current) => [user.homeTeamId as string, ...current])}
                         className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
                       >
-                        Add Home Team
+                        {t(uiLanguage, "profile.addHomeTeam")}
                       </button>
                     ) : null}
                     {followedTeamIdsDraft.length > 0 ? (
@@ -462,19 +510,19 @@ export function ProfileSummary({
                         }}
                         className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
                       >
-                        Clear
+                        {t(uiLanguage, "profile.clear")}
                       </button>
                     ) : null}
                   </div>
                   {allTeamsFollowed ? (
-                    <p className="mt-3 rounded-md border border-accent-light bg-accent-light/40 px-3 py-3 text-sm font-semibold text-accent-dark">
-                      All teams are included in your dashboard reminders.
+                    <p className="mt-3 rounded-[0.9rem] border border-accent-light bg-accent-light/40 px-3 py-3 text-sm font-semibold text-accent-dark">
+                      {t(uiLanguage, "profile.allTeamsDashboardReminders")}
                     </p>
                   ) : null}
                   <div className="mt-3 space-y-2">
                     {selectedFollowedTeams.length > 0 ? (
                       selectedFollowedTeams.map((team) => (
-                        <div key={team.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-2">
+                        <div key={team.id} className="flex items-start justify-between gap-3 rounded-[0.9rem] border border-gray-200 bg-white px-3 py-2">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-black text-gray-950">
                               {team.flagEmoji ? `${team.flagEmoji} ` : ""}{team.name}
@@ -486,15 +534,15 @@ export function ProfileSummary({
                             onClick={() =>
                               setFollowedTeamIdsDraft((current) => current.filter((teamId) => teamId !== team.id))
                             }
-                            className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-rose-300 bg-white px-3 py-2 text-xs font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 sm:text-sm"
+                            className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-rose-300 bg-white px-3 py-2 text-xs font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 sm:text-sm"
                           >
-                            Remove
+                            {t(uiLanguage, "common.remove")}
                           </button>
                         </div>
                       ))
                     ) : (
-                      <p className="rounded-md border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-500">
-                        No teams selected yet.
+                      <p className="rounded-[0.9rem] border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-500">
+                        {t(uiLanguage, "profile.noTeamsSelected")}
                       </p>
                     )}
                   </div>
@@ -508,18 +556,18 @@ export function ProfileSummary({
                         const result = await updateCurrentUserFollowedTeams(followedTeamIdsDraft);
                         setNotificationMessage({
                           tone: result.ok ? "success" : "error",
-                          text: result.message ?? "Something went wrong."
+                          text: result.message ?? t(user.preferredLanguage, "errors.generic")
                         });
                         if (result.ok) {
                           await refresh();
                         }
                         setIsUpdatingFollowedTeams(false);
                       }}
-                      className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                      className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-accent bg-accent px-3 py-2 text-xs font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
                     >
-                      {isUpdatingFollowedTeams ? "Saving..." : "Save Followed Teams"}
+                      {isUpdatingFollowedTeams ? t(user.preferredLanguage, "common.saving") : t(user.preferredLanguage, "profile.saveFollowedTeams")}
                     </button>
-                    <p className="text-xs font-semibold text-gray-500">Your dashboard reminder follows these teams.</p>
+                    <p className="text-xs font-semibold text-gray-500">{t(user.preferredLanguage, "profile.remindersFollowTeams")}</p>
                   </div>
                 </>
               ) : null}
@@ -535,17 +583,20 @@ export function ProfileSummary({
                   const result = await updateCurrentUserPreferredLanguage(event.target.value);
                   setNotificationMessage({
                     tone: result.ok ? "success" : "error",
-                    text: result.message ?? "Something went wrong."
+                    text: result.message ?? t(user.preferredLanguage, "errors.generic")
                   });
                   if (result.ok) {
                     await refresh();
                   }
                   setIsUpdatingLanguage(false);
                 }}
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+                className="mt-2 w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
               >
-                <option value="en">{copy.english}</option>
-                <option value="es">{copy.spanish}</option>
+                {getSupportedLanguageOptions(user.preferredLanguage).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </label>
             <div className="mt-5 border-t border-gray-200 pt-4">
@@ -557,29 +608,29 @@ export function ProfileSummary({
                     router.replace("/login");
                     router.refresh();
                   }}
-                  className="inline-flex rounded-md border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
+                  className="inline-flex rounded-[0.9rem] border border-accent bg-accent px-4 py-3 text-sm font-bold text-white transition hover:border-accent-dark hover:bg-accent-dark"
                 >
-                  Sign out
+                  {t(uiLanguage, "profile.signOut")}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowDeleteAccountPrompt((current) => !current)}
-                  className="inline-flex rounded-md border border-rose-300 bg-white px-4 py-3 text-sm font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50"
+                  className="inline-flex rounded-[0.9rem] border border-rose-300 bg-white px-4 py-3 text-sm font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50"
                 >
-                  Delete my account
+                  {t(uiLanguage, "profile.deleteMyAccount")}
                 </button>
               </div>
               {showDeleteAccountPrompt ? (
-                <div className="mt-3 rounded-md border border-rose-200 bg-rose-50/70 p-3">
+                <div className="mt-3 rounded-[1rem] border border-rose-200 bg-rose-50/70 p-3">
                   <p className="text-sm font-semibold text-rose-800">
-                    This permanently deletes your account. Type <span className="font-black">{user.email?.trim().toLowerCase()}</span> to confirm.
+                    {t(uiLanguage, "profile.deleteAccountConfirm", { email: user.email?.trim().toLowerCase() })}
                   </p>
                   <input
                     type="text"
                     value={deleteAccountConfirmation}
                     onChange={(event) => setDeleteAccountConfirmation(event.target.value)}
                     placeholder={user.email?.trim().toLowerCase() ?? "your email"}
-                    className="mt-3 w-full rounded-md border border-rose-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    className="mt-3 w-full rounded-[0.9rem] border border-rose-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
                   />
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
@@ -591,7 +642,7 @@ export function ProfileSummary({
                         const result = await deleteCurrentUserAccount(deleteAccountConfirmation);
                         setDeleteAccountMessage({
                           tone: result.ok ? "success" : "error",
-                          text: result.message ?? "Could not delete your account."
+                          text: result.message ?? t(uiLanguage, "profile.couldNotDeleteAccount")
                         });
                         if (result.ok) {
                           await signOutCurrentUser();
@@ -601,9 +652,9 @@ export function ProfileSummary({
                         }
                         setIsDeletingAccount(false);
                       }}
-                      className="inline-flex rounded-md border border-rose-600 bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600"
+                      className="inline-flex rounded-[0.9rem] border border-rose-600 bg-rose-600 px-4 py-3 text-sm font-bold text-white disabled:border-gray-300 disabled:bg-gray-300 disabled:text-gray-600"
                     >
-                      {isDeletingAccount ? "Deleting..." : "Permanently delete account"}
+                      {isDeletingAccount ? t(uiLanguage, "profile.deleting") : t(uiLanguage, "profile.permanentlyDeleteAccount")}
                     </button>
                     <button
                       type="button"
@@ -612,9 +663,9 @@ export function ProfileSummary({
                         setShowDeleteAccountPrompt(false);
                         setDeleteAccountConfirmation("");
                       }}
-                      className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-700"
+                      className="inline-flex rounded-[0.9rem] border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-700"
                     >
-                      Cancel
+                      {t(uiLanguage, "common.cancel")}
                     </button>
                   </div>
                 </div>
@@ -625,10 +676,9 @@ export function ProfileSummary({
       </div>
 
       <div className="ui-card p-4">
-        <h3 className="text-lg font-bold">Notifications</h3>
+        <h3 className="text-lg font-bold">{t(uiLanguage, "profile.notifications")}</h3>
         <p className="mt-2 text-sm leading-6 text-gray-600">
-          Opt in to the big moments only: Perfect Picks, Daily Winner, major jumps up the table, and new comments on
-          your activity.
+          {t(uiLanguage, "profile.notificationsDescription")}
         </p>
         <button
           type="button"
@@ -639,7 +689,7 @@ export function ProfileSummary({
             const result = await updateCurrentUserNotificationPreferences(!(user.notificationsEnabled ?? false));
             setNotificationMessage({
               tone: result.ok ? "success" : "error",
-              text: result.message ?? "Something went wrong."
+                          text: result.message ?? t(user.preferredLanguage, "errors.generic")
             });
             if (result.ok) {
               await refresh();
@@ -653,10 +703,10 @@ export function ProfileSummary({
           } disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500`}
         >
           {isUpdatingNotifications
-            ? "Updating..."
+            ? t(uiLanguage, "profile.sending")
             : user.notificationsEnabled
-              ? "Notifications On"
-              : "Turn On Notifications"}
+              ? t(uiLanguage, "profile.notificationsOn")
+              : t(uiLanguage, "profile.turnOnNotifications")}
         </button>
         {notificationMessage ? (
           <p
@@ -671,7 +721,7 @@ export function ProfileSummary({
         ) : null}
         <div className="mt-4 border-t border-gray-200 pt-4">
           <p className="text-sm font-semibold text-gray-700">
-            Enable push notifications for this browser or device.
+            {t(uiLanguage, "profile.enablePushInstructions")}
           </p>
           <button
             type="button"
@@ -684,8 +734,8 @@ export function ProfileSummary({
                 tone: result.ok ? "success" : "error",
                 text:
                   !(user.notificationsEnabled ?? false) && !result.ok
-                    ? "Turn on leaderboard notifications first."
-                    : (result.message ?? "Something went wrong.")
+                    ? t(uiLanguage, "profile.turnOnLeaderboardNotificationsFirst")
+                    : (result.message ?? t(user.preferredLanguage, "errors.generic"))
               });
               if (result.ok) {
                 await refresh();
@@ -699,21 +749,21 @@ export function ProfileSummary({
             } disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500`}
           >
             {isRegisteringPush
-              ? "Enabling..."
+              ? t(uiLanguage, "profile.enabling")
               : user.pushNotificationsEnabled
-                ? "Push Enabled"
-                : "Enable Push Notifications"}
+                ? t(uiLanguage, "profile.pushEnabled")
+                : t(uiLanguage, "profile.enablePushNotifications")}
           </button>
           <p className="mt-2 text-xs font-semibold text-gray-500">
-            We only use push for Perfect Picks, Daily Winners, big jumps up the table, and new comments.
+            {t(uiLanguage, "profile.pushDescription")}
           </p>
         </div>
       </div>
 
       <div className="ui-card p-4">
-        <h3 className="text-lg font-bold">Password</h3>
+        <h3 className="text-lg font-bold">{t(uiLanguage, "profile.passwordTitle")}</h3>
         <p className="mt-2 text-sm leading-6 text-gray-600">
-          Send yourself a password reset email if you want to change how you sign in.
+          {t(uiLanguage, "profile.passwordDescription")}
         </p>
         {passwordMessage ? (
           <p
@@ -735,13 +785,13 @@ export function ProfileSummary({
             const result = await sendCurrentUserPasswordReset(user.email);
             setPasswordMessage({
               tone: result.ok ? "success" : "error",
-              text: result.message ?? "Something went wrong."
+              text: result.message ?? t(user.preferredLanguage, "errors.generic")
             });
             setIsSendingReset(false);
           }}
           className="mt-4 w-full rounded-md border border-gray-300 bg-gray-50 px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
         >
-          {isSendingReset ? "Sending..." : "Reset My Password"}
+          {isSendingReset ? t(uiLanguage, "profile.sending") : t(uiLanguage, "profile.resetMyPassword")}
         </button>
       </div>
 
@@ -871,11 +921,11 @@ export function ProfileSummary({
       ) : null}
 
       <div className="ui-card p-4">
-        <h3 className="text-lg font-bold">Trophies</h3>
+        <h3 className="text-lg font-bold">{t(uiLanguage, "profile.trophies")}</h3>
         {isLoadingTrophies ? (
-          <p className="mt-2 text-sm leading-6 text-gray-600">Loading trophies...</p>
+          <p className="mt-2 text-sm leading-6 text-gray-600">{t(uiLanguage, "profile.loadingTrophies")}</p>
         ) : trophies.length === 0 ? (
-          <p className="mt-2 text-sm leading-6 text-gray-600">No trophies yet</p>
+          <p className="mt-2 text-sm leading-6 text-gray-600">{t(uiLanguage, "profile.noTrophiesYet")}</p>
         ) : (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {trophies.map((trophy) => (
@@ -893,22 +943,22 @@ export function ProfileSummary({
       <div className="ui-card p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-lg font-bold">Knockout Bracket</h3>
+            <h3 className="text-lg font-bold">{t(uiLanguage, "profile.knockoutBracket")}</h3>
             <p className="mt-2 text-sm leading-6 text-gray-600">
-              Your knockout score stays separate from the main leaderboard for now.
+              {t(uiLanguage, "profile.knockoutScoreSeparate")}
             </p>
           </div>
           <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-            {bracketScoreSummary.bracketPoints} pts
+            {t(uiLanguage, "common.pointsShort", { points: bracketScoreSummary.bracketPoints })}
           </div>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <div className="rounded-md bg-gray-100 px-4 py-3">
-            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Correct picks</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{t(uiLanguage, "bracket.correctPicks")}</p>
             <p className="mt-1 text-2xl font-black text-gray-950">{bracketScoreSummary.correctPicks}</p>
           </div>
           <div className="rounded-md bg-gray-100 px-4 py-3">
-            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Bracket points</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{t(uiLanguage, "bracket.bracketPoints")}</p>
             <p className="mt-1 text-2xl font-black text-gray-950">{bracketScoreSummary.bracketPoints}</p>
           </div>
         </div>
@@ -916,7 +966,7 @@ export function ProfileSummary({
           href="/knockout"
           className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
         >
-          Open Knockout Picks
+          {t(uiLanguage, "bracket.openKnockoutPicks")}
         </a>
       </div>
 
@@ -928,10 +978,11 @@ export function ProfileSummary({
           </p>
           <p className="mt-1 text-xs font-semibold text-gray-500">
             {(currentLegalDocument?.body ?? user.currentEulaBody)
-              ? `Showing the active ${copy.termsOfUse.toLowerCase()} in ${
-                  (currentLegalDocument?.language ?? user.currentEulaLanguage) === "es" ? copy.spanish : copy.english
-                }.`
-              : "The active terms are not available in this profile view right now."}
+              ? t(user.preferredLanguage, "legal.activeTermsLanguage", {
+                  termsLabel: copy.termsOfUse.toLowerCase(),
+                  languageLabel: getLanguageLabel(normalizeLanguage(currentLegalDocument?.language ?? user.currentEulaLanguage), user.preferredLanguage)
+                })
+              : t(user.preferredLanguage, "legal.termsUnavailable")}
           </p>
           {(currentLegalDocument?.body ?? user.currentEulaBody) ? (
             <div className="mt-3 max-h-56 overflow-y-auto whitespace-pre-wrap text-sm font-semibold leading-6 text-gray-700">
@@ -939,7 +990,7 @@ export function ProfileSummary({
             </div>
           ) : (
             <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">
-              Use the button below to open the current acceptance screen and review the active terms directly.
+              {t(user.preferredLanguage, "legal.reviewCurrentTerms")}
             </p>
           )}
         </div>
@@ -948,11 +999,11 @@ export function ProfileSummary({
             href="/legal/accept?next=/profile"
             className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
           >
-            Review and Accept Terms
+            {t(uiLanguage, "profile.reviewAcceptTerms")}
           </a>
         ) : (
           <p className="mt-4 text-sm font-semibold text-gray-600">
-            You&apos;re current on the active terms shown above.
+            {t(uiLanguage, "profile.currentOnTerms")}
           </p>
         )}
       </div>

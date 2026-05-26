@@ -16,6 +16,7 @@ import { LeaderboardPlayerLocalizationBackground } from "@/components/localized-
 import { LocalizedCardBackground } from "@/components/localized-card/LocalizedCardBackground";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
+import { useAppLanguage } from "@/lib/app-language";
 import { parseJsonResponse } from "@/lib/fetch-json";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
@@ -29,7 +30,8 @@ import type {
   LeaderboardSwitcherView
 } from "@/lib/leaderboard-data";
 import type { DailyWinner } from "@/lib/leaderboard-highlights";
-import { getLocalizedCardCssVars, getLocalizedCardTheme, getLocalizedCardThemeForUserSurface } from "@/lib/localized-card-themes";
+import { getLocalizedCardCssVars, getLocalizedCardThemeForUserSurface } from "@/lib/localized-card-themes";
+import { t } from "@/lib/strings";
 import { hasDirectorAccess } from "@/lib/tier-access";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY, LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -114,7 +116,10 @@ function LeaderboardPlayerRow({
 }) {
   const isCurrentUser = profile.id === currentUserId;
   const isLightlyHighlighted = index < 3;
-  const localizedTheme = getLocalizedCardTheme({ homeTeamId: profile.homeTeamId ?? null });
+  const localizedTheme = getLocalizedCardThemeForUserSurface({
+    visualThemeId: profile.visualThemeId ?? null,
+    homeTeamId: profile.homeTeamId ?? null
+  });
   const localizedCardVars = getLocalizedCardCssVars(localizedTheme);
   const rowTone = isCurrentUser
     ? "border-accent/60 bg-white shadow-[0_10px_24px_rgba(16,185,129,0.12)]"
@@ -186,28 +191,43 @@ function LeaderboardPlayerRow({
 }
 
 function getLeaderboardScoreDisplay(profile: LeaderboardListItem, activePhase: LeaderboardPhase) {
+  const scoreValue = getLeaderboardNumericScore(profile, activePhase);
+
   if (activePhase === "group_phase") {
     return {
       scoreLabel: "Pts",
-      scoreValue: profile.groupPhasePoints ?? 0
+      scoreValue
     };
   }
 
   if (activePhase === "knockout_phase") {
     return {
       scoreLabel: "Pts",
-      scoreValue: profile.knockoutPhasePoints ?? 0
+      scoreValue
     };
   }
 
   return {
     scoreLabel: "Pts",
-    scoreValue: profile.globalTopTenPoints ?? profile.totalPoints
+    scoreValue
   };
+}
+
+function getLeaderboardNumericScore(profile: LeaderboardListItem, activePhase: LeaderboardPhase) {
+  if (activePhase === "group_phase") {
+    return profile.groupPhasePoints ?? 0;
+  }
+
+  if (activePhase === "knockout_phase") {
+    return profile.knockoutPhasePoints ?? 0;
+  }
+
+  return profile.globalTopTenPoints ?? profile.totalPoints ?? 0;
 }
 
 export function LeaderboardClient() {
   const { user, isLoading: isUserLoading } = useCurrentUser();
+  const { activeLanguage: uiLanguage } = useAppLanguage();
   const searchParams = useSearchParams();
   const [users, setUsers] = useState<LeaderboardListItem[]>([]);
   const [groupStandings, setGroupStandings] = useState<GroupStandingItem[]>([]);
@@ -215,6 +235,7 @@ export function LeaderboardClient() {
   const [switcher, setSwitcher] = useState<LeaderboardSwitcherContext | null>(null);
   const [dailyWinners, setDailyWinners] = useState<DailyWinner[]>([]);
   const [activityFeed, setActivityFeed] = useState<LeaderboardActivityItem[]>([]);
+  const [globalLeaderboardTotalPlayers, setGlobalLeaderboardTotalPlayers] = useState(0);
   const [activePhase, setActivePhase] = useState<LeaderboardPhase>(DEFAULT_LEADERBOARD_PHASE);
   const [activeView, setActiveView] = useState<LeaderboardSwitcherView>(DEFAULT_SWITCHER_STATE.activeView);
   const [selectedGroupId, setSelectedGroupId] = useState(DEFAULT_SWITCHER_STATE.selectedGroupId);
@@ -266,6 +287,7 @@ export function LeaderboardClient() {
   const lastSelectedGroupIdRef = useRef("");
   const lastSelectedManagerIdRef = useRef("");
   const localizedTheme = getLocalizedCardThemeForUserSurface({
+    visualThemeId: user?.visualThemeId ?? null,
     homeTeamId: user?.homeTeamId ?? null,
     preferredLanguage: user?.preferredLanguage ?? null
   });
@@ -525,6 +547,7 @@ export function LeaderboardClient() {
           setSwitcher(result.switcher);
           setDailyWinners(result.dailyWinners);
           setActivityFeed(result.activityFeed);
+          setGlobalLeaderboardTotalPlayers(result.globalLeaderboardTotalPlayers);
           setActivePhase(result.phase);
           setError(null);
           hasLoadedLeaderboardRef.current = true;
@@ -594,7 +617,9 @@ export function LeaderboardClient() {
         }
 
         setGlobalStandingLabel(
-          currentUserRank ? `GLOBAL: #${currentUserRank}` : "GLOBAL: UNRANKED"
+          currentUserRank
+            ? `${t(uiLanguage, "leaderboard.global")}: #${currentUserRank}`
+            : `${t(uiLanguage, "leaderboard.global")}: ${t(uiLanguage, "leaderboard.unranked")}`
         );
       })
       .catch(() => {
@@ -606,7 +631,7 @@ export function LeaderboardClient() {
     return () => {
       isMounted = false;
     };
-  }, [user?.id, refreshNonce]);
+  }, [refreshNonce, uiLanguage, user?.id]);
 
   useEffect(() => {
     if (!pendingActivityAnchorId || !isActivityExpanded) {
@@ -666,7 +691,7 @@ export function LeaderboardClient() {
     }
 
     const preferredView = getRememberedLeaderboardViewForPhase(switcher, activePhase, rememberedViewByPhase);
-    const phaseTabs = getPhaseViewTabs(switcher, activePhase);
+    const phaseTabs = getPhaseViewTabs(switcher, activePhase, uiLanguage);
 
     if (!hasExplicitSwitcherPreference) {
       if (activeView !== preferredView) {
@@ -679,7 +704,7 @@ export function LeaderboardClient() {
     if (!allowedViews.has(activeView)) {
       setActiveView(preferredView);
     }
-  }, [activePhase, activeView, hasExplicitSwitcherPreference, rememberedViewByPhase, switcher]);
+  }, [activePhase, activeView, hasExplicitSwitcherPreference, rememberedViewByPhase, switcher, uiLanguage]);
 
   const availableGroupOptions = useMemo(
     () => (switcher ? getGroupOptionsForView(switcher, activeView) : []),
@@ -828,8 +853,8 @@ export function LeaderboardClient() {
     [availableGroupOptions, selectedGroupId]
   );
   const phaseNavItems = useMemo(
-    () => (switcher ? getPhaseNavItems(switcher, activePhase) : []),
-    [activePhase, switcher]
+    () => (switcher ? getPhaseNavItems(switcher, activePhase, uiLanguage) : []),
+    [activePhase, switcher, uiLanguage]
   );
   const activePhaseNavKey = useMemo(() => {
     if (activePhase === "global_top10" && activeView === "groups") {
@@ -854,11 +879,11 @@ export function LeaderboardClient() {
     () =>
       phaseNavItems.find((item) => item.key === activePhaseNavKey)?.label ??
       (activePhase === "group_phase"
-        ? "Group Stage"
+        ? t(uiLanguage, "leaderboard.groupStage")
         : activePhase === "knockout_phase"
-          ? "Knockout Stage"
-          : "Global Top 10"),
-    [activePhase, activePhaseNavKey, phaseNavItems]
+          ? t(uiLanguage, "leaderboard.knockoutStage")
+          : t(uiLanguage, "leaderboard.globalTop10")),
+    [activePhase, activePhaseNavKey, phaseNavItems, uiLanguage]
   );
   const groupedPhaseNavItems = useMemo(() => {
     const globalItems = phaseNavItems.filter(
@@ -868,33 +893,33 @@ export function LeaderboardClient() {
     const invitedItems = phaseNavItems.filter((item) => item.view === "my_groups");
 
     return [
-      { title: "Global", items: globalItems },
-      { title: "Managed Groups", items: managedItems },
-      { title: "Invited Groups", items: invitedItems }
+      { title: t(uiLanguage, "leaderboard.global"), items: globalItems },
+      { title: t(uiLanguage, "leaderboard.managedGroups"), items: managedItems },
+      { title: t(uiLanguage, "leaderboard.invitedGroups"), items: invitedItems }
     ].filter((section) => section.items.length > 0);
-  }, [phaseNavItems]);
+  }, [phaseNavItems, uiLanguage]);
   const leaderboardTitle = useMemo(() => {
     if (activePhase === "global_top10" && activeView === "groups") {
-      return "Global Top 10 Groups";
+      return t(uiLanguage, "leaderboard.globalTop10Groups");
     }
 
     if (activePhase === "global_top10" && activeView === "teams") {
-      return "Global Top 10 Teams";
+      return t(uiLanguage, "leaderboard.globalTop10Teams");
     }
 
     if (activePhase === "global_top10") {
-      return "Global Top 10";
+      return t(uiLanguage, "leaderboard.globalTop10");
     }
 
     if ((activeView === "managed_groups" || activeView === "my_groups") && selectedGroupLabel) {
       return selectedGroupLabel;
     }
 
-    return activePhase === "group_phase" ? "Group Stage Leaderboard" : "Knockout Stage";
-  }, [activePhase, activeView, selectedGroupLabel]);
+    return activePhase === "group_phase" ? t(uiLanguage, "leaderboard.groupStageLeaderboard") : t(uiLanguage, "leaderboard.knockoutStageLeaderboard");
+  }, [activePhase, activeView, selectedGroupLabel, uiLanguage]);
   const dailyWinnerContextLabel = useMemo(() => {
     if (activeView === "global") {
-      return "Global";
+      return t(uiLanguage, "leaderboard.global");
     }
 
     if ((activeView === "managed_groups" || activeView === "my_groups") && selectedGroupLabel) {
@@ -902,7 +927,7 @@ export function LeaderboardClient() {
     }
 
     if (activeView === "groups") {
-      return "Group Standings";
+      return t(uiLanguage, "leaderboard.groupStandings");
     }
 
     if (activeView === "managers" && selectedManagerLabel) {
@@ -910,7 +935,7 @@ export function LeaderboardClient() {
     }
 
     return null;
-  }, [activeView, selectedGroupLabel, selectedManagerLabel]);
+  }, [activeView, selectedGroupLabel, selectedManagerLabel, uiLanguage]);
   const stableLeaderSummaryGroupId = selectedGroupId || lastSelectedGroupIdRef.current;
   const stableLeaderSummaryManagerId = selectedManagerId || lastSelectedManagerIdRef.current;
   const leaderSummaryContextKey = useMemo(
@@ -934,7 +959,11 @@ export function LeaderboardClient() {
     () => (activePhase === "global_top10" ? teamStandings.slice(0, 10) : teamStandings),
     [activePhase, teamStandings]
   );
-  const shouldRenderLeaderboardRows = isGlobalView || isGroupView;
+  const isGlobalTopTenPlayerView = activePhase === "global_top10" && isGlobalView;
+  const hasGlobalTopTenScoringStarted = users.some((profile) => getLeaderboardNumericScore(profile, activePhase) > 0);
+  const shouldShowGlobalTopTenWaitingCard =
+    isGlobalTopTenPlayerView && !isLoading && !error && users.length > 0 && !hasGlobalTopTenScoringStarted;
+  const shouldRenderLeaderboardRows = (isGlobalView || isGroupView) && !shouldShowGlobalTopTenWaitingCard;
   const canAwardManagedTrophies =
     activeView === "managed_groups" &&
     hasDirectorAccess(switcher?.accessLevel ?? "player") &&
@@ -949,7 +978,7 @@ export function LeaderboardClient() {
     return missingRows * LEADERBOARD_STABLE_ROW_DEPTH_PX;
   }, [error, isLoading, shouldRenderLeaderboardRows, users.length]);
   const leaders = useMemo(() => users.filter((profile) => profile.rank === 1), [users]);
-  const sharedLeaderScore = leaders[0]?.totalPoints ?? null;
+  const sharedLeaderScore = leaders[0] ? getLeaderboardNumericScore(leaders[0], activePhase) : null;
   const activityMentionCount = useMemo(
     () =>
       activityFeed.filter(
@@ -1068,6 +1097,7 @@ export function LeaderboardClient() {
   }, [activePhase, rememberedViewByPhase, switcher]);
 
   function renderActivityCard(event: LeaderboardActivityItem, isNewest: boolean) {
+    const activityMessage = event.messageKey ? t(uiLanguage, event.messageKey, event.messageParams ?? {}) : event.message;
     return (
       <div
         key={event.id}
@@ -1093,16 +1123,16 @@ export function LeaderboardClient() {
                       style={TWO_LINE_CLAMP_STYLE}
                       className={`min-w-0 flex-1 text-sm font-semibold leading-5 ${isNewest ? "text-gray-900" : "text-gray-800"}`}
                     >
-                      {event.message}
+                      {activityMessage}
                     </p>
                     <div className="flex shrink-0 flex-col items-end gap-2">
                       <span
                         className={`ui-chip-sm font-black ${getActivityBadgeTone(event)}`}
                       >
-                        {getActivityLabel(event)}
+                        {getActivityLabel(event, uiLanguage)}
                       </span>
                       {isNewest ? (
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Newest</p>
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{t(uiLanguage, "leaderboard.newest")}</p>
                       ) : null}
                     </div>
                   </div>
@@ -1124,8 +1154,8 @@ export function LeaderboardClient() {
                           aria-expanded={Boolean(event.eventId && expandedComments[event.eventId])}
                           aria-label={
                             event.eventId && expandedComments[event.eventId]
-                              ? `Hide comments for ${event.message}`
-                              : `Open comments for ${event.message}`
+                              ? `Hide comments for ${activityMessage}`
+                              : `Open comments for ${activityMessage}`
                           }
                         >
                           {event.eventId && expandedComments[event.eventId] ? (
@@ -1133,7 +1163,7 @@ export function LeaderboardClient() {
                           ) : (
                             <ChevronDown className="h-3.5 w-3.5" aria-hidden />
                           )}
-                          <span>💬 {event.comments.length > 0 ? `${event.comments.length} comments` : "Comments"}</span>
+                          <span>💬 {event.comments.length > 0 ? t(uiLanguage, "leaderboard.commentCount", { count: event.comments.length }) : t(uiLanguage, "leaderboard.comments")}</span>
                         </button>
                       ) : null}
                     </div>
@@ -1147,16 +1177,16 @@ export function LeaderboardClient() {
                   style={TWO_LINE_CLAMP_STYLE}
                   className={`min-w-0 flex-1 text-sm font-semibold leading-5 ${isNewest ? "text-gray-900" : "text-gray-800"}`}
                 >
-                  {event.message}
+                  {activityMessage}
                 </p>
                 <div className="flex shrink-0 flex-col items-end gap-2">
                   <span
                     className={`ui-chip-sm font-black ${getActivityBadgeTone(event)}`}
                   >
-                    {getActivityLabel(event)}
+                    {getActivityLabel(event, uiLanguage)}
                   </span>
                   {isNewest ? (
-                    <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Newest</p>
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{t(uiLanguage, "leaderboard.newest")}</p>
                   ) : null}
                 </div>
               </div>
@@ -1206,7 +1236,7 @@ export function LeaderboardClient() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs font-semibold text-gray-500">No comments yet.</p>
+                  <p className="text-xs font-semibold text-gray-500">{t(uiLanguage, "leaderboard.noCommentsYet")}</p>
                 )}
                 <div className="space-y-2">
                   <textarea
@@ -1224,11 +1254,11 @@ export function LeaderboardClient() {
                     }}
                     rows={3}
                     maxLength={280}
-                    placeholder="Add a comment"
+                    placeholder={t(uiLanguage, "leaderboard.addComment")}
                     className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                   />
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-[11px] font-semibold text-gray-500">Keep it kind. 280 characters max.</p>
+                    <p className="text-[11px] font-semibold text-gray-500">{t(uiLanguage, "leaderboard.commentGuidance")}</p>
                     <button
                       type="button"
                       onClick={() => {
@@ -1241,7 +1271,7 @@ export function LeaderboardClient() {
                       }
                       className="inline-flex items-center rounded-md bg-accent px-3 py-2 text-xs font-bold text-accent-text transition hover:bg-accent-dark disabled:cursor-not-allowed disabled:bg-gray-300"
                     >
-                      {activeCommentEventId === event.eventId ? "Posting..." : "Post comment"}
+                      {activeCommentEventId === event.eventId ? t(uiLanguage, "leaderboard.posting") : t(uiLanguage, "leaderboard.postComment")}
                     </button>
                   </div>
                 </div>
@@ -1267,7 +1297,7 @@ export function LeaderboardClient() {
         <LocalizedCardBackground theme={localizedTheme} />
         <div className="relative flex items-start justify-between gap-3">
           <p className="text-sm font-bold uppercase tracking-wide text-[color:var(--localized-card-secondary-text)]">
-            Leaderboard
+            {t(uiLanguage, "leaderboard.leaderboard")}
           </p>
           {globalStandingLabel ? (
             <div className="ui-chip-sm shrink-0 font-bold uppercase tracking-wide" style={introChipStyle}>
@@ -1276,7 +1306,7 @@ export function LeaderboardClient() {
           ) : null}
         </div>
         <h2 className="relative mt-3 text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">
-          See how you rank
+          {t(uiLanguage, "leaderboard.seeHowYouRank")}
         </h2>
       </section>
 
@@ -1286,7 +1316,7 @@ export function LeaderboardClient() {
             <div>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
-                  <p className="text-sm font-bold uppercase tracking-wide text-amber-700">🏆 Daily Winner</p>
+                  <p className="text-sm font-bold uppercase tracking-wide text-amber-700">🏆 {t(uiLanguage, "leaderboard.dailyWinnerTitle")}</p>
                   {dailyWinnerContextLabel ? (
                     <span className="ui-chip-sm border border-amber-200 bg-white/80 font-bold uppercase tracking-wide text-amber-800">
                       {dailyWinnerContextLabel}
@@ -1303,7 +1333,7 @@ export function LeaderboardClient() {
                       }}
                       className="text-xs font-bold text-amber-800 underline-offset-2 hover:underline"
                     >
-                      See in Recent Activity
+                      {t(uiLanguage, "leaderboard.seeInRecentActivity")}
                     </button>
                   ) : null}
                   <button
@@ -1318,14 +1348,14 @@ export function LeaderboardClient() {
                       );
                     }}
                     className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-amber-200 bg-white/90 text-amber-800 transition hover:border-amber-300 hover:bg-amber-50"
-                    aria-label="Dismiss daily winner"
+                    aria-label={t(uiLanguage, "leaderboard.dismissDailyWinner")}
                   >
                     <X className="h-3.5 w-3.5" aria-hidden />
                   </button>
                 </div>
               </div>
               <p className="mt-2 text-sm font-semibold text-gray-600">
-                {dailyWinners.length === 1 ? "Highest points today." : "Tied for the highest points today."}
+                {dailyWinners.length === 1 ? t(uiLanguage, "leaderboard.highestPointsToday") : t(uiLanguage, "leaderboard.tiedHighestPointsToday")}
               </p>
             </div>
 
@@ -1347,7 +1377,7 @@ export function LeaderboardClient() {
                         />
                         <div className="min-w-0">
                           <p className="truncate text-base font-black text-gray-950">{winner.name}</p>
-                          <p className="mt-1 text-sm font-semibold text-amber-800">{winner.points} pts today</p>
+                          <p className="mt-1 text-sm font-semibold text-amber-800">{t(uiLanguage, "leaderboard.pointsTodayFull", { points: winner.points })}</p>
                           {winner.homeTeamId ? (
                             <div className="mt-2">
                               <HomeTeamBadge teamId={winner.homeTeamId} label="" className="border-amber-200 bg-amber-50/80" />
@@ -1374,7 +1404,7 @@ export function LeaderboardClient() {
                         >
                           <span className="inline-flex items-center gap-2">
                             <span>👏</span>
-                            <span>{winner.congratulated ? "Congratulated" : "Congratulate"}</span>
+                            <span>{winner.congratulated ? t(uiLanguage, "leaderboard.congratulated") : t(uiLanguage, "leaderboard.congratulate")}</span>
                             {winner.congratulationsCount ? <span>{winner.congratulationsCount}</span> : null}
                           </span>
                         </button>
@@ -1399,10 +1429,9 @@ export function LeaderboardClient() {
         <section className="ui-card p-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Recent Activity</p>
+              <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(uiLanguage, "leaderboard.recentActivity")}</p>
               <p className="mt-1 text-xs font-semibold text-gray-500">
-                {activityFeed.length} recent update{activityFeed.length === 1 ? "" : "s"} · {activityMentionCount} mention
-                {activityMentionCount === 1 ? "" : "s"}
+                {t(uiLanguage, "leaderboard.activitySummary", { updateCount: activityFeed.length, mentionCount: activityMentionCount })}
               </p>
             </div>
             <InlineDisclosureButton
@@ -1428,7 +1457,13 @@ export function LeaderboardClient() {
         </section>
       ) : null}
 
-      {shouldRenderLeaderboardRows ? (
+      {shouldShowGlobalTopTenWaitingCard ? (
+        <GlobalTopTenWaitingCard
+          leaders={users}
+          totalPlayers={globalLeaderboardTotalPlayers || users.length}
+          language={uiLanguage}
+        />
+      ) : shouldRenderLeaderboardRows ? (
         <section className="space-y-2" style={{ minHeight: LEADERBOARD_STABLE_CONTENT_MIN_HEIGHT }}>
           <div className="flex items-start justify-between gap-2 px-1 pt-1">
             {isGroupView && selectedGroupSummary ? (
@@ -1442,7 +1477,7 @@ export function LeaderboardClient() {
                   <h3 className="min-w-0 truncate text-base font-black text-gray-950">{leaderboardTitle}</h3>
                 </div>
                 <span className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700">
-                  {selectedGroupSummary.context === "managed" ? "Managed" : "Invited"}
+                  {selectedGroupSummary.context === "managed" ? t(uiLanguage, "leaderboard.managed") : t(uiLanguage, "leaderboard.invited")}
                 </span>
               </div>
             ) : (
@@ -1453,18 +1488,18 @@ export function LeaderboardClient() {
             <div className="px-3 py-1">
               <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 text-[11px] font-semibold text-gray-600">
                 <div className="min-w-0">
-                  <span className="font-black text-gray-900">Managed by:</span>{" "}
-                  <span className="truncate">{selectedGroupSummary.managerName ?? "Group manager"}</span>
+                  <span className="font-black text-gray-900">{t(uiLanguage, "leaderboard.managedBy")}</span>{" "}
+                  <span className="truncate">{selectedGroupSummary.managerName ?? t(uiLanguage, "leaderboard.groupManager")}</span>
                 </div>
                 <div className="text-right font-black text-gray-900">
-                  {selectedGroupSummary.totalPlayers} players
+                  {t(uiLanguage, "leaderboard.playerCountFull", { count: selectedGroupSummary.totalPlayers })}
                 </div>
                 <div className="min-w-0">
-                  <span className="font-black text-gray-900">Average Points:</span>{" "}
+                  <span className="font-black text-gray-900">{t(uiLanguage, "leaderboard.averagePoints")}</span>{" "}
                   {selectedGroupSummary.averagePoints !== null ? formatAveragePoints(selectedGroupSummary.averagePoints) : "—"}
                 </div>
                 <div className="text-right">
-                  <span className="font-black text-gray-900">Global Rank:</span>{" "}
+                  <span className="font-black text-gray-900">{t(uiLanguage, "leaderboard.globalRank")}</span>{" "}
                   {selectedGroupSummary.globalRank ? `#${selectedGroupSummary.globalRank}` : "—"}
                 </div>
               </div>
@@ -1476,6 +1511,7 @@ export function LeaderboardClient() {
               sharedScore={sharedLeaderScore}
               isOpen={leaderSummaryState.isOpen}
               showAllLeaders={leaderSummaryState.showAllLeaders}
+              language={uiLanguage}
               onToggleOpen={() =>
                 setLeaderSummaryStateByContext((current) => ({
                   ...current,
@@ -1552,6 +1588,7 @@ export function LeaderboardClient() {
           groups={displayedGroupStandings}
           isLoading={isLoading}
           error={error}
+          language={uiLanguage}
         />
       ) : isTeamStandingsView ? (
         <TeamStandingsSection
@@ -1559,12 +1596,14 @@ export function LeaderboardClient() {
           teams={displayedTeamStandings}
           isLoading={isLoading}
           error={error}
+          language={uiLanguage}
         />
       ) : (
         <LeaderboardPlaceholder
           activeView={activeView}
           selectedGroupLabel={selectedGroupLabel}
           selectedManagerLabel={selectedManagerLabel}
+          language={uiLanguage}
         />
       )}
 
@@ -1732,15 +1771,15 @@ export function LeaderboardClient() {
     return (
       <div className={className ? `${className} space-y-1.5` : "space-y-1.5"}>
         <LeaderboardChoiceRail
-          prevLabel="Show previous leaderboard phases"
-          nextLabel="Show more leaderboard phases"
+          prevLabel={t(uiLanguage, "leaderboard.showPreviousLeaderboardPhases")}
+          nextLabel={t(uiLanguage, "leaderboard.showMoreLeaderboardPhases")}
           activeItemKey={activePhase}
           onActiveItemChange={(nextKey) => handleSelectPhase(nextKey as LeaderboardPhase)}
         >
           {[
-            { value: "group_phase", label: "Group Stage" },
-            { value: "knockout_phase", label: "Knockout Stage" },
-            { value: "global_top10", label: "Global" }
+            { value: "group_phase", label: t(uiLanguage, "leaderboard.groupStage") },
+            { value: "knockout_phase", label: t(uiLanguage, "leaderboard.knockoutStage") },
+            { value: "global_top10", label: t(uiLanguage, "leaderboard.global") }
           ].map((phase) => (
             <button
               key={phase.value}
@@ -1789,7 +1828,7 @@ export function LeaderboardClient() {
                         >
                           <span className="truncate text-[13px] font-bold">{item.label}</span>
                           {activePhaseNavKey === item.key ? (
-                            <span className="ml-2 shrink-0 text-[10px] font-black uppercase tracking-wide">Open</span>
+                            <span className="ml-2 shrink-0 text-[10px] font-black uppercase tracking-wide">{t(uiLanguage, "leaderboard.open")}</span>
                           ) : null}
                         </button>
                       ))}
@@ -1808,24 +1847,26 @@ export function LeaderboardClient() {
 function LeaderboardPlaceholder({
   activeView,
   selectedGroupLabel,
-  selectedManagerLabel
+  selectedManagerLabel,
+  language
 }: {
   activeView: LeaderboardSwitcherView;
   selectedGroupLabel: string | null;
   selectedManagerLabel: string | null;
+  language: string;
 }) {
   return (
     <section className="ui-card-soft p-4">
-      <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Leaderboard View</p>
-      <h3 className="mt-2 text-2xl font-black text-gray-950">{getPlaceholderTitle(activeView)}</h3>
+      <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(language, "leaderboard.leaderboardView")}</p>
+      <h3 className="mt-2 text-2xl font-black text-gray-950">{getPlaceholderTitle(activeView, language)}</h3>
       <p className="mt-2 text-sm font-semibold text-gray-600">
-        {getPlaceholderCopy(activeView, selectedGroupLabel, selectedManagerLabel)}
+        {getPlaceholderCopy(activeView, selectedGroupLabel, selectedManagerLabel, language)}
       </p>
       <p className="mt-2.5 rounded-md border border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-700">
-        Progress indicators are currently available on the Global leaderboard. Group progress is coming next.
+        {t(language, "leaderboard.progressGlobalOnly")}
       </p>
       <p className="mt-3 rounded-md border border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-700">
-        Group leaderboard coming next.
+        {t(language, "leaderboard.groupLeaderboardComingNext")}
       </p>
     </section>
   );
@@ -1868,27 +1909,32 @@ function getGroupOptionsForView(
 
 function getPhaseViewTabs(
   switcher: LeaderboardSwitcherContext,
-  activePhase: LeaderboardPhase
+  activePhase: LeaderboardPhase,
+  language = "en"
 ): Array<{ value: LeaderboardSwitcherView; label: string }> {
   if (activePhase === "global_top10") {
     return [
-      { value: "global", label: "Global Top 10" },
-      { value: "groups", label: "Global Top 10 Groups" },
-      { value: "teams", label: "Global Top 10 Teams" }
+      { value: "global", label: t(language, "leaderboard.globalTop10") },
+      ...(switcher.tabs.some((tab) => tab.value === "groups")
+        ? [{ value: "groups" as const, label: t(language, "leaderboard.globalTop10Groups") }]
+        : []),
+      ...(switcher.tabs.some((tab) => tab.value === "teams")
+        ? [{ value: "teams" as const, label: t(language, "leaderboard.globalTop10Teams") }]
+        : [])
     ];
   }
 
   const nextTabs: Array<{ value: LeaderboardSwitcherView; label: string }> = [
     {
       value: "global",
-      label: activePhase === "group_phase" ? "Group Stage" : "Knockout Stage"
+      label: activePhase === "group_phase" ? t(language, "leaderboard.groupStage") : t(language, "leaderboard.knockoutStage")
     }
   ];
   if (switcher.managedGroups.length > 0 && switcher.tabs.some((tab) => tab.value === "managed_groups")) {
-    nextTabs.push({ value: "managed_groups", label: "Managed Groups" });
+    nextTabs.push({ value: "managed_groups", label: t(language, "leaderboard.managedGroups") });
   }
   if (switcher.joinedGroups.length > 0 && switcher.tabs.some((tab) => tab.value === "my_groups")) {
-    nextTabs.push({ value: "my_groups", label: "Invited Groups" });
+    nextTabs.push({ value: "my_groups", label: t(language, "leaderboard.invitedGroups") });
   }
 
   return nextTabs;
@@ -1896,13 +1942,18 @@ function getPhaseViewTabs(
 
 function getPhaseNavItems(
   switcher: LeaderboardSwitcherContext,
-  activePhase: LeaderboardPhase
+  activePhase: LeaderboardPhase,
+  language: string
 ): PhaseNavItem[] {
   if (activePhase === "global_top10") {
     return [
-      { key: "global", label: "Global Top 10", view: "global" },
-      { key: "groups", label: "Global Top 10 Groups", view: "groups" },
-      { key: "teams", label: "Global Top 10 Teams", view: "teams" }
+      { key: "global", label: t(language, "leaderboard.globalTop10"), view: "global" },
+      ...(switcher.tabs.some((tab) => tab.value === "groups")
+        ? [{ key: "groups", label: t(language, "leaderboard.globalTop10Groups"), view: "groups" as const }]
+        : []),
+      ...(switcher.tabs.some((tab) => tab.value === "teams")
+        ? [{ key: "teams", label: t(language, "leaderboard.globalTop10Teams"), view: "teams" as const }]
+        : [])
     ];
   }
 
@@ -1961,7 +2012,7 @@ function getRememberedLeaderboardViewForPhase(
   rememberedViewByPhase: Partial<Record<LeaderboardPhase, LeaderboardSwitcherView>>
 ): LeaderboardSwitcherView {
   const rememberedView = rememberedViewByPhase[activePhase];
-  if (rememberedView && getPhaseViewTabs(switcher, activePhase).some((tab) => tab.value === rememberedView)) {
+  if (rememberedView && getPhaseViewTabs(switcher, activePhase, "en").some((tab) => tab.value === rememberedView)) {
     return rememberedView;
   }
 
@@ -1972,20 +2023,20 @@ function shouldShowManagerSelector(activeView: LeaderboardSwitcherView) {
   return activeView === "managers";
 }
 
-function getPlaceholderTitle(activeView: LeaderboardSwitcherView) {
+function getPlaceholderTitle(activeView: LeaderboardSwitcherView, language: string) {
   if (activeView === "my_groups") {
-    return "Invited / Joined Groups";
+    return t(language, "leaderboard.invitedJoinedGroups");
   }
   if (activeView === "managed_groups") {
-    return "My Managed Groups";
+    return t(language, "leaderboard.myManagedGroups");
   }
   if (activeView === "groups") {
-    return "Group Standings";
+    return t(language, "leaderboard.groupStandings");
   }
   if (activeView === "managers") {
-    return "Managers";
+    return t(language, "leaderboard.managers");
   }
-  return "Global Standings";
+  return t(language, "leaderboard.globalStandings");
 }
 
 function getLeaderSummaryContextKey(
@@ -2007,37 +2058,40 @@ function getLeaderSummaryContextKey(
 function getPlaceholderCopy(
   activeView: LeaderboardSwitcherView,
   selectedGroupLabel: string | null,
-  selectedManagerLabel: string | null
+  selectedManagerLabel: string | null,
+  language: string
 ) {
   if (activeView === "managers") {
     return selectedManagerLabel
-      ? `We are lining up ${selectedManagerLabel}'s leaderboard context next.`
-      : "Choose a manager to preview that leaderboard context.";
+      ? t(language, "leaderboard.liningUpManagerContext", { label: selectedManagerLabel })
+      : t(language, "leaderboard.chooseManagerContext");
   }
 
   if (shouldShowGroupSelector(activeView)) {
     return selectedGroupLabel
-      ? `We are lining up ${selectedGroupLabel}'s leaderboard context next.`
-      : "Choose a group to preview that leaderboard context.";
+      ? t(language, "leaderboard.liningUpGroupContext", { label: selectedGroupLabel })
+      : t(language, "leaderboard.chooseGroupContext");
   }
 
   if (activeView === "groups") {
-    return "Standings include groups you joined and groups you manage.";
+    return t(language, "leaderboard.groupsYouJoinedManaged");
   }
 
-  return "Global leaderboard is ready now.";
+  return t(language, "leaderboard.globalReady");
 }
 
 function GroupStandingsSection({
   title,
   groups,
   isLoading,
-  error
+  error,
+  language
 }: {
   title: string;
   groups: GroupStandingItem[];
   isLoading: boolean;
   error: string | null;
+  language: string;
 }) {
   const topAverage = groups[0]?.avgPoints ?? 0;
   const allGroupsAreScoreless = groups.length > 0 && groups.every((group) => group.totalPoints <= 0);
@@ -2050,25 +2104,25 @@ function GroupStandingsSection({
 
       {isLoading ? (
         <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
-          Loading group standings...
+          {t(language, "leaderboard.loadingGroupStandings")}
         </p>
       ) : null}
 
       {!isLoading && error ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-          Could not load group standings right now: {error}
+          {t(language, "leaderboard.couldNotLoadGroupStandings", { error })}
         </p>
       ) : null}
 
       {!isLoading && !error && groups.length === 0 ? (
         <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
-          No group standings are ready yet.
+          {t(language, "leaderboard.noGroupStandings")}
         </p>
       ) : null}
 
       {!isLoading && !error && allGroupsAreScoreless ? (
         <p className="ui-card px-4 py-3 text-sm font-semibold text-gray-600">
-          Groups are set up, but no scores have landed yet.
+          {t(language, "leaderboard.groupScoresPending")}
         </p>
       ) : null}
 
@@ -2084,7 +2138,7 @@ function GroupStandingsSection({
                 <div className="flex items-start gap-3">
                   <div className="flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-center text-gray-700">
                     <span className="text-sm font-black leading-none">{group.rank}</span>
-                    <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">Rank</span>
+                    <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">{t(language, "leaderboard.rank")}</span>
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
@@ -2094,7 +2148,7 @@ function GroupStandingsSection({
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-lg font-black text-accent-dark">{formatAveragePoints(group.avgPoints)}</p>
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Avg standard pts</p>
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{t(language, "leaderboard.avgStandardPts")}</p>
                       </div>
                     </div>
 
@@ -2106,26 +2160,26 @@ function GroupStandingsSection({
                     </div>
 
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-gray-600">
-                      <span>{group.playerCount} players</span>
+                      <span>{t(language, "leaderboard.playerCountFull", { count: group.playerCount })}</span>
                       <span>•</span>
-                      <span>{group.totalPoints} total pts</span>
+                      <span>{t(language, "leaderboard.totalPts", { points: group.totalPoints })}</span>
                       <span>•</span>
-                      <span>Top player: {group.topPlayerName} ({group.topPlayerPoints} pts)</span>
+                      <span>{t(language, "leaderboard.topPlayer", { name: group.topPlayerName, points: group.topPlayerPoints })}</span>
                       {group.perfectPickCount !== null ? (
                         <>
                           <span>•</span>
-                          <span>{group.perfectPickCount} perfect picks</span>
+                          <span>{t(language, "leaderboard.perfectPicks", { count: group.perfectPickCount })}</span>
                         </>
                       ) : null}
                       {group.recentActivityCount !== null ? (
                         <>
                           <span>•</span>
-                          <span>{group.recentActivityCount} recent moments</span>
+                          <span>{t(language, "leaderboard.recentMoments", { count: group.recentActivityCount })}</span>
                         </>
                       ) : null}
                       {isScoreless ? (
                         <span className="rounded-md bg-gray-100 px-2 py-1 text-[11px] font-black text-gray-600">
-                          No scores yet
+                          {t(language, "leaderboard.noScoresYet")}
                         </span>
                       ) : null}
                       {group.tag ? (
@@ -2148,12 +2202,14 @@ function TeamStandingsSection({
   title,
   teams,
   isLoading,
-  error
+  error,
+  language
 }: {
   title: string;
   teams: TeamStandingItem[];
   isLoading: boolean;
   error: string | null;
+  language: string;
 }) {
   const topAverage = teams[0]?.avgPoints ?? 0;
   const allTeamsAreScoreless = teams.length > 0 && teams.every((team) => team.totalPoints <= 0);
@@ -2166,25 +2222,25 @@ function TeamStandingsSection({
 
       {isLoading ? (
         <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
-          Loading team standings...
+          {t(language, "leaderboard.loadingTeamStandings")}
         </p>
       ) : null}
 
       {!isLoading && error ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-          Could not load team standings right now: {error}
+          {t(language, "leaderboard.couldNotLoadTeamStandings", { error })}
         </p>
       ) : null}
 
       {!isLoading && !error && teams.length === 0 ? (
         <p className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-600">
-          No team standings are ready yet.
+          {t(language, "leaderboard.noTeamStandings")}
         </p>
       ) : null}
 
       {!isLoading && !error && allTeamsAreScoreless ? (
         <p className="ui-card px-4 py-3 text-sm font-semibold text-gray-600">
-          Teams are lined up, but no scores have landed yet.
+          {t(language, "leaderboard.teamScoresPending")}
         </p>
       ) : null}
 
@@ -2200,7 +2256,7 @@ function TeamStandingsSection({
                 <div className="flex items-start gap-3">
                   <div className="flex min-h-12 min-w-12 flex-col items-center justify-center rounded-md bg-gray-100 px-2 py-1 text-center text-gray-700">
                     <span className="text-sm font-black leading-none">{team.rank}</span>
-                    <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">Rank</span>
+                    <span className="mt-1 text-[9px] font-black uppercase tracking-wide leading-none">{t(language, "leaderboard.rank")}</span>
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
@@ -2210,12 +2266,12 @@ function TeamStandingsSection({
                           <HomeTeamBadge teamId={team.id} label="" compact className="bg-gray-50" />
                         </div>
                         <p className="mt-1 truncate text-sm font-semibold text-gray-600">
-                          {team.playerCount} player{team.playerCount === 1 ? "" : "s"} backing {team.shortName}
+                          {t(language, "leaderboard.playersBackingTeam", { count: team.playerCount, teamName: team.shortName })}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-lg font-black text-accent-dark">{formatAveragePoints(team.avgPoints)}</p>
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Avg pts</p>
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{t(language, "leaderboard.avgPts")}</p>
                       </div>
                     </div>
 
@@ -2227,12 +2283,12 @@ function TeamStandingsSection({
                     </div>
 
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-gray-600">
-                      <span>{team.totalPoints} total pts</span>
+                      <span>{t(language, "leaderboard.totalPts", { points: team.totalPoints })}</span>
                       <span>•</span>
-                      <span>Top player: {team.topPlayerName} ({team.topPlayerPoints} pts)</span>
+                      <span>{t(language, "leaderboard.topPlayer", { name: team.topPlayerName, points: team.topPlayerPoints })}</span>
                       {isScoreless ? (
                         <span className="rounded-md bg-gray-100 px-2 py-1 text-[11px] font-black text-gray-600">
-                          No scores yet
+                          {t(language, "leaderboard.noScoresYet")}
                         </span>
                       ) : null}
                       {team.tag ? (
@@ -2256,6 +2312,7 @@ function LeaderSummaryCard({
   sharedScore,
   isOpen,
   showAllLeaders,
+  language,
   onToggleOpen,
   onShowAllLeaders,
   onShowFewerLeaders
@@ -2264,6 +2321,7 @@ function LeaderSummaryCard({
   sharedScore: number | null;
   isOpen: boolean;
   showAllLeaders: boolean;
+  language: string;
   onToggleOpen: () => void;
   onShowAllLeaders: () => void;
   onShowFewerLeaders: () => void;
@@ -2275,7 +2333,7 @@ function LeaderSummaryCard({
     <div className="ui-card p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <h3 className="text-sm font-bold uppercase tracking-wide text-accent-dark">WHO&apos;S #1</h3>
+          <h3 className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(language, "leaderboard.whosNumberOne")}</h3>
         </div>
         <div className="flex shrink-0 items-center">
           <InlineDisclosureButton
@@ -2289,13 +2347,11 @@ function LeaderSummaryCard({
         <>
           <div className="mt-1.5">
             <div className="inline-flex shrink-0 rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
-              Shared score: {sharedScore ?? "—"} pts
+              {t(language, "leaderboard.sharedScore", { score: sharedScore ?? "—" })}
             </div>
           </div>
           <p className="mt-0.5 min-w-0 text-sm leading-6 text-gray-600">
-            {leaders.length > 1
-              ? `${leaders.length} players are sharing rank 1 right now.`
-              : "One player is holding rank 1 right now."}
+            {t(language, "leaderboard.playersShareRankOne", { count: leaders.length })}
           </p>
 
           <div className="mt-2.5 flex flex-wrap gap-2">
@@ -2315,7 +2371,7 @@ function LeaderSummaryCard({
                 onClick={onShowAllLeaders}
                 className="inline-flex items-center rounded-md bg-accent-light px-3 py-2 text-sm font-bold text-accent-dark transition hover:bg-accent/20"
               >
-                +{hiddenLeaderCount} more
+                {t(language, "leaderboard.moreLeaders", { count: hiddenLeaderCount })}
               </button>
             ) : null}
             {showAllLeaders && leaders.length > 4 ? (
@@ -2324,13 +2380,60 @@ function LeaderSummaryCard({
                 onClick={onShowFewerLeaders}
                 className="inline-flex items-center rounded-md bg-accent-light px-3 py-2 text-sm font-bold text-accent-dark transition hover:bg-accent/20"
               >
-                Show less
+                {t(language, "leaderboard.showLess")}
               </button>
             ) : null}
           </div>
         </>
       ) : null}
     </div>
+  );
+}
+
+function GlobalTopTenWaitingCard({
+  leaders,
+  totalPlayers,
+  language
+}: {
+  leaders: LeaderboardListItem[];
+  totalPlayers: number;
+  language: string;
+}) {
+  const previewLeaders = leaders.slice(0, 30);
+  const hiddenPlayerCount = Math.max(0, totalPlayers - previewLeaders.length);
+
+  return (
+    <section className="ui-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(language, "leaderboard.whosNumberOne")}</h3>
+          <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-500">{t(language, "leaderboard.noScoresYet")}</p>
+        </div>
+        <span className="ui-chip-sm border border-gray-200 bg-gray-50 font-black text-gray-800">
+          {t(language, "leaderboard.sharedScore", { score: 0 })}
+        </span>
+      </div>
+      <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">
+        {t(language, "leaderboard.globalTop10Waiting")}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {previewLeaders.map((leader) => (
+          <Link
+            key={leader.id}
+            href={`/leaderboard/${leader.id}`}
+            className="inline-flex max-w-full items-center gap-2 rounded-[0.85rem] border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            <Avatar name={leader.name} avatarUrl={leader.avatarUrl} size="sm" />
+            <span className="truncate">{leader.name}</span>
+          </Link>
+        ))}
+        {hiddenPlayerCount > 0 ? (
+          <span className="inline-flex items-center rounded-[0.85rem] border border-gray-200 bg-white px-3 py-2 text-sm font-black text-gray-700">
+            {t(language, "leaderboard.morePlayersJoining", { count: hiddenPlayerCount })}
+          </span>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -2372,13 +2475,13 @@ function formatAveragePoints(value: number) {
   return value % 1 === 0 ? `${value}` : value.toFixed(1);
 }
 
-function getActivityLabel(event: LeaderboardActivityItem) {
+function getActivityLabel(event: LeaderboardActivityItem, language: string) {
   if (event.eventType === "perfect_pick") {
-    return "Perfect Pick";
+    return t(language, "leaderboard.activityPerfectPick");
   }
 
   if (event.eventType === "daily_winner") {
-    return "Daily Winner";
+    return t(language, "leaderboard.activityDailyWinner");
   }
 
   if (event.eventType === "points_awarded" && event.pointsDelta === 8) {
@@ -2386,18 +2489,18 @@ function getActivityLabel(event: LeaderboardActivityItem) {
   }
 
   if (event.eventType === "trophy_awarded") {
-    return "Trophy";
+    return t(language, "leaderboard.activityTrophy");
   }
 
   if (event.eventType === "rank_moved_up") {
-    return "Rank Up";
+    return t(language, "leaderboard.activityRankUp");
   }
 
   if (event.eventType === "rank_moved_down") {
-    return "Rank Move";
+    return t(language, "leaderboard.activityRankMove");
   }
 
-  return "Points";
+  return t(language, "leaderboard.activityPoints");
 }
 
 function getActivityCardTone(event: LeaderboardActivityItem) {

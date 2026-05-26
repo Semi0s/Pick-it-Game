@@ -7,7 +7,9 @@ import {
   fetchKnockoutStructureStatus
 } from "@/lib/bracket-predictions";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
+import { normalizeLanguage } from "@/lib/i18n";
 import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
+import { t } from "@/lib/strings";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +22,11 @@ export default async function KnockoutPage() {
   if (user) {
     await redirectIfLaunchOnboardingRequired({ userId: user.id });
     await redirectIfLegacyScoringSetupRequired({ userId: user.id, pathname: "/knockout" });
+  }
+  let language = normalizeLanguage(null);
+  if (user) {
+    const { data: profile } = await supabase.from("users").select("preferred_language").eq("id", user.id).maybeSingle();
+    language = normalizeLanguage((profile as { preferred_language?: string | null } | null)?.preferred_language);
   }
   const knockoutStatus = await fetchKnockoutStructureStatus().catch(() => ({
     counts: { r32: 0, r16: 0, qf: 0, sf: 0, third: 0, final: 0 },
@@ -40,8 +47,8 @@ export default async function KnockoutPage() {
         champion: null,
         thirdPlace: null,
         predictions: [],
-        title: "Official knockout bracket",
-        description: "The official knockout bracket is now available.",
+        title: t(language, "knockout.officialBracketTitle"),
+        description: t(language, "knockout.officialBracketAvailable"),
         secondaryNote: null
       }))
     : null;
@@ -55,34 +62,41 @@ export default async function KnockoutPage() {
   const shouldShowLockedProjected = Boolean(projectedChallengeView && projectedChallengeView.isLocked && !isOfficialSeeded);
   const shouldShowOfficialBracket = Boolean(officialBracketView && isOfficialSeeded);
   const showingProjectedChallengeOnly = shouldShowEditableProjected || shouldShowLockedProjected;
-  const introEyebrow = "Knockout Phase";
-  const introTitle = showingProjectedChallengeOnly || !isOfficialSeeded
-    ? "Waiting on qualifiers."
-    : "Predict all the match scores for a winner.";
+  const introTitleKey = showingProjectedChallengeOnly || !isOfficialSeeded
+    ? "knockout.waitingOnQualifiers"
+    : "knockout.predictScoresForWinner";
   const introDescription = (shouldShowEditableProjected || shouldShowLockedProjected)
     ? shouldShowLockedProjected
-      ? "Your projected bracket challenge is locked for this phase. It will stay visible as its own archived side-pick once the official Round of 32 is seeded."
-      : "Build your projected bracket challenge from your group-stage picks. Official knockout picks open after the real Round of 32 is seeded."
+      ? t(language, "knockout.projectedLockedDescription")
+      : t(language, "knockout.projectedEditableDescription")
     : isOfficialSeeded
-      ? "Round of 32 keeps your early Group Stage path beside the official bracket. Later rounds use standard knockout cards."
-      : "We will open official knockout picks once the full group stage is complete and the real Round of 32 is seeded.";
+      ? t(language, "knockout.officialSeededDescription")
+      : t(language, "knockout.officialPendingDescription");
   const introSecondaryNote = (shouldShowEditableProjected || shouldShowLockedProjected)
     ? shouldShowLockedProjected
-      ? "Projection status updates as matches become final."
-      : "Official knockout picks open after the real Round of 32 is seeded."
+      ? t(language, "knockout.projectionStatusNote")
+      : t(language, "knockout.officialPicksOpenAfterSeeded")
     : isOfficialSeeded
       ? null
       : null;
+  const knockoutStatusChipKey =
+    !isOfficialSeeded || getKnockoutPhaseChip(knockoutStatus.counts, language) === t(language, "knockout.groupStageChip")
+      ? "knockout.groupStageChip"
+      : getKnockoutPhaseChip(knockoutStatus.counts, language) === t(language, "knockout.final")
+        ? "knockout.final"
+        : undefined;
+  const knockoutStatusChip = knockoutStatusChipKey ? undefined : getKnockoutPhaseChip(knockoutStatus.counts, language);
   const primaryBracketView = shouldShowOfficialBracket ? officialBracketView : projectedChallengeView;
 
   return (
     <AppShell>
       <ManagementIntro
-        eyebrow={introEyebrow}
-        title={introTitle}
+        eyebrowKey="knockout.knockoutPhase"
+        titleKey={introTitleKey}
         description={introDescription}
         secondaryNote={introSecondaryNote}
-        statusChip={isOfficialSeeded ? getKnockoutPhaseChip(knockoutStatus.counts) : "Group Stage"}
+        statusChip={knockoutStatusChip}
+        statusChipKey={knockoutStatusChipKey}
         disclosurePlacement="bottom-right"
         statusChipPlacement="top-right"
         collapseBodyWhenClosed
@@ -93,11 +107,12 @@ export default async function KnockoutPage() {
           <KnockoutBracketBuilder
             initialView={primaryBracketView}
             projectedComparisonView={shouldShowOfficialBracket ? projectedComparisonView : null}
+            language={language}
           />
         </div>
       ) : user && !isOfficialSeeded ? (
         <div className="mt-5 rounded-lg border border-gray-200 bg-white px-4 py-4 text-sm font-semibold text-gray-600">
-          Make more group-stage picks to build your projected bracket preview.
+          {t(language, "knockout.makeGroupPicksForPreview")}
         </div>
       ) : null}
     </AppShell>
@@ -111,9 +126,9 @@ function getKnockoutPhaseChip(counts: {
   sf: number;
   third: number;
   final: number;
-}) {
+}, language: string) {
   if (counts.final > 0) {
-    return "Final";
+    return t(language, "knockout.final");
   }
 
   if (counts.third > 0 || counts.sf > 0) {
@@ -132,5 +147,5 @@ function getKnockoutPhaseChip(counts: {
     return "R32";
   }
 
-  return "Group Stage";
+  return t(language, "knockout.groupStageChip");
 }

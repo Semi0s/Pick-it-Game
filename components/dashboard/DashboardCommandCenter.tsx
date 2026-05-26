@@ -5,17 +5,19 @@ import { AlarmClock, BellRing, ThumbsUp } from "lucide-react";
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import {
   getDeadlineUrgency,
-  getReminderLabel,
   type DashboardCommandCenterSummary,
   type DashboardMatchSummary,
   type DashboardUrgencyTone
 } from "@/lib/dashboard-home";
+import { formatDate, formatNumber, formatRank as formatLocalizedRank, formatTime } from "@/lib/i18n-format";
+import { t } from "@/lib/strings";
 
 type DashboardCommandCenterProps = {
   summary: DashboardCommandCenterSummary;
+  language?: string | null;
 };
 
-export function DashboardCommandCenter({ summary }: DashboardCommandCenterProps) {
+export function DashboardCommandCenter({ summary, language }: DashboardCommandCenterProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -29,32 +31,36 @@ export function DashboardCommandCenter({ summary }: DashboardCommandCenterProps)
   }, []);
 
   return (
-    <section className="grid grid-cols-3 gap-2.5">
-      <ProgressPanel progress={summary.progress} nowMs={nowMs} />
-      <PerformancePanel performance={summary.performance} />
-      <ReminderPanel reminder={summary.reminder} nowMs={nowMs} />
+    <section className="grid grid-cols-3 gap-2">
+      <ProgressPanel progress={summary.progress} nowMs={nowMs} language={language} />
+      <PerformancePanel performance={summary.performance} language={language} />
+      <ReminderPanel reminder={summary.reminder} nowMs={nowMs} language={language} />
     </section>
   );
 }
 
 function ProgressPanel({
   progress,
-  nowMs
+  nowMs,
+  language
 }: {
   progress: DashboardCommandCenterSummary["progress"];
   nowMs: number;
+  language?: string | null;
 }) {
   const tone = getProgressDisplayTone(progress, nowMs);
   const percentage = progress.totalUnits > 0 ? Math.round((progress.completedUnits / progress.totalUnits) * 100) : 0;
-  const statusLabel = progress.isComplete ? (progress.isLocked ? "Locked" : "Ready") : progress.deadlineLabel;
+  const statusLabel = progress.isComplete
+    ? (progress.isLocked ? t(language, "common.locked") : t(language, "common.ready"))
+    : getLocalizedDeadlineLabel(progress.deadlineAt, language, nowMs);
 
   return (
-    <PanelShell accentTone={tone} header={<UrgencyIconChip tone={tone} isComplete={progress.isComplete} />}>
+    <PanelShell accentTone={tone} header={<UrgencyIconChip tone={tone} isComplete={progress.isComplete} language={language} />}>
       <div className="flex h-full flex-col items-center justify-center text-center">
         <DigitalWatchRing percentage={percentage} tone={tone} />
         <div className="mt-1.5 space-y-0.5">
-          <p className="text-center text-[10px] font-black tracking-[-0.02em] text-slate-950">{progress.label}</p>
-          <p className={`text-[7px] font-semibold uppercase tracking-[0.18em] ${getToneMetaTextClasses(tone, progress.isComplete, progress.isLocked)}`}>
+          <p className="max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] text-slate-950">{progress.label}</p>
+          <p className={`max-w-full truncate text-[6.5px] font-semibold uppercase tracking-[0.1em] ${getToneMetaTextClasses(tone, progress.isComplete, progress.isLocked)}`}>
             {statusLabel}
           </p>
         </div>
@@ -64,16 +70,18 @@ function ProgressPanel({
 }
 
 function PerformancePanel({
-  performance
+  performance,
+  language
 }: {
   performance: DashboardCommandCenterSummary["performance"];
+  language?: string | null;
 }) {
   return (
-    <PanelShell accentTone="neutral">
+    <PanelShell accentTone="neutral" className="triptych-compact-type">
       <div className="flex h-full w-full flex-col justify-center divide-y divide-slate-200/80">
-        <MetricRow label="Pts" value={formatPoints(performance.globalPoints)} />
-        <MetricRow label="Rank" value={formatRank(performance.globalRank)} />
-        <MetricRow label="Groups" value={String(performance.totalGroups)} />
+        <MetricRow label="Pts" value={formatPoints(performance.globalPoints, language)} />
+        <MetricRow label={t(language, "leaderboard.rank")} value={formatRank(performance.globalRank, language)} />
+        <MetricRow label={t(language, "dashboard.groupsCompact")} value={String(performance.totalGroups)} />
       </div>
     </PanelShell>
   );
@@ -81,16 +89,18 @@ function PerformancePanel({
 
 function ReminderPanel({
   reminder,
-  nowMs
+  nowMs,
+  language
 }: {
   reminder: DashboardCommandCenterSummary["reminder"];
   nowMs: number;
+  language?: string | null;
 }) {
   if (reminder.followedTeamCount === 0) {
     return (
       <Link
         href="/profile#followed-teams"
-        className={`relative flex h-[166px] min-w-0 flex-col items-center justify-center overflow-hidden rounded-[1.15rem] border px-3 py-3 text-center transition hover:border-accent/50 hover:bg-accent-light/20 ${getPanelShellClasses("green")}`}
+        className={`relative flex h-[166px] min-w-0 flex-col items-center justify-center overflow-hidden rounded-[1.15rem] border px-2.5 py-3 text-center transition hover:border-accent/50 hover:bg-accent-light/20 ${getPanelShellClasses("green")}`}
       >
         <div className={`pointer-events-none absolute inset-px rounded-[1.05rem] ${getPanelInnerSurfaceClasses("green")}`} />
         <div className={`pointer-events-none absolute -right-10 top-0 h-20 w-20 rounded-full blur-2xl ${getPanelGlowClasses("green")}`} />
@@ -98,8 +108,8 @@ function ReminderPanel({
           <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/80 bg-white/85 text-accent-dark shadow-[0_1px_0_rgba(255,255,255,0.9)]">
             <BellRing aria-hidden className="h-4 w-4" />
           </span>
-          <p className="mt-2 text-[7px] font-semibold uppercase tracking-[0.2em] text-slate-500">Reminders</p>
-          <p className="mt-1 text-[11px] font-black leading-3 tracking-[-0.02em] text-slate-950">Pick team(s) to follow</p>
+          <p className="mt-2 max-w-full truncate text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">{t(language, "dashboard.reminders")}</p>
+          <p className="mt-1 max-w-full text-[10px] font-black leading-3 tracking-[-0.03em] text-slate-950">{t(language, "dashboard.pickTeamsToFollow")}</p>
         </div>
       </Link>
     );
@@ -108,8 +118,8 @@ function ReminderPanel({
   const hasLiveMatches = reminder.liveMatches.length > 0;
   const tone = hasLiveMatches ? "red" : getDeadlineUrgency(reminder.nextMatch?.kickoffTime ?? null, nowMs);
   const chipLabel = hasLiveMatches
-    ? "Live"
-    : getReminderLabel(reminder.nextMatch?.kickoffTime ?? null, nowMs, { emptyLabel: "No match" });
+    ? t(language, "common.live")
+    : getLocalizedReminderLabel(reminder.nextMatch?.kickoffTime ?? null, language, nowMs, t(language, "dashboard.noMatch"));
 
   return (
     <PanelShell
@@ -121,15 +131,15 @@ function ReminderPanel({
         {hasLiveMatches ? (
           <div className="flex w-full flex-col justify-center gap-2">
             {reminder.liveMatches.slice(0, 2).map((match) => (
-              <CompactLiveMatch key={match.id} match={match} />
+              <CompactLiveMatch key={match.id} match={match} language={language} />
             ))}
           </div>
         ) : reminder.nextMatch ? (
           <div className="flex w-full flex-col items-center justify-center text-center">
-            <p className="text-[7px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-              {formatReminderStageLabel(reminder.nextMatch)}
+            <p className="max-w-full truncate text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">
+              {formatReminderStageLabel(reminder.nextMatch, language)}
             </p>
-            <p className="mt-1.5 flex items-center gap-2 text-[15px] font-black leading-3 tracking-[-0.03em] text-slate-950">
+            <p className="mt-1.5 flex max-w-full items-center gap-1.5 text-[15px] font-black leading-3 tracking-[-0.03em] text-slate-950">
               <MatchFlag
                 flagEmoji={reminder.nextMatch.homeTeamFlagEmoji}
                 fallback={reminder.nextMatch.homeTeamShortName}
@@ -143,13 +153,13 @@ function ReminderPanel({
               />
             </p>
             <div className="mt-1.5 flex flex-col items-center gap-0.5">
-              <p className="text-[9px] font-semibold leading-3 text-slate-700">{formatShortDate(reminder.nextMatch.kickoffTime)}</p>
-              <p className="text-[7px] font-semibold uppercase tracking-[0.18em] text-slate-500">{formatShortTime(reminder.nextMatch.kickoffTime)}</p>
+              <p className="text-[8.5px] font-semibold leading-3 text-slate-700">{formatShortDate(reminder.nextMatch.kickoffTime, language)}</p>
+              <p className="text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">{formatShortTime(reminder.nextMatch.kickoffTime, language)}</p>
             </div>
           </div>
         ) : (
           <div className="flex w-full items-center justify-center px-1 text-center">
-            <p className="text-[8px] font-semibold leading-3 text-slate-500">No upcoming match</p>
+            <p className="text-[8px] font-semibold leading-3 text-slate-500">{t(language, "dashboard.noUpcomingMatch")}</p>
           </div>
         )}
       </div>
@@ -161,20 +171,22 @@ function PanelShell({
   header,
   accentTone = "neutral",
   headerAlign = "right",
+  className = "",
   children
 }: {
   header?: ReactNode;
   accentTone?: DashboardUrgencyTone;
   headerAlign?: "right" | "center";
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <section className={`relative flex h-[166px] min-w-0 flex-col overflow-hidden rounded-[1.15rem] border px-3 py-3 ${getPanelShellClasses(accentTone)}`}>
+    <section className={`relative flex h-[166px] min-w-0 flex-col overflow-hidden rounded-[1.15rem] border px-2.5 py-3 ${getPanelShellClasses(accentTone)} ${className}`.trim()}>
       <div className={`pointer-events-none absolute inset-px rounded-[1.05rem] ${getPanelInnerSurfaceClasses(accentTone)}`} />
       <div className={`pointer-events-none absolute -right-8 top-0 h-20 w-20 rounded-full blur-2xl ${getPanelGlowClasses(accentTone)}`} />
       <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-white/75" />
       {header ? (
-        <div className={`absolute left-3 right-3 top-3 z-10 flex ${headerAlign === "center" ? "justify-center" : "justify-end"}`}>
+        <div className={`absolute left-2.5 right-2.5 top-3 z-10 flex ${headerAlign === "center" ? "justify-center" : "justify-end"}`}>
           {header}
         </div>
       ) : null}
@@ -185,16 +197,18 @@ function PanelShell({
 
 function UrgencyIconChip({
   tone,
-  isComplete
+  isComplete,
+  language
 }: {
   tone: DashboardUrgencyTone;
   isComplete: boolean;
+  language?: string | null;
 }) {
   const Icon = isComplete ? ThumbsUp : tone === "red" ? BellRing : AlarmClock;
 
   return (
     <span
-      aria-label={getUrgencyAriaLabel(tone, isComplete)}
+      aria-label={getUrgencyAriaLabel(tone, isComplete, language)}
       className={`ui-chip-icon-sm border font-bold ${getToneIconChipClasses(tone)}`}
     >
       <Icon
@@ -213,7 +227,7 @@ function ReminderChip({
   label: string;
 }) {
   return (
-    <span className={`ui-chip-sm border font-bold ${getToneLabelChipClasses(tone)}`}>
+    <span className={`ui-chip-sm max-w-full border px-1 font-bold tracking-[-0.02em] ${getToneLabelChipClasses(tone)}`}>
       <BellRing aria-hidden className={`h-2.5 w-2.5 ${tone === "red" ? "motion-safe:animate-pulse" : ""}`} />
       <span className="truncate leading-none tabular-nums">{label}</span>
     </span>
@@ -287,21 +301,21 @@ function DigitalWatchRing({
 
 function MetricRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-2 py-2.5">
-      <span className="text-[7px] font-semibold uppercase tracking-[0.22em] text-slate-500">{label}</span>
-      <span className="truncate text-[13px] font-black leading-none tracking-[-0.03em] text-slate-950 tabular-nums">{value}</span>
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 py-2.5">
+      <span className="min-w-0 truncate text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">{label}</span>
+      <span className="min-w-0 max-w-[3.3rem] truncate text-right text-[13px] font-black leading-none tracking-[-0.04em] text-slate-950 tabular-nums">{value}</span>
     </div>
   );
 }
 
-function CompactLiveMatch({ match }: { match: DashboardMatchSummary }) {
+function CompactLiveMatch({ match, language }: { match: DashboardMatchSummary; language?: string | null }) {
   return (
     <div className="rounded-[0.95rem] border border-rose-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,241,242,0.94))] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.88)]">
       <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-[7px] font-semibold uppercase tracking-[0.2em] text-rose-700">{compactStageLabel(match.stage)}</p>
+        <p className="truncate text-[7px] font-semibold uppercase tracking-[0.2em] text-rose-700">{compactStageLabel(match.stage, language)}</p>
         <span className="ui-chip-sm border border-rose-200/80 bg-white/85 text-[7px] font-bold uppercase tracking-[0.18em] text-rose-700">
           <span className="h-1.5 w-1.5 rounded-full bg-rose-500 motion-safe:animate-pulse" />
-          Live
+          {t(language, "common.live")}
         </span>
       </div>
       <div className="mt-1.5 space-y-1.5">
@@ -544,26 +558,26 @@ function getRingGradientStops(tone: DashboardUrgencyTone) {
   }
 }
 
-function getUrgencyAriaLabel(tone: DashboardUrgencyTone, isComplete: boolean) {
+function getUrgencyAriaLabel(tone: DashboardUrgencyTone, isComplete: boolean, language?: string | null) {
   if (isComplete) {
-    return tone === "neutral" ? "Completed and locked" : "Completed";
+    return tone === "neutral" ? `${t(language, "common.done")} ${t(language, "common.locked")}` : t(language, "common.done");
   }
 
   switch (tone) {
     case "red":
-      return "Deadline urgent";
+      return `${t(language, "common.locked")} status`;
     case "orange":
-      return "Deadline approaching";
+      return `${t(language, "common.pending")} status`;
     case "green":
-      return "Deadline on track";
+      return `${t(language, "common.ready")} status`;
     default:
-      return "Deadline status";
+      return "Status";
   }
 }
 
-function compactStageLabel(stage: string) {
+function compactStageLabel(stage: string, language?: string | null) {
   if (stage === "group") {
-    return "Group";
+    return t(language, "dashboard.groupLabel");
   }
 
   if (stage === "r32" || stage === "round_of_32") {
@@ -583,42 +597,39 @@ function compactStageLabel(stage: string) {
   }
 
   if (stage === "third") {
-    return "Third";
+    return t(language, "knockout.thirdPlace");
   }
 
   if (stage === "final") {
-    return "Final";
+    return t(language, "common.final");
   }
 
   return stage;
 }
 
-function formatReminderStageLabel(match: DashboardMatchSummary) {
+function formatReminderStageLabel(match: DashboardMatchSummary, language?: string | null) {
   if (match.stage === "group") {
     const groupSuffix = match.groupLabel?.trim();
-    return groupSuffix ? `Group ${groupSuffix}` : "Group";
+    return groupSuffix ? `${t(language, "dashboard.groupLabel")} ${groupSuffix}` : t(language, "dashboard.groupLabel");
   }
 
-  return compactStageLabel(match.stage);
+  return compactStageLabel(match.stage, language);
 }
 
-function formatShortDate(value: string | null) {
+function formatShortDate(value: string | null, language?: string | null) {
   if (!value) {
-    return "Schedule coming soon";
+    return t(language, "dashboard.noUpcomingMatch");
   }
 
   const kickoff = new Date(value);
   if (Number.isNaN(kickoff.getTime())) {
-    return "Schedule coming soon";
+    return t(language, "dashboard.noUpcomingMatch");
   }
 
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric"
-  }).format(kickoff);
+  return formatDate(kickoff, language, { month: "short", day: "numeric" });
 }
 
-function formatShortTime(value: string | null) {
+function formatShortTime(value: string | null, language?: string | null) {
   if (!value) {
     return "";
   }
@@ -628,16 +639,52 @@ function formatShortTime(value: string | null) {
     return "";
   }
 
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(kickoff);
+  return formatTime(kickoff, language, { hour: "numeric", minute: "2-digit" });
 }
 
-function formatPoints(value: number | null) {
-  return typeof value === "number" ? value.toLocaleString("en-US") : "—";
+function formatPoints(value: number | null, language?: string | null) {
+  return typeof value === "number" ? formatNumber(value, language) : "—";
 }
 
-function formatRank(value: number | null) {
-  return typeof value === "number" ? `#${value.toLocaleString("en-US")}` : "—";
+function formatRank(value: number | null, language?: string | null) {
+  return typeof value === "number" ? formatLocalizedRank(value, language) : "—";
+}
+
+function getLocalizedDeadlineLabel(deadlineAt: string | null, language?: string | null, now = Date.now()) {
+  if (!deadlineAt) {
+    return t(language, "common.pending");
+  }
+
+  const diffMs = new Date(deadlineAt).getTime() - now;
+  if (diffMs <= 0) {
+    return t(language, "common.locked");
+  }
+  if (diffMs <= 2 * 24 * 60 * 60 * 1000) {
+    return t(language, "common.pending");
+  }
+  return t(language, "common.open");
+}
+
+function getLocalizedReminderLabel(
+  targetTime: string | null,
+  language?: string | null,
+  now = Date.now(),
+  emptyLabel?: string
+) {
+  if (!targetTime) {
+    return emptyLabel ?? t(language, "dashboard.noMatch");
+  }
+
+  const diffMs = new Date(targetTime).getTime() - now;
+  if (diffMs <= 0) {
+    return t(language, "common.locked");
+  }
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (diffMs <= dayMs) {
+    const halfHours = Math.max(1, Math.ceil(diffMs / (30 * 60 * 1000)));
+    const hours = halfHours / 2;
+    return `in ${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
+  }
+  const days = Math.max(1, Math.ceil(diffMs / dayMs));
+  return `in ${days}d`;
 }

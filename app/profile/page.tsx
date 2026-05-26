@@ -1,6 +1,6 @@
 import { AppShell } from "@/components/AppShell";
 import { ProfileSummary } from "@/components/ProfileSummary";
-import { fetchDashboardGroupAccessDataForCurrentUser } from "@/app/my-groups/actions";
+import { fetchDashboardGroupAccessForUser } from "@/lib/dashboard-group-access";
 import { isSelfServiceTestResetEnabled } from "@/lib/admin/destructive-tools";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
 import { getLegalLanguageForUser } from "@/lib/i18n";
@@ -25,7 +25,7 @@ export default async function ProfilePage() {
     try {
       const [{ data: profile }, groupAccessResult] = await Promise.all([
         supabase.from("users").select("preferred_language").eq("id", user.id).maybeSingle(),
-        fetchDashboardGroupAccessDataForCurrentUser()
+        fetchDashboardGroupAccessForUser(user.id)
       ]);
       preferredLanguage = getLegalLanguageForUser({
         preferredLanguage: (profile as { preferred_language?: string | null } | null)?.preferred_language ?? null

@@ -10,6 +10,11 @@ import {
   resolveLocalizedCardThemeId,
   type LocalizedCardThemeInput
 } from "../lib/localized-card-themes.ts";
+import {
+  getVisualThemeSelectOptions,
+  getVisualThemeSelectValue,
+  parseVisualThemeSelectValue
+} from "../lib/visual-theme-options.ts";
 
 test("localized card theme prefers home team over country, market, and locale", () => {
   const input: LocalizedCardThemeInput = {
@@ -38,10 +43,40 @@ test("localized card theme resolves canada and england directly from their home 
   assert.equal(resolveLocalizedCardThemeId({ homeTeamId: "eng", preferredLanguage: "es" }), "england");
 });
 
+test("oranjekoorts resolves as an explicit visual theme without changing language behavior", () => {
+  const theme = getLocalizedCardThemeForUserSurface({
+    visualThemeId: "oranjekoorts",
+    preferredLanguage: "de"
+  });
+
+  assert.equal(theme.id, "oranjekoorts");
+  assert.equal(theme.label, "Oranjekoorts");
+  assert.equal(theme.mainBackground, "#F97316");
+  assert.equal(theme.colors[0], "#FF7900");
+  assert.equal(theme.accent, "#FF7900");
+  assert.equal(resolveLocalizedCardThemeId({ preferredLanguage: "de" }), "generic");
+});
+
+test("oranjekoorts appears immediately after netherlands in the visual theme menu", () => {
+  const sortedTeams = [...teams].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+  const options = getVisualThemeSelectOptions(sortedTeams);
+  const netherlandsIndex = options.findIndex((option) => option.id === "ned");
+  const oranjekoortsIndex = options.findIndex((option) => option.id === "oranjekoorts");
+
+  assert.notEqual(netherlandsIndex, -1);
+  assert.equal(oranjekoortsIndex, netherlandsIndex + 1);
+  assert.deepEqual(parseVisualThemeSelectValue("visual:oranjekoorts"), {
+    homeTeamId: null,
+    visualThemeId: "oranjekoorts"
+  });
+  assert.equal(getVisualThemeSelectValue({ homeTeamId: "ned", visualThemeId: null }), "team:ned");
+  assert.equal(getVisualThemeSelectValue({ homeTeamId: "ned", visualThemeId: "oranjekoorts" }), "visual:oranjekoorts");
+});
+
 test("localized card theme falls back from country to market to locale", () => {
   assert.equal(resolveLocalizedCardThemeId({ countryCode: "japan", preferredLanguage: "es" }), "japan");
   assert.equal(resolveLocalizedCardThemeId({ marketCode: "de", preferredLanguage: "es" }), "germany");
-  assert.equal(resolveLocalizedCardThemeId({ preferredLanguage: "pt" }), "brazil");
+  assert.equal(resolveLocalizedCardThemeId({ preferredLanguage: "pt" }), "generic");
 });
 
 test("localized card theme returns the generic fallback when nothing matches", () => {
@@ -101,7 +136,7 @@ test("localized app accents stay explicit for cooled yellow themes and quiet red
   assert.equal(brazilTheme.accent, "#56A24F");
   assert.equal(austriaTheme.useNeutralAccent, true);
   assert.equal(canadaTheme.accent, "#D80621");
-  assert.equal(japanTheme.accent, "#BC002D");
+  assert.equal(japanTheme.accent, "#D0002F");
   assert.equal(koreaTheme.accent, "#CD2E3A");
   assert.equal(canadaTheme.useNeutralAccent, true);
   assert.equal(japanTheme.useNeutralAccent, true);

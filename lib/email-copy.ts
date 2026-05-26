@@ -1,5 +1,5 @@
 import { escapeHtml } from "@/lib/email-sender";
-import { defaultLanguage, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
+import { defaultLanguage, normalizeLanguage } from "@/lib/i18n";
 import { getAccessLevelDisplayLabel, type AccessLevel } from "@/lib/tier-access";
 
 export function buildGroupInviteEmailCopy(input: {
@@ -12,7 +12,7 @@ export function buildGroupInviteEmailCopy(input: {
   existingAccount?: boolean | null;
   claimUrl: string;
 }) {
-  const language = normalizeLanguage(input.language);
+  const language = getEmailCopyLanguage(input.language);
   const copy = language === "es" ? GROUP_INVITE_COPY.es : GROUP_INVITE_COPY.en;
   const inviterLabel = input.inviterLabel?.trim() || copy.defaultInviterLabel;
   const introLine = input.suggestedDisplayName?.trim()
@@ -85,7 +85,7 @@ export function buildAdminRecoveryEmailCopy(input: {
   email: string;
   actionUrl: string;
 }) {
-  const language = normalizeLanguage(input.language);
+  const language = getEmailCopyLanguage(input.language);
   const copy = language === "es" ? ADMIN_RECOVERY_COPY.es : ADMIN_RECOVERY_COPY.en;
   const subject = input.isConfirmed ? copy.setupSubject : copy.confirmSubject;
   const heading = input.isConfirmed ? copy.setupHeading : copy.confirmHeading;
@@ -124,7 +124,7 @@ export function buildAdminAccessLevelChangeEmailCopy(input: {
   accessLevel: AccessLevel;
   loginUrl: string;
 }) {
-  const language = normalizeLanguage(input.language);
+  const language = getEmailCopyLanguage(input.language);
   const copy = language === "es" ? ADMIN_ACCESS_LEVEL_CHANGE_COPY.es : ADMIN_ACCESS_LEVEL_CHANGE_COPY.en;
   const accessLevelLabel = getAccessLevelDisplayLabel(input.accessLevel);
   const intro = copy.intro(input.recipientLabel, accessLevelLabel);
@@ -184,7 +184,13 @@ type GroupInviteCopy = {
   accountHelp: (existingAccount: boolean, invitedEmail: string) => string;
 };
 
-const GROUP_INVITE_COPY: Record<SupportedLanguage, GroupInviteCopy> = {
+type EmailCopyLanguage = "en" | "es";
+
+function getEmailCopyLanguage(language?: string | null): EmailCopyLanguage {
+  return normalizeLanguage(language) === "es" ? "es" : "en";
+}
+
+const GROUP_INVITE_COPY: Record<EmailCopyLanguage, GroupInviteCopy> = {
   en: {
     subject: (inviterLabel, groupName) => `${inviterLabel} invited you to join ${groupName}`,
     heading: (inviterLabel, groupName) => `${inviterLabel} invited you to join ${groupName}`,

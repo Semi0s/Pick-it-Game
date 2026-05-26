@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { memo, type CSSProperties } from "react";
 import { LocalizedEmblem } from "@/components/localized-card/LocalizedEmblem";
 import { isLightLocalizedCardTheme, type LocalizedCardTheme } from "@/lib/localized-card-themes";
 
@@ -20,7 +20,7 @@ const PATTERN_LAYER_PATHS = [
   { fill: "var(--localized-card-highlight)", d: "M560.41 134.27c.05.61.08 1.22.08 1.83 0 1.34-.12 2.65-.36 3.93-.03.2-.07.39-.12.59-.14.64-.3 1.28-.5 1.91-.06.19-.12.38-.18.56-3.94 11.69-17.53 20.31-33.67 20.31h-34.83c-19.22 0-34.83-12.23-34.83-27.3v-27.3c0-3.38.78-6.6 2.2-9.58.57-1.2 1.25-2.37 2.03-3.48.72-1.04 1.53-2.04 2.41-2.99.81-.87 1.68-1.7 2.6-2.49.82-.7 1.69-1.36 2.61-1.99.76-.52 1.55-1.02 2.37-1.49.6-.35 1.22-.68 1.86-.99.81-.41 1.64-.79 2.5-1.14 3.15-1.3 6.59-2.24 10.23-2.74.72-.03 1.43-.04 2.16-.04h42.57c.73 0 1.45.01 2.17.04 3.63.5 7.07 1.43 10.21 2.74.86.35 1.69.74 2.51 1.14.63.32 1.25.65 1.85.99.82.47 1.61.97 2.37 1.49.91.63 1.78 1.29 2.6 1.99.93.79 1.8 1.62 2.61 2.49.88.95 1.69 1.95 2.41 2.99.78 1.12 1.46 2.28 2.03 3.48 1.42 2.98 2.2 6.21 2.2 9.58h-34.83c6.47 0 12.51 1.37 17.69 3.77 1.69.78 3.29 1.67 4.78 2.66 2.49 1.65 4.69 3.57 6.5 5.7.1.12.2.24.3.36.26.32.52.64.76.97.88 1.17 1.65 2.41 2.31 3.68.08.16.16.31.23.47.39.81.73 1.63 1.03 2.47.24.69.45 1.4.62 2.12.1.4.18.8.26 1.21.12.68.21 1.36.27 2.05Z" }
 ];
 
-export function LocalizedCardBackground({
+function LocalizedCardBackgroundComponent({
   theme,
   className,
   preserveRightControlZone = true
@@ -61,6 +61,8 @@ export function LocalizedCardBackground({
     </div>
   );
 }
+
+export const LocalizedCardBackground = memo(LocalizedCardBackgroundComponent);
 
 function getPatternOpacities(theme: LocalizedCardTheme, isLightTheme: boolean) {
   if (isLightTheme) {
