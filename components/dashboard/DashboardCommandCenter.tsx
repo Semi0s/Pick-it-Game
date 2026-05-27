@@ -82,6 +82,10 @@ function PerformancePanel({
         <MetricRow label="Pts" value={formatPoints(performance.globalPoints, language)} />
         <MetricRow label={t(language, "leaderboard.rank")} value={formatRank(performance.globalRank, language)} />
         <MetricRow label={t(language, "dashboard.groupsCompact")} value={String(performance.totalGroups)} />
+        <MetricRow
+          labelLines={[t(language, "dashboard.totalPlayersLine1"), t(language, "dashboard.totalPlayersLine2")]}
+          value={formatNumber(performance.totalPlayers, language)}
+        />
       </div>
     </PanelShell>
   );
@@ -117,45 +121,36 @@ function ReminderPanel({
 
   const hasLiveMatches = reminder.liveMatches.length > 0;
   const tone = hasLiveMatches ? "red" : getDeadlineUrgency(reminder.nextMatch?.kickoffTime ?? null, nowMs);
-  const chipLabel = hasLiveMatches
+  const reminderTimeLabel = hasLiveMatches
     ? t(language, "common.live")
     : getLocalizedReminderLabel(reminder.nextMatch?.kickoffTime ?? null, language, nowMs, t(language, "dashboard.noMatch"));
+  const upcomingMatches = reminder.upcomingMatches.length > 0
+    ? reminder.upcomingMatches
+    : reminder.nextMatch
+      ? [reminder.nextMatch]
+      : [];
 
   return (
-    <PanelShell
-      accentTone={tone}
-      headerAlign="center"
-      header={<div className="flex justify-center"><ReminderChip tone={tone} label={chipLabel} /></div>}
-    >
-      <div className="flex h-full min-h-0 w-full overflow-y-auto">
+    <PanelShell accentTone={tone}>
+      <div className="flex h-full min-h-0 w-full flex-col items-center text-center">
+        <div className="flex shrink-0 flex-col items-center justify-center gap-0.5 [-webkit-text-size-adjust:100%] [text-size-adjust:100%]">
+          <p className="max-w-full truncate text-[6px] font-semibold uppercase leading-none tracking-[0.12em] text-slate-500">
+            {t(language, "dashboard.nextMatch")}
+          </p>
+          <ReminderChip tone={tone} label={reminderTimeLabel} />
+        </div>
+      <div className="flex min-h-0 w-full flex-1 pt-3">
         {hasLiveMatches ? (
-          <div className="flex w-full flex-col justify-center gap-2">
+          <div className="flex w-full flex-col justify-center gap-2 overflow-y-auto">
             {reminder.liveMatches.slice(0, 2).map((match) => (
               <CompactLiveMatch key={match.id} match={match} language={language} />
             ))}
           </div>
-        ) : reminder.nextMatch ? (
-          <div className="flex w-full flex-col items-center justify-center text-center">
-            <p className="max-w-full truncate text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">
-              {formatReminderStageLabel(reminder.nextMatch, language)}
-            </p>
-            <p className="mt-1.5 flex max-w-full items-center gap-1.5 text-[15px] font-black leading-3 tracking-[-0.03em] text-slate-950">
-              <MatchFlag
-                flagEmoji={reminder.nextMatch.homeTeamFlagEmoji}
-                fallback={reminder.nextMatch.homeTeamShortName}
-                teamName={reminder.nextMatch.homeTeamName}
-              />
-              <span className="px-1 text-slate-300">v</span>
-              <MatchFlag
-                flagEmoji={reminder.nextMatch.awayTeamFlagEmoji}
-                fallback={reminder.nextMatch.awayTeamShortName}
-                teamName={reminder.nextMatch.awayTeamName}
-              />
-            </p>
-            <div className="mt-1.5 flex flex-col items-center gap-0.5">
-              <p className="text-[8.5px] font-semibold leading-3 text-slate-700">{formatShortDate(reminder.nextMatch.kickoffTime, language)}</p>
-              <p className="text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">{formatShortTime(reminder.nextMatch.kickoffTime, language)}</p>
-            </div>
+        ) : upcomingMatches.length > 0 ? (
+          <div className="flex w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {upcomingMatches.map((match) => (
+              <CompactUpcomingMatch key={match.id} match={match} language={language} />
+            ))}
           </div>
         ) : (
           <div className="flex w-full items-center justify-center px-1 text-center">
@@ -163,7 +158,35 @@ function ReminderPanel({
           </div>
         )}
       </div>
+      </div>
     </PanelShell>
+  );
+}
+
+function CompactUpcomingMatch({ match, language }: { match: DashboardMatchSummary; language?: string | null }) {
+  return (
+    <div className="flex min-w-full snap-center flex-col items-center justify-center text-center [-webkit-text-size-adjust:100%] [text-size-adjust:100%]">
+      <p className="max-w-full truncate text-[6.5px] font-semibold uppercase leading-none tracking-[0.1em] text-slate-500">
+        {formatReminderStageLabel(match, language)}
+      </p>
+      <p className="mt-1.5 flex max-w-full items-center gap-1.5 text-[14px] font-black leading-3 tracking-[-0.03em] text-slate-950">
+        <MatchFlag
+          flagEmoji={match.homeTeamFlagEmoji}
+          fallback={match.homeTeamShortName}
+          teamName={match.homeTeamName}
+        />
+        <span className="px-1 text-slate-300">v</span>
+        <MatchFlag
+          flagEmoji={match.awayTeamFlagEmoji}
+          fallback={match.awayTeamShortName}
+          teamName={match.awayTeamName}
+        />
+      </p>
+      <div className="mt-1.5 flex flex-col items-center gap-0.5">
+        <p className="text-[8.5px] font-semibold leading-3 text-slate-700">{formatShortDate(match.kickoffTime, language)}</p>
+        <p className="text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">{formatShortTime(match.kickoffTime, language)}</p>
+      </div>
+    </div>
   );
 }
 
@@ -227,9 +250,8 @@ function ReminderChip({
   label: string;
 }) {
   return (
-    <span className={`ui-chip-sm max-w-full border px-1 font-bold tracking-[-0.02em] ${getToneLabelChipClasses(tone)}`}>
-      <BellRing aria-hidden className={`h-2.5 w-2.5 ${tone === "red" ? "motion-safe:animate-pulse" : ""}`} />
-      <span className="truncate leading-none tabular-nums">{label}</span>
+    <span className={`inline-flex max-w-full items-center justify-center rounded-lg border px-2 py-1 text-center font-bold leading-none ${getToneLabelChipClasses(tone)}`}>
+      <span className="truncate text-[9px] tracking-[-0.02em] tabular-nums">{label}</span>
     </span>
   );
 }
@@ -299,10 +321,27 @@ function DigitalWatchRing({
   );
 }
 
-function MetricRow({ label, value }: { label: string; value: string }) {
+function MetricRow({
+  label,
+  labelLines,
+  value
+}: {
+  label?: string;
+  labelLines?: [string, string];
+  value: string;
+}) {
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 py-2.5">
-      <span className="min-w-0 truncate text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">{label}</span>
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 py-2">
+      <span className="min-w-0 text-[6.5px] font-semibold uppercase leading-[0.95] tracking-[0.1em] text-slate-500">
+        {labelLines ? (
+          <>
+            <span className="block truncate">{labelLines[0]}</span>
+            <span className="block truncate">{labelLines[1]}</span>
+          </>
+        ) : (
+          <span className="block truncate">{label}</span>
+        )}
+      </span>
       <span className="triptych-regular-value min-w-0 max-w-[3.3rem] truncate text-right text-[13px] font-black leading-none tracking-[-0.04em] text-slate-950 tabular-nums">{value}</span>
     </div>
   );

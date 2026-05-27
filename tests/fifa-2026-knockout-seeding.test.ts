@@ -10,6 +10,7 @@ import {
 } from "../lib/fifa-2026-third-place-permutations.ts";
 import {
   buildFifa2026RoundOf32,
+  buildFifa2026RoundOf32StoredMatchIdLookup,
   formatBestThirdPlaceholder,
   rankFifa2026ThirdPlaceTeams,
   sourceToGroupLetter,
@@ -113,6 +114,30 @@ test("FIFA 2026 Round of 32 builder keeps official placeholders until all third-
   assert.equal(byId.get("M74")?.sideB.placeholder, "Best 3rd from A/B/C/D/F");
   assert.deepEqual(byId.get("M79")?.sideB.candidateGroups, ["C", "E", "F", "H", "I"]);
   assert.equal(formatBestThirdPlaceholder(["D", "E", "I", "J", "L"]), "Best 3rd from D/E/I/J/L");
+});
+
+test("Round of 32 stored match lookup maps official FIFA IDs onto legacy R32 IDs", () => {
+  const legacyMatches = Array.from({ length: 16 }, (_, index) => ({
+    id: `r32-${String(index + 1).padStart(2, "0")}`,
+    stage: "r32"
+  }));
+
+  const lookup = buildFifa2026RoundOf32StoredMatchIdLookup(legacyMatches);
+
+  assert.equal(lookup.get("M73"), "r32-01");
+  assert.equal(lookup.get("M88"), "r32-16");
+});
+
+test("Round of 32 stored match lookup keeps official FIFA IDs when already migrated", () => {
+  const officialMatches = Array.from({ length: 16 }, (_, index) => ({
+    id: `M${73 + index}`,
+    stage: "r32"
+  }));
+
+  const lookup = buildFifa2026RoundOf32StoredMatchIdLookup(officialMatches);
+
+  assert.equal(lookup.get("M73"), "M73");
+  assert.equal(lookup.get("M88"), "M88");
 });
 
 test("FIFA 2026 third-place ranking uses points, goal difference, goals for, and stable fallbacks", () => {

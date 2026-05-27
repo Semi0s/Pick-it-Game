@@ -79,13 +79,14 @@ export default async function KnockoutPage() {
     : isOfficialSeeded
       ? null
       : null;
+  const phaseChip = getKnockoutPhaseChip(knockoutStatus.counts, language);
   const knockoutStatusChipKey =
-    !isOfficialSeeded || getKnockoutPhaseChip(knockoutStatus.counts, language) === t(language, "knockout.groupStageChip")
-      ? "knockout.groupStageChip"
-      : getKnockoutPhaseChip(knockoutStatus.counts, language) === t(language, "knockout.final")
+    !isOfficialSeeded || phaseChip === t(language, "knockout.groupStageChip")
+      ? "knockout.opensJun27"
+      : phaseChip === t(language, "knockout.final")
         ? "knockout.final"
         : undefined;
-  const knockoutStatusChip = knockoutStatusChipKey ? undefined : getKnockoutPhaseChip(knockoutStatus.counts, language);
+  const knockoutStatusChip = knockoutStatusChipKey ? undefined : phaseChip;
   const primaryBracketView = shouldShowOfficialBracket ? officialBracketView : projectedChallengeView;
 
   return (

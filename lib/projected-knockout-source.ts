@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  buildRoundOf32MatchIdLookup,
   buildProjectedGroupStandingsFromSeedRankings,
   buildUserProjectedRoundOf32,
   type GroupStageMatchForSeeding,
@@ -112,7 +113,10 @@ export async function loadProjectedRoundOf32FromPreferredSource(
   return {
     source: "seed_builder" as const,
     inputs,
-    projectedSeeds: buildSeedBuilderProjectedRoundOf32(inputs)
+    projectedSeeds: mapProjectedRoundOf32ToStoredMatchIds(
+      buildSeedBuilderProjectedRoundOf32(inputs),
+      inputs.roundOf32Placeholders
+    )
   };
 }
 
@@ -179,6 +183,22 @@ function buildScorePredictionProjectedRoundOf32(inputs: ProjectedRoundOf32Inputs
     predictions: inputs.predictions,
     roundOf32Placeholders: inputs.roundOf32Placeholders
   });
+}
+
+function mapProjectedRoundOf32ToStoredMatchIds<T extends { matches: Array<{ matchId: string }> }>(
+  projectedSeeds: T,
+  roundOf32Placeholders: KnockoutPlaceholderMatch[]
+): T {
+  const storedMatchIdByOfficialId = buildRoundOf32MatchIdLookup(roundOf32Placeholders);
+  const matches = projectedSeeds.matches.map((match) => ({
+    ...match,
+    matchId: storedMatchIdByOfficialId.get(match.matchId) ?? match.matchId
+  }));
+
+  return {
+    ...projectedSeeds,
+    matches
+  };
 }
 
 async function loadProjectedRoundOf32Inputs(

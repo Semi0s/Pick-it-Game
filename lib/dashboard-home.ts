@@ -4,6 +4,7 @@ export type DashboardPerformanceSummary = {
   globalPoints: number | null;
   globalRank: number | null;
   totalGroups: number;
+  totalPlayers: number;
 };
 
 export type DashboardMatchSummary = {
@@ -31,6 +32,7 @@ export type DashboardMatchSummary = {
 export type DashboardReminderSummary = {
   followedTeamCount: number;
   nextMatch: DashboardMatchSummary | null;
+  upcomingMatches: DashboardMatchSummary[];
   liveMatches: DashboardMatchSummary[];
 };
 
@@ -190,21 +192,30 @@ export function formatCountdown(targetTime: string | null, now = Date.now()): st
 }
 
 export function getNextMatch(matches: DashboardMatchSummary[], now = Date.now()): DashboardMatchSummary | null {
-  return (
-    [...matches]
-      .filter((match) => {
-        if (!match.kickoffTime || match.status === "final" || match.status === "live") {
-          return false;
-        }
+  return getUpcomingMatches(matches, { now, limit: 1 })[0] ?? null;
+}
 
-        return new Date(match.kickoffTime).getTime() > now;
-      })
-      .sort((left, right) => {
-        return (
-          new Date(left.kickoffTime ?? 0).getTime() - new Date(right.kickoffTime ?? 0).getTime()
-        );
-      })[0] ?? null
-  );
+export function getUpcomingMatches(
+  matches: DashboardMatchSummary[],
+  options?: { now?: number; limit?: number }
+): DashboardMatchSummary[] {
+  const now = options?.now ?? Date.now();
+  const limit = options?.limit ?? 6;
+
+  return [...matches]
+    .filter((match) => {
+      if (!match.kickoffTime || match.status === "final" || match.status === "live") {
+        return false;
+      }
+
+      return new Date(match.kickoffTime).getTime() > now;
+    })
+    .sort((left, right) => {
+      return (
+        new Date(left.kickoffTime ?? 0).getTime() - new Date(right.kickoffTime ?? 0).getTime()
+      );
+    })
+    .slice(0, limit);
 }
 
 export function filterMatchesByTeamIds(matches: DashboardMatchSummary[], teamIds: string[]): DashboardMatchSummary[] {
