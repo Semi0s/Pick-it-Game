@@ -1,54 +1,12 @@
 import Image from "next/image";
-import { useEffect, useState } from "react";
 
 const PICKIT_LOGO_VIEWBOX = "0 0 1152.64 477.44";
 const PICKIT_LOGO_ASPECT_RATIO = 1152.64 / 477.44;
-const HEADER_LOGO_ACCENT_PATH = '<path class="cls-2"';
-const HEADER_LOGO_SECONDARY_PATH = '<path class="cls-5"';
-
-let themedHeaderLogoCache: string | null = null;
-
-function replacePathOccurrence(source: string, token: string, replacement: string, occurrence: number) {
-  let seen = 0;
-
-  return source.replaceAll(token, (match) => {
-    seen += 1;
-    return seen === occurrence ? replacement : match;
-  });
-}
-
-function themeHeaderLogoSvg(svg: string) {
-  let nextSvg = svg
-    .replace('<?xml version="1.0" encoding="UTF-8"?>', "")
-    .replace("<svg ", '<svg aria-hidden="true" focusable="false" class="h-full w-full" ');
-
-  nextSvg = replacePathOccurrence(
-    nextSvg,
-    HEADER_LOGO_SECONDARY_PATH,
-    '<path class="cls-5" style="fill:var(--app-logo-secondary-accent)"',
-    1
-  );
-  nextSvg = replacePathOccurrence(
-    nextSvg,
-    HEADER_LOGO_ACCENT_PATH,
-    '<path class="cls-2" style="fill:var(--app-accent)"',
-    1
-  );
-  nextSvg = replacePathOccurrence(
-    nextSvg,
-    HEADER_LOGO_ACCENT_PATH,
-    '<path class="cls-2" style="fill:var(--app-logo-check-accent)"',
-    2
-  );
-
-  return nextSvg;
-}
 
 type PickItLogoProps = {
   alt?: string;
   className?: string;
   imageClassName?: string;
-  inlineThemed?: boolean;
   priority?: boolean;
   sizes?: string;
   src?: string;
@@ -58,41 +16,10 @@ export function PickItLogo({
   alt = "PICK-IT! World Cup 2026",
   className,
   imageClassName = "object-contain",
-  inlineThemed = false,
   priority = false,
   sizes,
   src = "/images/pickit-logo.svg"
 }: PickItLogoProps) {
-  const [inlineSvg, setInlineSvg] = useState<string | null>(inlineThemed ? themedHeaderLogoCache : null);
-
-  useEffect(() => {
-    if (!inlineThemed || inlineSvg) {
-      return;
-    }
-
-    let isMounted = true;
-
-    async function loadThemedLogo() {
-      const response = await fetch(src);
-      if (!response.ok) {
-        return;
-      }
-
-      const svg = themeHeaderLogoSvg(await response.text());
-      themedHeaderLogoCache = svg;
-
-      if (isMounted) {
-        setInlineSvg(svg);
-      }
-    }
-
-    void loadThemedLogo();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [inlineThemed, inlineSvg, src]);
-
   return (
     <span
       aria-label={alt}
@@ -100,24 +27,15 @@ export function PickItLogo({
       role="img"
       style={{ aspectRatio: String(PICKIT_LOGO_ASPECT_RATIO) }}
     >
-      {inlineSvg ? (
-        <span
-          aria-hidden
-          className="absolute inset-0 h-full w-full"
-          dangerouslySetInnerHTML={{ __html: inlineSvg }}
-        />
-      ) : (
-        <Image
-          src={src}
-          alt=""
-          aria-hidden
-          fill
-          priority={priority}
-          sizes={sizes}
-          className={imageClassName}
-        />
-      )}
-      {!inlineThemed ? (
+      <Image
+        src={src}
+        alt=""
+        aria-hidden
+        fill
+        priority={priority}
+        sizes={sizes}
+        className={imageClassName}
+      />
       <svg
         aria-hidden
         viewBox={PICKIT_LOGO_VIEWBOX}
@@ -137,7 +55,6 @@ export function PickItLogo({
           d="M170.44,214.76l-16.97-21.13c-4.11-5.12-7.79-10.51-12.13-15.34-6.36-7.05-9.04-16.02-3.39-24.73,4.64-7.15,12.6-12.38,21.38-13.57,7.74-1.04,15.1,1.55,20.19,7.29l29.46,33.21c8.9-5.53,14.95-11.4,22.63-17.3l77.59-59.59c8.98-6.89,18.48-14.27,29.08-8.94,4.27,2.15,9.02,6.78,9.18,12.74.13,4.77-3.28,9.38-6.7,12.48l-18.63,16.9-12.25,11.2-69.44,63.45-24.43,21.68c-8.75,7.76-22.36,7.42-30.93-1-5.34-5.24-9.67-11.17-14.63-17.35Z"
         />
       </svg>
-      ) : null}
     </span>
   );
 }

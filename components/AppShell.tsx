@@ -6,7 +6,7 @@ import { ReactNode, useEffect, useRef, useState, type CSSProperties, type SVGPro
 import { ChevronDown, CircleUserRound, Globe } from "lucide-react";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { TierIconBadge } from "@/components/TierIconBadge";
-import { PickItLogo } from "@/components/PickItLogo";
+import { ThemedPickItLogo } from "@/components/ThemedPickItLogo";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { AppLanguageProvider, useResolvedAppLanguage } from "@/lib/app-language";
 import { APP_TOAST_EVENT, markAppToastsReady, showAppToast, type AppToastDetail } from "@/lib/app-toast";
@@ -545,9 +545,8 @@ export function AppShell({ children }: AppShellProps) {
       <header ref={headerRef} className="sticky top-0 z-20 bg-white">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-2.5 px-3 py-2 sm:px-4">
           <Link href="/dashboard" className="shrink-0" aria-label={t(displayLanguage, "dashboard.homeAria")}>
-            <PickItLogo
+            <ThemedPickItLogo
               alt="PICK-IT! World Cup 2026"
-              inlineThemed
               src="/images/pickit-header-logo-v4.svg"
               sizes="(max-width: 430px) 119px, (max-width: 640px) 148px, 187px"
               priority
