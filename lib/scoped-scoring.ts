@@ -1,8 +1,18 @@
 import { normalizeKnockoutStage } from "@/lib/match-stage";
-import { getRequiredThirdPlaceQualifierCount } from "@/lib/knockout-seeding";
+import {
+  buildProjectedGroupStandings,
+  buildQualifiedTeamSeeds,
+  getRequiredThirdPlaceQualifierCount,
+  type GroupStageMatchForSeeding,
+  type KnockoutPlaceholderMatch
+} from "@/lib/knockout-seeding";
 import { isMissingAnyRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
+import { calculateCanonicalLeaderboardScores, sumScoreRowsByUser } from "@/lib/canonical-scoring";
+import { recomputeGroupPhaseLadderScores } from "@/lib/group-phase-ladder-recompute";
+import { normalizeGroupKey } from "@/lib/group-standings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizeGroupStageMode, type GroupStageMode } from "@/lib/group-stage-modes";
+import type { MatchStatus, Team } from "@/lib/types";
 
 export type ScoringScope = "standard" | "group_custom";
 export type ManagedGroupRulesetStatus = "draft" | "active" | "locked" | "superseded" | "archived";
@@ -250,11 +260,35 @@ type MatchRow = {
   group_name?: string | null;
   kickoff_time: string;
   status: string;
+  home_source?: string | null;
+  away_source?: string | null;
   home_team_id?: string | null;
   away_team_id?: string | null;
   home_score?: number | null;
   away_score?: number | null;
   winner_team_id?: string | null;
+};
+
+type TeamRow = {
+  id: string;
+  name: string;
+  short_name: string;
+  group_name: string;
+  fifa_rank?: number | null;
+  flag_emoji?: string | null;
+};
+
+type UserGroupSeedRankingScoreRow = {
+  user_id: string;
+  group_name: string;
+  rank_position: number;
+  team_id: string;
+};
+
+type UserBestThirdRankingScoreRow = {
+  user_id: string;
+  team_id: string;
+  rank_position: number;
 };
 
 type BracketPredictionRow = {
@@ -726,44 +760,48 @@ export async function rebuildScopedLeaderboardState(
   }
 
   const [
-    { data: predictionPoints, error: predictionPointsError },
     { data: bracketPoints, error: bracketPointsError },
+    { data: users, error: usersError },
     standardSidePickTotals
   ] = await Promise.all([
-    adminSupabase.from("predictions").select("user_id,points_awarded"),
     adminSupabase.from("bracket_scores").select("user_id,points"),
+    adminSupabase.from("users").select("id"),
     fetchStandardSidePickTotalsByUser(adminSupabase)
   ]);
 
-  if (predictionPointsError) {
-    return { ok: false, message: predictionPointsError.message };
-  }
   if (bracketPointsError) {
     return { ok: false, message: bracketPointsError.message };
   }
-
-  const totalsByUser = new Map<string, number>();
-  for (const row of (predictionPoints ?? []) as Array<{ user_id: string; points_awarded: number | null }>) {
-    totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points_awarded ?? 0));
-  }
-  for (const row of (bracketPoints ?? []) as Array<{ user_id: string; points: number | null }>) {
-    totalsByUser.set(row.user_id, (totalsByUser.get(row.user_id) ?? 0) + (row.points ?? 0));
-  }
-  for (const [userId, total] of standardSidePickTotals.entries()) {
-    totalsByUser.set(userId, (totalsByUser.get(userId) ?? 0) + total);
-  }
-
-  const { data: users, error: usersError } = await adminSupabase.from("users").select("id");
   if (usersError) {
     return { ok: false, message: usersError.message };
   }
 
-  const totals = ((users ?? []) as Array<{ id: string }>)
-    .map((user) => ({ user_id: user.id, total_points: totalsByUser.get(user.id) ?? 0 }))
-    .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id));
+  const userIds = ((users ?? []) as Array<{ id: string }>).map((user) => user.id);
+  let groupPhaseScores: Map<string, number>;
+  try {
+    groupPhaseScores = await fetchCanonicalGroupPhaseScoreTotals(adminSupabase, userIds);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not rebuild canonical Group Phase ladder scores."
+    };
+  }
 
-  const rankedEntries = assignScopedLeaderboardRanks(totals).map((entry) => ({
-    ...entry,
+  const knockoutScores = sumScoreRowsByUser((bracketPoints ?? []) as Array<{ user_id: string; points: number | null }>);
+  // Canonical standard totals intentionally use the visible Group Phase
+  // ladder source, not legacy per-match `predictions.points_awarded` rows.
+  const canonicalEntries = calculateCanonicalLeaderboardScores({
+    users: userIds,
+    groupPhaseScores,
+    knockoutScores,
+    standardSidePickScores: standardSidePickTotals
+  });
+  const totalsByUser = new Map(canonicalEntries.map((entry) => [entry.user_id, entry.total_points] as const));
+
+  const rankedEntries = canonicalEntries.map((entry) => ({
+    user_id: entry.user_id,
+    total_points: entry.total_points,
+    rank: entry.rank,
     updated_at: new Date().toISOString()
   }));
 
@@ -823,15 +861,15 @@ export async function rebuildScopedLeaderboardState(
       const groupCustomTotals = await fetchGroupCustomScoreTotals(adminSupabase, Array.from(membersByGroupId.keys()));
       const groupSnapshotRows = Array.from(membersByGroupId.entries()).flatMap(([groupId, memberUserIds]) => {
         const customTotalsByUserId = groupCustomTotals.get(groupId) ?? new Map<string, number>();
-        const rankedGroupEntries = assignScopedLeaderboardRanks(
-          Array.from(new Set(memberUserIds))
-            .map((userId) => ({
-              // Group-local views can overlay custom points on top of standard totals.
-              user_id: userId,
-              total_points: (totalsByUser.get(userId) ?? 0) + (customTotalsByUserId.get(userId) ?? 0)
-            }))
-            .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id))
-        );
+        const rankedGroupEntries = calculateCanonicalLeaderboardScores({
+          users: Array.from(new Set(memberUserIds)),
+          groupPhaseScores,
+          knockoutScores,
+          standardSidePickScores: standardSidePickTotals,
+          groupCustomScores: customTotalsByUserId,
+          groupId,
+          includeGroupCustom: true
+        });
 
         return rankedGroupEntries.map((entry) => ({
           scope_type: "group",
@@ -877,6 +915,124 @@ export async function rebuildScopedLeaderboardState(
 
   return { ok: true };
 }
+
+async function fetchCanonicalGroupPhaseScoreTotals(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userIds: string[]
+) {
+  const uniqueUserIds = Array.from(new Set(userIds.filter(Boolean)));
+  if (uniqueUserIds.length === 0) {
+    return new Map<string, number>();
+  }
+
+  const [
+    { data: matches, error: matchesError },
+    { data: teams, error: teamsError },
+    { data: groupSeedRankings, error: groupSeedRankingsError },
+    { data: bestThirdRankings, error: bestThirdRankingsError }
+  ] = await Promise.all([
+    adminSupabase
+      .from("matches")
+      .select(
+        "id,stage,group_name,kickoff_time,status,home_source,away_source,home_team_id,away_team_id,home_score,away_score,winner_team_id"
+      ),
+    adminSupabase.from("teams").select("id,name,short_name,group_name,fifa_rank,flag_emoji"),
+    adminSupabase
+      .from("user_group_seed_rankings")
+      .select("user_id,group_name,rank_position,team_id")
+      .in("user_id", uniqueUserIds),
+    adminSupabase
+      .from("user_best_third_rankings")
+      .select("user_id,team_id,rank_position")
+      .in("user_id", uniqueUserIds)
+  ]);
+
+  const message =
+    matchesError?.message ??
+    teamsError?.message ??
+    groupSeedRankingsError?.message ??
+    bestThirdRankingsError?.message ??
+    null;
+  if (message) {
+    throw new Error(message);
+  }
+
+  const context = buildActualGroupPhaseContextForScoring({
+    matches: (matches ?? []) as MatchRow[],
+    teams: (teams ?? []) as TeamRow[]
+  });
+  const scores = recomputeGroupPhaseLadderScores({
+    userIds: uniqueUserIds,
+    actualOutcomes: context.actualOutcomes,
+    requiredThirdPlaceQualifierCount: context.requiredThirdPlaceQualifierCount,
+    groupSeedRankings: ((groupSeedRankings ?? []) as UserGroupSeedRankingScoreRow[]).map((row) => ({
+      ...row,
+      group_name: normalizeGroupKey(row.group_name) ?? row.group_name
+    })),
+    thirdPlaceRankings: (bestThirdRankings ?? []) as UserBestThirdRankingScoreRow[],
+    isScorable: context.isScorable
+  });
+
+  return new Map(Array.from(scores.entries()).map(([userId, score]) => [userId, score.points] as const));
+}
+
+function buildActualGroupPhaseContextForScoring(input: {
+  matches: MatchRow[];
+  teams: TeamRow[];
+}) {
+  const appTeams: Team[] = input.teams.map((team) => ({
+    id: team.id,
+    name: team.name,
+    shortName: team.short_name,
+    groupName: team.group_name,
+    fifaRank: team.fifa_rank ?? 0,
+    flagEmoji: team.flag_emoji ?? ""
+  }));
+  const groupMatches: GroupStageMatchForSeeding[] = input.matches
+    .filter((match) => match.stage === "group")
+    .map((match) => ({
+      id: match.id,
+      stage: match.stage,
+      groupName: match.group_name ?? null,
+      status: match.status as MatchStatus,
+      homeTeamId: match.home_team_id ?? null,
+      awayTeamId: match.away_team_id ?? null,
+      homeScore: match.home_score ?? null,
+      awayScore: match.away_score ?? null
+    }));
+  const projectedStandings = buildProjectedGroupStandings(groupMatches, appTeams);
+  const standingsRows = new Map(Array.from(projectedStandings.entries()).map(([groupName, standings]) => [groupName, standings.rows]));
+  const isScorable =
+    projectedStandings.size > 0 &&
+    Array.from(projectedStandings.values()).every((standings) => standings.isComplete && standings.isFullyActual);
+  const roundOf32Placeholders = input.matches
+    .filter((match) => normalizeKnockoutStage(match.stage) === "r32")
+    .map((match) => ({
+      id: match.id,
+      stage: match.stage,
+      homeSource: match.home_source ?? null,
+      awaySource: match.away_source ?? null,
+      homeTeamId: match.home_team_id ?? null,
+      awayTeamId: match.away_team_id ?? null,
+      status: match.status as MatchStatus
+    })) satisfies KnockoutPlaceholderMatch[];
+  const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(roundOf32Placeholders) || 8;
+  const { rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(standingsRows, requiredThirdPlaceQualifierCount);
+  const qualifiedThirdPlaceIds = new Set(rankedThirdPlaceTeams.map((team) => team.teamId));
+
+  return {
+    requiredThirdPlaceQualifierCount,
+    isScorable,
+    actualOutcomes: Array.from(standingsRows.entries())
+      .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
+      .map(([groupName, rows]) => ({
+        groupName,
+        rankedTeamIds: rows.slice(0, 4).map((row) => row.teamId),
+        thirdPlaceQualified: rows[2] ? qualifiedThirdPlaceIds.has(rows[2].teamId) : null
+      }))
+  };
+}
+
 async function fetchActiveGroupRulesetsForRebuild(
   adminSupabase: ReturnType<typeof createAdminClient>,
   groupIds?: string[]
@@ -1132,15 +1288,4 @@ function normalizeBonusValue(value: number | null | undefined, max: number) {
   }
 
   return Math.max(0, Math.min(max, Math.floor(value)));
-}
-function assignScopedLeaderboardRanks<T extends { user_id: string; total_points: number }>(totals: T[]) {
-  let previousPoints: number | null = null;
-  let previousRank = 0;
-
-  return totals.map((entry, index) => {
-    const rank = previousPoints === entry.total_points ? previousRank : index + 1;
-    previousPoints = entry.total_points;
-    previousRank = rank;
-    return { ...entry, rank };
-  });
 }

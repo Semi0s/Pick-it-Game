@@ -216,6 +216,8 @@ export async function seedOfficialKnockoutFromFinalGroupResults(
           .update({
             home_team_id: assignment.homeTeamId,
             away_team_id: assignment.awayTeamId,
+            home_source: assignment.homeSource,
+            away_source: assignment.awaySource,
             updated_at: seededAt
           })
           .eq("id", assignment.matchId);

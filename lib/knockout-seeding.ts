@@ -1,4 +1,15 @@
 import { applyGroupStandingsResult, createMiniGroupStandingsRow } from "@/lib/group-standings";
+import {
+  buildFifa2026RoundOf32FromSeeds,
+  sourceToGroupLetter,
+  type Fifa2026QualifiedSeed,
+  type Fifa2026RoundOf32Side
+} from "@/lib/fifa-2026-knockout-seeding";
+import {
+  isFifa2026GroupLetter,
+  type Fifa2026GroupLetter,
+  type Fifa2026SeedSource
+} from "@/lib/fifa-2026-third-place-permutations";
 import type { Team } from "@/lib/types";
 import type { MiniGroupStandingsRow } from "@/components/GroupStandingsMiniTable";
 
@@ -77,6 +88,8 @@ export type ProjectedRoundOf32Side = {
   sourceLabel: string;
   teamId: string | null;
   resolutionSource: ProjectedMatchScoreSource;
+  sourceSlot?: string | null;
+  candidateGroups?: string[];
 };
 
 export type ProjectedRoundOf32Match = {
@@ -93,10 +106,31 @@ export type GroupSeedRankingInput = {
 
 type ParsedSeedSource =
   | { kind: "group"; groupName: string; finish: 1 | 2 }
-  | { kind: "third_place"; rank: number };
+  | { kind: "third_place"; rank: number }
+  | { kind: "third_group"; groupName: string }
+  | { kind: "third_placeholder"; candidateGroups: Fifa2026GroupLetter[] };
 
 const GROUP_STAGE_NAME = "group";
 const ROUND_OF_32_STAGES = new Set(["r32", "round_of_32"]);
+const FIFA_2026_REQUIRED_THIRD_PLACE_COUNT = 8;
+const LEGACY_R32_ID_BY_OFFICIAL_MATCH_ID = new Map<string, string>([
+  ["M73", "r32-01"],
+  ["M74", "r32-02"],
+  ["M75", "r32-03"],
+  ["M76", "r32-04"],
+  ["M77", "r32-05"],
+  ["M78", "r32-06"],
+  ["M79", "r32-07"],
+  ["M80", "r32-08"],
+  ["M81", "r32-09"],
+  ["M82", "r32-10"],
+  ["M83", "r32-11"],
+  ["M84", "r32-12"],
+  ["M85", "r32-13"],
+  ["M86", "r32-14"],
+  ["M87", "r32-15"],
+  ["M88", "r32-16"]
+]);
 
 export function buildGroupStandingsByGroup(
   matches: GroupStageMatchForSeeding[],
@@ -409,33 +443,30 @@ export function resolveRoundOf32SeedAssignments(
   qualifiers: Map<string, QualifiedTeamSeed>,
   rankedThirdPlaceTeams: Array<QualifiedTeamSeed & { thirdPlaceRank: number }>
 ): KnockoutSeedAssignment[] {
-  const thirdPlaceByRank = new Map(rankedThirdPlaceTeams.map((seed) => [seed.thirdPlaceRank, seed]));
+  const fixedQualifiers = toFifaQualifiedSeedMap(qualifiers);
+  const officialRoundOf32 = buildFifa2026RoundOf32FromSeeds({
+    fixedQualifiers,
+    rankedThirdPlaceTeams: rankedThirdPlaceTeams.map(toFifaThirdPlaceSeed).filter(isFifaQualifiedSeed)
+  });
+  const matchIdLookup = buildRoundOf32MatchIdLookup(matches);
   const assignments: KnockoutSeedAssignment[] = [];
 
-  for (const match of matches) {
-    if (!ROUND_OF_32_STAGES.has(match.stage)) {
+  for (const officialMatch of officialRoundOf32) {
+    const storedMatchId = matchIdLookup.get(officialMatch.matchId);
+    if (!storedMatchId) {
       continue;
     }
 
-    const homeSeed = parseSeedSource(match.homeSource);
-    const awaySeed = parseSeedSource(match.awaySource);
-    if (!homeSeed || !awaySeed) {
-      continue;
-    }
-
-    const homeTeam = resolveSeededTeam(homeSeed, qualifiers, thirdPlaceByRank);
-    const awayTeam = resolveSeededTeam(awaySeed, qualifiers, thirdPlaceByRank);
-
-    if (!homeTeam || !awayTeam) {
-      throw new Error(`Could not resolve ${match.id} from ${match.homeSource ?? "unknown source"} and ${match.awaySource ?? "unknown source"}.`);
+    if (!officialMatch.sideA.teamId || !officialMatch.sideB.teamId || !officialMatch.sideA.source || !officialMatch.sideB.source) {
+      throw new Error(`Could not resolve ${officialMatch.matchId} from canonical FIFA 2026 Round of 32 seeding.`);
     }
 
     assignments.push({
-      matchId: match.id,
-      homeTeamId: homeTeam.teamId,
-      awayTeamId: awayTeam.teamId,
-      homeSource: match.homeSource ?? "",
-      awaySource: match.awaySource ?? ""
+      matchId: storedMatchId,
+      homeTeamId: officialMatch.sideA.teamId,
+      awayTeamId: officialMatch.sideB.teamId,
+      homeSource: officialMatch.sideA.source,
+      awaySource: officialMatch.sideB.source
     });
   }
 
@@ -477,23 +508,17 @@ export function buildUserProjectedRoundOf32({
           )
         : buildQualifiedTeamSeeds(completeRowsByGroup, 0)
       : buildQualifiedTeamSeeds(completeRowsByGroup, requiredThirdPlaceQualifierCount || 8);
-  const thirdPlaceByRank = new Map(rankedThirdPlaceTeams.map((seed) => [seed.thirdPlaceRank, seed]));
   const allGroupsComplete = Array.from(standingsByGroup.values()).every((group) => group.isComplete);
-
-  const matches: ProjectedRoundOf32Match[] = roundOf32Placeholders
-    .filter((match) => ROUND_OF_32_STAGES.has(match.stage))
-    .map((match) => {
-      const homeSeed = parseSeedSource(match.homeSource);
-      const awaySeed = parseSeedSource(match.awaySource);
-
-      return {
-        matchId: match.id,
-        stage: match.stage,
-        home: resolveProjectedRoundOf32Side(match.homeSource ?? "TBD", homeSeed, standingsByGroup, automaticQualifiers, thirdPlaceByRank, allGroupsComplete),
-        away: resolveProjectedRoundOf32Side(match.awaySource ?? "TBD", awaySeed, standingsByGroup, automaticQualifiers, thirdPlaceByRank, allGroupsComplete)
-      };
-    })
-    .sort((left, right) => left.matchId.localeCompare(right.matchId));
+  const officialRoundOf32 = buildFifa2026RoundOf32FromSeeds({
+    fixedQualifiers: toFifaQualifiedSeedMap(automaticQualifiers),
+    rankedThirdPlaceTeams: rankedThirdPlaceTeams.map(toFifaThirdPlaceSeed).filter(isFifaQualifiedSeed)
+  });
+  const matches: ProjectedRoundOf32Match[] = officialRoundOf32.map((match) => ({
+    matchId: match.matchId,
+    stage: "r32",
+    home: toProjectedRoundOf32Side(match.sideA, standingsByGroup, allGroupsComplete),
+    away: toProjectedRoundOf32Side(match.sideB, standingsByGroup, allGroupsComplete)
+  }));
 
   const resolvedSideCount = matches.reduce(
     (sum, match) => sum + (match.home.teamId ? 1 : 0) + (match.away.teamId ? 1 : 0),
@@ -523,6 +548,8 @@ export function getRequiredThirdPlaceQualifierCount(
   matches: KnockoutPlaceholderMatch[]
 ) {
   const ranks = new Set<number>();
+  const exactThirdGroups = new Set<string>();
+  let hasOfficialThirdPlacePlaceholder = false;
 
   for (const match of matches) {
     if (!ROUND_OF_32_STAGES.has(match.stage)) {
@@ -533,8 +560,16 @@ export function getRequiredThirdPlaceQualifierCount(
       const parsedSource = parseSeedSource(source);
       if (parsedSource?.kind === "third_place") {
         ranks.add(parsedSource.rank);
+      } else if (parsedSource?.kind === "third_group") {
+        exactThirdGroups.add(parsedSource.groupName);
+      } else if (parsedSource?.kind === "third_placeholder") {
+        hasOfficialThirdPlacePlaceholder = true;
       }
     }
+  }
+
+  if (hasOfficialThirdPlacePlaceholder || exactThirdGroups.size > 0) {
+    return FIFA_2026_REQUIRED_THIRD_PLACE_COUNT;
   }
 
   return ranks.size;
@@ -546,6 +581,28 @@ export function parseSeedSource(value?: string | null): ParsedSeedSource | null 
   }
 
   const normalized = value.trim();
+  const stableSourceMatch = normalized.match(/^([123])([A-L])$/i);
+  if (stableSourceMatch) {
+    const finish = Number(stableSourceMatch[1]);
+    const groupLetter = stableSourceMatch[2].toUpperCase();
+    if (!isFifa2026GroupLetter(groupLetter)) {
+      return null;
+    }
+
+    if (finish === 1 || finish === 2) {
+      return {
+        kind: "group",
+        groupName: `Group ${groupLetter}`,
+        finish
+      };
+    }
+
+    return {
+      kind: "third_group",
+      groupName: `Group ${groupLetter}`
+    };
+  }
+
   const groupMatch = normalized.match(/^Group\s+([A-Z])\s+(Winner|Runner-up)$/i);
   if (groupMatch) {
     return {
@@ -560,6 +617,18 @@ export function parseSeedSource(value?: string | null): ParsedSeedSource | null 
     return {
       kind: "third_place",
       rank: Number(thirdPlaceMatch[1])
+    };
+  }
+
+  const bestThirdFromMatch = normalized.match(/^Best\s+3(?:rd)?\s+from\s+([A-L](?:\/[A-L])*)$/i);
+  if (bestThirdFromMatch) {
+    const candidateGroups = bestThirdFromMatch[1]
+      .split("/")
+      .map((group) => group.toUpperCase())
+      .filter(isFifa2026GroupLetter);
+    return {
+      kind: "third_placeholder",
+      candidateGroups
     };
   }
 
@@ -728,71 +797,129 @@ function buildQualifierKey(groupName: string, finish: 1 | 2) {
   return `${normalizeGroupName(groupName)}:${finish}`;
 }
 
-function resolveSeededTeam(
-  parsed: ParsedSeedSource,
-  qualifiers: Map<string, QualifiedTeamSeed>,
-  thirdPlaceByRank: Map<number, QualifiedTeamSeed & { thirdPlaceRank: number }>
-) {
-  if (parsed.kind === "group") {
-    return qualifiers.get(buildQualifierKey(parsed.groupName, parsed.finish)) ?? null;
+function toFifaQualifiedSeedMap(
+  qualifiers: Map<string, QualifiedTeamSeed>
+): Map<Fifa2026SeedSource, Fifa2026QualifiedSeed> {
+  const fifaSeeds = new Map<Fifa2026SeedSource, Fifa2026QualifiedSeed>();
+
+  for (const seed of qualifiers.values()) {
+    const fifaSeed = toFifaQualifiedSeed(seed);
+    if (fifaSeed) {
+      fifaSeeds.set(fifaSeed.source, fifaSeed);
+    }
   }
 
-  return thirdPlaceByRank.get(parsed.rank) ?? null;
+  return fifaSeeds;
 }
 
-function resolveProjectedRoundOf32Side(
-  sourceLabel: string,
-  parsedSeed: ParsedSeedSource | null,
-  standingsByGroup: Map<string, ProjectedGroupStandings>,
-  qualifiers: Map<string, QualifiedTeamSeed>,
-  thirdPlaceByRank: Map<number, QualifiedTeamSeed & { thirdPlaceRank: number }>,
-  allGroupsComplete: boolean
-): ProjectedRoundOf32Side {
-  if (!parsedSeed) {
-    return {
-      sourceLabel,
-      teamId: null,
-      resolutionSource: "missing"
-    };
+function toFifaQualifiedSeed(seed: QualifiedTeamSeed): Fifa2026QualifiedSeed | null {
+  const groupLetter = extractFifaGroupLetter(seed.groupName);
+  if (!groupLetter) {
+    return null;
   }
-
-  if (parsedSeed.kind === "group") {
-    const compactSourceLabel = formatCompactProjectedSeedLabel(parsedSeed);
-    const groupState = standingsByGroup.get(normalizeGroupName(parsedSeed.groupName));
-    if (!groupState?.isComplete) {
-      return {
-        sourceLabel: compactSourceLabel,
-        teamId: null,
-        resolutionSource: "missing"
-      };
-    }
-
-    const qualifier = qualifiers.get(buildQualifierKey(parsedSeed.groupName, parsedSeed.finish)) ?? null;
-    return {
-      sourceLabel: compactSourceLabel,
-      teamId: qualifier?.teamId ?? null,
-      resolutionSource: groupState.isFullyActual ? "actual" : qualifier ? "prediction" : "missing"
-    };
-  }
-
-  const thirdPlaceSeed = thirdPlaceByRank.get(parsedSeed.rank) ?? null;
-  const compactThirdPlaceLabel = formatCompactProjectedSeedLabel(parsedSeed, thirdPlaceSeed?.groupName ?? null);
-
-  if (!allGroupsComplete) {
-    return {
-      sourceLabel: compactThirdPlaceLabel,
-      teamId: null,
-      resolutionSource: "missing"
-    };
-  }
-
-  const source = thirdPlaceSeed ? getQualifierSourceForGroup(standingsByGroup, thirdPlaceSeed.groupName) : "missing";
 
   return {
-    sourceLabel: compactThirdPlaceLabel,
-    teamId: thirdPlaceSeed?.teamId ?? null,
-    resolutionSource: source
+    teamId: seed.teamId,
+    teamName: seed.teamName,
+    teamShortName: seed.teamShortName,
+    points: seed.points,
+    goalDifference: seed.goalDifference,
+    goalsFor: seed.goalsFor,
+    groupLetter,
+    finish: seed.finish,
+    source: `${seed.finish}${groupLetter}` as Fifa2026SeedSource
   };
+}
+
+function toFifaThirdPlaceSeed(seed: QualifiedTeamSeed & { thirdPlaceRank?: number }): Fifa2026QualifiedSeed | null {
+  const fifaSeed = toFifaQualifiedSeed(seed);
+  if (!fifaSeed || fifaSeed.finish !== 3) {
+    return null;
+  }
+
+  return {
+    ...fifaSeed,
+    thirdPlaceRank: seed.thirdPlaceRank
+  };
+}
+
+function isFifaQualifiedSeed(seed: Fifa2026QualifiedSeed | null): seed is Fifa2026QualifiedSeed {
+  return seed !== null;
+}
+
+function buildRoundOf32MatchIdLookup(matches: KnockoutPlaceholderMatch[]) {
+  const roundOf32Matches = matches
+    .filter((match) => ROUND_OF_32_STAGES.has(match.stage))
+    .sort((left, right) => left.id.localeCompare(right.id, undefined, { numeric: true }));
+  const lookup = new Map<string, string>();
+
+  for (const match of roundOf32Matches) {
+    if (/^M(?:7[3-9]|8[0-8])$/.test(match.id)) {
+      lookup.set(match.id, match.id);
+    }
+  }
+
+  for (const [officialMatchId, legacyMatchId] of LEGACY_R32_ID_BY_OFFICIAL_MATCH_ID) {
+    if (roundOf32Matches.some((match) => match.id === legacyMatchId)) {
+      lookup.set(officialMatchId, legacyMatchId);
+    }
+  }
+
+  for (let index = 0; index < roundOf32Matches.length; index += 1) {
+    const officialMatchId = `M${73 + index}`;
+    if (!lookup.has(officialMatchId)) {
+      lookup.set(officialMatchId, roundOf32Matches[index].id);
+    }
+  }
+
+  return lookup;
+}
+
+function toProjectedRoundOf32Side(
+  side: Fifa2026RoundOf32Side,
+  standingsByGroup: Map<string, ProjectedGroupStandings>,
+  allGroupsComplete: boolean
+): ProjectedRoundOf32Side {
+  if (!side.source) {
+    return {
+      sourceLabel: side.placeholder ?? "TBD",
+      teamId: null,
+      resolutionSource: "missing",
+      sourceSlot: null,
+      candidateGroups: side.candidateGroups
+    };
+  }
+
+  const sourceLabel = formatFifaSourceLabel(side.source);
+  const groupLetter = sourceToGroupLetter(side.source);
+  const groupState = standingsByGroup.get(normalizeGroupName(groupLetter));
+  const resolutionSource = side.source.startsWith("3")
+    ? allGroupsComplete && side.teamId
+      ? getQualifierSourceForGroup(standingsByGroup, `Group ${groupLetter}`)
+      : "missing"
+    : groupState?.isComplete && side.teamId
+      ? groupState.isFullyActual ? "actual" : "prediction"
+      : "missing";
+
+  return {
+    sourceLabel,
+    teamId: side.teamId,
+    resolutionSource,
+    sourceSlot: side.source,
+    candidateGroups: side.candidateGroups
+  };
+}
+
+function formatFifaSourceLabel(source: Fifa2026SeedSource) {
+  const groupLetter = sourceToGroupLetter(source);
+  const finish = source.slice(0, 1);
+  if (finish === "1") {
+    return `${groupLetter}-1st`;
+  }
+  if (finish === "2") {
+    return `${groupLetter}-2nd`;
+  }
+  return `${groupLetter}-3rd`;
 }
 
 function getQualifierSourceForGroup(
@@ -812,20 +939,12 @@ function normalizeGroupName(value: string) {
   return trimmed.startsWith("Group ") ? trimmed : `Group ${trimmed}`;
 }
 
-function formatCompactProjectedSeedLabel(
-  parsedSeed: ParsedSeedSource,
-  resolvedThirdPlaceGroupName?: string | null
-) {
-  if (parsedSeed.kind === "group") {
-    const groupLetter = extractGroupLetter(parsedSeed.groupName);
-    return `${groupLetter}-${parsedSeed.finish === 1 ? "1st" : "2nd"}`;
-  }
-
-  const groupLetter = resolvedThirdPlaceGroupName ? extractGroupLetter(resolvedThirdPlaceGroupName) : null;
-  return groupLetter ? `${groupLetter}-3rd` : "3rd";
-}
-
 function extractGroupLetter(groupName: string) {
   const match = normalizeGroupName(groupName).match(/^Group\s+([A-Z])$/i);
   return match ? match[1].toUpperCase() : groupName.trim().slice(-1).toUpperCase();
+}
+
+function extractFifaGroupLetter(groupName: string): Fifa2026GroupLetter | null {
+  const groupLetter = extractGroupLetter(groupName);
+  return isFifa2026GroupLetter(groupLetter) ? groupLetter : null;
 }

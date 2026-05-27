@@ -9,7 +9,7 @@ import { demoUsers } from "@/lib/mock-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
-import { fetchGroupCustomScoreTotals } from "@/lib/scoped-scoring";
+import { fetchGroupCustomScoreTotals, fetchStandardSidePickTotalsByUser } from "@/lib/scoped-scoring";
 import {
   fetchDailyWinners,
   fetchPerfectPickUserIdsForLatestFinalizedMatch,
@@ -18,6 +18,7 @@ import {
 import { fetchGlobalChallengeSummaries } from "@/lib/global-challenge-data";
 import { fetchGroupPhaseSummaries } from "@/lib/group-phase-data";
 import { isMissingAnyRelationError, isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
+import { assignDeterministicRanks, compareLeaderboardEntries } from "@/lib/scoring-engine";
 import { hasOrganizerAccess, normalizeCommercialTier, resolveAccessLevel, type AccessLevel } from "@/lib/tier-access";
 import type { UserProfile, UserTrophy } from "@/lib/types";
 
@@ -42,6 +43,10 @@ type BracketScoreRow = {
   user_id: string;
   points?: number | null;
 };
+
+// Visible Group Phase leaderboard points come from the ladder summaries.
+// Do not substitute legacy full-score `prediction_scores` rows here unless
+// the product scoring model intentionally changes.
 
 type LatestSnapshotRow = {
   match_id: string;
@@ -652,6 +657,7 @@ async function fetchGlobalLeaderboardRows(
     globalChallengeSummaries,
     groupPhaseSummaries,
     knockoutPointsByUserId,
+    standardSidePickTotals,
     perfectPickUserIds,
     trophiesByUserId,
     visualThemeIdsByUserId
@@ -659,6 +665,7 @@ async function fetchGlobalLeaderboardRows(
     fetchGlobalChallengeSummaries(userIds),
     fetchGroupPhaseSummaries(userIds),
     fetchKnockoutPointsByUserIds(adminSupabase, userIds),
+    fetchStandardSidePickTotalsByUser(adminSupabase),
     perfectPickEnabled ? fetchPerfectPickUserIdsForLatestFinalizedMatch() : Promise.resolve(new Set<string>()),
     fetchTrophiesByUserIds(adminSupabase, userIds),
     fetchVisualThemeIdsByUserIds(adminSupabase, userIds)
@@ -668,18 +675,19 @@ async function fetchGlobalLeaderboardRows(
     .map((user) => {
       const groupPhasePoints = groupPhaseSummaries.get(user.id)?.points ?? 0;
       const knockoutPhasePoints = knockoutPointsByUserId.get(user.id) ?? 0;
+      const standardSidePickPoints = standardSidePickTotals.get(user.id) ?? 0;
       const totalPoints =
         phase === "group_phase"
           ? groupPhasePoints
           : phase === "knockout_phase"
             ? knockoutPhasePoints
-            : groupPhasePoints + knockoutPhasePoints;
+            : groupPhasePoints + knockoutPhasePoints + standardSidePickPoints;
       return {
         user_id: user.id,
         total_points: totalPoints
       };
     })
-    .sort((left, right) => right.total_points - left.total_points || left.user_id.localeCompare(right.user_id));
+    .sort(compareLeaderboardEntries);
 
   const ranks = assignRanks(rankedEntries);
 
@@ -693,6 +701,7 @@ async function fetchGlobalLeaderboardRows(
       const summary = globalChallengeSummaries.get(entry.user_id) ?? null;
       const groupPhaseSummary = groupPhaseSummaries.get(entry.user_id) ?? null;
       const knockoutPhasePoints = knockoutPointsByUserId.get(entry.user_id) ?? 0;
+      const standardSidePickPoints = standardSidePickTotals.get(entry.user_id) ?? 0;
 
       return {
         ...mapUserRow(joinedUser, visualThemeIdsByUserId.get(entry.user_id) ?? null),
@@ -702,7 +711,7 @@ async function fetchGlobalLeaderboardRows(
         groupCustomPoints: 0,
         groupPhasePoints: groupPhaseSummary?.points ?? 0,
         knockoutPhasePoints,
-        globalTopTenPoints: (groupPhaseSummary?.points ?? 0) + knockoutPhasePoints,
+        globalTopTenPoints: (groupPhaseSummary?.points ?? 0) + knockoutPhasePoints + standardSidePickPoints,
         groupStrategyPoints: summary?.groupStrategy.points ?? null,
         knockoutGlobalPoints: summary?.knockout.points ?? null,
         globalChallengePoints: summary?.totalPoints ?? null,
@@ -738,10 +747,11 @@ async function fetchGroupLeaderboardRows(
     return [];
   }
 
-  const [groupCustomTotals, groupPhaseSummaries, knockoutPointsByUserId] = await Promise.all([
+  const [groupCustomTotals, groupPhaseSummaries, knockoutPointsByUserId, standardSidePickTotals] = await Promise.all([
     fetchGroupCustomScoreTotals(adminSupabase, [groupId]),
     fetchGroupPhaseSummaries(memberUserIds),
-    fetchKnockoutPointsByUserIds(adminSupabase, memberUserIds)
+    fetchKnockoutPointsByUserIds(adminSupabase, memberUserIds),
+    fetchStandardSidePickTotalsByUser(adminSupabase)
   ]);
   const groupCustomTotalsByUserId = groupCustomTotals.get(groupId) ?? new Map<string, number>();
   const groupLeaderboardEntries: Array<{
@@ -753,12 +763,13 @@ async function fetchGroupLeaderboardRows(
     .map((userId) => {
       const groupPhasePoints = groupPhaseSummaries.get(userId)?.points ?? 0;
       const knockoutPhasePoints = knockoutPointsByUserId.get(userId) ?? 0;
+      const standardSidePickPoints = standardSidePickTotals.get(userId) ?? 0;
       const phasePoints =
         phase === "group_phase"
           ? groupPhasePoints
           : phase === "knockout_phase"
             ? knockoutPhasePoints
-            : groupPhasePoints + knockoutPhasePoints;
+            : groupPhasePoints + knockoutPhasePoints + standardSidePickPoints;
       return {
         user_id: userId,
         standard_points: phasePoints,
@@ -766,7 +777,7 @@ async function fetchGroupLeaderboardRows(
         total_points: phasePoints + (phase === "global_top10" ? groupCustomTotalsByUserId.get(userId) ?? 0 : 0)
       };
     })
-    .sort((a, b) => b.total_points - a.total_points || a.user_id.localeCompare(b.user_id));
+    .sort(compareLeaderboardEntries);
 
   const rankedEntries = assignRanks(groupLeaderboardEntries);
   const latestMatchId = await fetchLatestSnapshotMatchId(adminSupabase, { scopeType: "group", groupId });
@@ -808,7 +819,9 @@ async function fetchGroupLeaderboardRows(
         groupPhasePoints: groupPhaseSummaries.get(entry.user_id)?.points ?? 0,
         knockoutPhasePoints: knockoutPointsByUserId.get(entry.user_id) ?? 0,
         globalTopTenPoints:
-          (groupPhaseSummaries.get(entry.user_id)?.points ?? 0) + (knockoutPointsByUserId.get(entry.user_id) ?? 0),
+          (groupPhaseSummaries.get(entry.user_id)?.points ?? 0) +
+          (knockoutPointsByUserId.get(entry.user_id) ?? 0) +
+          (standardSidePickTotals.get(entry.user_id) ?? 0),
         rank: entry.rank,
         rankDelta: movement.rankDelta,
         pointsDelta: movement.pointsDelta,
@@ -1211,7 +1224,7 @@ async function fetchGroupNavigationItems(
           };
         })
         .filter((entry): entry is { user_id: string; total_points: number } => Boolean(entry))
-        .sort((left, right) => right.total_points - left.total_points || left.user_id.localeCompare(right.user_id))
+        .sort(compareLeaderboardEntries)
     ).map((entry) => [entry.user_id, entry.rank] as const)
   );
 
@@ -1251,10 +1264,7 @@ async function fetchGroupNavigationItems(
               total_points: number;
             } => Boolean(entry)
           )
-          .sort((left, right) =>
-            (right?.total_points ?? 0) - (left?.total_points ?? 0) ||
-            (left?.user_id ?? "").localeCompare(right?.user_id ?? "")
-          )
+          .sort(compareLeaderboardEntries)
       );
       const currentUserEntry = rankedEntries.find((entry) => entry.user_id === userId) ?? null;
       const currentUser = usersById.get(userId);
@@ -1530,20 +1540,7 @@ export function getDefaultLeaderboardView(switcher: LeaderboardSwitcherContext):
 function assignRanks<T extends { user_id: string; total_points: number }>(
   entries: T[]
 ): Array<T & { rank: number }> {
-  let currentRank = 0;
-  let lastScore: number | null = null;
-
-  return entries.map((entry, index) => {
-    if (lastScore === null || entry.total_points < lastScore) {
-      currentRank = index + 1;
-      lastScore = entry.total_points;
-    }
-
-    return {
-      ...entry,
-      rank: currentRank
-    };
-  });
+  return assignDeterministicRanks(entries);
 }
 
 function deriveGroupStandingTag(input: {

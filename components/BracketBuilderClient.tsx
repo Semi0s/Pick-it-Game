@@ -90,9 +90,20 @@ function formatProjectedSeedLabel(sourceLabel: string | null | undefined) {
   }
 
   const normalized = sourceLabel.trim();
+  const compactSourceMatch = normalized.match(/^([123])([A-L])$/i);
+  if (compactSourceMatch) {
+    const rank = compactSourceMatch[1] === "1" ? "1st" : compactSourceMatch[1] === "2" ? "2nd" : "3rd";
+    return `${compactSourceMatch[2].toUpperCase()}-${rank}`;
+  }
+
   const groupMatch = normalized.match(/^Group\s+([A-Z])\s+(Winner|Runner-up)$/i);
   if (groupMatch) {
     return `${groupMatch[1].toUpperCase()}-${groupMatch[2].toLowerCase() === "winner" ? "1st" : "2nd"}`;
+  }
+
+  const bestThirdFromMatch = normalized.match(/^Best\s+3(?:rd)?\s+from\s+([A-L](?:\/[A-L])*)$/i);
+  if (bestThirdFromMatch) {
+    return `3rd ${bestThirdFromMatch[1].toUpperCase()}`;
   }
 
   return normalized;

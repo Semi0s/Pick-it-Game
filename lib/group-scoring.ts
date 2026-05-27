@@ -1,5 +1,13 @@
-import type { MatchStage, MatchStatus } from "@/lib/types";
+import type { MatchStage, MatchStatus } from "./types.ts";
 
+/**
+ * Legacy full-score group match scorer.
+ *
+ * This remains useful for compatibility/admin audit rows in
+ * `predictions.points_awarded` and `prediction_scores`, but it is not the
+ * current visible/canonical Group Phase leaderboard source. The launch
+ * leaderboard path uses the ladder scorer in `group-phase-scoring.ts`.
+ */
 const CORRECT_OUTCOME_POINTS = 3;
 const EXACT_GOAL_DIFFERENCE_BONUS = 1;
 const EXACT_SCORE_BONUS = 5;

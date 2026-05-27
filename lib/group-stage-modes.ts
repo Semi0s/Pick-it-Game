@@ -1,4 +1,3 @@
-import { fetchActiveGroupRulesets } from "@/lib/scoped-scoring";
 import { normalizeGroupKey } from "@/lib/group-standings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Team } from "@/lib/types";
@@ -90,6 +89,7 @@ export async function resolveEffectiveUserGroupStageMode(
     };
   }
 
+  const { fetchActiveGroupRulesets } = await import("@/lib/scoped-scoring");
   const rulesets = await fetchActiveGroupRulesets(adminSupabase, groupIds);
   const modeByGroupId = new Map(
     Array.from(rulesets.entries()).map(([groupId, ruleset]) => [

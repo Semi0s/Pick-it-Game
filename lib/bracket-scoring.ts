@@ -2,8 +2,8 @@ import {
   formatMatchStage,
   normalizeKnockoutStage,
   type CanonicalKnockoutStage
-} from "@/lib/match-stage";
-import type { MatchStage, MatchStatus } from "@/lib/types";
+} from "./match-stage.ts";
+import type { MatchStage, MatchStatus } from "./types.ts";
 
 const BRACKET_WINNER_POINTS: Record<CanonicalKnockoutStage, number> = {
   r32: 3,

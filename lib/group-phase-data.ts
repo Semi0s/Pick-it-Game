@@ -1,6 +1,7 @@
 import "server-only";
 
-import { scoreGroupPhaseSnapshot, type GroupPhaseActualOutcome } from "@/lib/group-phase-scoring";
+import type { GroupPhaseActualOutcome } from "@/lib/group-phase-scoring";
+import { recomputeGroupPhaseLadderScores } from "@/lib/group-phase-ladder-recompute";
 import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { normalizeGroupKey } from "@/lib/group-standings";
 import {
@@ -98,47 +99,26 @@ export async function fetchGroupPhaseSummaries(userIds: string[]): Promise<Map<s
       .order("rank_position", { ascending: true })
   ]);
 
-  const groupedRankings = new Map<string, Map<string, string[]>>();
-  for (const row of ((groupSeedRows.data as GroupSeedRankingRecord[] | null) ?? [])) {
-    const normalizedGroup = normalizeGroupKey(row.group_name) ?? row.group_name;
-    const byGroup = groupedRankings.get(row.user_id) ?? new Map<string, string[]>();
-    const ranked = byGroup.get(normalizedGroup) ?? [];
-    ranked.push(row.team_id);
-    byGroup.set(normalizedGroup, ranked);
-    groupedRankings.set(row.user_id, byGroup);
-  }
-
-  const groupedThirdPlaceRankings = new Map<string, Array<{ teamId: string; rank: number }>>();
-  for (const row of ((thirdPlaceRows.data as ThirdPlaceRankingRecord[] | null) ?? [])) {
-    const current = groupedThirdPlaceRankings.get(row.user_id) ?? [];
-    current.push({ teamId: row.team_id, rank: row.rank_position });
-    groupedThirdPlaceRankings.set(row.user_id, current);
-  }
+  const ladderScores = recomputeGroupPhaseLadderScores({
+    userIds: uniqueUserIds,
+    actualOutcomes,
+    requiredThirdPlaceQualifierCount,
+    groupSeedRankings: ((groupSeedRows.data as GroupSeedRankingRecord[] | null) ?? []).map((row) => ({
+      ...row,
+      group_name: normalizeGroupKey(row.group_name) ?? row.group_name
+    })),
+    thirdPlaceRankings: (thirdPlaceRows.data as ThirdPlaceRankingRecord[] | null) ?? [],
+    isScorable
+  });
 
   for (const userId of uniqueUserIds) {
-    const rankingMap = groupedRankings.get(userId) ?? null;
-    const snapshot: LightSeedBuilderSnapshot | null =
-      rankingMap || groupedThirdPlaceRankings.has(userId)
-        ? {
-            groupRankings: Array.from((rankingMap ?? new Map()).entries())
-              .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
-              .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds })),
-            thirdPlaceRankings: (groupedThirdPlaceRankings.get(userId) ?? []).sort((left, right) => left.rank - right.rank)
-          }
-        : null;
-
-    const summary = scoreGroupPhaseSnapshot({
-      snapshot,
-      actualOutcomes,
-      requiredThirdPlaceQualifierCount
-    });
-
+    const summary = ladderScores.get(userId);
     result.set(userId, {
       userId,
-      snapshot,
-      points: isScorable ? summary.totalPoints : 0,
-      maxPoints: summary.maxPoints,
-      hasSnapshot: Boolean(snapshot?.groupRankings.length || snapshot?.thirdPlaceRankings.length)
+      snapshot: summary?.snapshot ?? null,
+      points: summary?.points ?? 0,
+      maxPoints: summary?.maxPoints ?? actualOutcomes.length * 14,
+      hasSnapshot: summary?.hasSnapshot ?? false
     });
   }
 
