@@ -291,6 +291,20 @@ export function ProfileSummary({
     setIsUpdatingHomeTeam(false);
   }
 
+  async function handleSaveFollowedTeams() {
+    setIsUpdatingFollowedTeams(true);
+    setNotificationMessage(null);
+    const result = await updateCurrentUserFollowedTeams(followedTeamIdsDraft);
+    setNotificationMessage({
+      tone: result.ok ? "success" : "error",
+      text: result.message ?? t(uiLanguage, "errors.generic")
+    });
+    if (result.ok) {
+      await refresh();
+    }
+    setIsUpdatingFollowedTeams(false);
+  }
+
   return (
     <section className="space-y-5">
       <div className="rounded-[1.15rem] bg-gray-100 p-5">
@@ -640,12 +654,20 @@ export function ProfileSummary({
       </div>
 
       <div id="followed-teams" className="ui-card scroll-mt-24 p-4">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-lg font-bold">{t(uiLanguage, "profile.followedTeams")}</h3>
             <p className="mt-1 text-sm font-normal text-gray-500">{t(uiLanguage, "profile.appFocusReminders")}</p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+            <button
+              type="button"
+              disabled={isUpdatingFollowedTeams || !hasPendingFollowedTeamsChanges}
+              onClick={handleSaveFollowedTeams}
+              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+            >
+              {isUpdatingFollowedTeams ? t(uiLanguage, "common.saving") : t(uiLanguage, "profile.saveFollowedTeams")}
+            </button>
             <div className="ui-chip-sm border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-700">
               {allTeamsFollowed ? t(uiLanguage, "profile.allTeams") : selectedFollowedTeams.length}
             </div>
@@ -763,26 +785,6 @@ export function ProfileSummary({
               )}
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                disabled={isUpdatingFollowedTeams || !hasPendingFollowedTeamsChanges}
-                onClick={async () => {
-                  setIsUpdatingFollowedTeams(true);
-                  setNotificationMessage(null);
-                  const result = await updateCurrentUserFollowedTeams(followedTeamIdsDraft);
-                  setNotificationMessage({
-                    tone: result.ok ? "success" : "error",
-                    text: result.message ?? t(user.preferredLanguage, "errors.generic")
-                  });
-                  if (result.ok) {
-                    await refresh();
-                  }
-                  setIsUpdatingFollowedTeams(false);
-                }}
-                className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
-              >
-                {isUpdatingFollowedTeams ? t(user.preferredLanguage, "common.saving") : t(user.preferredLanguage, "profile.saveFollowedTeams")}
-              </button>
               <p className="text-xs font-semibold text-gray-500">{t(user.preferredLanguage, "profile.remindersFollowTeams")}</p>
             </div>
           </>

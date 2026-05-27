@@ -665,9 +665,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   );
   const canCreateGroups = Boolean(summary?.ok && summary.tierAccess.capabilities.canCreateGroup);
   const canManageSocialTrophies = Boolean(summary?.ok && summary.tierAccess.capabilities.canManageSocialTrophies);
-  const createGroupMaxGroups = summary?.ok ? summary.tierAccess.limits.maxGroups : null;
-  const createGroupMaxMembers = summary?.ok ? summary.tierAccess.limits.maxMembersPerGroup : null;
-  const createGroupMaxPlayers = summary?.ok ? summary.tierAccess.limits.maxTotalPlayers : null;
   const managedSummaryGroups = useMemo(() => summaryGroups.filter((group) => group.canManage), [summaryGroups]);
   const filteredGroups = useMemo(() => {
     const orderedGroups = [...managedSummaryGroups];
@@ -1517,36 +1514,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   <h3 className="text-lg font-black leading-tight">
                     {summary?.ok && summary.currentUser.role === "admin" ? tg("createGroupUnlimited") : tg("createGroup")}
                   </h3>
-                  {tierAccess ? (
-                    <ManagementBadge label={tg(getAccessLevelLabelKey(tierAccess.accessLevel))} tone="accent" />
-                  ) : null}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {createGroupMaxGroups === null ? (
-                    <span className="rounded-[0.65rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-700">
-                      {tg("newGroupLimitUnlimited")}
-                    </span>
-                  ) : (
-                    <span className="rounded-[0.65rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-700">
-                      {tg("managedGroupsDetail", { count: summary?.ok ? summary.groupAccess.managedGroupCount : 0, limit: createGroupMaxGroups })}
-                    </span>
-                  )}
-                  {createGroupMaxMembers ? (
-                    <span className="rounded-[0.65rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-700">
-                      {tg("groupMemberCapDetail", { count: createGroupMaxMembers })}
-                    </span>
-                  ) : null}
-                  {createGroupMaxPlayers ? (
-                    <span className="rounded-[0.65rem] border border-gray-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-700">
-                      {tg("leaguePlayerCapDetail", { count: createGroupMaxPlayers })}
-                    </span>
-                  ) : null}
                 </div>
               </div>
               <div className="flex shrink-0 items-start gap-2">
-                <span className="rounded-[0.7rem] border border-accent-border bg-accent-soft px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-accent-dark">
-                  {t(groupsLanguage, "common.ready")}
-                </span>
                 <InlineDisclosureButton
                   isOpen={isCreateGroupOpen}
                   variant="subtle"
@@ -1625,8 +1595,23 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       ) : null}
 
       <section className="space-y-3">
-        <div>
+        <div className="space-y-2">
           <h3 className="text-xl font-black">{tg("managedGroupsHeading")}</h3>
+          {summary?.ok && summary.tierAccess.capabilities.canSeeOrganizerControls ? (
+            <p className="max-w-2xl text-sm font-semibold leading-5 text-gray-600">
+              <span>
+                {summary.tierAccess.limits.maxGroups === null
+                  ? tg("newGroupLimitUnlimited")
+                  : tg("managedGroupsDetail", { count: summary.groupAccess.managedGroupCount, limit: summary.tierAccess.limits.maxGroups })}
+              </span>
+              {summary.tierAccess.limits.maxMembersPerGroup ? (
+                <span> · {tg("groupMemberCapDetail", { count: summary.tierAccess.limits.maxMembersPerGroup })}</span>
+              ) : null}
+              {summary.tierAccess.limits.maxTotalPlayers ? (
+                <span> · {tg("leaguePlayerCapDetail", { count: summary.tierAccess.limits.maxTotalPlayers })}</span>
+              ) : null}
+            </p>
+          ) : null}
         </div>
         {isSuperAdmin ? (
           <label className="ui-card block p-4">

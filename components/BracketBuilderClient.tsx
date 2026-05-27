@@ -78,9 +78,10 @@ const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
 const BRACKET_BUILDER_COMPLETION_SEEN_STORAGE_KEY = "bracket-builder-completion-seen";
 
 const SWIPE_THRESHOLD_PX = 42;
+const GROUP_SWIPE_EXIT_MS = 190;
 const NEAR_DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
-const CUSTOM_TOUCH_DRAG_HOLD_MS = 110;
-const CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX = 16;
+const CUSTOM_TOUCH_DRAG_HOLD_MS = 155;
+const CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX = 20;
 
 function formatProjectedSeedLabel(sourceLabel: string | null | undefined) {
   if (!sourceLabel) {
@@ -211,6 +212,7 @@ export function BracketBuilderClient({
   const previousGroupRowTopsRef = useRef(new Map<string, number>());
   const thirdPlaceRowRefs = useRef(new Map<string, HTMLDivElement>());
   const previousThirdPlaceRowTopsRef = useRef(new Map<string, number>());
+  const groupSwipeAnimationTimeoutRef = useRef<number | null>(null);
   const matches = initialMatches ?? getLocalGroupMatches();
   const teams = useMemo(
     () =>
@@ -546,11 +548,14 @@ export function BracketBuilderClient({
       if (customDragHoldTimeoutRef.current !== null) {
         window.clearTimeout(customDragHoldTimeoutRef.current);
       }
+      if (groupSwipeAnimationTimeoutRef.current !== null) {
+        window.clearTimeout(groupSwipeAnimationTimeoutRef.current);
+      }
       mediaQuery.removeEventListener("change", updateSupport);
     };
   }, []);
 
-  function clearCustomTouchDragState() {
+  function clearCustomTouchDragState(options?: { preserveGroupSwipe?: boolean }) {
     if (customDragHoldTimeoutRef.current !== null) {
       window.clearTimeout(customDragHoldTimeoutRef.current);
       customDragHoldTimeoutRef.current = null;
@@ -561,8 +566,10 @@ export function BracketBuilderClient({
     setDraggedThirdPlaceTeamId(null);
     setDragOverThirdPlaceTeamId(null);
     setCustomDragGhost(null);
-    setIsGroupSurfaceSwiping(false);
-    setGroupSwipeOffsetX(0);
+    if (!options?.preserveGroupSwipe) {
+      setIsGroupSurfaceSwiping(false);
+      setGroupSwipeOffsetX(0);
+    }
   }
 
   function activateCustomTouchDrag(state: NonNullable<typeof customDragStateRef.current>) {
@@ -715,7 +722,7 @@ export function BracketBuilderClient({
 
     if (state.isGroupSwipe) {
       finishGroupSurfaceSwipe(event.clientX - state.startX);
-      clearCustomTouchDragState();
+      clearCustomTouchDragState({ preserveGroupSwipe: true });
       return;
     }
 
@@ -877,6 +884,14 @@ export function BracketBuilderClient({
     setActiveGroupIndex(boundedIndex);
   }
 
+  function getGroupSwipeTravelDistance() {
+    if (typeof window === "undefined") {
+      return 360;
+    }
+
+    return Math.max(320, Math.min(window.innerWidth * 0.9, 540));
+  }
+
   function getBoundedGroupSwipeOffset(deltaX: number) {
     const isPullingPastStart = deltaX > 0 && activeGroupIndex === 0;
     const isPullingPastEnd = deltaX < 0 && activeGroupIndex === sortedGroupNames.length - 1;
@@ -892,15 +907,36 @@ export function BracketBuilderClient({
   function finishGroupSurfaceSwipe(deltaX: number) {
     setIsGroupSurfaceSwiping(false);
 
-    if (Math.abs(deltaX) >= SWIPE_THRESHOLD_PX) {
-      if (deltaX < 0) {
-        goToGroup(activeGroupIndex + 1);
-      } else {
-        goToGroup(activeGroupIndex - 1);
-      }
+    const targetIndex = deltaX < 0 ? activeGroupIndex + 1 : activeGroupIndex - 1;
+    const boundedTargetIndex = Math.max(0, Math.min(sortedGroupNames.length - 1, targetIndex));
+    const shouldChangeGroup = Math.abs(deltaX) >= SWIPE_THRESHOLD_PX && boundedTargetIndex !== activeGroupIndex;
+
+    if (!shouldChangeGroup) {
+      setGroupSwipeOffsetX(0);
+      return;
     }
 
-    setGroupSwipeOffsetX(0);
+    if (groupSwipeAnimationTimeoutRef.current !== null) {
+      window.clearTimeout(groupSwipeAnimationTimeoutRef.current);
+    }
+
+    const swipeDirection = deltaX < 0 ? -1 : 1;
+    const travelDistance = getGroupSwipeTravelDistance();
+
+    setGroupSwipeOffsetX(swipeDirection * travelDistance);
+    groupSwipeAnimationTimeoutRef.current = window.setTimeout(() => {
+      groupSwipeAnimationTimeoutRef.current = null;
+      setIsGroupSurfaceSwiping(true);
+      setActiveGroupIndex(boundedTargetIndex);
+      setGroupSwipeOffsetX(-swipeDirection * travelDistance);
+
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          setIsGroupSurfaceSwiping(false);
+          setGroupSwipeOffsetX(0);
+        });
+      });
+    }, GROUP_SWIPE_EXIT_MS);
   }
 
   function handleGroupSwipeTouchStart(event: TouchEvent<HTMLElement>) {
@@ -1289,7 +1325,7 @@ export function BracketBuilderClient({
                 }
                 onPointerMove={handleCustomTouchDragMove}
                 onPointerUp={handleCustomTouchDragEnd}
-                onPointerCancel={clearCustomTouchDragState}
+                onPointerCancel={() => clearCustomTouchDragState()}
                 onDragStart={(event) => {
                   if (isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag) {
                     return;
@@ -1424,7 +1460,7 @@ export function BracketBuilderClient({
                     onPointerDown={(event) => beginCustomTouchDrag(event, "third", team.id, isReadOnly)}
                     onPointerMove={handleCustomTouchDragMove}
                     onPointerUp={handleCustomTouchDragEnd}
-                    onPointerCancel={clearCustomTouchDragState}
+                    onPointerCancel={() => clearCustomTouchDragState()}
                     onDragStart={(event) => {
                       if (isReadOnly || !supportsNativeRowDrag) {
                         return;
