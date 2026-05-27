@@ -5,6 +5,7 @@ import {
   getPredictionProgress,
   getLiveMatches,
   getNextMatch,
+  getUpcomingMatches,
   type DashboardCommandCenterSummary,
   type DashboardMatchSummary
 } from "@/lib/dashboard-home";
@@ -76,7 +77,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     snapshotResult,
     knockoutPredictionsResult,
     globalRankResult,
-    userSettingsResult
+    userSettingsResult,
+    totalPlayersResult
   ] = await Promise.all([
     adminSupabase
       .from("teams")
@@ -97,7 +99,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       totalPlayers: 0,
       totalPoints: null
     })),
-    adminSupabase.from("user_settings").select("followed_team_ids").eq("user_id", userId).maybeSingle()
+    adminSupabase.from("user_settings").select("followed_team_ids").eq("user_id", userId).maybeSingle(),
+    adminSupabase.from("users").select("id", { count: "exact", head: true })
   ]);
 
   const teams = ((teamsResult.data as TeamRow[] | null) ?? []).length
@@ -134,7 +137,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
   const followedTeamIds = resolveFollowedTeamIds(userSettingsResult.data as UserSettingsRow | null, userSettingsResult.error?.message);
   const reminderMatches = filterMatchesByTeamIds(dashboardMatches, followedTeamIds);
   const reminderLiveMatches = getLiveMatches(reminderMatches, { limit: 2 });
-  const reminderNextMatch = reminderLiveMatches.length > 0 ? null : getNextMatch(reminderMatches);
+  const reminderUpcomingMatches = reminderLiveMatches.length > 0 ? [] : getUpcomingMatches(reminderMatches, { limit: 6 });
+  const reminderNextMatch = reminderLiveMatches.length > 0 ? null : reminderUpcomingMatches[0] ?? getNextMatch(reminderMatches);
 
   const joinedGroupIds = Array.from(new Set(memberships.map((membership) => membership.group_id).filter(Boolean)));
   const managedGroupIds = Array.from(
@@ -224,11 +228,13 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     performance: {
       globalPoints: profile?.total_points ?? globalRankResult.totalPoints ?? null,
       globalRank: globalRankResult.rank,
-      totalGroups: visibleGroupIds.length
+      totalGroups: visibleGroupIds.length,
+      totalPlayers: totalPlayersResult.count ?? globalRankResult.totalPlayers ?? 0
     },
     reminder: {
       followedTeamCount: followedTeamIds.length,
       nextMatch: reminderNextMatch,
+      upcomingMatches: reminderUpcomingMatches,
       liveMatches: reminderLiveMatches
     }
   };
@@ -247,11 +253,13 @@ function buildFallbackDashboardCommandCenter(): DashboardCommandCenterSummary {
     performance: {
       globalPoints: null,
       globalRank: null,
-      totalGroups: 0
+      totalGroups: 0,
+      totalPlayers: 0
     },
     reminder: {
       followedTeamCount: 0,
       nextMatch: null,
+      upcomingMatches: [],
       liveMatches: []
     }
   };

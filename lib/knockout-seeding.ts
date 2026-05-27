@@ -1,6 +1,7 @@
 import { applyGroupStandingsResult, createMiniGroupStandingsRow } from "@/lib/group-standings";
 import {
   buildFifa2026RoundOf32FromSeeds,
+  buildFifa2026RoundOf32StoredMatchIdLookup,
   sourceToGroupLetter,
   type Fifa2026QualifiedSeed,
   type Fifa2026RoundOf32Side
@@ -113,24 +114,6 @@ type ParsedSeedSource =
 const GROUP_STAGE_NAME = "group";
 const ROUND_OF_32_STAGES = new Set(["r32", "round_of_32"]);
 const FIFA_2026_REQUIRED_THIRD_PLACE_COUNT = 8;
-const LEGACY_R32_ID_BY_OFFICIAL_MATCH_ID = new Map<string, string>([
-  ["M73", "r32-01"],
-  ["M74", "r32-02"],
-  ["M75", "r32-03"],
-  ["M76", "r32-04"],
-  ["M77", "r32-05"],
-  ["M78", "r32-06"],
-  ["M79", "r32-07"],
-  ["M80", "r32-08"],
-  ["M81", "r32-09"],
-  ["M82", "r32-10"],
-  ["M83", "r32-11"],
-  ["M84", "r32-12"],
-  ["M85", "r32-13"],
-  ["M86", "r32-14"],
-  ["M87", "r32-15"],
-  ["M88", "r32-16"]
-]);
 
 export function buildGroupStandingsByGroup(
   matches: GroupStageMatchForSeeding[],
@@ -847,32 +830,8 @@ function isFifaQualifiedSeed(seed: Fifa2026QualifiedSeed | null): seed is Fifa20
   return seed !== null;
 }
 
-function buildRoundOf32MatchIdLookup(matches: KnockoutPlaceholderMatch[]) {
-  const roundOf32Matches = matches
-    .filter((match) => ROUND_OF_32_STAGES.has(match.stage))
-    .sort((left, right) => left.id.localeCompare(right.id, undefined, { numeric: true }));
-  const lookup = new Map<string, string>();
-
-  for (const match of roundOf32Matches) {
-    if (/^M(?:7[3-9]|8[0-8])$/.test(match.id)) {
-      lookup.set(match.id, match.id);
-    }
-  }
-
-  for (const [officialMatchId, legacyMatchId] of LEGACY_R32_ID_BY_OFFICIAL_MATCH_ID) {
-    if (roundOf32Matches.some((match) => match.id === legacyMatchId)) {
-      lookup.set(officialMatchId, legacyMatchId);
-    }
-  }
-
-  for (let index = 0; index < roundOf32Matches.length; index += 1) {
-    const officialMatchId = `M${73 + index}`;
-    if (!lookup.has(officialMatchId)) {
-      lookup.set(officialMatchId, roundOf32Matches[index].id);
-    }
-  }
-
-  return lookup;
+export function buildRoundOf32MatchIdLookup(matches: KnockoutPlaceholderMatch[]) {
+  return buildFifa2026RoundOf32StoredMatchIdLookup(matches);
 }
 
 function toProjectedRoundOf32Side(

@@ -1166,7 +1166,7 @@ export function BracketBuilderClient({
             : t(language, "bracket.topTwoQualify")}
       </section>
 
-      <section className="space-y-2.5 px-0 py-0">
+      <section className="space-y-2.5 px-0 pb-0 pt-1.5">
         <div className="space-y-2">
           <div
             className={`flex items-start justify-between gap-2 select-none ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
@@ -1204,10 +1204,32 @@ export function BracketBuilderClient({
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
-            <div className="flex justify-center">
-              <p className="ui-chip-sm-pill border border-gray-200 bg-white px-4 font-black uppercase tracking-[0.14em] text-gray-700 shadow-sm">
-                {t(language, "bracket.swipeForMore")}
-              </p>
+            <div className="flex items-center justify-center">
+              <div
+                aria-hidden
+                className="grid w-[7.6rem] grid-cols-12 gap-[2px]"
+              >
+                {sortedGroupNames.map((groupName, index) => {
+                  const isComplete = touchedGroups.has(groupName);
+                  const isActive = index === activeGroupIndex;
+                  return (
+                    <span
+                      key={groupName}
+                      className={`h-1.5 min-w-0 ${
+                        index === 0 ? "rounded-l-full" : ""
+                      } ${
+                        index === sortedGroupNames.length - 1 ? "rounded-r-full" : ""
+                      } ${
+                        isActive
+                          ? "bg-accent-dark"
+                          : isComplete
+                            ? "bg-accent-light"
+                            : "bg-gray-200"
+                      }`}
+                    />
+                  );
+                })}
+              </div>
             </div>
             <button
               type="button"

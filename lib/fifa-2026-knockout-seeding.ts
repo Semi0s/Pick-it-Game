@@ -60,6 +60,11 @@ export type Fifa2026RoundOf32MatchId =
   | "M87"
   | "M88";
 
+export type Fifa2026RoundOf32StoredMatchLike = {
+  id: string;
+  stage?: string | null;
+};
+
 type Fifa2026RoundOf32Slot =
   | { kind: "fixed"; source: Fifa2026SeedSource }
   | {
@@ -107,6 +112,25 @@ export const FIFA_2026_ROUND_OF_32_DEFINITIONS: readonly Fifa2026RoundOf32Defini
   { matchId: "M88", sideA: fixed("2D"), sideB: fixed("2G") }
 ];
 
+const LEGACY_R32_ID_BY_OFFICIAL_MATCH_ID = new Map<string, string>([
+  ["M73", "r32-01"],
+  ["M74", "r32-02"],
+  ["M75", "r32-03"],
+  ["M76", "r32-04"],
+  ["M77", "r32-05"],
+  ["M78", "r32-06"],
+  ["M79", "r32-07"],
+  ["M80", "r32-08"],
+  ["M81", "r32-09"],
+  ["M82", "r32-10"],
+  ["M83", "r32-11"],
+  ["M84", "r32-12"],
+  ["M85", "r32-13"],
+  ["M86", "r32-14"],
+  ["M87", "r32-15"],
+  ["M88", "r32-16"]
+]);
+
 export function buildFifa2026RoundOf32(input: {
   groupStandings: Map<string, Fifa2026StandingsTeam[]>;
 }): Fifa2026RoundOf32Match[] {
@@ -138,6 +162,36 @@ export function buildFifa2026RoundOf32FromSeeds(input: {
     sideA: resolveRoundOf32Side(match.sideA, input.fixedQualifiers, thirdPlaceBySource, thirdPlaceAssignment),
     sideB: resolveRoundOf32Side(match.sideB, input.fixedQualifiers, thirdPlaceBySource, thirdPlaceAssignment)
   }));
+}
+
+export function buildFifa2026RoundOf32StoredMatchIdLookup(
+  matches: Fifa2026RoundOf32StoredMatchLike[]
+) {
+  const roundOf32Matches = matches
+    .filter((match) => !match.stage || match.stage === "r32" || match.stage === "round_of_32")
+    .sort((left, right) => left.id.localeCompare(right.id, undefined, { numeric: true }));
+  const lookup = new Map<string, string>();
+
+  for (const match of roundOf32Matches) {
+    if (/^M(?:7[3-9]|8[0-8])$/.test(match.id)) {
+      lookup.set(match.id, match.id);
+    }
+  }
+
+  for (const [officialMatchId, legacyMatchId] of LEGACY_R32_ID_BY_OFFICIAL_MATCH_ID) {
+    if (roundOf32Matches.some((match) => match.id === legacyMatchId)) {
+      lookup.set(officialMatchId, legacyMatchId);
+    }
+  }
+
+  for (let index = 0; index < roundOf32Matches.length; index += 1) {
+    const officialMatchId = `M${73 + index}`;
+    if (!lookup.has(officialMatchId)) {
+      lookup.set(officialMatchId, roundOf32Matches[index].id);
+    }
+  }
+
+  return lookup;
 }
 
 export function rankFifa2026ThirdPlaceTeams(

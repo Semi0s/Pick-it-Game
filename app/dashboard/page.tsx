@@ -49,11 +49,13 @@ export default async function DashboardPage() {
           performance: {
             globalPoints: null,
             globalRank: null,
-            totalGroups: 0
+            totalGroups: 0,
+            totalPlayers: 0
           },
           reminder: {
             followedTeamCount: 0,
             nextMatch: null,
+            upcomingMatches: [],
             liveMatches: []
           }
         }}
