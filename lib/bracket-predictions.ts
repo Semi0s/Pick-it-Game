@@ -16,6 +16,7 @@ import {
   type ProjectedMatchScoreSource
 } from "@/lib/knockout-seeding";
 import { loadProjectedRoundOf32FromPreferredSource } from "@/lib/projected-knockout-source";
+import { isMatchLockedAt } from "@/lib/scoring-engine";
 import type {
   BracketPrediction,
   BracketScore,
@@ -1175,15 +1176,7 @@ async function upsertBracketPrediction(
 function isKnockoutMatchLocked(
   match: Pick<MatchRow, "status" | "kickoff_time">
 ) {
-  if (match.status === "final" || match.status === "live" || match.status === "locked") {
-    return true;
-  }
-
-  if (!match.kickoff_time) {
-    return false;
-  }
-
-  return new Date(match.kickoff_time).getTime() <= Date.now();
+  return isMatchLockedAt({ status: match.status, kickoffTime: match.kickoff_time });
 }
 
 async function clearInvalidDescendantPredictions(

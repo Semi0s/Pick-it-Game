@@ -1,4 +1,4 @@
-import type { MatchStage } from "@/lib/types";
+import type { MatchStage } from "./types.ts";
 
 export type CanonicalKnockoutStage = "r32" | "r16" | "qf" | "sf" | "third" | "final";
 

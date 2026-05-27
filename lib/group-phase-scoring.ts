@@ -1,4 +1,4 @@
-import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
+import type { LightSeedBuilderSnapshot } from "./group-stage-modes.ts";
 
 export type GroupPhaseActualOutcome = {
   groupName: string;
@@ -28,6 +28,10 @@ export const GROUP_PHASE_GROUP_MAX_POINTS = 14;
 
 /**
  * Launch scoring ladder for the Group Phase default path.
+ *
+ * This is the current visible and canonical Group Phase leaderboard source.
+ * Cached totals and audit/recompute paths should rebuild from this ladder,
+ * not from legacy per-match full-score prediction rows.
  *
  * Each group can earn up to 14 points:
  * - Correct winner: 5

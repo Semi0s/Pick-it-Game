@@ -2201,6 +2201,22 @@ function formatRoundOf32PlaceholderLabel(placeholderLabel: string | null, langua
   }
 
   const normalized = placeholderLabel.replace(/\s+/g, " ").trim();
+  const compactSourceMatch = normalized.match(/^([123])([A-L])$/i);
+  if (compactSourceMatch) {
+    const rankKey =
+      compactSourceMatch[1] === "1"
+        ? "groupWinnerRank"
+        : compactSourceMatch[1] === "2"
+          ? "groupRunnerUpRank"
+          : "groupThirdRank";
+    return {
+      primary: kt(language, "groupSeedLabel", {
+        groupName: compactSourceMatch[2].toUpperCase(),
+        rank: kt(language, rankKey)
+      })
+    };
+  }
+
   const groupMatch = normalized.match(/^Group\s+([A-Z])\s+(Winner|Runner-up)$/i);
   if (groupMatch) {
     return {
@@ -2208,6 +2224,13 @@ function formatRoundOf32PlaceholderLabel(placeholderLabel: string | null, langua
         groupName: groupMatch[1].toUpperCase(),
         rank: groupMatch[2].toLowerCase() === "winner" ? kt(language, "groupWinnerRank") : kt(language, "groupRunnerUpRank")
       })
+    };
+  }
+
+  const bestThirdFromMatch = normalized.match(/^Best\s+3(?:rd)?\s+from\s+([A-L](?:\/[A-L])*)$/i);
+  if (bestThirdFromMatch) {
+    return {
+      primary: kt(language, "bestThirdFromGroups", { groups: bestThirdFromMatch[1].toUpperCase() })
     };
   }
 
