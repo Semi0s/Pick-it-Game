@@ -27,9 +27,15 @@ export function ResetPasswordForm() {
         const searchParams = new URLSearchParams(window.location.search);
         const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
         const urlError = searchParams.get("error") ?? searchParams.get("error_description");
+        const urlErrorCode = searchParams.get("error_code");
+
+        if (urlErrorCode === "missing_pkce_verifier" || isMissingPkceCodeVerifierError(urlError)) {
+          setError(t(language, "auth.resetLinkVerifierMissing"));
+          return;
+        }
 
         if (urlError) {
-          setError(urlError);
+          setError(urlError === "missing_pkce_verifier" ? t(language, "auth.resetLinkVerifierMissing") : urlError);
           return;
         }
 
@@ -178,4 +184,8 @@ export function ResetPasswordForm() {
       </p>
     </form>
   );
+}
+
+function isMissingPkceCodeVerifierError(message?: string | null) {
+  return message?.toLowerCase().includes("pkce code verifier not found in storage") ?? false;
 }

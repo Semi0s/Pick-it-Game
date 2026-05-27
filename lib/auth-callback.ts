@@ -47,6 +47,7 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
   });
 
   let errorMessage: string | null = null;
+  let callbackErrorCode: string | null = authErrorCode;
   let confirmedUserEmail: string | null = null;
   let confirmedAt: string | null = null;
   let skipUserSessionLookup = false;
@@ -69,8 +70,13 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
         });
         skipUserSessionLookup = true;
       } else {
-      console.error("Failed to exchange auth code for session during callback.", error);
-      errorMessage = error.message;
+        console.error("Failed to exchange auth code for session during callback.", error);
+        if (isMissingPkceCodeVerifierError(error.message) && nextPath.startsWith("/reset-password")) {
+          callbackErrorCode = "missing_pkce_verifier";
+          errorMessage = "missing_pkce_verifier";
+        } else {
+          errorMessage = error.message;
+        }
       }
     }
   } else if (tokenHash && type) {
@@ -158,6 +164,9 @@ export async function handleAuthCallback(nextRequest: NextRequest) {
   const redirectUrl = new URL(redirectPath, nextRequest.url);
   if (errorMessage) {
     redirectUrl.searchParams.set("error", errorMessage);
+  }
+  if (callbackErrorCode) {
+    redirectUrl.searchParams.set("error_code", callbackErrorCode);
   }
 
   console.info("Auth callback redirecting.", {
