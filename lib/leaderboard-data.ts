@@ -1468,7 +1468,7 @@ async function fetchKnockoutPointsByUserIds(
 }
 
 function normalizeLeaderboardPhase(value?: string | null): LeaderboardPhase {
-  return value === "knockout_phase" || value === "global_top10" ? value : "group_phase";
+  return value === "global_top10" ? value : "group_phase";
 }
 
 function resolveAllowedView(

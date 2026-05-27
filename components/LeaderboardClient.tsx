@@ -43,6 +43,11 @@ const DEFAULT_SWITCHER_STATE = {
 };
 
 const DEFAULT_LEADERBOARD_PHASE: LeaderboardPhase = "group_phase";
+const LEADERBOARD_PHASE_RAIL_ITEMS: Array<{ value: LeaderboardPhase; disabled?: boolean }> = [
+  { value: "group_phase" },
+  { value: "knockout_phase", disabled: true },
+  { value: "global_top10" }
+];
 
 type LeaderboardSubselectionState = {
   groupByPhaseAndView?: Partial<Record<LeaderboardPhase, Partial<Record<LeaderboardSwitcherView, string>>>>;
@@ -66,6 +71,10 @@ type PhaseNavItem = {
   groupId?: string;
   phase?: LeaderboardPhase;
 };
+
+function getAvailableLeaderboardPhase(phase?: LeaderboardPhase | null): LeaderboardPhase {
+  return phase === "knockout_phase" ? DEFAULT_LEADERBOARD_PHASE : phase ?? DEFAULT_LEADERBOARD_PHASE;
+}
 
 const DEFAULT_SUBSELECTION_STATE: LeaderboardSubselectionState = {
   groupByPhaseAndView: {},
@@ -306,7 +315,7 @@ export function LeaderboardClient() {
 
   const requestUrl = useMemo(() => {
     const params = new URLSearchParams();
-    params.set("phase", activePhase);
+    params.set("phase", getAvailableLeaderboardPhase(activePhase));
     params.set("view", activeView);
     if (selectedGroupId) {
       params.set("groupId", selectedGroupId);
@@ -353,7 +362,7 @@ export function LeaderboardClient() {
       if (queryPhase || queryView || queryGroupId || queryManagerId) {
         setHasExplicitSwitcherPreference(true);
         if (queryPhase === "knockout_phase" || queryPhase === "global_top10" || queryPhase === "group_phase") {
-          setActivePhase(queryPhase);
+          setActivePhase(getAvailableLeaderboardPhase(queryPhase));
         }
         if (queryView) {
           setActiveView(queryView as LeaderboardSwitcherView);
@@ -366,7 +375,7 @@ export function LeaderboardClient() {
         }
       } else if (storedSwitcherState) {
         setHasExplicitSwitcherPreference(true);
-        const restoredPhase = storedSwitcherState.activePhase ?? DEFAULT_LEADERBOARD_PHASE;
+        const restoredPhase = getAvailableLeaderboardPhase(storedSwitcherState.activePhase ?? DEFAULT_LEADERBOARD_PHASE);
         setActivePhase(restoredPhase);
 
         const restoredView =
@@ -548,7 +557,7 @@ export function LeaderboardClient() {
           setDailyWinners(result.dailyWinners);
           setActivityFeed(result.activityFeed);
           setGlobalLeaderboardTotalPlayers(result.globalLeaderboardTotalPlayers);
-          setActivePhase(result.phase);
+          setActivePhase(getAvailableLeaderboardPhase(result.phase));
           setError(null);
           hasLoadedLeaderboardRef.current = true;
           setIsLoading(false);
@@ -773,7 +782,7 @@ export function LeaderboardClient() {
     }
 
     const nextState = {
-      activePhase,
+      activePhase: getAvailableLeaderboardPhase(activePhase),
       phaseViewByPhase: rememberedViewByPhase,
       activeView,
       selectedGroupId,
@@ -1078,11 +1087,12 @@ export function LeaderboardClient() {
     ? managedAwardGroup.members.find((member) => member.userId === managedTrophySheetTarget.userId) ?? null
     : null;
   const handleSelectPhase = useCallback((nextPhase: LeaderboardPhase) => {
+    const availablePhase = getAvailableLeaderboardPhase(nextPhase);
     setHasExplicitSwitcherPreference(true);
     setIsPhaseNavOpen(false);
-    setActivePhase(nextPhase);
+    setActivePhase(availablePhase);
     if (switcher) {
-      setActiveView(getRememberedLeaderboardViewForPhase(switcher, nextPhase, rememberedViewByPhase));
+      setActiveView(getRememberedLeaderboardViewForPhase(switcher, availablePhase, rememberedViewByPhase));
     }
   }, [rememberedViewByPhase, switcher]);
 
@@ -1781,30 +1791,42 @@ export function LeaderboardClient() {
         <LeaderboardChoiceRail
           prevLabel={t(uiLanguage, "leaderboard.showPreviousLeaderboardPhases")}
           nextLabel={t(uiLanguage, "leaderboard.showMoreLeaderboardPhases")}
-          activeItemKey={activePhase}
+          activeItemKey={getAvailableLeaderboardPhase(activePhase)}
           onActiveItemChange={(nextKey) => handleSelectPhase(nextKey as LeaderboardPhase)}
         >
-          {[
-            { value: "group_phase", label: t(uiLanguage, "leaderboard.groupStage") },
-            { value: "knockout_phase", label: t(uiLanguage, "leaderboard.knockoutStage") },
-            { value: "global_top10", label: t(uiLanguage, "leaderboard.global") }
-          ].map((phase) => (
+          {LEADERBOARD_PHASE_RAIL_ITEMS.map((phase) => (
             <button
               key={phase.value}
               type="button"
-              onClick={() => handleSelectPhase(phase.value as LeaderboardPhase)}
-              data-choice-key={phase.value}
-              data-choice-active={activePhase === phase.value ? "true" : "false"}
+              onClick={() => {
+                if (!phase.disabled) {
+                  handleSelectPhase(phase.value);
+                }
+              }}
+              data-choice-key={phase.disabled ? undefined : phase.value}
+              data-choice-active={getAvailableLeaderboardPhase(activePhase) === phase.value ? "true" : "false"}
+              disabled={phase.disabled}
+              aria-disabled={phase.disabled ? "true" : undefined}
               className={`shrink-0 ${LEADERBOARD_COCKPIT_BUTTON_CLASS} ${
-                activePhase === phase.value
+                phase.disabled
+                  ? "cursor-not-allowed border border-gray-200 bg-gray-100 text-gray-400"
+                  : getAvailableLeaderboardPhase(activePhase) === phase.value
                   ? "bg-accent text-accent-text"
                   : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
               }`}
             >
-              {phase.label}
+              {phase.value === "group_phase"
+                ? t(uiLanguage, "leaderboard.groupStage")
+                : phase.value === "knockout_phase"
+                  ? t(uiLanguage, "leaderboard.knockoutStage")
+                  : t(uiLanguage, "leaderboard.global")}
             </button>
           ))}
         </LeaderboardChoiceRail>
+
+        <p className="mx-auto max-w-[22rem] text-center text-[11px] font-semibold leading-4 text-gray-500">
+          {t(uiLanguage, "leaderboard.knockoutLeaderboardComingSoon")}
+        </p>
 
         {shouldShowPhaseNavMenu ? (
           <div className="relative mx-auto w-[87%]">

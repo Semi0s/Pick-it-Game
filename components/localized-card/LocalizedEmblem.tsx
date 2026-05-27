@@ -277,16 +277,19 @@ function getLocalizedEmblemSpec(
         )
       };
     case "england":
+      const englandPanelFill = accentPrefix === "leaderboard-card" ? "rgba(255,255,255,0.94)" : "rgba(255,255,255,0.84)";
+      const englandStarFill = accentPrefix === "leaderboard-card" ? "#D8DDE6" : "rgba(107,114,128,0.78)";
       return {
-        opacity: 0.17,
-        scale: 0.96,
-        leaderboardOpacity: 0.58,
-        leaderboardScale: 1.28,
+        opacity: 0.2,
+        scale: 1.08,
+        leaderboardOpacity: 0.64,
+        leaderboardScale: 1.42,
         node: (
           <>
-            <rect x="-24" y="-24" width="48" height="48" rx="10" fill="rgba(255,255,255,0.8)" />
-            <rect x="-6" y="-24" width="12" height="48" rx="4" fill={a2} />
-            <rect x="-24" y="-6" width="48" height="12" rx="4" fill={a2} />
+            <rect x="-30" y="-21" width="60" height="42" rx="10" fill={englandPanelFill} />
+            <rect x="-3.7" y="-21" width="7.4" height="42" rx="2.5" fill={a1} />
+            <rect x="-30" y="-3.7" width="60" height="7.4" rx="2.5" fill={a1} />
+            <Star x="0" y="-28" size={5.4} fill={englandStarFill} />
           </>
         )
       };

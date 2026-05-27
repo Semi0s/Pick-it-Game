@@ -1,5 +1,4 @@
 import Image from "next/image";
-import { PickItLogo } from "@/components/PickItLogo";
 import { LoginForm } from "@/components/LoginForm";
 
 function extractInviteTokenFromNextPath(nextPath?: string) {
@@ -45,12 +44,14 @@ export default async function LoginPage({
       <section className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] max-w-[17.85rem] flex-col justify-center">
         <div className="mb-8 rounded-[1.35rem] border border-white/60 bg-white/90 p-4 shadow-2xl shadow-black/25">
           <div className="mx-auto mb-6 max-w-[30rem]">
-            <PickItLogo
+            <Image
+              src="/images/pickit-login-logo.png"
               alt="PICK-IT! World Cup 2026"
+              width={577}
+              height={239}
               sizes="(max-width: 640px) 216px, 264px"
               priority
-              className="mx-auto w-full max-w-[13.5rem] sm:max-w-[15rem] md:max-w-[16.5rem]"
-              imageClassName="object-contain"
+              className="mx-auto h-auto w-full max-w-[12.25rem] object-contain sm:max-w-[13.75rem] md:max-w-[15rem]"
             />
           </div>
 

@@ -113,6 +113,18 @@ export function VisualThemeMenu({
 }
 
 function VisualThemeOptionIcon({ option }: { option: VisualThemeSelectOption }) {
+  if (option.kind === "team" && option.id === "eng") {
+    return (
+      <span
+        aria-hidden
+        className="relative inline-flex h-3.5 w-5 shrink-0 overflow-hidden rounded-[3px] border border-gray-300 bg-white shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]"
+      >
+        <span className="absolute inset-x-0 top-1/2 h-[22%] -translate-y-1/2 bg-[#CE1126]" />
+        <span className="absolute inset-y-0 left-1/2 w-[16%] -translate-x-1/2 bg-[#CE1126]" />
+      </span>
+    );
+  }
+
   if (option.kind === "visual" && option.id === "oranjekoorts") {
     return (
       <span

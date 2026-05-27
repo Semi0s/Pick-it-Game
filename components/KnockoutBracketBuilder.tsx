@@ -47,6 +47,7 @@ const KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY = "knockout-active-country-filt
 const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
 
 const KnockoutLanguageContext = createContext<SupportedLanguage>("en");
+const KnockoutLandingMatchContext = createContext<string | null>(null);
 
 function useKnockoutLanguage() {
   return useContext(KnockoutLanguageContext);
@@ -79,7 +80,9 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     ""
   );
   const [transitionReady, setTransitionReady] = useState(true);
+  const [landingMatchId, setLandingMatchId] = useState<string | null>(null);
   const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const landingHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasAutoFocusedProjectedSlideRef = useRef(false);
   const hasAppliedQueryFocusRef = useRef(false);
 
@@ -110,6 +113,9 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     return () => {
       if (transitionTimerRef.current) {
         clearTimeout(transitionTimerRef.current);
+      }
+      if (landingHighlightTimerRef.current) {
+        clearTimeout(landingHighlightTimerRef.current);
       }
     };
   }, []);
@@ -193,7 +199,18 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
 
     const frame = window.requestAnimationFrame(() => {
       const target = document.querySelector<HTMLElement>(`[data-knockout-match-id="${requestedMatchId}"]`);
-      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (target) {
+        const rect = target.getBoundingClientRect();
+        const nextTop = Math.max(0, window.scrollY + rect.top - (window.innerHeight - rect.height) / 2);
+        window.scrollTo({ top: nextTop, behavior: "smooth" });
+      }
+      setLandingMatchId(requestedMatchId);
+      if (landingHighlightTimerRef.current) {
+        clearTimeout(landingHighlightTimerRef.current);
+      }
+      landingHighlightTimerRef.current = setTimeout(() => {
+        setLandingMatchId((current) => (current === requestedMatchId ? null : current));
+      }, 1800);
     });
 
     return () => window.cancelAnimationFrame(frame);
@@ -213,6 +230,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
 
   return (
     <KnockoutLanguageContext.Provider value={uiLanguage}>
+    <KnockoutLandingMatchContext.Provider value={landingMatchId}>
     <section className="space-y-3">
       <div
         className="sticky z-[14] w-full overflow-x-hidden rounded-lg bg-white px-3 py-1.5 sm:border sm:border-gray-200 sm:px-4"
@@ -283,6 +301,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
         </div>
       </div>
     </section>
+    </KnockoutLandingMatchContext.Provider>
     </KnockoutLanguageContext.Provider>
   );
 
@@ -1312,9 +1331,11 @@ function CurrentRoundMatchCard({
   showMatchIdentity?: boolean;
 }) {
   const language = useKnockoutLanguage();
+  const landingMatchId = useContext(KnockoutLandingMatchContext);
   const isCompact = density === "compact";
   const isHero = density === "hero";
   const isEmbeddedCenterCard = side === "center" && !showHeader;
+  const isLandingMatch = landingMatchId === match.matchId;
   const matchNumber = getKnockoutMatchNumber(match.title);
   const shouldShowStageLabel = match.stage === "r32";
   const hasOfficialTeams = Boolean(match.seededHomeTeam && match.seededAwayTeam);
@@ -1439,14 +1460,14 @@ function CurrentRoundMatchCard({
       data-knockout-match-id={match.matchId}
       className={
         isEmbeddedCenterCard
-          ? `${isHero ? "p-1" : "p-0.5"}`
-          : `box-border w-full max-w-full overflow-hidden rounded-[1.15rem] border ${
+          ? `relative ${isHero ? "p-1" : "p-0.5"} ${isLandingMatch ? "knockout-landing-pop" : ""}`
+          : `relative box-border w-full max-w-full overflow-hidden rounded-[1.15rem] border ${
               match.viewMode === "projected"
                 ? "border-amber-200 bg-amber-50/80 p-2"
                 : shellState === "final"
                   ? "border-gray-200 bg-gray-100 p-2"
                   : "border-gray-200 bg-white p-2"
-            }`
+            } ${isLandingMatch ? "knockout-landing-pop" : ""}`
       }
     >
       {showHeader ? (

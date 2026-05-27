@@ -292,7 +292,7 @@ function DigitalWatchRing({
       <div className="absolute inset-0 flex items-center justify-center">
         <p className="tabular-nums text-[20px] font-black leading-none tracking-[-0.04em] text-slate-950">
           <span>{clampedPercentage}</span>
-          <sup className="ml-0.5 align-super text-[7px] font-black tracking-normal text-slate-500">%</sup>
+          <sup className="ml-0.5 align-super text-[4px] font-black tracking-normal text-slate-500">%</sup>
         </p>
       </div>
     </div>
@@ -303,7 +303,7 @@ function MetricRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 py-2.5">
       <span className="min-w-0 truncate text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">{label}</span>
-      <span className="min-w-0 max-w-[3.3rem] truncate text-right text-[13px] font-black leading-none tracking-[-0.04em] text-slate-950 tabular-nums">{value}</span>
+      <span className="triptych-regular-value min-w-0 max-w-[3.3rem] truncate text-right text-[13px] font-black leading-none tracking-[-0.04em] text-slate-950 tabular-nums">{value}</span>
     </div>
   );
 }

@@ -155,6 +155,15 @@ export async function authenticateWithEmail(
   password: string,
   options?: AuthOptions
 ): Promise<AuthResult> {
+  if (
+    mode === "signup" &&
+    options?.flow !== "invite" &&
+    !options?.promoManagerCode?.trim() &&
+    !options?.accessCode?.trim()
+  ) {
+    return { ok: false, message: "Enter the access code from your group organizer to create your account." };
+  }
+
   if (!hasSupabaseConfig()) {
     const result = mode === "login" ? demoSignIn(email, password) : demoSignUp(email, password);
     return result.ok ? { ok: true, user: result.user } : result;

@@ -35,7 +35,6 @@ export function LoginForm({
   const searchParams = useSearchParams();
   const uiLanguage = normalizeLanguage(language);
   const inviteFlow = flow === "invite";
-  const signupContext = initialMode === "signup";
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -100,6 +99,11 @@ export function LoginForm({
     event.preventDefault();
     setError(null);
     setNotice(null);
+    if (mode === "signup" && !emailBoundInviteFlow && !promoManagerCode && !accessCode.trim()) {
+      setError(t(uiLanguage, "auth.accessCodeRequired"));
+      return;
+    }
+
     setIsSubmitting(true);
     const result = await authenticateWithEmail(mode, email, password, {
       nextPath,
@@ -226,11 +230,9 @@ export function LoginForm({
         <p className="rounded-[0.9rem] border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
           {t(uiLanguage, "promoInvite.signupNotice")}
         </p>
-      ) : !isEmailConfirmationNotice && !confirmed && (inviteFlow || signupContext) ? (
+      ) : !isEmailConfirmationNotice && !confirmed && inviteFlow && mode === "login" ? (
         <p className="rounded-[0.9rem] border border-accent-light bg-white px-3 py-2 text-sm font-medium text-accent-dark">
-          {inviteFlow && mode === "login"
-            ? t(uiLanguage, "auth.useInvitedEmailToJoin")
-            : t(uiLanguage, "auth.useInviteOrAccessCode")}
+          {t(uiLanguage, "auth.useInvitedEmailToJoin")}
         </p>
       ) : null}
 

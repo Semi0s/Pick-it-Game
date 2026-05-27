@@ -81,7 +81,7 @@ export const teams: Team[] = [
   { id: "cod", name: "Congo DR", shortName: "COD", groupName: "K", fifaRank: 46, flagEmoji: "🇨🇩" },
   { id: "uzb", name: "Uzbekistan", shortName: "UZB", groupName: "K", fifaRank: 50, flagEmoji: "🇺🇿" },
   { id: "col", name: "Colombia", shortName: "COL", groupName: "K", fifaRank: 13, flagEmoji: "🇨🇴" },
-  { id: "eng", name: "England", shortName: "ENG", groupName: "L", fifaRank: 4, flagEmoji: "🏴" },
+  { id: "eng", name: "England", shortName: "ENG", groupName: "L", fifaRank: 4, flagEmoji: "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}" },
   { id: "cro", name: "Croatia", shortName: "CRO", groupName: "L", fifaRank: 11, flagEmoji: "🇭🇷" },
   { id: "gha", name: "Ghana", shortName: "GHA", groupName: "L", fifaRank: 74, flagEmoji: "🇬🇭" },
   { id: "pan", name: "Panama", shortName: "PAN", groupName: "L", fifaRank: 33, flagEmoji: "🇵🇦" }
