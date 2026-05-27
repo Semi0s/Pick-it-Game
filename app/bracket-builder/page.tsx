@@ -127,7 +127,7 @@ export default async function BracketBuilderPage() {
       <div className="mx-auto max-w-3xl space-y-5 pb-4 pt-0">
         <ManagementIntro
           eyebrowKey="bracket.startHere"
-          titleKey="bracket.groupStage"
+          titleKey="bracket.selectAdvancingTeams"
           description={t(preferredLanguage, "bracket.pickQualifyingTeamsOnly")}
           secondaryNote={fullScoresEnabled ? t(preferredLanguage, "bracket.pickScoresEarnMorePoints") : t(preferredLanguage, "bracket.finishGroupThenKnockout")}
           statusChipKey={knockoutStatus.isFullySeeded ? "common.locked" : "common.open"}

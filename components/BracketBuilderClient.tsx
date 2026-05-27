@@ -81,8 +81,6 @@ const SWIPE_THRESHOLD_PX = 42;
 const NEAR_DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
 const CUSTOM_TOUCH_DRAG_HOLD_MS = 110;
 const CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX = 16;
-const COMPACT_ICON_BUTTON_CLASS =
-  "inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 transition hover:border-accent hover:text-accent-dark disabled:cursor-not-allowed disabled:opacity-40";
 
 function formatProjectedSeedLabel(sourceLabel: string | null | undefined) {
   if (!sourceLabel) {
@@ -1160,17 +1158,25 @@ export function BracketBuilderClient({
         </section>
       ) : null}
 
-      <section
-        className={`space-y-2.5 px-0 py-0 ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
-        style={{
-          transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
-        }}
-        onTouchStart={handleGroupSwipeTouchStart}
-        onTouchMove={handleGroupSwipeTouchMove}
-        onTouchEnd={handleGroupSwipeTouchEnd}
-      >
+      <section className={`rounded-[1rem] border px-3 py-2 text-center text-[10px] font-black uppercase tracking-[0.08em] ${isThirdPlacePhase ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
+        {isComplete
+          ? t(language, "bracket.topTwoQualify")
+          : isThirdPlacePhase
+            ? t(language, "bracket.pickThirdPlaceQualifiers", { count: requiredThirdPlaceQualifierCount })
+            : t(language, "bracket.topTwoQualify")}
+      </section>
+
+      <section className="space-y-2.5 px-0 py-0">
         <div className="space-y-2">
-          <div className="flex items-start justify-between gap-2">
+          <div
+            className={`flex items-start justify-between gap-2 select-none ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
+            style={{
+              transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
+            }}
+            onTouchStart={handleGroupSwipeTouchStart}
+            onTouchMove={handleGroupSwipeTouchMove}
+            onTouchEnd={handleGroupSwipeTouchEnd}
+          >
             <div className="min-w-0">
               <h1 className="truncate text-xl font-black leading-tight text-gray-950 text-left">
                 {activeGroupName ? formatGroupName(activeGroupName) : t(language, "dashboard.groupLabel")}
@@ -1213,16 +1219,14 @@ export function BracketBuilderClient({
               <ArrowRight className="h-5 w-5" />
             </button>
           </div>
-          <div className={`rounded-[1rem] border px-3 py-2 text-center text-xs font-black uppercase tracking-[0.08em] ${isThirdPlacePhase ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
-            {isComplete
-              ? t(language, "bracket.topTwoQualify")
-              : isThirdPlacePhase
-                ? t(language, "bracket.pickThirdPlaceQualifiers", { count: requiredThirdPlaceQualifierCount })
-                : t(language, "bracket.topTwoQualify")}
-          </div>
         </div>
 
-        <div className="overflow-hidden rounded-[1.15rem] border border-gray-200">
+        <div
+          className={`overflow-hidden rounded-[1.15rem] border border-gray-200 ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
+          style={{
+            transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
+          }}
+        >
           {activeGroupTeams.map((team, index) => {
             const isTopTwo = index < 2;
             const isThirdPlaceTeam = index === 2;
@@ -1292,19 +1296,12 @@ export function BracketBuilderClient({
                   event.preventDefault();
                   handleDropReorder(team.id);
                 }}
-                className={`grid grid-cols-[1.55rem_0.55rem_2.2rem_minmax(0,1fr)_3.6rem_2rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1 last:border-b-0 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "[touch-action:none]" : "[touch-action:manipulation]"} ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
+                className={`grid grid-cols-[1.55rem_2.2rem_minmax(0,1fr)_3.6rem_2rem] items-center gap-x-0.5 border-b border-gray-200 px-1.5 py-1 last:border-b-0 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "[touch-action:none]" : "[touch-action:manipulation]"} ${highlightClass} ${dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
               >
-                <div className="flex justify-start">
+                <div className="flex justify-start pl-1">
                   <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-text">
                     {index + 1}
                   </span>
-                </div>
-                <div className="flex justify-center">
-                  {isThirdPlacePhase && isThirdPlaceTeam ? (
-                    <span className={`h-4 w-4 rounded-full border ${isThirdPlaceQualified ? "border-accent bg-accent-light" : "border-accent/70 bg-transparent"}`} aria-label={isThirdPlaceQualified ? "Third-place qualifier selected" : "Third-place qualifier not selected"} />
-                  ) : (
-                    <span className="h-4 w-4 rounded-full border border-transparent" aria-hidden />
-                  )}
                 </div>
                 <div className="flex items-center justify-center px-1.5">
                   <span aria-hidden className="text-[1.6rem] leading-none">{team.flagEmoji}</span>
@@ -1362,6 +1359,12 @@ export function BracketBuilderClient({
             );
           })}
         </div>
+
+        {isThirdPlacePhase ? (
+          <div className="rounded-[1rem] border border-amber-200 bg-amber-50 px-3 py-2 text-center text-[10px] font-bold leading-snug text-amber-900">
+            {t(language, "bracket.thirdPlaceRuleInfo", { count: requiredThirdPlaceQualifierCount })}
+          </div>
+        ) : null}
 
         {isThirdPlacePhase ? (
           <div className="rounded-[1.15rem] border border-gray-200 bg-gray-50 px-3 py-3">
@@ -1433,7 +1436,7 @@ export function BracketBuilderClient({
                         {t(language, "bracket.cutoff")}
                       </div>
                     ) : null}
-                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_4rem_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly ? "[touch-action:none]" : "[touch-action:manipulation]"} ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
+                    <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_3.6rem_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] ${!supportsNativeRowDrag && !isReadOnly ? "[touch-action:none]" : "[touch-action:manipulation]"} ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : "border-gray-200 bg-gray-100"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${isReadOnly || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}>
                       <div className="flex justify-start">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-text">
                           {index + 1}
@@ -1445,29 +1448,31 @@ export function BracketBuilderClient({
                           <span className="truncate text-xs font-black text-gray-950">{team.name}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          draggable={false}
-                          data-no-row-drag="true"
-                          disabled={isReadOnly || index === 0}
-                          onClick={() => moveThirdPlaceTeam(index, -1)}
-                          className={COMPACT_ICON_BUTTON_CLASS}
-                          aria-label={t(language, "bracket.moveTeamUp", { teamName: team.name })}
-                        >
-                          <ChevronUp className="h-5 w-5" />
-                        </button>
-                        <button
-                          type="button"
-                          draggable={false}
-                          data-no-row-drag="true"
-                          disabled={isReadOnly || index === normalizedThirdPlaceRankings.length - 1}
-                          onClick={() => moveThirdPlaceTeam(index, 1)}
-                          className={COMPACT_ICON_BUTTON_CLASS}
-                          aria-label={t(language, "bracket.moveTeamDown", { teamName: team.name })}
-                        >
-                          <ChevronDown className="h-5 w-5" />
-                        </button>
+                      <div className="flex items-center justify-end">
+                        <div className="grid grid-cols-2 overflow-hidden rounded-[0.9rem] border border-gray-200 bg-white">
+                          <button
+                            type="button"
+                            draggable={false}
+                            data-no-row-drag="true"
+                            disabled={isReadOnly || index === 0}
+                            onClick={() => moveThirdPlaceTeam(index, -1)}
+                            className="inline-flex h-7 w-7 items-center justify-center border-r border-gray-200 text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
+                            aria-label={t(language, "bracket.moveTeamUp", { teamName: team.name })}
+                          >
+                            <ChevronUp className="h-4.5 w-4.5" />
+                          </button>
+                          <button
+                            type="button"
+                            draggable={false}
+                            data-no-row-drag="true"
+                            disabled={isReadOnly || index === normalizedThirdPlaceRankings.length - 1}
+                            onClick={() => moveThirdPlaceTeam(index, 1)}
+                            className="inline-flex h-7 w-7 items-center justify-center text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
+                            aria-label={t(language, "bracket.moveTeamDown", { teamName: team.name })}
+                          >
+                            <ChevronDown className="h-4.5 w-4.5" />
+                          </button>
+                        </div>
                       </div>
                       <div className="flex justify-center">
                         <span
