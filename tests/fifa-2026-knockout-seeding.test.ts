@@ -16,6 +16,11 @@ import {
   sourceToGroupLetter,
   type Fifa2026StandingsTeam
 } from "../lib/fifa-2026-knockout-seeding.ts";
+import { scoreBracketPrediction } from "../lib/bracket-scoring.ts";
+import {
+  assertCanonicalScoreBreakdownInvariant,
+  calculateCanonicalLeaderboardScores
+} from "../lib/canonical-scoring.ts";
 
 test("FIFA 2026 third-place permutation table is complete and internally valid", () => {
   const keys = Object.keys(FIFA_2026_THIRD_PLACE_PERMUTATIONS);
@@ -100,6 +105,85 @@ test("FIFA 2026 Round of 32 builder uses official match slots and prevents third
       );
     }
   }
+});
+
+test("FIFA 2026 Round of 32 third-place matchups score by official match ID and team ID", () => {
+  const matches = buildFifa2026RoundOf32({
+    groupStandings: buildStandingsWithBestThirdGroups(new Set(["E", "F", "G", "H", "I", "J", "K", "L"]))
+  });
+  const byId = new Map(matches.map((match) => [match.matchId, match]));
+  const match = byId.get("M79");
+
+  assert.ok(match);
+  assert.equal(match.sideA.source, "1A");
+  assert.equal(match.sideB.source, "3E");
+  assert.equal(match.sideA.teamId, "a1");
+  assert.equal(match.sideB.teamId, "e3");
+
+  const correct = scoreBracketPrediction(
+    {
+      stage: "r32",
+      status: "final",
+      homeScore: 1,
+      awayScore: 2,
+      winnerTeamId: match.sideB.teamId
+    },
+    {
+      predictedWinnerTeamId: match.sideB.teamId,
+      predictedHomeScore: 1,
+      predictedAwayScore: 2
+    }
+  );
+  const wrong = scoreBracketPrediction(
+    {
+      stage: "r32",
+      status: "final",
+      homeScore: 1,
+      awayScore: 2,
+      winnerTeamId: match.sideB.teamId
+    },
+    {
+      predictedWinnerTeamId: match.sideA.teamId,
+      predictedHomeScore: 2,
+      predictedAwayScore: 1
+    }
+  );
+
+  assert.equal(correct.points, 8);
+  assert.equal(wrong.points, 0);
+
+  const leaderboard = calculateCanonicalLeaderboardScores({
+    users: ["user-correct", "user-wrong"],
+    knockoutScores: new Map([
+      ["user-correct", correct.points],
+      ["user-wrong", wrong.points]
+    ])
+  });
+
+  assert.deepEqual(
+    leaderboard.map((entry) => ({ userId: entry.user_id, totalPoints: entry.total_points, rank: entry.rank })),
+    [
+      { userId: "user-correct", totalPoints: 8, rank: 1 },
+      { userId: "user-wrong", totalPoints: 0, rank: 2 }
+    ]
+  );
+  assert.doesNotThrow(() => assertCanonicalScoreBreakdownInvariant(leaderboard[0].breakdown));
+  assert.equal(leaderboard[0].breakdown.lineItems.find((item) => item.source === "knockout")?.points, 8);
+});
+
+test("changing the third-place combination changes official source slots before scoring", () => {
+  const lateAlphabet = buildFifa2026RoundOf32({
+    groupStandings: buildStandingsWithBestThirdGroups(new Set(["E", "F", "G", "H", "I", "J", "K", "L"]))
+  });
+  const earlyAlphabet = buildFifa2026RoundOf32({
+    groupStandings: buildStandingsWithBestThirdGroups(new Set(["A", "B", "C", "D", "E", "F", "G", "H"]))
+  });
+  const lateM79 = lateAlphabet.find((match) => match.matchId === "M79");
+  const earlyM79 = earlyAlphabet.find((match) => match.matchId === "M79");
+
+  assert.equal(lateM79?.sideB.source, "3E");
+  assert.equal(earlyM79?.sideB.source, "3H");
+  assert.notEqual(lateM79?.sideB.teamId, earlyM79?.sideB.teamId);
 });
 
 test("FIFA 2026 Round of 32 builder keeps official placeholders until all third-place teams resolve", () => {

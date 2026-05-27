@@ -1912,6 +1912,15 @@ export async function scoreFinalizedKnockoutMatchWithClient(
   }
 
   const predictionRows = (predictions ?? []) as BracketPredictionRow[];
+  const { error: deleteStaleScoresError } = await adminSupabase
+    .from("bracket_scores")
+    .delete()
+    .eq("match_id", matchId);
+
+  if (deleteStaleScoresError) {
+    throw deleteStaleScoresError;
+  }
+
   if (predictionRows.length === 0) {
     return 0;
   }

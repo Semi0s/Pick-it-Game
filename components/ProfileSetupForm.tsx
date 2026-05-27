@@ -28,6 +28,8 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
   const [displayName, setDisplayName] = useState("");
   const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage | "">("");
   const [visualThemeSelection, setVisualThemeSelection] = useState("");
+  const [followedTeamIdsDraft, setFollowedTeamIdsDraft] = useState<string[]>([]);
+  const [followedTeamSelection, setFollowedTeamSelection] = useState("");
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inviteGroupName, setInviteGroupName] = useState<string | null>(null);
@@ -43,7 +45,26 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
     () => [...teams].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" })),
     []
   );
+  const sortedFollowTeams = useMemo(
+    () =>
+      [...teams].sort((left, right) => {
+        const groupCompare = left.groupName.localeCompare(right.groupName, undefined, { sensitivity: "base" });
+        return groupCompare || left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+      }),
+    []
+  );
   const visualThemeOptions = useMemo(() => getVisualThemeSelectOptions(sortedTeams), [sortedTeams]);
+  const selectedFollowedTeams = useMemo(
+    () => sortedFollowTeams.filter((team) => followedTeamIdsDraft.includes(team.id)),
+    [followedTeamIdsDraft, sortedFollowTeams]
+  );
+  const availableFollowedTeamOptions = useMemo(
+    () => sortedFollowTeams.filter((team) => !followedTeamIdsDraft.includes(team.id)),
+    [followedTeamIdsDraft, sortedFollowTeams]
+  );
+  const selectedVisualThemeHomeTeamId = parseVisualThemeSelectValue(visualThemeSelection).homeTeamId;
+  const canAddVisualThemeTeam =
+    Boolean(selectedVisualThemeHomeTeamId) && !followedTeamIdsDraft.includes(selectedVisualThemeHomeTeamId as string);
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -84,6 +105,7 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
           visualThemeId: user.visualThemeId ?? null
         })
     );
+    setFollowedTeamIdsDraft((current) => (current.length > 0 ? current : user.followedTeamIds ?? []));
   }, [placeholderName, user]);
 
   useEffect(() => {
@@ -123,7 +145,8 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
       displayName: displayName || placeholderName,
       preferredLanguage: preferredLanguage || "en",
       homeTeamId: parsedVisualThemeSelection.homeTeamId,
-      visualThemeId: parsedVisualThemeSelection.visualThemeId
+      visualThemeId: parsedVisualThemeSelection.visualThemeId,
+      followedTeamIds: followedTeamIdsDraft
     });
 
     setIsSubmitting(false);
@@ -208,6 +231,109 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
             {t(uiLanguage, "profile.changeLater")}
           </p>
         </label>
+
+        <div className="rounded-[1rem] border border-gray-200 bg-gray-50/80 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.followedTeams")}</span>
+                <span className="ui-chip-sm border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-500">
+                  {t(uiLanguage, "profile.optional")}
+                </span>
+              </div>
+              <p className="mt-1 text-sm font-normal leading-5 text-gray-500">
+                {t(uiLanguage, "profile.followedTeamsSetupHelp")}
+              </p>
+            </div>
+            <span className="ui-chip-sm shrink-0 border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-700">
+              {selectedFollowedTeams.length}
+            </span>
+          </div>
+
+          <div className="mt-3 flex flex-col gap-2">
+            <label>
+              <span className="sr-only">{t(uiLanguage, "profile.chooseTeamToFollow")}</span>
+              <select
+                value={followedTeamSelection}
+                onChange={(event) => setFollowedTeamSelection(event.target.value)}
+                className="w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+              >
+                <option value="">{t(uiLanguage, "profile.addTeam")}</option>
+                {availableFollowedTeamOptions.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.groupName} {team.flagEmoji ? `${team.flagEmoji} ` : ""}· {team.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={!followedTeamSelection}
+                onClick={() => {
+                  if (!followedTeamSelection) {
+                    return;
+                  }
+
+                  setFollowedTeamIdsDraft((current) =>
+                    current.includes(followedTeamSelection) ? current : [...current, followedTeamSelection]
+                  );
+                  setFollowedTeamSelection("");
+                }}
+                className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+              >
+                {t(uiLanguage, "profile.addTeam")}
+              </button>
+              {canAddVisualThemeTeam ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFollowedTeamIdsDraft((current) =>
+                      selectedVisualThemeHomeTeamId && !current.includes(selectedVisualThemeHomeTeamId)
+                        ? [selectedVisualThemeHomeTeamId, ...current]
+                        : current
+                    );
+                  }}
+                  className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+                >
+                  {t(uiLanguage, "profile.addHomeTeam")}
+                </button>
+              ) : null}
+              {followedTeamIdsDraft.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFollowedTeamIdsDraft([]);
+                    setFollowedTeamSelection("");
+                  }}
+                  className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                >
+                  {t(uiLanguage, "profile.clear")}
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {selectedFollowedTeams.length > 0 ? (
+              selectedFollowedTeams.map((team) => (
+                <button
+                  key={team.id}
+                  type="button"
+                  onClick={() => setFollowedTeamIdsDraft((current) => current.filter((teamId) => teamId !== team.id))}
+                  className="ui-chip-sm border border-gray-200 bg-white font-bold text-gray-700 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
+                  aria-label={`${t(uiLanguage, "common.remove")} ${team.name}`}
+                >
+                  <span aria-hidden>{team.flagEmoji}</span>
+                  <span>{team.shortName}</span>
+                  <span aria-hidden>×</span>
+                </button>
+              ))
+            ) : (
+              <p className="text-xs font-semibold text-gray-500">{t(uiLanguage, "profile.noTeamsSelected")}</p>
+            )}
+          </div>
+        </div>
 
         {message ? (
           <p

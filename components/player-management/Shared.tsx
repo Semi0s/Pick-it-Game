@@ -739,9 +739,8 @@ export function ManagementSection({
     <section className="space-y-3">
       <div className="ui-card px-4 py-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h3 className="text-xl font-black">{title}</h3>
-            {description ? <p className="mt-1 text-sm font-semibold text-gray-600">{description}</p> : null}
           </div>
           <div className="flex shrink-0 items-start gap-2">
             {badge}
@@ -752,6 +751,7 @@ export function ManagementSection({
             />
           </div>
         </div>
+        {isOpen && description ? <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">{description}</p> : null}
       </div>
       {isOpen ? children : null}
     </section>

@@ -37,7 +37,6 @@ import { Avatar } from "@/components/Avatar";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { OrganizationBrandingPanel } from "@/components/OrganizationBrandingPanel";
-import { TierIconBadge } from "@/components/TierIconBadge";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { showAppToast } from "@/lib/app-toast";
 import { useAppLanguage } from "@/lib/app-language";
@@ -1451,43 +1450,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             </div>
           ) : null}
         </section>
-      ) : null}
-
-      {summary?.ok && summary.currentUser.role === "admin" ? (
-        <ManagementCard
-          title="Admin Controls"
-          subtitle="Full system control lives here without adding another dock tab."
-          badges={
-            <>
-              <TierIconBadge accessLevel="super_admin" size={22} />
-              <ManagementBadge label="unlimited" tone="accent" />
-            </>
-          }
-          actions={
-            <>
-              <Link href="/admin/players" className="inline-flex">
-                <ActionButton>Manage Players & Groups</ActionButton>
-              </Link>
-              <Link href="/admin/players" className="inline-flex">
-                <ActionButton>Manage Managers</ActionButton>
-              </Link>
-            </>
-          }
-        >
-          <div className="space-y-4">
-            <p className="text-sm font-semibold leading-6 text-gray-600">
-              Create groups without limits, invite players globally, and review every group from this hub.
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Link href="/admin/invites" className="inline-flex">
-                <ActionButton fullWidth>Open Invite Controls</ActionButton>
-              </Link>
-              <Link href="/admin/groups" className="inline-flex">
-                <ActionButton fullWidth>Open Group Controls</ActionButton>
-              </Link>
-            </div>
-          </div>
-        </ManagementCard>
       ) : null}
 
       {summary?.ok && summary.tierAccess.capabilities.canManageOrganizationBranding ? <OrganizationBrandingPanel /> : null}

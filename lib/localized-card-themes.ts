@@ -1194,11 +1194,15 @@ export function getAppAccentCssVars(theme: LocalizedCardTheme): CSSProperties {
   const accentRing = withAlpha(accent, theme.useNeutralAccent ? 0.26 : 0.42);
   const logoSecondaryAccent = getLogoSecondaryAccentColor(theme, accent, fallbackTheme);
   const logoCheckAccent = getLogoCheckAccentColor(theme, accent, logoSecondaryAccent, fallbackTheme);
+  const accentSecondary = logoCheckAccent;
+  const accentTertiary = logoSecondaryAccent;
 
   return {
     "--app-accent": accent,
     "--app-accent-light": accentLight,
     "--app-accent-dark": accentDark,
+    "--app-accent-secondary": accentSecondary,
+    "--app-accent-tertiary": accentTertiary,
     "--app-accent-text": accentText,
     "--app-accent-fill": accentFill,
     "--app-accent-fill-hover": accentFillHover,
@@ -1212,6 +1216,8 @@ export function getAppAccentCssVars(theme: LocalizedCardTheme): CSSProperties {
     "--app-accent-rgb": toRgbChannels(accent),
     "--app-accent-light-rgb": toRgbChannels(accentLight),
     "--app-accent-dark-rgb": toRgbChannels(accentDark),
+    "--app-accent-secondary-rgb": toRgbChannels(accentSecondary),
+    "--app-accent-tertiary-rgb": toRgbChannels(accentTertiary),
     "--app-accent-text-rgb": toRgbChannels(accentText),
     "--app-accent-fill-rgb": toRgbChannels(accentFill),
     "--app-accent-fill-hover-rgb": toRgbChannels(accentFillHover),

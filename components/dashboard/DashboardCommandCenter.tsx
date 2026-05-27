@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { AlarmClock, BellRing, ThumbsUp } from "lucide-react";
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { BellRing, Clock3, ThumbsUp } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   getDeadlineUrgency,
   type DashboardCommandCenterSummary,
@@ -17,8 +17,22 @@ type DashboardCommandCenterProps = {
   language?: string | null;
 };
 
+type TriptychTheme = "light" | "dark";
+type RgbColor = {
+  r: number;
+  g: number;
+  b: number;
+};
+
+const DASHBOARD_TRIPTYCH_THEME_STORAGE_KEY = "pickit:dashboard-triptych-theme";
+const FALLBACK_TRIPTYCH_DARK_ACCENT_STYLE = getTriptychDarkAccentStyle({ r: 159, g: 229, b: 143 });
+
 export function DashboardCommandCenter({ summary, language }: DashboardCommandCenterProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [triptychTheme, setTriptychTheme] = useState<TriptychTheme>("light");
+  const [darkAccentStyle, setDarkAccentStyle] = useState<CSSProperties>(FALLBACK_TRIPTYCH_DARK_ACCENT_STYLE);
+  const triptychRef = useRef<HTMLElement | null>(null);
+  const darkAccentSignatureRef = useRef("");
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -30,11 +44,70 @@ export function DashboardCommandCenter({ summary, language }: DashboardCommandCe
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      const storedTheme = window.localStorage.getItem(DASHBOARD_TRIPTYCH_THEME_STORAGE_KEY);
+      if (storedTheme === "light" || storedTheme === "dark") {
+        setTriptychTheme(storedTheme);
+      }
+    } catch {
+      // localStorage may be unavailable in private or restricted contexts.
+    }
+  }, []);
+
+  useEffect(() => {
+    const element = triptychRef.current;
+    if (!element) {
+      return;
+    }
+
+    const computedStyle = window.getComputedStyle(element);
+    const accentColor = selectTriptychDarkAccent([
+      computedStyle.getPropertyValue("--app-accent-secondary"),
+      computedStyle.getPropertyValue("--app-accent-tertiary"),
+      computedStyle.getPropertyValue("--app-logo-check-accent"),
+      computedStyle.getPropertyValue("--app-logo-secondary-accent"),
+      computedStyle.getPropertyValue("--app-accent-ring"),
+      computedStyle.getPropertyValue("--app-accent"),
+      computedStyle.getPropertyValue("--app-accent-dark")
+    ]);
+    const signature = `${accentColor.r}-${accentColor.g}-${accentColor.b}`;
+
+    if (signature !== darkAccentSignatureRef.current) {
+      darkAccentSignatureRef.current = signature;
+      setDarkAccentStyle(getTriptychDarkAccentStyle(accentColor));
+    }
+  }, [triptychTheme]);
+
+  function toggleTriptychTheme() {
+    setTriptychTheme((currentTheme) => {
+      const nextTheme = currentTheme === "dark" ? "light" : "dark";
+      try {
+        window.localStorage.setItem(DASHBOARD_TRIPTYCH_THEME_STORAGE_KEY, nextTheme);
+      } catch {
+        // Keep the in-memory toggle responsive even if persistence is blocked.
+      }
+      return nextTheme;
+    });
+  }
+
   return (
-    <section className="grid grid-cols-3 gap-2">
-      <ProgressPanel progress={summary.progress} nowMs={nowMs} language={language} />
-      <PerformancePanel performance={summary.performance} language={language} />
-      <ReminderPanel reminder={summary.reminder} nowMs={nowMs} language={language} />
+    <section
+      ref={triptychRef}
+      data-dashboard-triptych
+      data-triptych-theme={triptychTheme}
+      style={triptychTheme === "dark" ? darkAccentStyle : undefined}
+    >
+      <div className="grid grid-cols-3 gap-2">
+        <ProgressPanel progress={summary.progress} nowMs={nowMs} language={language} theme={triptychTheme} />
+        <PerformancePanel
+          performance={summary.performance}
+          language={language}
+          theme={triptychTheme}
+          onToggleTheme={toggleTriptychTheme}
+        />
+        <ReminderPanel reminder={summary.reminder} nowMs={nowMs} language={language} theme={triptychTheme} />
+      </div>
     </section>
   );
 }
@@ -42,50 +115,88 @@ export function DashboardCommandCenter({ summary, language }: DashboardCommandCe
 function ProgressPanel({
   progress,
   nowMs,
-  language
+  language,
+  theme
 }: {
   progress: DashboardCommandCenterSummary["progress"];
   nowMs: number;
   language?: string | null;
+  theme: TriptychTheme;
 }) {
-  const tone = getProgressDisplayTone(progress, nowMs);
   const percentage = progress.totalUnits > 0 ? Math.round((progress.completedUnits / progress.totalUnits) * 100) : 0;
-  const statusLabel = progress.isComplete
-    ? (progress.isLocked ? t(language, "common.locked") : t(language, "common.ready"))
-    : getLocalizedDeadlineLabel(progress.deadlineAt, language, nowMs);
+  const isCompleteForDisplay = progress.isComplete || percentage >= 100;
+  const tone = getProgressDisplayTone(progress, nowMs, isCompleteForDisplay);
+  const statusLabel = getProgressStatusLabel(progress, language, nowMs);
+  const progressHref = progress.phase === "knockout_stage" ? "/knockout" : "/bracket-builder";
 
   return (
-    <PanelShell accentTone={tone} header={<UrgencyIconChip tone={tone} isComplete={progress.isComplete} language={language} />}>
-      <div className="flex h-full flex-col items-center justify-center text-center">
-        <DigitalWatchRing percentage={percentage} tone={tone} />
-        <div className="mt-1.5 space-y-0.5">
-          <p className="max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] text-slate-950">{progress.label}</p>
-          <p className={`max-w-full truncate text-[6.5px] font-semibold uppercase tracking-[0.1em] ${getToneMetaTextClasses(tone, progress.isComplete, progress.isLocked)}`}>
-            {statusLabel}
-          </p>
+    <Link
+      href={progressHref}
+      aria-label={`${progress.label}: ${statusLabel}`}
+      className="block min-w-0 rounded-[1.15rem] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+    >
+      <PanelShell
+        accentTone={tone}
+        theme={theme}
+        header={<UrgencyIconChip tone={tone} isComplete={isCompleteForDisplay} language={language} theme={theme} />}
+        className="transition hover:-translate-y-0.5 hover:border-accent/35 hover:shadow-[0_12px_26px_rgba(38,28,20,0.08),0_1px_2px_rgba(38,28,20,0.04)]"
+      >
+        <div className="flex h-full flex-col items-center justify-center pt-3 text-center">
+          <DigitalWatchRing percentage={percentage} tone={tone} theme={theme} />
+          <div className="-mt-0.5 space-y-0.5">
+            <p className={`max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{progress.label}</p>
+            <p className={`max-w-full truncate font-semibold uppercase tracking-[0.1em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] ${getToneMetaTextClasses(tone, isCompleteForDisplay, progress.isLocked, theme)}`}>
+              <span className="triptych-micro-copy">
+              {statusLabel}
+              </span>
+            </p>
+          </div>
         </div>
-      </div>
-    </PanelShell>
+      </PanelShell>
+    </Link>
   );
 }
 
 function PerformancePanel({
   performance,
-  language
+  language,
+  theme,
+  onToggleTheme
 }: {
   performance: DashboardCommandCenterSummary["performance"];
   language?: string | null;
+  theme: TriptychTheme;
+  onToggleTheme: () => void;
 }) {
   return (
-    <PanelShell accentTone="neutral" className="triptych-compact-type">
-      <div className="flex h-full w-full flex-col justify-center divide-y divide-slate-200/80">
-        <MetricRow label="Pts" value={formatPoints(performance.globalPoints, language)} />
-        <MetricRow label={t(language, "leaderboard.rank")} value={formatRank(performance.globalRank, language)} />
-        <MetricRow label={t(language, "dashboard.groupsCompact")} value={String(performance.totalGroups)} />
+    <PanelShell accentTone="neutral" theme={theme} className="triptych-compact-type">
+      <div className={`relative flex h-full w-full flex-col justify-center divide-y px-1 pb-4 ${getDividerClasses(theme)}`}>
+        <MetricRow label="Pts" value={formatPoints(performance.globalPoints, language)} theme={theme} />
+        <MetricRow label={t(language, "leaderboard.rank")} value={formatRank(performance.globalRank, language)} theme={theme} />
+        <MetricSplitRow
+          leftLabel={t(language, "dashboard.invitedShort")}
+          leftValue={formatNumber(performance.invitedGroups, language)}
+          rightLabel={t(language, "dashboard.managedShort")}
+          rightValue={formatNumber(performance.managedGroups, language)}
+          theme={theme}
+        />
         <MetricRow
           labelLines={[t(language, "dashboard.totalPlayersLine1"), t(language, "dashboard.totalPlayersLine2")]}
           value={formatNumber(performance.totalPlayers, language)}
+          theme={theme}
         />
+        <button
+          type="button"
+          role="switch"
+          aria-checked={theme === "dark"}
+          aria-label={t(language, theme === "dark" ? "dashboard.triptychSwitchToLightAria" : "dashboard.triptychSwitchToDarkAria")}
+          onClick={onToggleTheme}
+          className={`absolute bottom-0 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[8px] font-semibold uppercase leading-none tracking-[0.12em] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${getTriptychToggleClasses(theme)}`}
+        >
+          <span className="triptych-micro-copy triptych-micro-copy-tight">
+            {t(language, theme === "dark" ? "dashboard.triptychSwitchToLight" : "dashboard.triptychSwitchToDark")}
+          </span>
+        </button>
       </div>
     </PanelShell>
   );
@@ -94,26 +205,30 @@ function PerformancePanel({
 function ReminderPanel({
   reminder,
   nowMs,
-  language
+  language,
+  theme
 }: {
   reminder: DashboardCommandCenterSummary["reminder"];
   nowMs: number;
   language?: string | null;
+  theme: TriptychTheme;
 }) {
   if (reminder.followedTeamCount === 0) {
     return (
       <Link
         href="/profile#followed-teams"
-        className={`relative flex h-[166px] min-w-0 flex-col items-center justify-center overflow-hidden rounded-[1.15rem] border px-2.5 py-3 text-center transition hover:border-accent/50 hover:bg-accent-light/20 ${getPanelShellClasses("green")}`}
+        className={`relative flex h-[200px] min-w-0 flex-col items-center justify-center overflow-hidden rounded-[1.15rem] border px-2.5 py-2.5 text-center transition hover:border-accent/50 hover:bg-accent-light/20 ${getPanelShellClasses("green", theme)}`}
       >
-        <div className={`pointer-events-none absolute inset-px rounded-[1.05rem] ${getPanelInnerSurfaceClasses("green")}`} />
-        <div className={`pointer-events-none absolute -right-10 top-0 h-20 w-20 rounded-full blur-2xl ${getPanelGlowClasses("green")}`} />
+        <div className={`pointer-events-none absolute inset-px rounded-[1.05rem] ${getPanelInnerSurfaceClasses("green", theme)}`} />
+        <div className={`pointer-events-none absolute -right-10 top-0 h-20 w-20 rounded-full blur-2xl ${getPanelGlowClasses("green", theme)}`} />
         <div className="relative flex h-full flex-col items-center justify-center">
-          <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/80 bg-white/85 text-accent-dark shadow-[0_1px_0_rgba(255,255,255,0.9)]">
+          <span className={`inline-flex h-9 w-9 items-center justify-center rounded-full border shadow-[0_1px_0_rgba(255,255,255,0.55)] ${theme === "dark" ? "border-white/20 bg-white/10 text-accent-light" : "border-white/80 bg-white/85 text-accent-dark"}`}>
             <BellRing aria-hidden className="h-4 w-4" />
           </span>
-          <p className="mt-2 max-w-full truncate text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">{t(language, "dashboard.reminders")}</p>
-          <p className="mt-1 max-w-full text-[10px] font-black leading-3 tracking-[-0.03em] text-slate-950">{t(language, "dashboard.pickTeamsToFollow")}</p>
+          <p className={`mt-2 max-w-full truncate font-semibold uppercase tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
+            <span className="triptych-micro-copy">{t(language, "dashboard.reminders")}</span>
+          </p>
+          <p className={`mt-1 max-w-full text-[10px] font-black leading-3 tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{t(language, "dashboard.pickTeamsToFollow")}</p>
         </div>
       </Link>
     );
@@ -129,53 +244,75 @@ function ReminderPanel({
     : reminder.nextMatch
       ? [reminder.nextMatch]
       : [];
+  const showSwipeCue = !hasLiveMatches && upcomingMatches.length > 1;
 
   return (
-    <PanelShell accentTone={tone}>
-      <div className="flex h-full min-h-0 w-full flex-col items-center text-center">
-        <div className="flex shrink-0 flex-col items-center justify-center gap-0.5 [-webkit-text-size-adjust:100%] [text-size-adjust:100%]">
-          <p className="max-w-full truncate text-[6px] font-semibold uppercase leading-none tracking-[0.12em] text-slate-500">
-            {t(language, "dashboard.nextMatch")}
+    <PanelShell accentTone={tone} theme={theme}>
+      <div className="relative flex h-full min-h-0 w-full flex-col items-center text-center">
+        <div className="flex shrink-0 flex-col items-center justify-center gap-1.5 [-webkit-text-size-adjust:100%] [text-size-adjust:100%]">
+          <p className={`max-w-full truncate font-semibold uppercase leading-none tracking-[0.12em] ${getMutedTextClasses(theme)}`}>
+            <span className="triptych-micro-copy">{t(language, "dashboard.nextMatch")}</span>
           </p>
-          <ReminderChip tone={tone} label={reminderTimeLabel} />
+          <ReminderChip tone={tone} label={reminderTimeLabel} theme={theme} />
         </div>
       <div className="flex min-h-0 w-full flex-1 pt-3">
         {hasLiveMatches ? (
           <div className="flex w-full flex-col justify-center gap-2 overflow-y-auto">
             {reminder.liveMatches.slice(0, 2).map((match) => (
-              <CompactLiveMatch key={match.id} match={match} language={language} />
+              <CompactLiveMatch key={match.id} match={match} language={language} theme={theme} />
             ))}
           </div>
         ) : upcomingMatches.length > 0 ? (
           <div className="flex w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {upcomingMatches.map((match) => (
-              <CompactUpcomingMatch key={match.id} match={match} language={language} />
+              <CompactUpcomingMatch key={match.id} match={match} language={language} theme={theme} />
             ))}
           </div>
         ) : (
           <div className="flex w-full items-center justify-center px-1 text-center">
-            <p className="text-[8px] font-semibold leading-3 text-slate-500">{t(language, "dashboard.noUpcomingMatch")}</p>
+            <p className={`text-[8px] font-semibold leading-3 ${getMutedTextClasses(theme)}`}>{t(language, "dashboard.noUpcomingMatch")}</p>
           </div>
         )}
       </div>
+      {showSwipeCue ? <SwipeCueArrows theme={theme} /> : null}
       </div>
     </PanelShell>
   );
 }
 
-function CompactUpcomingMatch({ match, language }: { match: DashboardMatchSummary; language?: string | null }) {
+function SwipeCueArrows({ theme }: { theme: TriptychTheme }) {
+  return (
+    <div
+      aria-hidden
+      className={`pointer-events-none absolute inset-x-1 bottom-0 flex items-center justify-between text-[12px] font-semibold leading-none ${theme === "dark" ? "text-white/40" : "text-slate-400/80"}`}
+    >
+      <span>‹</span>
+      <span>›</span>
+    </div>
+  );
+}
+
+function CompactUpcomingMatch({
+  match,
+  language,
+  theme
+}: {
+  match: DashboardMatchSummary;
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
   return (
     <div className="flex min-w-full snap-center flex-col items-center justify-center text-center [-webkit-text-size-adjust:100%] [text-size-adjust:100%]">
-      <p className="max-w-full truncate text-[6.5px] font-semibold uppercase leading-none tracking-[0.1em] text-slate-500">
-        {formatReminderStageLabel(match, language)}
+      <p className={`max-w-full truncate font-semibold uppercase leading-none tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
+        <span className="triptych-micro-copy">{formatReminderStageLabel(match, language)}</span>
       </p>
-      <p className="mt-1.5 flex max-w-full items-center gap-1.5 text-[14px] font-black leading-3 tracking-[-0.03em] text-slate-950">
+      <p className={`mt-1.5 flex max-w-full items-center gap-1.5 text-[14px] font-black leading-3 tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>
         <MatchFlag
           flagEmoji={match.homeTeamFlagEmoji}
           fallback={match.homeTeamShortName}
           teamName={match.homeTeamName}
         />
-        <span className="px-1 text-slate-300">v</span>
+        <span className={`px-1 ${theme === "dark" ? "text-slate-500" : "text-slate-300"}`}>v</span>
         <MatchFlag
           flagEmoji={match.awayTeamFlagEmoji}
           fallback={match.awayTeamShortName}
@@ -183,8 +320,10 @@ function CompactUpcomingMatch({ match, language }: { match: DashboardMatchSummar
         />
       </p>
       <div className="mt-1.5 flex flex-col items-center gap-0.5">
-        <p className="text-[8.5px] font-semibold leading-3 text-slate-700">{formatShortDate(match.kickoffTime, language)}</p>
-        <p className="text-[6.5px] font-semibold uppercase tracking-[0.1em] text-slate-500">{formatShortTime(match.kickoffTime, language)}</p>
+        <p className={`text-[8.5px] font-semibold leading-3 ${getSecondaryTextClasses(theme)}`}>{formatShortDate(match.kickoffTime, language)}</p>
+        <p className={`font-semibold uppercase tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
+          <span className="triptych-micro-copy">{formatShortTime(match.kickoffTime, language)}</span>
+        </p>
       </div>
     </div>
   );
@@ -194,20 +333,22 @@ function PanelShell({
   header,
   accentTone = "neutral",
   headerAlign = "right",
+  theme,
   className = "",
   children
 }: {
   header?: ReactNode;
   accentTone?: DashboardUrgencyTone;
   headerAlign?: "right" | "center";
+  theme: TriptychTheme;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <section className={`relative flex h-[166px] min-w-0 flex-col overflow-hidden rounded-[1.15rem] border px-2.5 py-3 ${getPanelShellClasses(accentTone)} ${className}`.trim()}>
-      <div className={`pointer-events-none absolute inset-px rounded-[1.05rem] ${getPanelInnerSurfaceClasses(accentTone)}`} />
-      <div className={`pointer-events-none absolute -right-8 top-0 h-20 w-20 rounded-full blur-2xl ${getPanelGlowClasses(accentTone)}`} />
-      <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-white/75" />
+    <section className={`relative flex h-[200px] min-w-0 flex-col overflow-hidden rounded-[1.15rem] border px-2.5 py-2.5 [-webkit-text-size-adjust:100%] [text-size-adjust:100%] ${getPanelShellClasses(accentTone, theme)} ${className}`.trim()}>
+      <div className={`pointer-events-none absolute inset-px rounded-[1.05rem] ${getPanelInnerSurfaceClasses(accentTone, theme)}`} />
+      <div className={`pointer-events-none absolute -right-8 top-0 h-20 w-20 rounded-full blur-2xl ${getPanelGlowClasses(accentTone, theme)}`} />
+      <div className={`pointer-events-none absolute inset-x-4 top-0 h-px ${theme === "dark" ? "bg-white/10" : "bg-white/75"}`} />
       {header ? (
         <div className={`absolute left-2.5 right-2.5 top-3 z-10 flex ${headerAlign === "center" ? "justify-center" : "justify-end"}`}>
           {header}
@@ -221,18 +362,20 @@ function PanelShell({
 function UrgencyIconChip({
   tone,
   isComplete,
-  language
+  language,
+  theme
 }: {
   tone: DashboardUrgencyTone;
   isComplete: boolean;
   language?: string | null;
+  theme: TriptychTheme;
 }) {
-  const Icon = isComplete ? ThumbsUp : tone === "red" ? BellRing : AlarmClock;
+  const Icon = getUrgencyIcon(tone, isComplete);
 
   return (
     <span
       aria-label={getUrgencyAriaLabel(tone, isComplete, language)}
-      className={`ui-chip-icon-sm border font-bold ${getToneIconChipClasses(tone)}`}
+      className={`inline-flex h-6 w-6 items-center justify-center ${getToneIconClasses(theme)}`}
     >
       <Icon
         aria-hidden
@@ -242,26 +385,42 @@ function UrgencyIconChip({
   );
 }
 
+function getUrgencyIcon(tone: DashboardUrgencyTone, isComplete: boolean) {
+  if (isComplete || tone === "green" || tone === "neutral") {
+    return ThumbsUp;
+  }
+
+  if (tone === "orange") {
+    return Clock3;
+  }
+
+  return BellRing;
+}
+
 function ReminderChip({
   tone,
-  label
+  label,
+  theme
 }: {
   tone: DashboardUrgencyTone;
   label: string;
+  theme: TriptychTheme;
 }) {
   return (
-    <span className={`inline-flex max-w-full items-center justify-center rounded-lg border px-2 py-1 text-center font-bold leading-none ${getToneLabelChipClasses(tone)}`}>
-      <span className="truncate text-[9px] tracking-[-0.02em] tabular-nums">{label}</span>
+    <span className={`max-w-full truncate text-center text-[9px] font-semibold leading-none tracking-[-0.02em] tabular-nums ${getTonePlainTextClasses(tone, theme)}`}>
+      <span>{label}</span>
     </span>
   );
 }
 
 function DigitalWatchRing({
   percentage,
-  tone
+  tone,
+  theme
 }: {
   percentage: number;
   tone: DashboardUrgencyTone;
+  theme: TriptychTheme;
 }) {
   const gradientId = useId();
   const clampedPercentage = Math.max(0, Math.min(percentage, 100));
@@ -286,19 +445,26 @@ function DigitalWatchRing({
   );
 
   return (
-    <div className="relative h-[104px] w-[104px]">
-      <div className={`absolute inset-4 rounded-full blur-xl ${getRingGlowClasses(tone)}`} />
+    <div className="relative h-[109px] w-[109px]">
+      <div className={`absolute inset-4 rounded-full blur-xl ${getRingGlowClasses(tone, theme)}`} />
       <svg viewBox="-52 -52 104 104" className="relative h-full w-full drop-shadow-[0_3px_8px_rgba(15,23,42,0.06)]" aria-hidden>
         <defs>
           <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
-            {getRingGradientStops(tone).map((stop) => (
+            {getRingGradientStops(tone, theme).map((stop) => (
               <stop key={`${gradientId}-${stop.offset}`} offset={stop.offset} stopColor={stop.color} />
             ))}
           </linearGradient>
         </defs>
-        <circle cx="0" cy="0" r="31" fill={`url(#${gradientId})`} opacity="0.08" />
-        <circle cx="0" cy="0" r="27.5" fill="rgba(255,255,255,0.94)" stroke="rgba(255,255,255,0.92)" strokeWidth="1" />
-        <circle cx="0" cy="0" r="38.5" fill="none" className="stroke-white/70" strokeWidth="1" />
+        <circle cx="0" cy="0" r="31" fill={`url(#${gradientId})`} opacity={theme === "dark" ? "0.14" : "0.08"} />
+        <circle
+          cx="0"
+          cy="0"
+          r="27.5"
+          fill={theme === "dark" ? "rgba(15,23,42,0.94)" : "rgba(255,255,255,0.94)"}
+          stroke={theme === "dark" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.92)"}
+          strokeWidth="1"
+        />
+        <circle cx="0" cy="0" r="38.5" fill="none" className={theme === "dark" ? "stroke-white/20" : "stroke-white/70"} strokeWidth="1" />
         {segments.map((segment, index) => (
           <path
             key={`segment-${index}`}
@@ -307,14 +473,14 @@ function DigitalWatchRing({
             strokeLinecap="round"
             strokeWidth="3.2"
             stroke={segment.filled ? `url(#${gradientId})` : undefined}
-            className={segment.filled ? "" : "stroke-slate-200/90"}
+            className={segment.filled ? "" : theme === "dark" ? "stroke-slate-700/90" : "stroke-slate-200/90"}
           />
         ))}
       </svg>
-      <div className="absolute inset-0 flex items-center justify-center">
-        <p className="tabular-nums text-[20px] font-black leading-none tracking-[-0.04em] text-slate-950">
+      <div className="absolute inset-0 flex translate-x-[3px] items-center justify-center">
+        <p className={`tabular-nums text-[20px] font-black leading-none tracking-[-0.04em] ${getPrimaryTextClasses(theme)}`}>
           <span>{clampedPercentage}</span>
-          <sup className="ml-0.5 align-super text-[4px] font-black tracking-normal text-slate-500">%</sup>
+          <sup className={`ml-0.5 align-super text-[6px] font-black tracking-normal ${getMutedTextClasses(theme)}`}>%</sup>
         </p>
       </div>
     </div>
@@ -324,34 +490,78 @@ function DigitalWatchRing({
 function MetricRow({
   label,
   labelLines,
-  value
+  value,
+  theme
 }: {
   label?: string;
   labelLines?: [string, string];
   value: string;
+  theme: TriptychTheme;
 }) {
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 py-2">
-      <span className="min-w-0 text-[6.5px] font-semibold uppercase leading-[0.95] tracking-[0.1em] text-slate-500">
+      <span className={`min-w-0 font-semibold uppercase leading-[0.95] tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
         {labelLines ? (
           <>
-            <span className="block truncate">{labelLines[0]}</span>
-            <span className="block truncate">{labelLines[1]}</span>
+            <span className="triptych-micro-copy triptych-micro-copy-left block truncate">{labelLines[0]}</span>
+            <span className="triptych-micro-copy triptych-micro-copy-left block truncate">{labelLines[1]}</span>
           </>
         ) : (
-          <span className="block truncate">{label}</span>
+          <span className="triptych-micro-copy triptych-micro-copy-left block truncate">{label}</span>
         )}
       </span>
-      <span className="triptych-regular-value min-w-0 max-w-[3.3rem] truncate text-right text-[13px] font-black leading-none tracking-[-0.04em] text-slate-950 tabular-nums">{value}</span>
+      <span className={`triptych-regular-value min-w-0 max-w-[3.3rem] truncate text-right text-[13px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>{value}</span>
     </div>
   );
 }
 
-function CompactLiveMatch({ match, language }: { match: DashboardMatchSummary; language?: string | null }) {
+function MetricSplitRow({
+  leftLabel,
+  leftValue,
+  rightLabel,
+  rightValue,
+  theme
+}: {
+  leftLabel: string;
+  leftValue: string;
+  rightLabel: string;
+  rightValue: string;
+  theme: TriptychTheme;
+}) {
   return (
-    <div className="rounded-[0.95rem] border border-rose-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,241,242,0.94))] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.88)]">
+    <div className="relative grid min-w-0 grid-cols-2 gap-7 py-1.5">
+      <span className={`pointer-events-none absolute bottom-1.5 left-1/2 -translate-x-1/2 font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
+        <span className="triptych-micro-copy">Groups</span>
+      </span>
+      <div className="min-w-0 text-center">
+        <span className={`block truncate font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
+          <span className="triptych-micro-copy">{leftLabel}</span>
+        </span>
+        <span className={`mt-1 block truncate text-center text-[12px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>{leftValue}</span>
+      </div>
+      <div className="min-w-0 text-center">
+        <span className={`block truncate font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
+          <span className="triptych-micro-copy">{rightLabel}</span>
+        </span>
+        <span className={`mt-1 block truncate text-center text-[12px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>{rightValue}</span>
+      </div>
+    </div>
+  );
+}
+
+function CompactLiveMatch({
+  match,
+  language,
+  theme
+}: {
+  match: DashboardMatchSummary;
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
+  return (
+    <div className={`rounded-[0.95rem] border px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] ${theme === "dark" ? "border-rose-300/20 bg-rose-950/35" : "border-rose-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,241,242,0.94))]"}`}>
       <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-[7px] font-semibold uppercase tracking-[0.2em] text-rose-700">{compactStageLabel(match.stage, language)}</p>
+        <p className={`truncate text-[7px] font-semibold uppercase tracking-[0.2em] ${theme === "dark" ? "text-rose-200" : "text-rose-700"}`}>{compactStageLabel(match.stage, language)}</p>
         <span className="ui-chip-sm border border-rose-200/80 bg-white/85 text-[7px] font-bold uppercase tracking-[0.18em] text-rose-700">
           <span className="h-1.5 w-1.5 rounded-full bg-rose-500 motion-safe:animate-pulse" />
           {t(language, "common.live")}
@@ -364,6 +574,7 @@ function CompactLiveMatch({ match, language }: { match: DashboardMatchSummary; l
           score={match.homeScore}
           yellowCards={match.homeYellowCards}
           redCards={match.homeRedCards}
+          theme={theme}
         />
         <CompactLiveRow
           team={match.awayTeamShortName}
@@ -371,6 +582,7 @@ function CompactLiveMatch({ match, language }: { match: DashboardMatchSummary; l
           score={match.awayScore}
           yellowCards={match.awayYellowCards}
           redCards={match.awayRedCards}
+          theme={theme}
         />
       </div>
     </div>
@@ -382,13 +594,15 @@ function CompactLiveRow({
   flagEmoji,
   score,
   yellowCards,
-  redCards
+  redCards,
+  theme
 }: {
   team: string;
   flagEmoji?: string | null;
   score: number | null;
   yellowCards?: number | null;
   redCards?: number | null;
+  theme: TriptychTheme;
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
@@ -396,7 +610,7 @@ function CompactLiveRow({
         <MatchFlag flagEmoji={flagEmoji} fallback={team} teamName={team} className="text-[14px]" />
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <span className="min-w-4 text-center text-[11px] font-black tracking-[-0.03em] text-slate-950 tabular-nums">{score ?? "—"}</span>
+        <span className={`min-w-4 text-center text-[11px] font-black tracking-[-0.03em] tabular-nums ${getPrimaryTextClasses(theme)}`}>{score ?? "—"}</span>
         {typeof yellowCards === "number" ? <TinyCardStat label="🟨" value={yellowCards} /> : null}
         {typeof redCards === "number" ? <TinyCardStat label="🟥" value={redCards} /> : null}
       </div>
@@ -433,7 +647,7 @@ function MatchFlag({
   }
 
   return (
-    <span className={`inline-flex items-center truncate text-[11px] font-black leading-none tracking-[-0.02em] text-slate-950 ${className}`}>
+    <span className={`inline-flex items-center truncate text-[11px] font-black leading-none tracking-[-0.02em] ${className}`}>
       {fallback}
     </span>
   );
@@ -454,73 +668,104 @@ function polarToCartesian(radius: number, angleInDegrees: number) {
   };
 }
 
-function getToneIconChipClasses(tone: DashboardUrgencyTone) {
+function getTriptychToggleClasses(theme: TriptychTheme) {
+  return theme === "dark"
+    ? "border-[color:var(--triptych-dark-accent)] bg-[color:var(--triptych-dark-accent-soft)] [color:var(--triptych-dark-accent-text)]"
+    : "border-stone-200 bg-white text-slate-500 hover:border-accent/35 hover:text-accent-dark";
+}
+
+function getPrimaryTextClasses(theme: TriptychTheme) {
+  return theme === "dark" ? "text-white" : "text-slate-950";
+}
+
+function getSecondaryTextClasses(theme: TriptychTheme) {
+  return theme === "dark" ? "text-slate-200" : "text-slate-700";
+}
+
+function getMutedTextClasses(theme: TriptychTheme) {
+  return theme === "dark" ? "text-slate-400" : "text-slate-500";
+}
+
+function getDividerClasses(theme: TriptychTheme) {
+  return theme === "dark" ? "divide-white/10" : "divide-slate-200/80";
+}
+
+function getToneIconClasses(theme: TriptychTheme) {
+  return theme === "dark" ? "text-slate-200" : "text-slate-600";
+}
+
+function getTonePlainTextClasses(tone: DashboardUrgencyTone, theme: TriptychTheme) {
   switch (tone) {
     case "red":
-      return "border-rose-200/80 bg-rose-50/90 text-rose-700";
+      return theme === "dark" ? "text-rose-200" : "text-rose-700";
     case "orange":
-      return "border-amber-200/80 bg-amber-50/90 text-amber-700";
+      return theme === "dark" ? "text-amber-200" : "text-amber-700";
     case "green":
-      return "border-accent/30 bg-accent-light/40 text-accent-dark";
+      return theme === "dark" ? "[color:var(--triptych-dark-accent-text)]" : "text-accent-dark";
     default:
-      return "border-slate-200/80 bg-white/85 text-slate-500";
+      return getMutedTextClasses(theme);
   }
 }
 
-function getToneLabelChipClasses(tone: DashboardUrgencyTone) {
-  switch (tone) {
-    case "red":
-      return "border-rose-200/80 bg-rose-50/90 text-rose-700";
-    case "orange":
-      return "border-amber-200/80 bg-amber-50/90 text-amber-700";
-    case "green":
-      return "border-accent/30 bg-accent-light/40 text-accent-dark";
-    default:
-      return "border-slate-200/80 bg-white/85 text-slate-500";
-  }
-}
-
-function getToneMetaTextClasses(tone: DashboardUrgencyTone, isComplete: boolean, isLocked: boolean) {
+function getToneMetaTextClasses(tone: DashboardUrgencyTone, isComplete: boolean, isLocked: boolean, theme: TriptychTheme) {
   if (isLocked && isComplete) {
-    return "text-slate-500";
+    return getMutedTextClasses(theme);
   }
 
   if (isComplete) {
-    return "text-accent-dark";
+    return theme === "dark" ? "[color:var(--triptych-dark-accent-text)]" : "text-accent-dark";
   }
 
   switch (tone) {
     case "red":
-      return "text-rose-700";
+      return theme === "dark" ? "text-rose-200" : "text-rose-700";
     case "orange":
-      return "text-amber-700";
+      return theme === "dark" ? "text-amber-200" : "text-amber-700";
     case "green":
-      return "text-accent-dark";
+      return theme === "dark" ? "[color:var(--triptych-dark-accent-text)]" : "text-accent-dark";
     default:
-      return "text-slate-500";
+      return getMutedTextClasses(theme);
   }
 }
 
 function getProgressDisplayTone(
   progress: DashboardCommandCenterSummary["progress"],
-  nowMs: number
+  nowMs: number,
+  isCompleteForDisplay = progress.isComplete
 ): DashboardUrgencyTone {
   if (progress.deadlineAt && new Date(progress.deadlineAt).getTime() <= nowMs) {
-    return progress.isComplete ? "neutral" : "red";
+    return isCompleteForDisplay ? "neutral" : "red";
   }
 
-  if (progress.isComplete) {
+  if (isCompleteForDisplay) {
     return "green";
   }
 
   return getDeadlineUrgency(progress.deadlineAt, nowMs);
 }
 
-function getPanelShellClasses(tone: DashboardUrgencyTone) {
-  return `border-stone-200/85 bg-[linear-gradient(180deg,rgba(255,252,248,0.98)_0%,rgba(247,242,235,0.98)_100%)] shadow-[0_10px_24px_rgba(38,28,20,0.06),0_1px_2px_rgba(38,28,20,0.03)] ${getPanelRingClasses(tone)}`;
+function getPanelShellClasses(tone: DashboardUrgencyTone, theme: TriptychTheme) {
+  if (theme === "dark") {
+    return `border-white/10 bg-[linear-gradient(180deg,rgba(22,35,33,0.98)_0%,rgba(10,16,24,0.98)_100%)] shadow-[0_10px_24px_rgba(0,0,0,0.14),0_1px_2px_rgba(255,255,255,0.03)] ${getPanelRingClasses(tone, theme)}`;
+  }
+
+  return `border-stone-200/85 bg-[linear-gradient(180deg,rgba(255,252,248,0.98)_0%,rgba(247,242,235,0.98)_100%)] shadow-[0_10px_24px_rgba(38,28,20,0.06),0_1px_2px_rgba(38,28,20,0.03)] ${getPanelRingClasses(tone, theme)}`;
 }
 
-function getPanelInnerSurfaceClasses(tone: DashboardUrgencyTone) {
+function getPanelInnerSurfaceClasses(tone: DashboardUrgencyTone, theme: TriptychTheme) {
+  if (theme === "dark") {
+    const darkAccent =
+      tone === "green"
+        ? "bg-[radial-gradient(circle_at_top_right,var(--triptych-dark-accent-glow),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.055),transparent)]"
+        : tone === "orange"
+          ? "bg-[radial-gradient(circle_at_top_right,rgba(245,158,11,0.18),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.045),transparent)]"
+          : tone === "red"
+            ? "bg-[radial-gradient(circle_at_top_right,rgba(225,29,72,0.18),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.045),transparent)]"
+            : "bg-[radial-gradient(circle_at_top_right,var(--triptych-dark-accent-soft),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.045),transparent)]";
+
+    return `${darkAccent} shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]`;
+  }
+
   const accent =
     tone === "green"
       ? "bg-[linear-gradient(180deg,rgba(255,255,255,0.7),transparent)]"
@@ -533,46 +778,46 @@ function getPanelInnerSurfaceClasses(tone: DashboardUrgencyTone) {
   return `${accent} shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]`;
 }
 
-function getPanelGlowClasses(tone: DashboardUrgencyTone) {
+function getPanelGlowClasses(tone: DashboardUrgencyTone, theme: TriptychTheme) {
   switch (tone) {
     case "green":
-      return "bg-accent-light/40";
+      return theme === "dark" ? "bg-[color:var(--triptych-dark-accent-glow)]" : "bg-accent-light/40";
     case "orange":
-      return "bg-amber-200/32";
+      return theme === "dark" ? "bg-amber-300/20" : "bg-amber-200/30";
     case "red":
-      return "bg-rose-200/28";
+      return theme === "dark" ? "bg-rose-300/20" : "bg-rose-200/30";
     default:
-      return "bg-amber-100/28";
+      return theme === "dark" ? "bg-[color:var(--triptych-dark-accent-soft)]" : "bg-amber-100/30";
   }
 }
 
-function getPanelRingClasses(tone: DashboardUrgencyTone) {
+function getPanelRingClasses(tone: DashboardUrgencyTone, theme: TriptychTheme) {
   switch (tone) {
     case "green":
-      return "ring-1 ring-accent-light";
+      return theme === "dark" ? "ring-1 ring-[color:var(--triptych-dark-accent)]" : "ring-1 ring-accent-light";
     case "orange":
-      return "ring-1 ring-amber-100/80";
+      return theme === "dark" ? "ring-1 ring-amber-200/20" : "ring-1 ring-amber-100/80";
     case "red":
-      return "ring-1 ring-rose-100/80";
+      return theme === "dark" ? "ring-1 ring-rose-200/20" : "ring-1 ring-rose-100/80";
     default:
-      return "ring-1 ring-stone-100/85";
+      return theme === "dark" ? "ring-1 ring-white/10" : "ring-1 ring-stone-100/85";
   }
 }
 
-function getRingGlowClasses(tone: DashboardUrgencyTone) {
+function getRingGlowClasses(tone: DashboardUrgencyTone, theme: TriptychTheme) {
   switch (tone) {
     case "green":
-      return "bg-accent-light/40";
+      return theme === "dark" ? "bg-[color:var(--triptych-dark-accent-glow)]" : "bg-accent-light/40";
     case "orange":
-      return "bg-amber-200/20";
+      return theme === "dark" ? "bg-amber-300/10" : "bg-amber-200/20";
     case "red":
-      return "bg-rose-200/18";
+      return theme === "dark" ? "bg-rose-300/10" : "bg-rose-200/20";
     default:
-      return "bg-amber-100/22";
+      return theme === "dark" ? "bg-white/10" : "bg-amber-100/20";
   }
 }
 
-function getRingGradientStops(tone: DashboardUrgencyTone) {
+function getRingGradientStops(tone: DashboardUrgencyTone, theme: TriptychTheme) {
   switch (tone) {
     case "red":
       return [
@@ -585,6 +830,13 @@ function getRingGradientStops(tone: DashboardUrgencyTone) {
         { offset: "100%", color: "#f59e0b" }
       ];
     case "green":
+      if (theme === "dark") {
+        return [
+          { offset: "0%", color: "var(--triptych-dark-accent-text)" },
+          { offset: "100%", color: "var(--triptych-dark-accent)" }
+        ];
+      }
+
       return [
         { offset: "0%", color: "var(--app-accent-ring)" },
         { offset: "100%", color: "var(--app-accent)" }
@@ -595,6 +847,165 @@ function getRingGradientStops(tone: DashboardUrgencyTone) {
         { offset: "100%", color: "#8f7b66" }
       ];
   }
+}
+
+function getTriptychDarkAccentStyle(color: RgbColor): CSSProperties {
+  const darkSurface = { r: 10, g: 16, b: 24 };
+  const accent = boostContrastForDarkSurface(color, darkSurface, 3.2);
+  const textAccent = boostContrastForDarkSurface(color, darkSurface, 5.2);
+
+  return {
+    "--triptych-dark-accent": toRgbCss(accent),
+    "--triptych-dark-accent-glow": toRgbaCss(accent, 0.32),
+    "--triptych-dark-accent-soft": toRgbaCss(accent, 0.18),
+    "--triptych-dark-accent-text": toRgbCss(textAccent)
+  } as CSSProperties;
+}
+
+function selectTriptychDarkAccent(rawCandidates: string[]): RgbColor {
+  const candidates = rawCandidates
+    .map(parseCssColor)
+    .filter((color): color is RgbColor => Boolean(color));
+  const darkSurface = { r: 10, g: 16, b: 24 };
+
+  const colorfulReadableCandidates = candidates.filter((color) => {
+    return getContrastRatio(color, darkSurface) >= 2.75 && getColorSaturation(color) >= 0.08 && !isNearWhite(color);
+  });
+  const balancedReadableCandidates = colorfulReadableCandidates.filter((color) => {
+    const luminance = getRelativeLuminance(color);
+    return luminance >= 0.08 && luminance <= 0.58;
+  });
+  const candidatePool = balancedReadableCandidates.length > 0
+    ? balancedReadableCandidates
+    : colorfulReadableCandidates.length > 0
+      ? colorfulReadableCandidates
+      : candidates;
+
+  return candidatePool
+    .map((color, index) => {
+      const luminance = getRelativeLuminance(color);
+      const contrast = getContrastRatio(color, darkSurface);
+      const brightPenalty = luminance > 0.58 ? 2.4 : 0;
+      const dimPenalty = contrast < 2.75 ? 1.8 : 0;
+
+      return {
+        color,
+        score:
+          Math.min(contrast, 6) * 0.45 +
+          getColorSaturation(color) * 2.4 -
+          Math.abs(luminance - 0.28) * 2.2 -
+          brightPenalty -
+          dimPenalty -
+          (isNearWhite(color) ? 4 : 0) -
+          index * 0.06
+      };
+    })
+    .sort((left, right) => right.score - left.score)[0]?.color ?? { r: 159, g: 229, b: 143 };
+}
+
+function boostContrastForDarkSurface(color: RgbColor, darkSurface: RgbColor, minimumContrast: number) {
+  let candidate = color;
+
+  for (let step = 0; step < 12; step += 1) {
+    if (getContrastRatio(candidate, darkSurface) >= minimumContrast) {
+      return candidate;
+    }
+
+    candidate = mixRgbColor(candidate, { r: 255, g: 255, b: 255 }, 0.12);
+  }
+
+  return candidate;
+}
+
+function mixRgbColor(color: RgbColor, target: RgbColor, amount: number): RgbColor {
+  return {
+    r: clampRgbChannel(color.r + (target.r - color.r) * amount),
+    g: clampRgbChannel(color.g + (target.g - color.g) * amount),
+    b: clampRgbChannel(color.b + (target.b - color.b) * amount)
+  };
+}
+
+function toRgbCss(color: RgbColor) {
+  return `rgb(${color.r} ${color.g} ${color.b})`;
+}
+
+function toRgbaCss(color: RgbColor, alpha: number) {
+  return `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`;
+}
+
+function parseCssColor(value: string): RgbColor | null {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const hexMatch = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const hex = hexMatch[1];
+    const expandedHex = hex.length === 3
+      ? hex.split("").map((character) => `${character}${character}`).join("")
+      : hex;
+
+    return {
+      r: Number.parseInt(expandedHex.slice(0, 2), 16),
+      g: Number.parseInt(expandedHex.slice(2, 4), 16),
+      b: Number.parseInt(expandedHex.slice(4, 6), 16)
+    };
+  }
+
+  const rgbMatch = normalized.match(/^rgba?\(([^)]+)\)$/i);
+  if (!rgbMatch) {
+    return null;
+  }
+
+  const channels = rgbMatch[1]
+    .replace(/\//g, " ")
+    .split(/[,\s]+/)
+    .map((channel) => Number.parseFloat(channel))
+    .filter((channel) => Number.isFinite(channel));
+
+  if (channels.length < 3) {
+    return null;
+  }
+
+  return {
+    r: clampRgbChannel(channels[0]),
+    g: clampRgbChannel(channels[1]),
+    b: clampRgbChannel(channels[2])
+  };
+}
+
+function clampRgbChannel(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function getColorSaturation(color: RgbColor) {
+  const maxChannel = Math.max(color.r, color.g, color.b);
+  const minChannel = Math.min(color.r, color.g, color.b);
+  return (maxChannel - minChannel) / 255;
+}
+
+function isNearWhite(color: RgbColor) {
+  return getRelativeLuminance(color) > 0.86 && getColorSaturation(color) < 0.12;
+}
+
+function getContrastRatio(first: RgbColor, second: RgbColor) {
+  const firstLuminance = getRelativeLuminance(first);
+  const secondLuminance = getRelativeLuminance(second);
+  const lighter = Math.max(firstLuminance, secondLuminance);
+  const darker = Math.min(firstLuminance, secondLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function getRelativeLuminance(color: RgbColor) {
+  const channels = [color.r, color.g, color.b].map((channel) => {
+    const normalized = channel / 255;
+    return normalized <= 0.03928
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  });
+
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
 }
 
 function getUrgencyAriaLabel(tone: DashboardUrgencyTone, isComplete: boolean, language?: string | null) {
@@ -689,6 +1100,22 @@ function formatRank(value: number | null, language?: string | null) {
   return typeof value === "number" ? formatLocalizedRank(value, language) : "—";
 }
 
+function getProgressStatusLabel(
+  progress: DashboardCommandCenterSummary["progress"],
+  language?: string | null,
+  now = Date.now()
+) {
+  if (progress.isLocked) {
+    return t(language, "common.locked");
+  }
+
+  if (progress.deadlineAt) {
+    return getLocalizedDeadlineLabel(progress.deadlineAt, language, now);
+  }
+
+  return progress.isComplete ? t(language, "common.ready") : t(language, "common.pending");
+}
+
 function getLocalizedDeadlineLabel(deadlineAt: string | null, language?: string | null, now = Date.now()) {
   if (!deadlineAt) {
     return t(language, "common.pending");
@@ -698,10 +1125,16 @@ function getLocalizedDeadlineLabel(deadlineAt: string | null, language?: string 
   if (diffMs <= 0) {
     return t(language, "common.locked");
   }
-  if (diffMs <= 2 * 24 * 60 * 60 * 1000) {
-    return t(language, "common.pending");
+
+  const hourMs = 60 * 60 * 1000;
+  const dayMs = 24 * hourMs;
+  if (diffMs <= 2 * dayMs) {
+    const hours = Math.max(1, Math.ceil(diffMs / hourMs));
+    return t(language, hours === 1 ? "dashboard.hourLeftCompact" : "dashboard.hoursLeftCompact", { hours });
   }
-  return t(language, "common.open");
+
+  const days = Math.max(1, Math.ceil(diffMs / dayMs));
+  return t(language, days === 1 ? "dashboard.dayLeftCompact" : "dashboard.daysLeftCompact", { days });
 }
 
 function getLocalizedReminderLabel(
@@ -720,10 +1153,9 @@ function getLocalizedReminderLabel(
   }
   const dayMs = 24 * 60 * 60 * 1000;
   if (diffMs <= dayMs) {
-    const halfHours = Math.max(1, Math.ceil(diffMs / (30 * 60 * 1000)));
-    const hours = halfHours / 2;
-    return `in ${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
+    const hours = Math.max(1, Math.ceil(diffMs / (60 * 60 * 1000)));
+    return t(language, hours === 1 ? "dashboard.reminderInHour" : "dashboard.reminderInHours", { hours });
   }
   const days = Math.max(1, Math.ceil(diffMs / dayMs));
-  return `in ${days}d`;
+  return t(language, days === 1 ? "dashboard.reminderInDay" : "dashboard.reminderInDays", { days });
 }

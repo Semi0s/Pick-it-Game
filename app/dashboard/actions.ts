@@ -85,6 +85,17 @@ export type UpsertAppUpdateResult =
     };
 
 export type ArchiveAppUpdateResult = UpsertAppUpdateResult;
+export type DeleteAppUpdateResult = UpsertAppUpdateResult;
+export type DeleteArchivedAppUpdatesResult =
+  | {
+      ok: true;
+      message: string;
+      deletedCount: number;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
 export type MarkAppUpdateReadResult = UpsertAppUpdateResult;
 export type UpdateDashboardUpdatesForceOpenResult = UpsertAppUpdateResult;
 export type UpdateDashboardUpdatesEnabledResult = UpsertAppUpdateResult;
@@ -337,6 +348,73 @@ export async function archiveAppUpdateAction(updateId: string): Promise<ArchiveA
 
   revalidateAppUpdatePaths();
   return { ok: true, message: "Update archived." };
+}
+
+export async function deleteArchivedAppUpdateAction(updateId: string): Promise<DeleteAppUpdateResult> {
+  const currentUser = await requireSuperAdmin();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const adminSupabase = createAdminClient();
+  const { data: row, error: loadError } = await adminSupabase
+    .from("app_updates")
+    .select("expires_at")
+    .eq("id", updateId)
+    .maybeSingle();
+
+  if (loadError) {
+    return { ok: false, message: loadError.message };
+  }
+
+  if (!row) {
+    return { ok: false, message: "Update not found." };
+  }
+
+  const expiresAt = (row as { expires_at?: string | null }).expires_at ?? null;
+  if (!expiresAt || new Date(expiresAt).getTime() > Date.now()) {
+    return { ok: false, message: "Archive this update before deleting it." };
+  }
+
+  const { error } = await adminSupabase
+    .from("app_updates")
+    .delete()
+    .eq("id", updateId);
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  revalidateAppUpdatePaths();
+  return { ok: true, message: "Archived update deleted." };
+}
+
+export async function deleteAllArchivedAppUpdatesAction(): Promise<DeleteArchivedAppUpdatesResult> {
+  const currentUser = await requireSuperAdmin();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const adminSupabase = createAdminClient();
+  const { data, error } = await adminSupabase
+    .from("app_updates")
+    .delete()
+    .not("expires_at", "is", null)
+    .lte("expires_at", new Date().toISOString())
+    .select("id");
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+
+  const deletedCount = ((data as Array<{ id: string }> | null) ?? []).length;
+
+  revalidateAppUpdatePaths();
+  return {
+    ok: true,
+    deletedCount,
+    message: deletedCount === 1 ? "1 archived update deleted." : `${deletedCount} archived updates deleted.`
+  };
 }
 
 function mapAppUpdateRow(row: AppUpdateRow): AppUpdate {

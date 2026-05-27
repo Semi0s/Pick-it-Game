@@ -5113,7 +5113,14 @@ export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMa
   if (scoreableMatchResult.kind === "knockout") {
     try {
       const predictionsScored = await scoreFinalizedKnockoutMatchWithClient(adminSupabase, matchId);
+      const leaderboardResult = await recalculateLeaderboard(adminSupabase, matchId);
+      if (!leaderboardResult.ok) {
+        return leaderboardResult;
+      }
 
+      revalidatePath("/");
+      revalidatePath("/dashboard");
+      revalidatePath("/leaderboard");
       revalidatePath("/knockout");
       revalidatePath("/admin/matches");
       revalidatePath("/profile");

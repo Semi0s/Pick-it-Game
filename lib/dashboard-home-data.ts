@@ -228,6 +228,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     performance: {
       globalPoints: profile?.total_points ?? globalRankResult.totalPoints ?? null,
       globalRank: globalRankResult.rank,
+      invitedGroups: joinedGroupIds.length,
+      managedGroups: managedGroupIds.length,
       totalGroups: visibleGroupIds.length,
       totalPlayers: totalPlayersResult.count ?? globalRankResult.totalPlayers ?? 0
     },
@@ -253,6 +255,8 @@ function buildFallbackDashboardCommandCenter(): DashboardCommandCenterSummary {
     performance: {
       globalPoints: null,
       globalRank: null,
+      invitedGroups: 0,
+      managedGroups: 0,
       totalGroups: 0,
       totalPlayers: 0
     },

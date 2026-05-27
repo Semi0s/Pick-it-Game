@@ -3,6 +3,8 @@ export type DashboardUrgencyTone = "green" | "orange" | "red" | "neutral";
 export type DashboardPerformanceSummary = {
   globalPoints: number | null;
   globalRank: number | null;
+  invitedGroups: number;
+  managedGroups: number;
   totalGroups: number;
   totalPlayers: number;
 };

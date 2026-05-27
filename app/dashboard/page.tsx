@@ -49,6 +49,8 @@ export default async function DashboardPage() {
           performance: {
             globalPoints: null,
             globalRank: null,
+            invitedGroups: 0,
+            managedGroups: 0,
             totalGroups: 0,
             totalPlayers: 0
           },

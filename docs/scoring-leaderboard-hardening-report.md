@@ -45,6 +45,26 @@ The server-safe Group Phase ladder recompute helper lives in:
 - `users.total_points`, `leaderboard_entries`, and leaderboard snapshots now rebuild from visible Group Phase ladder points instead of legacy full-score group prediction rows.
 - Knockout match lock checks now use a pure helper that is tested at the one-second boundary.
 - `leaderboard_entries` rank ordering is now stable and documented.
+- Knockout admin scoring now rebuilds canonical leaderboard totals immediately after `bracket_scores` are recalculated.
+- Knockout score recalculation clears stale `bracket_scores` for the finalized match before writing current prediction scores, so deleted or replaced picks cannot keep contributing points.
+- The scoring audit now flags stale knockout score rows that reference missing matches, non-knockout matches, or no current `bracket_predictions` row.
+
+## Knockout Scoring Verification
+
+The verified knockout path is:
+
+1. user `bracket_predictions`
+2. official match ID/source slot/team ID from the FIFA 2026 knockout skeleton
+3. `scoreBracketPrediction(...)`
+4. persisted `bracket_scores`
+5. `calculateCanonicalLeaderboardScores(...)`
+6. `users.total_points`
+7. `leaderboard_entries`
+8. visible global/group leaderboards and dashboard totals
+
+Round of 32 third-place fixtures come from `lib/fifa-2026-knockout-seeding.ts`, backed by the 495-row Annexe C table in `lib/fifa-2026-third-place-permutations.ts`. Tests verify the `EFGHIJKL` example, including `M79: 1A vs 3E`, and score that matchup by team ID rather than label or rendered order.
+
+Knockout scoring remains independent of language, source-label localization, card visuals, home-team/country themes, and Oranjekoorts/Holland visual themes. Tests and docs use match IDs, source slots, team IDs, and canonical score objects instead of visible translated labels.
 
 ## Audit/Recompute Command
 
@@ -65,6 +85,7 @@ Default mode is dry-run. It reports:
 - duplicate knockout prediction keys
 - missing match references
 - persisted score mismatches
+- stale knockout score rows with missing/non-knockout/orphaned match references
 - `users.total_points` mismatches against canonical recomputed totals
 - `leaderboard_entries` total/rank mismatches against canonical recomputed totals
 
@@ -100,6 +121,7 @@ npm run scoring:audit -- --report=tmp/scoring-audit-report.json
 - non-final group matches scoring 0
 - knockout final exact score
 - Round of 32 exact score
+- every knockout round winner/exact/wrong-pick point value
 - scheduled knockout matches scoring 0
 - score breakdown sum invariant
 - canonical Group Phase ladder totals do not include legacy full-score rows
@@ -110,6 +132,8 @@ npm run scoring:audit -- --report=tmp/scoring-audit-report.json
 - lock-time boundary behavior one second before, exactly at, and one second after kickoff
 
 Existing Group Phase ladder tests remain in `tests/group-phase-scoring.test.ts`.
+
+`tests/fifa-2026-knockout-seeding.test.ts` verifies the official R32 Annexe C slot mapping and adds a scoring fixture proving `M79: 1A vs 3E` scores by the resolved team ID and feeds the `knockout` canonical total line item.
 
 ## Cache And Concurrency Notes
 
