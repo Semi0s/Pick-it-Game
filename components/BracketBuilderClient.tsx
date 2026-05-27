@@ -1191,7 +1191,7 @@ export function BracketBuilderClient({
               ) : null}
             </div>
             <div className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.12em] ${isReadOnly ? "bg-gray-100 text-gray-600" : "bg-cyan-50 text-accent-dark"}`}>
-              {isReadOnly ? t(language, "common.locked") : t(language, "common.open")}
+              {t(language, "common.groupCount", { count: sortedGroupNames.length })}
             </div>
           </div>
           <div className="grid grid-cols-[1.9rem_minmax(0,1fr)_1.9rem] items-center gap-0">
@@ -1384,7 +1384,8 @@ export function BracketBuilderClient({
 
         {isThirdPlacePhase ? (
           <div className="rounded-[1rem] border border-amber-200 bg-amber-50 px-3 py-2 text-center text-[10px] font-bold leading-snug text-amber-900">
-            {t(language, "bracket.thirdPlaceRuleInfo", { count: requiredThirdPlaceQualifierCount })}
+            <span className="block">{t(language, "bracket.thirdPlaceRuleInfo", { count: requiredThirdPlaceQualifierCount })}</span>
+            <span className="block">{t(language, "bracket.thirdPlaceRulePickBelow")}</span>
           </div>
         ) : null}
 
@@ -1530,7 +1531,6 @@ export function BracketBuilderClient({
       <section className="px-0 pt-3 pb-0">
         <div className="mb-1 flex items-center justify-between gap-3">
           <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500">{t(language, "bracket.projectedBracket")}</p>
-          <p className="text-xs font-semibold text-gray-600">{t(language, "bracket.updatesLive")}</p>
         </div>
 
         <div className="mt-2 px-0 py-2">

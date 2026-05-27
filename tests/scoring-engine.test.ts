@@ -152,6 +152,72 @@ test("knockout scoring uses round points plus exact-score bonus only after final
   assert.equal(scheduled.points, 0);
 });
 
+test("knockout golden scoring values are stable for every supported round", () => {
+  const goldenRounds = [
+    { stage: "r32" as const, winnerOnly: 3, exact: 8 },
+    { stage: "r16" as const, winnerOnly: 5, exact: 10 },
+    { stage: "qf" as const, winnerOnly: 8, exact: 13 },
+    { stage: "sf" as const, winnerOnly: 10, exact: 15 },
+    { stage: "third" as const, winnerOnly: 5, exact: 10 },
+    { stage: "final" as const, winnerOnly: 15, exact: 25 }
+  ];
+
+  for (const round of goldenRounds) {
+    const winnerOnly = calculateKnockoutMatchScoreLineItem({
+      userId: `user-${round.stage}`,
+      matchId: `M-${round.stage}`,
+      match: {
+        stage: round.stage,
+        status: "final",
+        homeScore: 2,
+        awayScore: 1,
+        winnerTeamId: "home"
+      },
+      prediction: {
+        predictedWinnerTeamId: "home",
+        predictedHomeScore: 1,
+        predictedAwayScore: 0
+      }
+    });
+    const exact = calculateKnockoutMatchScoreLineItem({
+      userId: `user-${round.stage}`,
+      matchId: `M-${round.stage}`,
+      match: {
+        stage: round.stage,
+        status: "final",
+        homeScore: 2,
+        awayScore: 1,
+        winnerTeamId: "home"
+      },
+      prediction: {
+        predictedWinnerTeamId: "home",
+        predictedHomeScore: 2,
+        predictedAwayScore: 1
+      }
+    });
+    const wrong = calculateKnockoutMatchScoreLineItem({
+      userId: `user-${round.stage}`,
+      matchId: `M-${round.stage}`,
+      match: {
+        stage: round.stage,
+        status: "final",
+        homeScore: 2,
+        awayScore: 1,
+        winnerTeamId: "home"
+      },
+      prediction: {
+        predictedWinnerTeamId: "away",
+        predictedHomeScore: 1,
+        predictedAwayScore: 2
+      }
+    });
+
+    assert.equal(winnerOnly.points, round.winnerOnly);
+    assert.equal(exact.points, round.exact);
+    assert.equal(wrong.points, 0);
+  }
+});
+
 test("score breakdown totals always equal line-item sums", () => {
   const breakdown = calculateUserScoreBreakdown({
     userId: "user-total",

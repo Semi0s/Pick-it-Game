@@ -52,6 +52,17 @@ Only final group matches with both actual scores are scorable. Scheduled, locked
 
 Knockout scoring is calculated by `scoreBracketPrediction(...)`. A match is scorable only when it is a knockout stage match, has status `final`, and has an actual winner.
 
+Knockout scoring uses stable match IDs and team IDs. The official FIFA 2026 knockout skeleton is:
+
+- Round of 32: `M73`-`M88`
+- Round of 16: `M89`-`M96`
+- Quarterfinals: `M97`-`M100`
+- Semifinals: `M101`-`M102`
+- Third-place match: `M103`, if supported
+- Final: `M104`
+
+Round of 32 third-place teams are assigned through the FIFA 2026 Annexe C permutation table in `lib/fifa-2026-third-place-permutations.ts` and the canonical builder in `lib/fifa-2026-knockout-seeding.ts`. Scoring consumes the resulting match ID, source slot, and team ID; it must not consume translated labels, localized source text, rendered bracket position, or country/theme state.
+
 Winner points by round:
 
 - Round of 32: 3
@@ -119,6 +130,8 @@ Group-local bonus and group-local side-pick scores are not included in global st
 Group snapshots add group-local bonus and group-local side-pick scores only inside that group scope. The standard/global total remains Group Phase ladder + knockout + standard side picks.
 
 Legacy `predictions.points_awarded` and `prediction_scores` rows may still be repaired by the audit tool, but they do not feed current canonical leaderboard totals.
+
+Knockout score persistence flows through `scoreFinalizedKnockoutMatchWithClient(...)`, which recalculates `bracket_scores` from current `bracket_predictions` for the finalized match. Admin/manual and sync paths then rebuild canonical leaderboard state so `users.total_points`, `leaderboard_entries`, snapshots, visible leaderboard rows, and dashboard totals use the same knockout points.
 
 ## Result Status Rules
 

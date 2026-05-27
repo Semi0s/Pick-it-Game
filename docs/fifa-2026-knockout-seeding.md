@@ -116,6 +116,15 @@ UI can localize the visible label, but bracket logic must continue to use stable
 
 Visualization and scoring now share the canonical Round of 32 builder through `lib/knockout-seeding.ts`.
 
+The scoring path for official knockout matches is:
+
+1. `bracket_predictions` keyed by user and official match ID
+2. finalized match result from `matches`
+3. `scoreBracketPrediction(...)`
+4. `bracket_scores`
+5. canonical totals in `lib/canonical-scoring.ts`
+6. cached `users.total_points` and `leaderboard_entries`
+
 Scoring and seeding should use:
 
 - official match IDs (`M73`-`M104`)
@@ -129,6 +138,8 @@ They must not use:
 - visible UI text
 - visual theme or home-team localization
 - array position in a rendered bracket
+
+For legacy/pre-migration local data, `buildFifa2026RoundOf32StoredMatchIdLookup(...)` maps official `M73`-`M88` IDs onto legacy `r32-01`-`r32-16` rows only as a storage compatibility bridge. Scoring itself still relies on the stored match ID plus resolved team IDs, not on visible bracket order.
 
 ## Migration Notes
 
@@ -159,4 +170,5 @@ The tests verify:
 - no R32 third-place-vs-third-place match exists
 - placeholders render when third-place qualifiers are unresolved
 - third-place ranking uses deterministic criteria
-
+- official R32 third-place slots feed knockout scoring by match ID and team ID
+- `bracket_scores` flow into canonical leaderboard totals

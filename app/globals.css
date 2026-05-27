@@ -126,6 +126,28 @@ select {
     font-stretch: normal;
   }
 
+  .triptych-micro-copy {
+    display: inline-block;
+    font-size: 8px;
+    line-height: 1;
+    transform: scale(0.82);
+    transform-origin: center;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+
+  .triptych-micro-copy-left {
+    transform-origin: left center;
+  }
+
+  .triptych-micro-copy-right {
+    transform-origin: right center;
+  }
+
+  .triptych-micro-copy-tight {
+    transform: scale(0.72);
+  }
+
   .knockout-landing-pop {
     animation: knockout-landing-pop 1200ms ease-out 1;
     box-shadow: inset 0 0 0 2px rgba(var(--app-accent-rgb), 0.28);

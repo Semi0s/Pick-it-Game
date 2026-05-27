@@ -1,6 +1,6 @@
 "use client";
 
-import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
+import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   deactivateOrganizerAccessAction,
   demoteUserWithImpactResolutionAction,
@@ -31,6 +31,7 @@ import { ADMIN_ASSIGNABLE_ACCESS_LEVELS, compareAccessLevels, getAccessLevelDisp
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { AdminGroupsSection } from "@/components/admin/AdminGroupsClient";
 import { AdminInvitesSection, formatDate } from "@/components/admin/AdminInvitesClient";
+import { AdminUpdatesManager } from "@/components/admin/AdminUpdatesManager";
 import { Avatar } from "@/components/Avatar";
 import { TierIconBadge } from "@/components/TierIconBadge";
 import {
@@ -57,6 +58,8 @@ const FILTERS = [
   { value: "pending", label: "Pending signup or confirmation" }
 ] as const;
 
+type AdminManagementTab = "setup" | "users" | "groups";
+
 export function AdminPlayersClient() {
   const [players, setPlayers] = useState<AdminPlayerHealthRow[]>([]);
   const [leaderboardSettings, setLeaderboardSettings] = useState<LeaderboardFeatureSettings | null>(null);
@@ -68,6 +71,7 @@ export function AdminPlayersClient() {
   const [activeActionKey, setActiveActionKey] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState("");
   const [filterValue, setFilterValue] = useState<(typeof FILTERS)[number]["value"]>("all");
+  const [activeTab, setActiveTab] = useState<AdminManagementTab>("users");
   const [managerEditor, setManagerEditor] = useState<{
     userId: string;
     displayName: string;
@@ -199,6 +203,18 @@ export function AdminPlayersClient() {
       return true;
     });
   }, [filterValue, players, searchValue]);
+  const attentionPlayerCount = useMemo(
+    () => players.filter((player) => player.healthBadge === "mismatch" || player.healthBadge === "needs_attention").length,
+    [players]
+  );
+  const managerPlayerCount = useMemo(
+    () => players.filter((player) => player.roleLabel === "admin" || player.isManager).length,
+    [players]
+  );
+  const readinessIssueCount =
+    (systemReadiness?.missingSchema.length ?? 0) +
+    (systemReadiness?.storageConfigIssues.length ?? 0) +
+    (systemReadiness?.featureReadiness.filter((item) => item.status !== "ready").length ?? 0);
 
   async function refreshPlayers() {
     setMessage(null);
@@ -248,205 +264,15 @@ export function AdminPlayersClient() {
         title="Manage players and managers."
         description="See and manage all your players here"
       />
-      <HierarchyPanel />
-      <AdminInvitesSection showHeader={false} showInviteList={false} />
-      <ManagementCard
-        title="System readiness"
-        subtitle="Read-only diagnostic checks for schema, storage, and feature readiness."
-      >
-        <div className="space-y-4">
-          {systemReadiness ? (
-            <>
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Checked {formatDate(systemReadiness.checkedAt)}
-              </p>
-
-              <ReadinessGroup
-                title="Missing schema"
-                emptyCopy="No missing tables or columns detected."
-                items={systemReadiness.missingSchema.map((issue) => ({
-                  key: issue.key,
-                  label: issue.label,
-                  detail: issue.detail
-                }))}
-              />
-
-              <ReadinessGroup
-                title="Storage / config issues"
-                emptyCopy="No storage or config issues detected."
-                items={systemReadiness.storageConfigIssues.map((issue) => ({
-                  key: issue.key,
-                  label: issue.label,
-                  detail: issue.detail
-                }))}
-              />
-
-              <div className="space-y-2">
-                <p className="text-sm font-black text-gray-900">Feature readiness</p>
-                <div className="space-y-2">
-                  {systemReadiness.featureReadiness.map((item) => (
-                    <div key={item.key} className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-black text-gray-950">{item.label}</p>
-                          <p className="mt-1 text-sm font-semibold text-gray-600">{item.detail}</p>
-                        </div>
-                        <ManagementBadge
-                          label={item.status}
-                          tone={item.status === "ready" ? "accent" : item.status === "degraded" ? "warning" : "neutral"}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          ) : (
-            <p className="text-sm font-semibold text-gray-600">Loading diagnostics...</p>
-          )}
-        </div>
-      </ManagementCard>
-      <ManagementCard
-        title="Legal / Terms"
-        subtitle="Update the required EULA version by language and require users to accept it before using the app again."
-      >
-        <div className="space-y-4">
-          <p className="text-sm font-semibold text-gray-600">
-            Users will be required to accept the current terms in their selected language before continuing. Active
-            sessions will be revoked where supported.
-          </p>
-          <ManagementGrid>
-            <ManagementDatum label="Language" value={legalDocument?.language?.toUpperCase() ?? "Not configured"} />
-            <ManagementDatum label="Current version" value={legalDocument?.requiredVersion ?? "Not configured"} />
-            <ManagementDatum label="Last updated" value={legalDocument?.updatedAt ? formatDate(legalDocument.updatedAt) : "—"} />
-          </ManagementGrid>
-          <label className="block">
-            <span className="text-sm font-bold text-gray-800">Document type</span>
-            <input
-              value={legalEditor.documentType}
-              onChange={(event) => setLegalEditor((current) => ({ ...current, documentType: event.target.value }))}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-bold text-gray-800">Language</span>
-            <select
-              value={legalEditor.language}
-              onChange={(event) => setLegalEditor((current) => ({ ...current, language: event.target.value }))}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-            >
-              <option value="en">English</option>
-              <option value="es">Spanish</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-sm font-bold text-gray-800">Required version</span>
-            <input
-              value={legalEditor.requiredVersion}
-              onChange={(event) => setLegalEditor((current) => ({ ...current, requiredVersion: event.target.value }))}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-bold text-gray-800">Title</span>
-            <input
-              value={legalEditor.title}
-              onChange={(event) => setLegalEditor((current) => ({ ...current, title: event.target.value }))}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-bold text-gray-800">Body</span>
-            <textarea
-              value={legalEditor.body}
-              onChange={(event) => setLegalEditor((current) => ({ ...current, body: event.target.value }))}
-              rows={10}
-              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-            />
-          </label>
-          <ActionButton
-            tone="accent"
-            disabled={activeActionKey === "force-legal-reacceptance"}
-            onClick={() => {
-              void withAction("force-legal-reacceptance", async () => {
-                const result = await forceLegalReacceptanceAction(
-                  legalEditor.documentType,
-                  legalEditor.language,
-                  legalEditor.requiredVersion,
-                  legalEditor.title,
-                  legalEditor.body
-                );
-                setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                if (result.ok) {
-                  await loadLegalDocument();
-                }
-              });
-            }}
-          >
-            {activeActionKey === "force-legal-reacceptance" ? "Updating..." : "Require everyone to accept this version"}
-          </ActionButton>
-        </div>
-      </ManagementCard>
-      <ManagementCard
-        title="Leaderboard highlights"
-        subtitle="Super-admin controls for tournament-time spotlight features."
-      >
-        <div className="space-y-3">
-          <p className="text-sm font-semibold text-gray-600">
-            These switches control what appears on the live leaderboard. All features stay off until you turn them on.
-          </p>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <LeaderboardSettingToggle
-              label="Daily Winner"
-              description="Show the top scorer or tied scorers for the current day."
-              settingKey="daily_winner_enabled"
-              settings={leaderboardSettings}
-              activeActionKey={activeActionKey}
-              onToggle={(enabled) => {
-                void withAction(`leaderboard-setting-daily_winner_enabled`, async () => {
-                  const result = await updateLeaderboardFeatureSettingAction("daily_winner_enabled", enabled);
-                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                  if (result.ok) {
-                    await loadLeaderboardSettings();
-                  }
-                });
-              }}
-            />
-            <LeaderboardSettingToggle
-              label="Perfect Pick"
-              description="Show the exact-score badge for qualifying leaderboard rows."
-              settingKey="perfect_pick_enabled"
-              settings={leaderboardSettings}
-              activeActionKey={activeActionKey}
-              onToggle={(enabled) => {
-                void withAction(`leaderboard-setting-perfect_pick_enabled`, async () => {
-                  const result = await updateLeaderboardFeatureSettingAction("perfect_pick_enabled", enabled);
-                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                  if (result.ok) {
-                    await loadLeaderboardSettings();
-                  }
-                });
-              }}
-            />
-            <LeaderboardSettingToggle
-              label="Leaderboard Activity"
-              description="Show rank movement arrows and point-change context."
-              settingKey="leaderboard_activity_enabled"
-              settings={leaderboardSettings}
-              activeActionKey={activeActionKey}
-              onToggle={(enabled) => {
-                void withAction(`leaderboard-setting-leaderboard_activity_enabled`, async () => {
-                  const result = await updateLeaderboardFeatureSettingAction("leaderboard_activity_enabled", enabled);
-                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                  if (result.ok) {
-                    await loadLeaderboardSettings();
-                  }
-                });
-              }}
-            />
-          </div>
-        </div>
-      </ManagementCard>
+      <AdminManagementTabs
+        activeTab={activeTab}
+        tabs={[
+          { value: "setup", label: "Setup", badge: readinessIssueCount > 0 ? `${readinessIssueCount} issues` : "ready" },
+          { value: "users", label: "Users", badge: `${players.length} total` },
+          { value: "groups", label: "Groups", badge: "tools" }
+        ]}
+        onChange={setActiveTab}
+      />
       {message ? <AdminMessage tone={message.tone} message={message.text} /> : null}
 
       {confirmation ? (
@@ -489,34 +315,273 @@ export function AdminPlayersClient() {
         />
       ) : null}
 
-      <ManagementToolbar
-        searchValue={searchValue}
-        onSearchChange={setSearchValue}
-        filterValue={filterValue}
-        onFilterChange={(value) => setFilterValue(value as (typeof FILTERS)[number]["value"])}
-        filters={FILTERS.map((filter) => ({ ...filter }))}
-        className="sticky top-20 z-10 shadow-sm"
-        trailing={
-          !isLoading ? (
-            <ActionButton onClick={() => void refreshPlayers()}>Refresh Auth Status</ActionButton>
-          ) : null
-        }
-      />
+      {activeTab === "setup" ? (
+        <div className="space-y-4">
+          <AdminToolCard
+            title="Invite access"
+            storageKey="admin-players:setup-invite-access:v1"
+            badge={<ManagementBadge label={`${managerPlayerCount} organizers`} tone="warning" />}
+          >
+            <p className="text-sm font-semibold text-gray-600">
+              Promote, invite, and repair access while keeping demotions on the guarded player cards.
+            </p>
+            <div className="mt-4 space-y-4">
+              <HierarchyPanel />
+              <AdminInvitesSection showHeader={false} showInviteList={false} />
+            </div>
+          </AdminToolCard>
 
-      <ManagementSection
-        title="Users / Members"
-        description="Collapsed-by-default player cards that keep role, tier, counts, and warning chips visible while moving the heavier controls into the expanded state."
-        storageKey="admin-players:users-section"
-        defaultOpen
-        badge={<ManagementBadge label={`${filteredPlayers.length} shown`} tone="neutral" />}
-      >
-        {isLoading ? <ManagementEmptyState message="Loading players..." /> : null}
-        {!isLoading && filteredPlayers.length === 0 ? (
-          <ManagementEmptyState message="No players match the current search or filter." />
-        ) : null}
+          <AdminToolCard
+            title="Dashboard updates"
+            storageKey="admin-players:dashboard-updates:v1"
+            badge={<ManagementBadge label="updates" tone="neutral" />}
+          >
+            <AdminUpdatesManager embedded />
+          </AdminToolCard>
 
-        {!isLoading
-          ? filteredPlayers.map((player) => {
+          <AdminToolCard
+            title="System readiness"
+            storageKey="admin-players:system-readiness:v1"
+            badge={<ManagementBadge label={readinessIssueCount > 0 ? `${readinessIssueCount} issues` : "ready"} tone={readinessIssueCount > 0 ? "warning" : "accent"} />}
+          >
+            <p className="text-sm font-semibold text-gray-600">
+              Read-only diagnostic checks for schema, storage, and feature readiness.
+            </p>
+            <div className="mt-4 space-y-4">
+              {systemReadiness ? (
+                <>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    Checked {formatDate(systemReadiness.checkedAt)}
+                  </p>
+
+                  <ReadinessGroup
+                    title="Missing schema"
+                    emptyCopy="No missing tables or columns detected."
+                    items={systemReadiness.missingSchema.map((issue) => ({
+                      key: issue.key,
+                      label: issue.label,
+                      detail: issue.detail
+                    }))}
+                  />
+
+                  <ReadinessGroup
+                    title="Storage / config issues"
+                    emptyCopy="No storage or config issues detected."
+                    items={systemReadiness.storageConfigIssues.map((issue) => ({
+                      key: issue.key,
+                      label: issue.label,
+                      detail: issue.detail
+                    }))}
+                  />
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-black text-gray-900">Feature readiness</p>
+                    <div className="space-y-2">
+                      {systemReadiness.featureReadiness.map((item) => (
+                        <div key={item.key} className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-black text-gray-950">{item.label}</p>
+                              <p className="mt-1 text-sm font-semibold text-gray-600">{item.detail}</p>
+                            </div>
+                            <ManagementBadge
+                              label={item.status}
+                              tone={item.status === "ready" ? "accent" : item.status === "degraded" ? "warning" : "neutral"}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm font-semibold text-gray-600">Loading diagnostics...</p>
+              )}
+            </div>
+          </AdminToolCard>
+
+          <AdminToolCard
+            title="Legal / Terms"
+            storageKey="admin-players:legal-terms:v1"
+            badge={<ManagementBadge label={legalDocument?.requiredVersion ?? "not configured"} tone={legalDocument ? "neutral" : "warning"} />}
+          >
+            <div className="space-y-4">
+              <p className="text-sm font-semibold text-gray-600">
+                Users will be required to accept the current terms in their selected language before continuing. Active
+                sessions will be revoked where supported.
+              </p>
+              <ManagementGrid>
+                <ManagementDatum label="Language" value={legalDocument?.language?.toUpperCase() ?? "Not configured"} />
+                <ManagementDatum label="Current version" value={legalDocument?.requiredVersion ?? "Not configured"} />
+                <ManagementDatum label="Last updated" value={legalDocument?.updatedAt ? formatDate(legalDocument.updatedAt) : "—"} />
+              </ManagementGrid>
+              <label className="block">
+                <span className="text-sm font-bold text-gray-800">Document type</span>
+                <input
+                  value={legalEditor.documentType}
+                  onChange={(event) => setLegalEditor((current) => ({ ...current, documentType: event.target.value }))}
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                />
+              </label>
+              <label className="block">
+                <span className="text-sm font-bold text-gray-800">Language</span>
+                <select
+                  value={legalEditor.language}
+                  onChange={(event) => setLegalEditor((current) => ({ ...current, language: event.target.value }))}
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                >
+                  <option value="en">English</option>
+                  <option value="es">Spanish</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-sm font-bold text-gray-800">Required version</span>
+                <input
+                  value={legalEditor.requiredVersion}
+                  onChange={(event) => setLegalEditor((current) => ({ ...current, requiredVersion: event.target.value }))}
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                />
+              </label>
+              <label className="block">
+                <span className="text-sm font-bold text-gray-800">Title</span>
+                <input
+                  value={legalEditor.title}
+                  onChange={(event) => setLegalEditor((current) => ({ ...current, title: event.target.value }))}
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                />
+              </label>
+              <label className="block">
+                <span className="text-sm font-bold text-gray-800">Body</span>
+                <textarea
+                  value={legalEditor.body}
+                  onChange={(event) => setLegalEditor((current) => ({ ...current, body: event.target.value }))}
+                  rows={10}
+                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                />
+              </label>
+              <ActionButton
+                tone="accent"
+                disabled={activeActionKey === "force-legal-reacceptance"}
+                onClick={() => {
+                  void withAction("force-legal-reacceptance", async () => {
+                    const result = await forceLegalReacceptanceAction(
+                      legalEditor.documentType,
+                      legalEditor.language,
+                      legalEditor.requiredVersion,
+                      legalEditor.title,
+                      legalEditor.body
+                    );
+                    setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                    if (result.ok) {
+                      await loadLegalDocument();
+                    }
+                  });
+                }}
+              >
+                {activeActionKey === "force-legal-reacceptance" ? "Updating..." : "Require everyone to accept this version"}
+              </ActionButton>
+            </div>
+          </AdminToolCard>
+
+          <AdminToolCard
+            title="Leaderboard highlights"
+            storageKey="admin-players:leaderboard-highlights:v1"
+            badge={<ManagementBadge label="feature flags" tone="neutral" />}
+          >
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-gray-600">
+                These switches control what appears on the live leaderboard. All features stay off until you turn them on.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <LeaderboardSettingToggle
+                  label="Daily Winner"
+                  description="Show the top scorer or tied scorers for the current day."
+                  settingKey="daily_winner_enabled"
+                  settings={leaderboardSettings}
+                  activeActionKey={activeActionKey}
+                  onToggle={(enabled) => {
+                    void withAction(`leaderboard-setting-daily_winner_enabled`, async () => {
+                      const result = await updateLeaderboardFeatureSettingAction("daily_winner_enabled", enabled);
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadLeaderboardSettings();
+                      }
+                    });
+                  }}
+                />
+                <LeaderboardSettingToggle
+                  label="Perfect Pick"
+                  description="Show the exact-score badge for qualifying leaderboard rows."
+                  settingKey="perfect_pick_enabled"
+                  settings={leaderboardSettings}
+                  activeActionKey={activeActionKey}
+                  onToggle={(enabled) => {
+                    void withAction(`leaderboard-setting-perfect_pick_enabled`, async () => {
+                      const result = await updateLeaderboardFeatureSettingAction("perfect_pick_enabled", enabled);
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadLeaderboardSettings();
+                      }
+                    });
+                  }}
+                />
+                <LeaderboardSettingToggle
+                  label="Leaderboard Activity"
+                  description="Show rank movement arrows and point-change context."
+                  settingKey="leaderboard_activity_enabled"
+                  settings={leaderboardSettings}
+                  activeActionKey={activeActionKey}
+                  onToggle={(enabled) => {
+                    void withAction(`leaderboard-setting-leaderboard_activity_enabled`, async () => {
+                      const result = await updateLeaderboardFeatureSettingAction("leaderboard_activity_enabled", enabled);
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadLeaderboardSettings();
+                      }
+                    });
+                  }}
+                />
+              </div>
+            </div>
+          </AdminToolCard>
+        </div>
+      ) : null}
+
+      {activeTab === "users" ? (
+        <>
+          <ManagementToolbar
+            searchValue={searchValue}
+            onSearchChange={setSearchValue}
+            filterValue={filterValue}
+            onFilterChange={(value) => setFilterValue(value as (typeof FILTERS)[number]["value"])}
+            filters={FILTERS.map((filter) => ({ ...filter }))}
+            className="sticky top-20 z-10 shadow-sm"
+            trailing={
+              !isLoading ? (
+                <ActionButton onClick={() => void refreshPlayers()}>Refresh Auth Status</ActionButton>
+              ) : null
+            }
+          />
+
+          <ManagementSection
+            title="Users / Members"
+            description="Collapsed-by-default player cards that keep role, tier, counts, and warning chips visible while moving the heavier controls into the expanded state."
+            storageKey="admin-players:users-section:v2"
+            defaultOpen={false}
+            badge={
+              <>
+                <ManagementBadge label={`${filteredPlayers.length} shown`} tone="neutral" />
+                {attentionPlayerCount > 0 ? <ManagementBadge label={`${attentionPlayerCount} attention`} tone="warning" /> : null}
+              </>
+            }
+          >
+            {isLoading ? <ManagementEmptyState message="Loading players..." /> : null}
+            {!isLoading && filteredPlayers.length === 0 ? (
+              <ManagementEmptyState message="No players match the current search or filter." />
+            ) : null}
+
+            {!isLoading
+              ? filteredPlayers.map((player) => {
               const activeManagerEditor = managerEditor?.userId === player.appUserId ? managerEditor : null;
 
               return (
@@ -604,18 +669,25 @@ export function AdminPlayersClient() {
                 />
               );
             })
-          : null}
-      </ManagementSection>
+              : null}
+          </ManagementSection>
+        </>
+      ) : null}
 
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-xl font-black">Group management</h3>
-          <p className="mt-1 text-sm font-semibold text-gray-600">
-            Add existing players to groups, adjust group limits, and repair ownership without leaving this admin surface.
-          </p>
-        </div>
-        <AdminGroupsSection showIntro={false} showPlayerManagementLink={false} />
-      </section>
+      {activeTab === "groups" ? (
+        <section className="space-y-3">
+          <div className="ui-card px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-xl font-black">Group management</h3>
+              <ManagementBadge label="group tools" tone="neutral" />
+            </div>
+            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
+              Add existing players to groups, adjust group limits, and repair ownership without leaving this admin surface.
+            </p>
+          </div>
+          <AdminGroupsSection showIntro={false} showPlayerManagementLink={false} />
+        </section>
+      ) : null}
     </div>
   );
 
@@ -631,6 +703,70 @@ export function AdminPlayersClient() {
       maxMembersPerGroup: String(player.maxMembersPerGroup ?? 30)
     });
   }
+}
+
+function AdminManagementTabs({
+  activeTab,
+  tabs,
+  onChange
+}: {
+  activeTab: AdminManagementTab;
+  tabs: Array<{ value: AdminManagementTab; label: string; badge: string }>;
+  onChange: (value: AdminManagementTab) => void;
+}) {
+  return (
+    <div className="ui-card flex gap-2 overflow-x-auto p-1.5">
+      {tabs.map((tab) => {
+        const isActive = tab.value === activeTab;
+
+        return (
+          <button
+            key={tab.value}
+            type="button"
+            onClick={() => onChange(tab.value)}
+            className={`flex min-w-[8.5rem] flex-1 items-center justify-between gap-3 rounded-[0.9rem] px-3 py-2 text-left transition ${
+              isActive ? "bg-accent text-accent-text shadow-sm" : "bg-white text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            <span className="text-sm font-black uppercase tracking-[0.14em]">{tab.label}</span>
+            <span className={`ui-chip-sm shrink-0 font-bold ${isActive ? "bg-white/90 text-gray-900" : "bg-gray-100 text-gray-700"}`}>
+              {tab.badge}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AdminToolCard({
+  title,
+  storageKey,
+  badge,
+  children
+}: {
+  title: string;
+  storageKey: string;
+  badge?: ReactNode;
+  children: ReactNode;
+}) {
+  const [isOpen, setIsOpen] = useSessionDisclosureState(storageKey, false);
+
+  return (
+    <ManagementCard
+      title={<span className="text-base font-black text-gray-950">{title}</span>}
+      badges={badge}
+      headerActions={
+        <InlineDisclosureButton
+          isOpen={isOpen}
+          variant="subtle"
+          onClick={() => setIsOpen((current) => !current)}
+        />
+      }
+    >
+      {isOpen ? children : null}
+    </ManagementCard>
+  );
 }
 
 function PlayerSummaryCard({
@@ -761,38 +897,46 @@ function PlayerSummaryCard({
   return (
     <ManagementCard
       title={
-        <div className="flex items-center gap-3">
-          <Avatar name={player.displayName} avatarUrl={player.avatarUrl} size="md" />
-          <div className="min-w-0">
-            <p className="truncate text-base font-black text-gray-950">{player.displayName}</p>
-            <p className="truncate text-sm font-semibold text-gray-600">{player.email}</p>
+        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <button
+            type="button"
+            aria-expanded={isOpen}
+            onClick={() => setIsOpen((current) => !current)}
+            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          >
+            <Avatar name={player.displayName} avatarUrl={player.avatarUrl} size="md" />
+            <div className="min-w-0">
+              <p className="truncate text-base font-black text-gray-950">{player.displayName}</p>
+              <p className="truncate text-sm font-semibold text-gray-600">{player.email}</p>
+            </div>
+          </button>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <ManagementBadge label={getRoleBadgeLabel(player.roleLabel === "admin" ? "super admin" : "player")} tone={player.roleLabel === "admin" ? "accent" : "neutral"} />
+            <TierIconBadge accessLevel={player.accessLevel} size={22} />
+            <ManagementBadge label={formatStateLabel(player.healthBadge)} tone={getHealthTone(player.healthBadge)} />
+            {player.groupMembershipCount > 0 ? <ManagementBadge label={`${player.groupMembershipCount} groups`} tone="neutral" /> : null}
+            {player.isManager ? <ManagementBadge label={`${player.currentGroupsUsed}/${player.maxGroups ?? 0} managed`} tone="warning" /> : null}
           </div>
         </div>
       }
-      badges={
-        <>
-          <ManagementBadge label={getRoleBadgeLabel(player.roleLabel === "admin" ? "super admin" : "player")} tone={player.roleLabel === "admin" ? "accent" : "neutral"} />
-          <TierIconBadge accessLevel={player.accessLevel} size={22} />
-          <ManagementBadge label={formatStateLabel(player.healthBadge)} tone={getHealthTone(player.healthBadge)} />
-          {player.groupMembershipCount > 0 ? <ManagementBadge label={`${player.groupMembershipCount} groups`} tone="neutral" /> : null}
-          {player.isManager ? <ManagementBadge label={`${player.currentGroupsUsed}/${player.maxGroups ?? 0} managed`} tone="warning" /> : null}
-        </>
-      }
-      headerActions={<InlineDisclosureButton isOpen={isOpen} variant="subtle" onClick={() => setIsOpen((current) => !current)} />}
     >
-      <ManagementGrid>
-        <ManagementDatum label="Role" value={player.roleLabel === "admin" ? "Super Admin" : "Player"} />
-        <ManagementDatum label="Plan tier" value={player.planTier ?? "player"} />
-        <ManagementDatum label="Groups count" value={player.groupMembershipCount} />
-        <ManagementDatum label="Managed groups" value={player.isManager ? player.currentGroupsUsed : "—"} />
-        <ManagementDatum label="Seat usage" value={player.isManager ? `${player.currentMembersUsed} / ${player.maxMembersPerGroup ?? 0}` : "—"} />
-        <ManagementDatum label="Invite state" value={formatStateLabel(player.inviteState)} />
-        <ManagementDatum label="Delivery" value={formatDeliveryState(player)} />
-        <ManagementDatum label="Warnings" value={player.troubleshootingNotes.length > 0 ? `${player.troubleshootingNotes.length} notes` : "Clear"} />
-      </ManagementGrid>
-
       {isOpen ? (
         <>
+          <div className="-mt-1 flex justify-end">
+            <InlineDisclosureButton isOpen={isOpen} variant="subtle" onClick={() => setIsOpen(false)} />
+          </div>
+
+          <ManagementGrid>
+            <ManagementDatum label="Role" value={player.roleLabel === "admin" ? "Super Admin" : "Player"} />
+            <ManagementDatum label="Plan tier" value={player.planTier ?? "player"} />
+            <ManagementDatum label="Groups count" value={player.groupMembershipCount} />
+            <ManagementDatum label="Managed groups" value={player.isManager ? player.currentGroupsUsed : "—"} />
+            <ManagementDatum label="Seat usage" value={player.isManager ? `${player.currentMembersUsed} / ${player.maxMembersPerGroup ?? 0}` : "—"} />
+            <ManagementDatum label="Invite state" value={formatStateLabel(player.inviteState)} />
+            <ManagementDatum label="Delivery" value={formatDeliveryState(player)} />
+            <ManagementDatum label="Warnings" value={player.troubleshootingNotes.length > 0 ? `${player.troubleshootingNotes.length} notes` : "Clear"} />
+          </ManagementGrid>
+
           <div className="mt-4 flex flex-wrap gap-2">
             {player.appUserId ? (
               <ActionButton onClick={onRename} disabled={activeActionKey === `rename-${player.appUserId}`}>

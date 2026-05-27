@@ -42,6 +42,21 @@ import {
 
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 
+type ProfileTeam = (typeof teams)[number];
+
+function compareTeamsByGroupThenName(left: ProfileTeam, right: ProfileTeam) {
+  const groupComparison = left.groupName.localeCompare(right.groupName, undefined, {
+    numeric: true,
+    sensitivity: "base"
+  });
+
+  if (groupComparison !== 0) {
+    return groupComparison;
+  }
+
+  return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+}
+
 export function ProfileSummary({
   initialLegalDocument,
   managedGroupCount = 0,
@@ -93,7 +108,7 @@ export function ProfileSummary({
   const [followedTeamSelection, setFollowedTeamSelection] = useState("");
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const sortedTeams = useMemo(
-    () => [...teams].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" })),
+    () => [...teams].sort(compareTeamsByGroupThenName),
     []
   );
   const visualThemeOptions = useMemo(() => getVisualThemeSelectOptions(sortedTeams), [sortedTeams]);
@@ -627,7 +642,7 @@ export function ProfileSummary({
       <div id="followed-teams" className="ui-card scroll-mt-24 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.followedTeams")}</p>
+            <h3 className="text-lg font-bold">{t(uiLanguage, "profile.followedTeams")}</h3>
             <p className="mt-1 text-sm font-normal text-gray-500">{t(uiLanguage, "profile.appFocusReminders")}</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -654,7 +669,7 @@ export function ProfileSummary({
                   <option value="">{t(uiLanguage, "profile.addTeam")}</option>
                   {availableFollowedTeamOptions.map((team) => (
                     <option key={team.id} value={team.id}>
-                      {team.groupName} · {team.name}
+                      {team.groupName} {team.flagEmoji ? `${team.flagEmoji} ` : ""}· {team.name}
                     </option>
                   ))}
                 </select>
@@ -726,7 +741,9 @@ export function ProfileSummary({
                       <p className="truncate text-sm font-black text-gray-950">
                         {team.flagEmoji ? `${team.flagEmoji} ` : ""}{team.name}
                       </p>
-                      <p className="mt-1 text-xs font-semibold text-gray-500">{team.groupName}</p>
+                      <p className="mt-1 text-xs font-semibold text-gray-500">
+                        {team.groupName} {team.flagEmoji ? team.flagEmoji : ""}
+                      </p>
                     </div>
                     <button
                       type="button"

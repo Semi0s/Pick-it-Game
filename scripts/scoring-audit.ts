@@ -270,6 +270,7 @@ async function main() {
     bracketScores.map((score) => [`${score.user_id}:${score.match_id}`, score] as const)
   );
   const recomputedKnockoutScoresByUser = new Map<string, number>();
+  const expectedBracketScoreKeys = new Set<string>();
 
   for (const prediction of predictions) {
     const match = matchesById.get(prediction.match_id);
@@ -360,6 +361,7 @@ async function main() {
       continue;
     }
 
+    expectedBracketScoreKeys.add(`${prediction.user_id}:${prediction.match_id}`);
     const expected = scoreBracketPrediction(
       {
         stage: match.stage,
@@ -424,6 +426,63 @@ async function main() {
       );
       if (bracketScoreUpsertError) {
         throw new Error(bracketScoreUpsertError.message);
+      }
+    }
+  }
+
+  const staleBracketScoreRows: BracketScoreRow[] = [];
+  for (const scoreRow of bracketScores) {
+    const key = `${scoreRow.user_id}:${scoreRow.match_id}`;
+    const match = matchesById.get(scoreRow.match_id) ?? null;
+    if (!match) {
+      report.counts.missingMatches += 1;
+      staleBracketScoreRows.push(scoreRow);
+      recordMismatch(report, {
+        kind: "bracket_scores.missing_match",
+        id: key,
+        userId: scoreRow.user_id,
+        matchId: scoreRow.match_id,
+        expected: "valid knockout match",
+        actual: null
+      });
+      continue;
+    }
+
+    if (!normalizeKnockoutStage(match.stage)) {
+      staleBracketScoreRows.push(scoreRow);
+      recordMismatch(report, {
+        kind: "bracket_scores.non_knockout_match",
+        id: key,
+        userId: scoreRow.user_id,
+        matchId: scoreRow.match_id,
+        expected: "knockout match",
+        actual: match.stage
+      });
+      continue;
+    }
+
+    if (!expectedBracketScoreKeys.has(key)) {
+      staleBracketScoreRows.push(scoreRow);
+      recordMismatch(report, {
+        kind: "bracket_scores.orphaned_score",
+        id: key,
+        userId: scoreRow.user_id,
+        matchId: scoreRow.match_id,
+        expected: "matching bracket prediction",
+        actual: null
+      });
+    }
+  }
+
+  if (applyRepairs && staleBracketScoreRows.length > 0) {
+    for (const scoreRow of staleBracketScoreRows) {
+      const { error: deleteStaleBracketScoreError } = await supabase
+        .from("bracket_scores")
+        .delete()
+        .eq("user_id", scoreRow.user_id)
+        .eq("match_id", scoreRow.match_id);
+      if (deleteStaleBracketScoreError) {
+        throw new Error(deleteStaleBracketScoreError.message);
       }
     }
   }
@@ -521,7 +580,7 @@ async function main() {
     }
 
     report.warnings.push(
-      "Apply mode repairs legacy score rows, then updates users.total_points and leaderboard_entries from canonical Group Phase ladder + recomputed knockout + standard side-pick totals."
+      "Apply mode repairs legacy score rows, removes stale knockout score rows, then updates users.total_points and leaderboard_entries from canonical Group Phase ladder + recomputed knockout + standard side-pick totals."
     );
   }
 

@@ -24,6 +24,7 @@ export async function completeProfileSetupAction(input: {
   preferredLanguage?: string;
   homeTeamId?: string | null;
   visualThemeId?: string | null;
+  followedTeamIds?: string[];
 }): Promise<CompleteProfileSetupResult> {
   const supabase = await createServerSupabaseClient();
   const {
@@ -39,6 +40,8 @@ export async function completeProfileSetupAction(input: {
   const preferredLanguage = normalizeLanguage(input.preferredLanguage);
   const normalizedHomeTeamId = input.homeTeamId?.trim() || null;
   const normalizedVisualThemeId = input.visualThemeId?.trim().toLowerCase() || null;
+  const normalizedFollowedTeamIds = normalizeFollowedTeamIds(input.followedTeamIds);
+  const shouldPersistFollowedTeams = Array.isArray(input.followedTeamIds);
 
   if (!DISPLAY_NAME_PATTERN.test(normalizedDisplayName)) {
     return {
@@ -55,24 +58,62 @@ export async function completeProfileSetupAction(input: {
     return { ok: false, message: "Choose a valid visual theme." };
   }
 
-  if (normalizedVisualThemeId) {
-    const { error: settingsError } = await supabase.from("user_settings").upsert(
-      {
-        user_id: user.id,
-        visual_theme_id: normalizedVisualThemeId
-      },
-      { onConflict: "user_id" }
-    );
+  let followedTeamsWarning: string | null = null;
+  if (normalizedVisualThemeId || shouldPersistFollowedTeams) {
+    const settingsPayload: {
+      user_id: string;
+      visual_theme_id?: string;
+      followed_team_ids?: string[];
+    } = {
+      user_id: user.id
+    };
+
+    if (normalizedVisualThemeId) {
+      settingsPayload.visual_theme_id = normalizedVisualThemeId;
+    }
+
+    if (shouldPersistFollowedTeams) {
+      settingsPayload.followed_team_ids = normalizedFollowedTeamIds;
+    }
+
+    const { error: settingsError } = await supabase.from("user_settings").upsert(settingsPayload, { onConflict: "user_id" });
 
     if (settingsError) {
-      if (isMissingUserSettingsTableError(settingsError.message) || isMissingVisualThemeIdColumnError(settingsError.message)) {
-        return {
-          ok: false,
-          message: "Visual theme selection is not available yet. Apply the visual theme migration first."
-        };
-      }
+      if (shouldPersistFollowedTeams && isMissingFollowedTeamIdsColumnError(settingsError.message)) {
+        followedTeamsWarning = " Followed teams can be added later from Profile.";
 
-      return { ok: false, message: settingsError.message };
+        if (normalizedVisualThemeId) {
+          const { error: visualThemeRetryError } = await supabase.from("user_settings").upsert(
+            {
+              user_id: user.id,
+              visual_theme_id: normalizedVisualThemeId
+            },
+            { onConflict: "user_id" }
+          );
+
+          if (visualThemeRetryError) {
+            if (isMissingUserSettingsTableError(visualThemeRetryError.message) || isMissingVisualThemeIdColumnError(visualThemeRetryError.message)) {
+              return {
+                ok: false,
+                message: "Visual theme selection is not available yet. Apply the visual theme migration first."
+              };
+            }
+
+            return { ok: false, message: visualThemeRetryError.message };
+          }
+        }
+      } else if (isMissingUserSettingsTableError(settingsError.message) || isMissingVisualThemeIdColumnError(settingsError.message)) {
+        if (normalizedVisualThemeId) {
+          return {
+            ok: false,
+            message: "Visual theme selection is not available yet. Apply the visual theme migration first."
+          };
+        }
+
+        followedTeamsWarning = " Followed teams can be added later from Profile.";
+      } else {
+        return { ok: false, message: settingsError.message };
+      }
     }
   }
 
@@ -113,7 +154,7 @@ export async function completeProfileSetupAction(input: {
 
   return {
     ok: true,
-    message: "Profile setup complete."
+    message: `Profile setup complete.${followedTeamsWarning ?? ""}`
   };
 }
 
@@ -140,10 +181,30 @@ function normalizeUsernameSegment(value: string) {
     .toLowerCase();
 }
 
+function normalizeFollowedTeamIds(teamIds: string[] | null | undefined) {
+  const validTeamIds = new Set(teams.map((team) => team.id));
+  const normalized: string[] = [];
+
+  for (const value of teamIds ?? []) {
+    const normalizedTeamId = value?.trim().toLowerCase();
+    if (!normalizedTeamId || !validTeamIds.has(normalizedTeamId) || normalized.includes(normalizedTeamId)) {
+      continue;
+    }
+
+    normalized.push(normalizedTeamId);
+  }
+
+  return normalized;
+}
+
 function isMissingUserSettingsTableError(message?: string) {
   return isMissingRelationError(message, "user_settings");
 }
 
 function isMissingVisualThemeIdColumnError(message?: string) {
   return isMissingColumnError(message, "user_settings", "visual_theme_id");
+}
+
+function isMissingFollowedTeamIdsColumnError(message?: string) {
+  return isMissingColumnError(message, "user_settings", "followed_team_ids");
 }
