@@ -168,10 +168,16 @@ export function BracketBuilderClient({
   const searchParams = useSearchParams();
   const { activeLanguage } = useAppLanguage();
   const language = activeLanguage ?? initialLanguage;
-  const groupSwipeTouchRef = useRef<{ startX: number | null; startY: number | null; enabled: boolean }>({
+  const groupSwipeTouchRef = useRef<{
+    startX: number | null;
+    startY: number | null;
+    enabled: boolean;
+    isSwiping: boolean;
+  }>({
     startX: null,
     startY: null,
-    enabled: true
+    enabled: true,
+    isSwiping: false
   });
   const customDragHoldTimeoutRef = useRef<number | null>(null);
   const customDragStateRef = useRef<{
@@ -187,6 +193,7 @@ export function BracketBuilderClient({
     width: number;
     height: number;
     isDragging: boolean;
+    isGroupSwipe: boolean;
     targetId: string;
   } | null>(null);
   const hasMountedRef = useRef(false);
@@ -257,6 +264,8 @@ export function BracketBuilderClient({
   const [draggedThirdPlaceTeamId, setDraggedThirdPlaceTeamId] = useState<string | null>(null);
   const [dragOverThirdPlaceTeamId, setDragOverThirdPlaceTeamId] = useState<string | null>(null);
   const [customDragGhost, setCustomDragGhost] = useState<CustomDragGhost | null>(null);
+  const [groupSwipeOffsetX, setGroupSwipeOffsetX] = useState(0);
+  const [isGroupSurfaceSwiping, setIsGroupSurfaceSwiping] = useState(false);
   const [supportsNativeRowDrag, setSupportsNativeRowDrag] = useState(false);
   const [isThirdPlaceListOpen, setIsThirdPlaceListOpen] = useState(false);
   const [groupProjectionSources, setGroupProjectionSources] = useState<Record<string, UserGroupProjectionSource>>(initialGroupProjectionSources);
@@ -543,6 +552,8 @@ export function BracketBuilderClient({
     setDraggedThirdPlaceTeamId(null);
     setDragOverThirdPlaceTeamId(null);
     setCustomDragGhost(null);
+    setIsGroupSurfaceSwiping(false);
+    setGroupSwipeOffsetX(0);
   }
 
   function activateCustomTouchDrag(state: NonNullable<typeof customDragStateRef.current>) {
@@ -597,6 +608,7 @@ export function BracketBuilderClient({
       width: rect.width,
       height: rect.height,
       isDragging: false,
+      isGroupSwipe: false,
       targetId: teamId
     };
 
@@ -616,10 +628,32 @@ export function BracketBuilderClient({
       return;
     }
 
+    if (state.isGroupSwipe) {
+      event.preventDefault();
+      state.currentX = event.clientX;
+      state.currentY = event.clientY;
+      updateGroupSurfaceSwipe(event.clientX - state.startX);
+      return;
+    }
+
     if (!state.isDragging) {
       const deltaX = Math.abs(event.clientX - state.startX);
       const deltaY = Math.abs(event.clientY - state.startY);
-      if (deltaX > CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX || deltaY > CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX) {
+      if (state.kind === "group" && deltaX > 10 && deltaX > deltaY * 1.15) {
+        if (customDragHoldTimeoutRef.current !== null) {
+          window.clearTimeout(customDragHoldTimeoutRef.current);
+          customDragHoldTimeoutRef.current = null;
+        }
+
+        state.isGroupSwipe = true;
+        state.currentX = event.clientX;
+        state.currentY = event.clientY;
+        event.preventDefault();
+        updateGroupSurfaceSwipe(event.clientX - state.startX);
+        return;
+      }
+
+      if (deltaY > CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX || (deltaX > CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX && deltaY >= deltaX)) {
         if (customDragHoldTimeoutRef.current !== null) {
           window.clearTimeout(customDragHoldTimeoutRef.current);
           customDragHoldTimeoutRef.current = null;
@@ -667,6 +701,12 @@ export function BracketBuilderClient({
   function handleCustomTouchDragEnd(event: React.PointerEvent<HTMLDivElement>) {
     const state = customDragStateRef.current;
     if (!state || state.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (state.isGroupSwipe) {
+      finishGroupSurfaceSwipe(event.clientX - state.startX);
+      clearCustomTouchDragState();
       return;
     }
 
@@ -828,19 +868,45 @@ export function BracketBuilderClient({
     setActiveGroupIndex(boundedIndex);
   }
 
+  function getBoundedGroupSwipeOffset(deltaX: number) {
+    const isPullingPastStart = deltaX > 0 && activeGroupIndex === 0;
+    const isPullingPastEnd = deltaX < 0 && activeGroupIndex === sortedGroupNames.length - 1;
+    const resistedDelta = isPullingPastStart || isPullingPastEnd ? deltaX * 0.28 : deltaX;
+    return Math.max(-118, Math.min(118, resistedDelta));
+  }
+
+  function updateGroupSurfaceSwipe(deltaX: number) {
+    setIsGroupSurfaceSwiping(true);
+    setGroupSwipeOffsetX(getBoundedGroupSwipeOffset(deltaX));
+  }
+
+  function finishGroupSurfaceSwipe(deltaX: number) {
+    setIsGroupSurfaceSwiping(false);
+
+    if (Math.abs(deltaX) >= SWIPE_THRESHOLD_PX) {
+      if (deltaX < 0) {
+        goToGroup(activeGroupIndex + 1);
+      } else {
+        goToGroup(activeGroupIndex - 1);
+      }
+    }
+
+    setGroupSwipeOffsetX(0);
+  }
+
   function handleGroupSwipeTouchStart(event: TouchEvent<HTMLElement>) {
     const touch = event.changedTouches[0];
     const target = event.target as HTMLElement | null;
     groupSwipeTouchRef.current = {
       startX: touch?.clientX ?? null,
       startY: touch?.clientY ?? null,
-      enabled: !Boolean(target?.closest("[data-disable-group-swipe='true']"))
+      enabled: !Boolean(target?.closest("[data-disable-group-swipe='true']")),
+      isSwiping: false
     };
   }
 
-  function handleGroupSwipeTouchEnd(event: TouchEvent<HTMLElement>) {
+  function handleGroupSwipeTouchMove(event: TouchEvent<HTMLElement>) {
     const { startX, startY, enabled } = groupSwipeTouchRef.current;
-    groupSwipeTouchRef.current = { startX: null, startY: null, enabled: true };
     if (!enabled || customDragStateRef.current?.isDragging || startX === null || startY === null) {
       return;
     }
@@ -852,16 +918,41 @@ export function BracketBuilderClient({
 
     const deltaX = touch.clientX - startX;
     const deltaY = touch.clientY - startY;
-    if (Math.abs(deltaX) < SWIPE_THRESHOLD_PX || Math.abs(deltaX) <= Math.abs(deltaY)) {
+    if (!groupSwipeTouchRef.current.isSwiping) {
+      if (Math.abs(deltaX) < 10 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.15) {
+        return;
+      }
+
+      groupSwipeTouchRef.current.isSwiping = true;
+    }
+
+    event.preventDefault();
+    updateGroupSurfaceSwipe(deltaX);
+  }
+
+  function handleGroupSwipeTouchEnd(event: TouchEvent<HTMLElement>) {
+    const { startX, startY, enabled, isSwiping } = groupSwipeTouchRef.current;
+    groupSwipeTouchRef.current = { startX: null, startY: null, enabled: true, isSwiping: false };
+    if (!enabled || customDragStateRef.current?.isDragging || startX === null || startY === null) {
+      setIsGroupSurfaceSwiping(false);
+      setGroupSwipeOffsetX(0);
       return;
     }
 
-    if (deltaX < 0) {
-      goToGroup(activeGroupIndex + 1);
+    const touch = event.changedTouches[0];
+    if (!touch) {
       return;
     }
 
-    goToGroup(activeGroupIndex - 1);
+    const deltaX = touch.clientX - startX;
+    const deltaY = touch.clientY - startY;
+    if (!isSwiping && (Math.abs(deltaX) < SWIPE_THRESHOLD_PX || Math.abs(deltaX) <= Math.abs(deltaY))) {
+      setIsGroupSurfaceSwiping(false);
+      setGroupSwipeOffsetX(0);
+      return;
+    }
+
+    finishGroupSurfaceSwipe(deltaX);
   }
 
   function handleGoToFullScoring() {
@@ -1059,8 +1150,12 @@ export function BracketBuilderClient({
       ) : null}
 
       <section
-        className="space-y-2.5 px-0 py-0"
+        className={`space-y-2.5 px-0 py-0 ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
+        style={{
+          transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
+        }}
         onTouchStart={handleGroupSwipeTouchStart}
+        onTouchMove={handleGroupSwipeTouchMove}
         onTouchEnd={handleGroupSwipeTouchEnd}
       >
         <div className="space-y-2">

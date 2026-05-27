@@ -52,7 +52,7 @@ insert into public.teams (id, name, short_name, group_name, fifa_rank, flag_emoj
   ('cod', 'Congo DR', 'COD', 'K', 46, '🇨🇩'),
   ('uzb', 'Uzbekistan', 'UZB', 'K', 50, '🇺🇿'),
   ('col', 'Colombia', 'COL', 'K', 13, '🇨🇴'),
-  ('eng', 'England', 'ENG', 'L', 4, '🏴'),
+  ('eng', 'England', 'ENG', 'L', 4, U&'\+01F3F4\+0E0067\+0E0062\+0E0065\+0E006E\+0E0067\+0E007F'),
   ('cro', 'Croatia', 'CRO', 'L', 11, '🇭🇷'),
   ('gha', 'Ghana', 'GHA', 'L', 74, '🇬🇭'),
   ('pan', 'Panama', 'PAN', 'L', 33, '🇵🇦')

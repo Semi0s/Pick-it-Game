@@ -1,5 +1,5 @@
 import { escapeHtml } from "@/lib/email-sender";
-import { defaultLanguage, normalizeLanguage } from "@/lib/i18n";
+import { defaultLanguage, normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { getAccessLevelDisplayLabel, type AccessLevel } from "@/lib/tier-access";
 
 export function buildGroupInviteEmailCopy(input: {
@@ -13,7 +13,7 @@ export function buildGroupInviteEmailCopy(input: {
   claimUrl: string;
 }) {
   const language = getEmailCopyLanguage(input.language);
-  const copy = language === "es" ? GROUP_INVITE_COPY.es : GROUP_INVITE_COPY.en;
+  const copy = GROUP_INVITE_COPY[language] ?? GROUP_INVITE_COPY.en;
   const inviterLabel = input.inviterLabel?.trim() || copy.defaultInviterLabel;
   const introLine = input.suggestedDisplayName?.trim()
     ? copy.introWithSuggestedName(inviterLabel, input.suggestedDisplayName.trim(), input.invitedEmail, input.groupName)
@@ -184,10 +184,10 @@ type GroupInviteCopy = {
   accountHelp: (existingAccount: boolean, invitedEmail: string) => string;
 };
 
-type EmailCopyLanguage = "en" | "es";
+type EmailCopyLanguage = SupportedLanguage;
 
 function getEmailCopyLanguage(language?: string | null): EmailCopyLanguage {
-  return normalizeLanguage(language) === "es" ? "es" : "en";
+  return normalizeLanguage(language);
 }
 
 const GROUP_INVITE_COPY: Record<EmailCopyLanguage, GroupInviteCopy> = {
@@ -236,6 +236,75 @@ const GROUP_INVITE_COPY: Record<EmailCopyLanguage, GroupInviteCopy> = {
       existingAccount
         ? `Si ya tienes una cuenta, inicia sesión con ${invitedEmail} y usa este enlace de invitación para unirte.`
         : `Crea tu cuenta con ${invitedEmail}, confirma tu correo y luego inicia sesión para terminar de unirte.`
+  },
+  fr: {
+    subject: (inviterLabel, groupName) => `${inviterLabel} vous invite à rejoindre ${groupName}`,
+    heading: (inviterLabel, groupName) => `${inviterLabel} vous invite à rejoindre ${groupName}`,
+    defaultInviterLabel: "Un responsable de groupe",
+    detailsLabel: "Détails de l'invitation",
+    groupLabel: "Groupe",
+    invitedByLabel: "Invité par",
+    intro: (inviterLabel, invitedEmail, groupName) => `${inviterLabel} a invité ${invitedEmail} à rejoindre ${groupName}.`,
+    introWithSuggestedName: (inviterLabel, suggestedName, invitedEmail, groupName) =>
+      `${inviterLabel} a invité ${suggestedName} (${invitedEmail}) à rejoindre ${groupName}.`,
+    actionIntro: (existingAccount, invitedEmail) =>
+      existingAccount
+        ? `Vous êtes invité à rejoindre ce groupe. Connectez-vous avec ${invitedEmail} pour continuer.`
+        : `Vous êtes invité à rejoindre ce groupe. Créez votre compte avec ${invitedEmail} pour continuer.`,
+    customMessageLabel: "Message de votre responsable de groupe",
+    aboutPickIt: "PICK-IT! est un jeu gratuit de pronostics pour la Coupe du monde où amis et groupes font leurs choix, comparent leurs scores et grimpent au classement ensemble.",
+    freeToPlay: "Gratuit. Aucun téléchargement requis.",
+    actionLabel: "Rejoindre PICK-IT!",
+    accountHelp: (existingAccount, invitedEmail) =>
+      existingAccount
+        ? `Si vous avez déjà un compte, connectez-vous avec ${invitedEmail} et utilisez ce lien d'invitation pour rejoindre le groupe.`
+        : `Créez votre compte avec ${invitedEmail}, confirmez votre e-mail, puis connectez-vous pour finaliser votre arrivée.`
+  },
+  pt: {
+    subject: (inviterLabel, groupName) => `${inviterLabel} convidou-o para entrar em ${groupName}`,
+    heading: (inviterLabel, groupName) => `${inviterLabel} convidou-o para entrar em ${groupName}`,
+    defaultInviterLabel: "Um gestor do grupo",
+    detailsLabel: "Detalhes do convite",
+    groupLabel: "Grupo",
+    invitedByLabel: "Convidado por",
+    intro: (inviterLabel, invitedEmail, groupName) => `${inviterLabel} convidou ${invitedEmail} para entrar em ${groupName}.`,
+    introWithSuggestedName: (inviterLabel, suggestedName, invitedEmail, groupName) =>
+      `${inviterLabel} convidou ${suggestedName} (${invitedEmail}) para entrar em ${groupName}.`,
+    actionIntro: (existingAccount, invitedEmail) =>
+      existingAccount
+        ? `Foi convidado para entrar neste grupo. Entre com ${invitedEmail} para continuar.`
+        : `Foi convidado para entrar neste grupo. Crie a sua conta com ${invitedEmail} para continuar.`,
+    customMessageLabel: "Mensagem do gestor do grupo",
+    aboutPickIt: "PICK-IT! é um jogo gratuito de previsões da Copa do Mundo onde amigos e grupos fazem picks, comparam pontuações e sobem juntos na classificação.",
+    freeToPlay: "Grátis para jogar. Não requer download.",
+    actionLabel: "Entrar no PICK-IT!",
+    accountHelp: (existingAccount, invitedEmail) =>
+      existingAccount
+        ? `Se já tem uma conta, entre com ${invitedEmail} e use este link de convite para entrar.`
+        : `Crie a sua conta com ${invitedEmail}, confirme o email e depois entre para concluir a entrada.`
+  },
+  de: {
+    subject: (inviterLabel, groupName) => `${inviterLabel} hat dich eingeladen, ${groupName} beizutreten`,
+    heading: (inviterLabel, groupName) => `${inviterLabel} hat dich eingeladen, ${groupName} beizutreten`,
+    defaultInviterLabel: "Ein Gruppenmanager",
+    detailsLabel: "Einladungsdetails",
+    groupLabel: "Gruppe",
+    invitedByLabel: "Eingeladen von",
+    intro: (inviterLabel, invitedEmail, groupName) => `${inviterLabel} hat ${invitedEmail} eingeladen, ${groupName} beizutreten.`,
+    introWithSuggestedName: (inviterLabel, suggestedName, invitedEmail, groupName) =>
+      `${inviterLabel} hat ${suggestedName} (${invitedEmail}) eingeladen, ${groupName} beizutreten.`,
+    actionIntro: (existingAccount, invitedEmail) =>
+      existingAccount
+        ? `Du wurdest eingeladen, dieser Gruppe beizutreten. Melde dich mit ${invitedEmail} an, um fortzufahren.`
+        : `Du wurdest eingeladen, dieser Gruppe beizutreten. Erstelle dein Konto mit ${invitedEmail}, um fortzufahren.`,
+    customMessageLabel: "Nachricht deines Gruppenmanagers",
+    aboutPickIt: "PICK-IT! ist ein kostenloses WM-Tippspiel, bei dem Freunde und Gruppen Tipps abgeben, Punkte vergleichen und gemeinsam in der Rangliste aufsteigen.",
+    freeToPlay: "Kostenlos spielbar. Kein Download erforderlich.",
+    actionLabel: "PICK-IT! beitreten",
+    accountHelp: (existingAccount, invitedEmail) =>
+      existingAccount
+        ? `Wenn du bereits ein Konto hast, melde dich mit ${invitedEmail} an und nutze diesen Einladungslink.`
+        : `Erstelle dein Konto mit ${invitedEmail}, bestätige deine E-Mail und melde dich dann an, um den Beitritt abzuschließen.`
   }
 };
 

@@ -634,7 +634,15 @@ export function DashboardOverview({
       </section>
 
       <section className="ui-card p-4">
-        <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(displayLanguage, "dashboard.howToPlay")}</p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(displayLanguage, "dashboard.howToPlay")}</p>
+          <InlineDisclosureButton
+            isOpen={isHowToPlayOpen}
+            onClick={() => setIsHowToPlayOpen((current) => !current)}
+            label={isHowToPlayOpen ? t(displayLanguage, "common.less") : t(displayLanguage, "common.more")}
+            variant="subtle"
+          />
+        </div>
         {isHowToPlayOpen ? (
           <div className="mt-3 space-y-4 text-sm leading-6 text-gray-600">
             <div>
@@ -683,14 +691,6 @@ export function DashboardOverview({
             </div>
           </div>
         ) : null}
-        <div className="mt-3 flex justify-end">
-          <InlineDisclosureButton
-            isOpen={isHowToPlayOpen}
-            onClick={() => setIsHowToPlayOpen((current) => !current)}
-            label={isHowToPlayOpen ? t(displayLanguage, "common.less") : t(displayLanguage, "common.more")}
-            variant="subtle"
-          />
-        </div>
       </section>
     </div>
   );

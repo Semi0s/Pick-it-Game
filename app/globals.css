@@ -121,12 +121,42 @@ select {
     font-stretch: condensed;
   }
 
+  .triptych-regular-value {
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-stretch: normal;
+  }
+
+  .knockout-landing-pop {
+    animation: knockout-landing-pop 1200ms ease-out 1;
+    box-shadow: inset 0 0 0 2px rgba(var(--app-accent-rgb), 0.28);
+  }
+
   .ui-cockpit-button {
     @apply inline-flex min-h-10 items-center rounded-[0.95rem] px-3 py-1.5 text-[14px] font-bold leading-none;
   }
 
   .ui-cockpit-trigger {
     @apply flex min-h-10 w-full items-center justify-between rounded-[0.95rem] border border-gray-300 bg-white px-3 py-1.5 text-left;
+  }
+}
+
+@keyframes knockout-landing-pop {
+  0% {
+    box-shadow: inset 0 0 0 0 rgba(var(--app-accent-rgb), 0);
+  }
+
+  28% {
+    box-shadow: inset 0 0 0 2px rgba(var(--app-accent-rgb), 0.32);
+  }
+
+  100% {
+    box-shadow: inset 0 0 0 2px rgba(var(--app-accent-rgb), 0.28);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knockout-landing-pop {
+    animation: none;
   }
 }
 

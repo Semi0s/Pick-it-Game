@@ -2174,16 +2174,16 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                       void navigator.clipboard
                                         .writeText(inviteCode.code)
                                         .then(() => {
-                                          setMessage({ tone: "success", text: "Invite code copied." });
+                                          setMessage({ tone: "success", text: tg("inviteCodeCopied") });
                                         })
                                         .catch((clipboardError) => {
                                           console.warn("Could not copy invite code.", clipboardError);
-                                          setMessage({ tone: "tip", text: "Copy failed. Copy the code from this card manually." });
+                                          setMessage({ tone: "tip", text: tg("inviteCodeCopyFailed") });
                                         });
                                     }}
                                     className="text-[10px] font-bold uppercase tracking-wide text-gray-600 transition hover:text-accent-dark"
                                   >
-                                    Copy code
+                                    {tg("copyCode")}
                                   </button>
                                 </div>
                                 <div className="grid gap-2 sm:grid-cols-3">
@@ -2193,22 +2193,22 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                       void navigator.clipboard
                                         .writeText(inviteCode.shareMessage)
                                         .then(() => {
-                                          setMessage({ tone: "success", text: "Invite message copied." });
+                                          setMessage({ tone: "success", text: tg("inviteMessageCopied") });
                                         })
                                         .catch((clipboardError) => {
                                           console.warn("Could not copy invite message.", clipboardError);
-                                          setMessage({ tone: "tip", text: "Copy failed. Share the invite code or links from this card manually." });
+                                          setMessage({ tone: "tip", text: tg("inviteMessageCopyFailed") });
                                         });
                                     }}
                                     fullWidth
                                   >
-                                    Copy invite
+                                    {tg("copyInvite")}
                                   </ActionButton>
                                   <Link href={inviteCode.whatsAppUrl} target="_blank" rel="noreferrer" className="inline-flex">
-                                    <ActionButton fullWidth>Send via WhatsApp</ActionButton>
+                                    <ActionButton fullWidth>{tg("sendViaWhatsApp")}</ActionButton>
                                   </Link>
                                   <a href={inviteCode.emailUrl} className="inline-flex">
-                                    <ActionButton fullWidth>Send via Email</ActionButton>
+                                    <ActionButton fullWidth>{tg("sendViaEmail")}</ActionButton>
                                   </a>
                                 </div>
                                 <div className="grid gap-2 sm:grid-cols-3">

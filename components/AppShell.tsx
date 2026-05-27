@@ -547,6 +547,8 @@ export function AppShell({ children }: AppShellProps) {
           <Link href="/dashboard" className="shrink-0" aria-label={t(displayLanguage, "dashboard.homeAria")}>
             <PickItLogo
               alt="PICK-IT! World Cup 2026"
+              inlineThemed
+              src="/images/pickit-header-logo-v4.svg"
               sizes="(max-width: 430px) 119px, (max-width: 640px) 148px, 187px"
               priority
               className="w-[clamp(7.425rem,30.6vw,11.7rem)] min-w-[7.425rem] max-w-[11.7rem] shrink-0"

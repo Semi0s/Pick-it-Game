@@ -285,6 +285,7 @@ type AccessCodeRecord = {
   used_count: number;
   expires_at?: string | null;
   group_id?: string | null;
+  default_language?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1445,7 +1446,7 @@ export async function createManagedGroupInviteCodeAction(input: {
         default_language: normalizeLanguage(currentUser.preferredLanguage),
         created_by: currentUser.userId
       })
-      .select("id,code,active,max_uses,used_count,expires_at,group_id,created_at,updated_at")
+      .select("id,code,active,max_uses,used_count,expires_at,group_id,default_language,created_at,updated_at")
       .single();
 
     if (!error && data) {
@@ -4454,7 +4455,7 @@ async function fetchManagedGroupDetailRows(
     manageableGroupIds.length > 0
       ? adminSupabase
           .from("access_codes")
-          .select("id,code,active,max_uses,used_count,expires_at,group_id,created_at,updated_at")
+          .select("id,code,active,max_uses,used_count,expires_at,group_id,default_language,created_at,updated_at")
           .in("group_id", manageableGroupIds)
           .order("updated_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
@@ -4852,10 +4853,13 @@ function getManagedGroupInviteCodeStatusLabel(status: ManagedGroupDetails["invit
 }
 
 function mapManagedGroupInviteCode(row: AccessCodeRecord, groupName: string): ManagedGroupInviteCode {
+  const inviteLanguage = normalizeLanguage(row.default_language ?? null);
   const shareMessage = buildManagedGroupInviteCodeMessage({
     code: row.code,
-    groupName
+    groupName,
+    language: inviteLanguage
   });
+  const shareSubject = buildManagedGroupInviteCodeEmailSubject(groupName, inviteLanguage);
 
   return {
     id: row.id,
@@ -4866,7 +4870,7 @@ function mapManagedGroupInviteCode(row: AccessCodeRecord, groupName: string): Ma
     expiresAt: row.expires_at ?? null,
     shareMessage,
     whatsAppUrl: buildManagedGroupInviteCodeWhatsAppUrl(shareMessage),
-    emailUrl: buildManagedGroupInviteCodeEmailUrl(groupName, shareMessage)
+    emailUrl: buildManagedGroupInviteCodeEmailUrl(shareSubject, shareMessage)
   };
 }
 
@@ -4935,30 +4939,73 @@ async function deactivateActiveManagedGroupInviteCodes(
   }
 }
 
-function buildManagedGroupInviteCodeMessage(input: { groupName: string; code: string }) {
+function buildManagedGroupInviteCodeMessage(input: { groupName: string; code: string; language?: string | null }) {
   const appUrl = `${getPublicSiteUrl()}/login?mode=signup`;
+  const copy = MANAGED_GROUP_INVITE_CODE_COPY[normalizeLanguage(input.language)] ?? MANAGED_GROUP_INVITE_CODE_COPY.en;
 
   return [
-    `Join my PICK-IT! group: ${input.groupName}`,
+    copy.headline(input.groupName),
     "",
-    "Use invite code:",
+    copy.useCode,
     input.code,
     "",
-    "Sign up or log in here:",
+    copy.signUpHere,
     appUrl,
     "",
-    "Then enter the code to join the group."
+    copy.enterCode
   ].join("\n");
+}
+
+function buildManagedGroupInviteCodeEmailSubject(groupName: string, language?: string | null) {
+  const copy = MANAGED_GROUP_INVITE_CODE_COPY[normalizeLanguage(language)] ?? MANAGED_GROUP_INVITE_CODE_COPY.en;
+  return copy.subject(groupName);
 }
 
 function buildManagedGroupInviteCodeWhatsAppUrl(message: string) {
   return `https://wa.me/?text=${encodeURIComponent(message)}`;
 }
 
-function buildManagedGroupInviteCodeEmailUrl(groupName: string, message: string) {
-  const subject = `Join my PICK-IT! group: ${groupName}`;
+function buildManagedGroupInviteCodeEmailUrl(subject: string, message: string) {
   return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`;
 }
+
+const MANAGED_GROUP_INVITE_CODE_COPY = {
+  en: {
+    subject: (groupName: string) => `Join my PICK-IT! group: ${groupName}`,
+    headline: (groupName: string) => `Join my PICK-IT! group: ${groupName}`,
+    useCode: "Use invite code:",
+    signUpHere: "Sign up or log in here:",
+    enterCode: "Then enter the code to join the group."
+  },
+  es: {
+    subject: (groupName: string) => `Únete a mi grupo de PICK-IT!: ${groupName}`,
+    headline: (groupName: string) => `Únete a mi grupo de PICK-IT!: ${groupName}`,
+    useCode: "Usa este código de invitación:",
+    signUpHere: "Crea una cuenta o inicia sesión aquí:",
+    enterCode: "Luego ingresa el código para unirte al grupo."
+  },
+  fr: {
+    subject: (groupName: string) => `Rejoins mon groupe PICK-IT! : ${groupName}`,
+    headline: (groupName: string) => `Rejoins mon groupe PICK-IT! : ${groupName}`,
+    useCode: "Utilise ce code d'invitation :",
+    signUpHere: "Crée un compte ou connecte-toi ici :",
+    enterCode: "Puis saisis le code pour rejoindre le groupe."
+  },
+  pt: {
+    subject: (groupName: string) => `Entra no meu grupo PICK-IT!: ${groupName}`,
+    headline: (groupName: string) => `Entra no meu grupo PICK-IT!: ${groupName}`,
+    useCode: "Use este código de convite:",
+    signUpHere: "Crie uma conta ou entre aqui:",
+    enterCode: "Depois introduza o código para entrar no grupo."
+  },
+  de: {
+    subject: (groupName: string) => `Tritt meiner PICK-IT!-Gruppe bei: ${groupName}`,
+    headline: (groupName: string) => `Tritt meiner PICK-IT!-Gruppe bei: ${groupName}`,
+    useCode: "Nutze diesen Einladungscode:",
+    signUpHere: "Erstelle ein Konto oder melde dich hier an:",
+    enterCode: "Gib danach den Code ein, um der Gruppe beizutreten."
+  }
+} as const;
 
 async function fetchVisibleGroups(
   adminSupabase: ReturnType<typeof createAdminClient>,
