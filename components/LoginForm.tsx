@@ -18,6 +18,7 @@ export function LoginForm({
   callbackError,
   nextPath,
   inviteToken,
+  initialAccessCode,
   promoManagerCode
 }: {
   confirmed?: boolean;
@@ -28,6 +29,7 @@ export function LoginForm({
   callbackError?: string;
   nextPath?: string;
   inviteToken?: string | null;
+  initialAccessCode?: string | null;
   promoManagerCode?: string | null;
 }) {
   const router = useRouter();
@@ -35,10 +37,11 @@ export function LoginForm({
   const searchParams = useSearchParams();
   const uiLanguage = normalizeLanguage(language);
   const inviteFlow = flow === "invite";
+  const normalizedInitialAccessCode = promoManagerCode ? "" : initialAccessCode?.trim() ?? "";
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [accessCode, setAccessCode] = useState(promoManagerCode ? "" : "");
+  const [accessCode, setAccessCode] = useState(normalizedInitialAccessCode);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -112,6 +115,17 @@ export function LoginForm({
     }
   }, [existingAccountInviteFlow]);
 
+  useEffect(() => {
+    if (promoManagerCode) {
+      setAccessCode("");
+      return;
+    }
+
+    if (normalizedInitialAccessCode) {
+      setAccessCode((current) => current || normalizedInitialAccessCode);
+    }
+  }, [normalizedInitialAccessCode, promoManagerCode]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -143,9 +157,14 @@ export function LoginForm({
     setIsSubmitting(false);
 
     if (!result.ok) {
-      if (mode === "signup" && accessCode.trim() && result.message.toLowerCase().includes("already has an account")) {
+      const normalizedMessage = result.message.toLowerCase();
+      if (mode === "signup" && accessCode.trim() && normalizedMessage.includes("already has an account")) {
         setMode("login");
-        setNotice(t(uiLanguage, "auth.accountExistsSignInToJoin"));
+        setNotice(
+          normalizedMessage.includes("already in this group")
+            ? t(uiLanguage, "auth.accountExistsAlreadyInGroup")
+            : t(uiLanguage, "auth.accountExistsSignInToJoin")
+        );
         return;
       }
 
@@ -180,6 +199,9 @@ export function LoginForm({
     const params = new URLSearchParams(searchParams.toString());
     params.set("lang", normalizedLanguage);
     params.set("mode", mode);
+    if (!promoManagerCode && accessCode.trim()) {
+      params.set("accessCode", accessCode.trim());
+    }
     router.replace(`${pathname}?${params.toString()}`);
     router.refresh();
   }
