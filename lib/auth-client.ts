@@ -15,7 +15,7 @@ import {
 } from "@/lib/i18n";
 import { teams } from "@/lib/mock-data";
 import { getPublicWebPushVapidKey } from "@/lib/push-config";
-import { normalizeCommercialTier, resolveAccessLevel } from "@/lib/tier-access";
+import { compareAccessLevels, normalizeCommercialTier, resolveAccessLevel } from "@/lib/tier-access";
 import {
   isMissingColumnError,
   isMissingAnyRelationError,
@@ -1250,6 +1250,42 @@ export async function updateCurrentUserDisplayName(displayName: string): Promise
     return { ok: false, message: "You must be signed in to update your display name." };
   }
 
+  const [profileResult, managerLimitsResult] = await Promise.all([
+    fetchCurrentUserProfileRow(supabase, user.id),
+    supabase
+      .from("manager_limits")
+      .select("max_groups,max_members_per_group")
+      .eq("user_id", user.id)
+      .maybeSingle()
+  ]);
+
+  if (profileResult.error || !profileResult.data) {
+    return { ok: false, message: "Could not verify your account level." };
+  }
+
+  if (
+    managerLimitsResult.error &&
+    !isMissingRelationError(managerLimitsResult.error.message, "manager_limits")
+  ) {
+    return { ok: false, message: "Could not verify your manager access." };
+  }
+
+  const managerLimits = (managerLimitsResult.data as ManagerLimitsRow | null) ?? null;
+  const accessLevel = resolveAccessLevel({
+    role: profileResult.data.role,
+    planTier: profileResult.data.plan_tier ?? null,
+    managerLimits: managerLimits
+      ? {
+          maxGroups: managerLimits.max_groups,
+          maxMembersPerGroup: managerLimits.max_members_per_group
+        }
+      : null
+  });
+
+  if (compareAccessLevels(accessLevel, "manager") < 0) {
+    return { ok: false, message: "Display name editing is available for managers and above." };
+  }
+
   const { error } = await supabase
     .from("users")
     .update({
@@ -1261,6 +1297,8 @@ export async function updateCurrentUserDisplayName(displayName: string): Promise
   if (error) {
     return { ok: false, message: error.message || "Could not update your display name." };
   }
+
+  notifyCurrentUserProfileChanged();
 
   return { ok: true, message: "Display name updated." };
 }

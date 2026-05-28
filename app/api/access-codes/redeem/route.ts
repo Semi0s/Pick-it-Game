@@ -43,7 +43,11 @@ export async function POST(request: Request) {
         message: error.message
       });
       const reason = getAccessCodeFailureReasonFromMessage(error.message) ?? "redemption_failed";
-      return NextResponse.json({ ok: false, message: getAccessCodeBlockedMessage(reason) }, { status: 400 });
+      const message =
+        reason === "redemption_failed"
+          ? "That code looked valid, but we could not finish joining the group."
+          : getAccessCodeBlockedMessage(reason);
+      return NextResponse.json({ ok: false, message }, { status: 400 });
     }
 
     const row = Array.isArray(data) ? (data[0] as RedeemAccessCodeRow | undefined) : (data as RedeemAccessCodeRow | null);

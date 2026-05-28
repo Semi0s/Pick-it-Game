@@ -15,6 +15,7 @@ import {
   registerCurrentBrowserPushNotifications,
   signOutCurrentUser,
   sendCurrentUserPasswordReset,
+  updateCurrentUserDisplayName,
   updateCurrentUserHomeTeam,
   updateCurrentUserFollowedTeams,
   updateCurrentUserPreferredLanguage,
@@ -29,7 +30,7 @@ import { getSpecialVisualThemeOption } from "@/lib/localized-card-themes";
 import type { LegalDocument } from "@/lib/legal";
 import { getLanguageLabel, getStrings, getSupportedLanguageOptions, t } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
-import { resolveTierAccess } from "@/lib/tier-access";
+import { compareAccessLevels, resolveTierAccess } from "@/lib/tier-access";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import type { UserTrophy } from "@/lib/types";
 import type { CurrentLegalDocument } from "@/lib/auth-client";
@@ -75,6 +76,7 @@ export function ProfileSummary({
     null
   );
   const [isSendingReset, setIsSendingReset] = useState(false);
+  const [isUpdatingDisplayName, setIsUpdatingDisplayName] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isUpdatingNotifications, setIsUpdatingNotifications] = useState(false);
   const [isRegisteringPush, setIsRegisteringPush] = useState(false);
@@ -233,6 +235,7 @@ export function ProfileSummary({
     managerLimits: user.managerLimits ?? null
   });
   const hasOrganizerResetAccess = currentAccessLevel !== "player" || managedGroupCount > 0;
+  const canEditDisplayName = compareAccessLevels(currentAccessLevel, "manager") >= 0;
   const canUseSelfServiceTestingReset = selfServiceTestResetEnabled && hasOrganizerResetAccess;
   const canSeeSelfServiceTestingResetHint =
     showSelfServiceTestResetHint && hasOrganizerResetAccess && !selfServiceTestResetEnabled;
@@ -303,6 +306,34 @@ export function ProfileSummary({
       await refresh();
     }
     setIsUpdatingFollowedTeams(false);
+  }
+
+  async function handleChangeDisplayName() {
+    if (!user || !canEditDisplayName || isUpdatingDisplayName) {
+      return;
+    }
+
+    const currentDisplayName = user.name;
+    const nextDisplayName = window.prompt(t(uiLanguage, "profile.changeDisplayNamePrompt"), currentDisplayName);
+    if (nextDisplayName === null) {
+      return;
+    }
+
+    if (nextDisplayName.trim() === currentDisplayName.trim()) {
+      return;
+    }
+
+    setIsUpdatingDisplayName(true);
+    setPasswordMessage(null);
+    const result = await updateCurrentUserDisplayName(nextDisplayName);
+    setPasswordMessage({
+      tone: result.ok ? "success" : "error",
+      text: result.ok ? t(uiLanguage, "profile.displayNameUpdated") : result.message ?? t(uiLanguage, "errors.generic")
+    });
+    if (result.ok) {
+      await refresh();
+    }
+    setIsUpdatingDisplayName(false);
   }
 
   return (
@@ -416,36 +447,80 @@ export function ProfileSummary({
               {passwordMessage.text}
             </p>
           ) : null}
-          <div className="grid gap-2 sm:grid-cols-2">
-            <button
-              type="button"
-              disabled={isSendingReset}
-              onClick={async () => {
-                setIsSendingReset(true);
-                setPasswordMessage(null);
-                const result = await sendCurrentUserPasswordReset(user.email);
-                setPasswordMessage({
-                  tone: result.ok ? "success" : "error",
-                  text: result.message ?? t(user.preferredLanguage, "errors.generic")
-                });
-                setIsSendingReset(false);
-              }}
-              className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
-            >
-              {isSendingReset ? t(uiLanguage, "profile.sending") : t(uiLanguage, "profile.resetMyPassword")}
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                await signOutCurrentUser();
-                router.replace("/login");
-                router.refresh();
-              }}
-              className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-3 text-sm font-bold transition"
-            >
-              {t(uiLanguage, "profile.signOut")}
-            </button>
-          </div>
+          {canEditDisplayName ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={isSendingReset}
+                  onClick={async () => {
+                    setIsSendingReset(true);
+                    setPasswordMessage(null);
+                    const result = await sendCurrentUserPasswordReset(user.email);
+                    setPasswordMessage({
+                      tone: result.ok ? "success" : "error",
+                      text: result.message ?? t(user.preferredLanguage, "errors.generic")
+                    });
+                    setIsSendingReset(false);
+                  }}
+                  className="inline-flex min-w-0 items-center justify-center whitespace-nowrap rounded-[0.9rem] border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-[0.03em] text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:px-4 sm:text-sm sm:normal-case sm:tracking-normal"
+                >
+                  {isSendingReset ? t(uiLanguage, "profile.sending") : t(uiLanguage, "profile.resetMyPassword")}
+                </button>
+                <button
+                  type="button"
+                  disabled={isUpdatingDisplayName}
+                  onClick={() => void handleChangeDisplayName()}
+                  aria-label={t(uiLanguage, "profile.changeDisplayName")}
+                  className="inline-flex min-w-0 items-center justify-center whitespace-nowrap rounded-[0.9rem] border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-[0.03em] text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:px-4 sm:text-sm sm:normal-case sm:tracking-normal"
+                >
+                  {isUpdatingDisplayName ? t(uiLanguage, "profile.updatingDisplayName") : t(uiLanguage, "profile.displayNameAction")}
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  await signOutCurrentUser();
+                  router.replace("/login");
+                  router.refresh();
+                }}
+                className="inline-flex w-full min-w-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-3 text-sm font-bold transition"
+              >
+                {t(uiLanguage, "profile.signOut")}
+              </button>
+            </div>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={isSendingReset}
+                onClick={async () => {
+                  setIsSendingReset(true);
+                  setPasswordMessage(null);
+                  const result = await sendCurrentUserPasswordReset(user.email);
+                  setPasswordMessage({
+                    tone: result.ok ? "success" : "error",
+                    text: result.message ?? t(user.preferredLanguage, "errors.generic")
+                  });
+                  setIsSendingReset(false);
+                }}
+                className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+              >
+                {isSendingReset ? t(uiLanguage, "profile.sending") : t(uiLanguage, "profile.resetMyPassword")}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await signOutCurrentUser();
+                  router.replace("/login");
+                  router.refresh();
+                }}
+                className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-3 text-sm font-bold transition"
+              >
+                {t(uiLanguage, "profile.signOut")}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
