@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChangeEvent, Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Info } from "lucide-react";
 import { fetchGroupInvitePreviewAction } from "@/app/group-invite-preview/actions";
@@ -56,7 +56,6 @@ import {
   HierarchyPanel,
   InlineDisclosureButton,
   InlineConfirmation,
-  InviteEntryForm,
   InlineTextConfirmation,
   ManagementBadge,
   ManagementCard,
@@ -64,7 +63,6 @@ import {
   ManagementEmptyState,
   ManagementGrid,
   ManagementIntro,
-  normalizeInviteTokenInput,
   useSessionDisclosureState
 } from "@/components/player-management/Shared";
 import {
@@ -75,6 +73,7 @@ import {
   normalizeGroupAccessMode
 } from "@/lib/group-management";
 import { redactEmailAddress } from "@/lib/redact-email";
+import { normalizeGroupJoinInput } from "@/lib/group-join-input";
 
 type MyGroupsClientProps = {
   inviteToken?: string;
@@ -124,6 +123,7 @@ type GroupAvatarDraft = {
 
 export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLanguage, forceCreateGroupOpen }: MyGroupsClientProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { activeLanguage } = useAppLanguage();
   const [summary, setSummary] = useState<FetchMyGroupsResult | null>(null);
   const [message, setMessage] = useState<ToastState>(null);
@@ -178,6 +178,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [deleteConfirmationValue, setDeleteConfirmationValue] = useState("");
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
+  const [inviteEntryStatus, setInviteEntryStatus] = useState<string | null>(null);
+  const [isJoiningFromInviteEntry, setIsJoiningFromInviteEntry] = useState(false);
   const [superAdminGroupQuery, setSuperAdminGroupQuery] = useState("");
   const [expandedGroupIds, setExpandedGroupIds] = useState<string[]>([]);
   const [groupDirectoryState, setGroupDirectoryState] = useState<
@@ -253,6 +255,14 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!inviteToken) {
+      return;
+    }
+
+    setInviteEntryValue((current) => current || inviteToken);
+  }, [inviteToken]);
 
   useEffect(() => {
     return () => {
@@ -567,7 +577,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     fetchGroupInvitePreviewAction(inviteToken)
       .then((result) => {
         if (!result.ok) {
-          setInvitePreviewMessage({ tone: "error", text: result.message });
+          setInvitePreview(null);
           return;
         }
 
@@ -1222,15 +1232,129 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     });
   }
 
-  function handleInviteEntrySubmit() {
-    const token = normalizeInviteTokenInput(inviteEntryValue);
-    if (!token) {
-      setInviteEntryError("Paste a valid invite link or token first.");
+  async function handleInviteEntrySubmit() {
+    if (isJoiningFromInviteEntry) {
+      return;
+    }
+
+    const normalizedInput = normalizeGroupJoinInput(inviteEntryValue);
+    if (!normalizedInput) {
+      const messageText = tg("enterValidInviteCodeOrLink");
+      setInviteEntryError(messageText);
+      setInviteEntryStatus(messageText);
       return;
     }
 
     setInviteEntryError(null);
-    router.push(`/my-groups?invite=${encodeURIComponent(token)}`);
+    setInviteEntryStatus(null);
+    setIsJoiningFromInviteEntry(true);
+
+    try {
+      const result =
+        normalizedInput.kind === "group_invite_token"
+          ? await joinWithGroupInviteTokenFirst(normalizedInput.value)
+          : await joinWithAccessCodeFirst(normalizedInput.value);
+
+      if (result.ok) {
+        const messageText = result.message || tg("joinedGroup");
+        setMessage({ tone: "success", text: messageText });
+        setInviteEntryStatus(messageText);
+        setInviteEntryValue("");
+        setInvitePreview(null);
+        await load();
+        router.refresh();
+        clearInviteQueryParam();
+      } else {
+        const messageText = result.message || tg("couldNotJoinGroup");
+        setInviteEntryError(messageText);
+        setInviteEntryStatus(messageText);
+      }
+    } catch (error) {
+      console.warn("Could not join group from invite entry.", error);
+      const messageText = tg("couldNotJoinGroup");
+      setInviteEntryError(messageText);
+      setInviteEntryStatus(messageText);
+    } finally {
+      setIsJoiningFromInviteEntry(false);
+    }
+  }
+
+  async function joinWithAccessCodeFirst(value: string): Promise<{ ok: boolean; message?: string }> {
+    const accessCodeResult = await redeemAccessCodeInput(value);
+    if (accessCodeResult.ok || !isAccessCodeNotFoundMessage(accessCodeResult.message)) {
+      return accessCodeResult;
+    }
+
+    const inviteResult = await acceptGroupInviteAction({ token: value });
+    if (inviteResult.ok || !isGroupInviteNotFoundMessage(inviteResult.message)) {
+      return inviteResult;
+    }
+
+    return { ok: false, message: tg("inviteCodeNotFound") };
+  }
+
+  async function joinWithGroupInviteTokenFirst(value: string): Promise<{ ok: boolean; message?: string }> {
+    const inviteResult = await acceptGroupInviteAction({ token: value });
+    if (inviteResult.ok || !isGroupInviteNotFoundMessage(inviteResult.message)) {
+      return inviteResult;
+    }
+
+    return redeemAccessCodeInput(value);
+  }
+
+  async function redeemAccessCodeInput(value: string): Promise<{ ok: boolean; message?: string }> {
+    try {
+      const response = await fetch("/api/access-codes/redeem", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ code: value })
+      });
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        message?: string;
+        alreadyMember?: boolean;
+      };
+
+      if (!response.ok || !payload.ok) {
+        return { ok: false, message: payload.message ?? tg("couldNotJoinGroup") };
+      }
+
+      if (payload.alreadyMember) {
+        return { ok: false, message: tg("alreadyInGroup") };
+      }
+
+      return { ok: true, message: payload.message ?? tg("joinedGroup") };
+    } catch (error) {
+      console.warn("Could not redeem invite access code.", error);
+      return { ok: false, message: tg("couldNotJoinGroup") };
+    }
+  }
+
+  function isAccessCodeNotFoundMessage(message?: string) {
+    const normalizedMessage = message?.toLowerCase() ?? "";
+    return (
+      normalizedMessage.includes("does not exist") ||
+      normalizedMessage.includes("not valid") ||
+      normalizedMessage.includes("not available")
+    );
+  }
+
+  function isGroupInviteNotFoundMessage(message?: string) {
+    const normalizedMessage = message?.toLowerCase() ?? "";
+    return normalizedMessage.includes("could not be found") || normalizedMessage.includes("token is required");
+  }
+
+  function clearInviteQueryParam() {
+    if (!inviteToken) {
+      return;
+    }
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete("invite");
+    const query = nextParams.toString();
+    router.replace(`/my-groups${query ? `?${query}` : ""}`, { scroll: false });
   }
 
   function toggleExpandedGroup(groupId: string) {
@@ -1300,6 +1424,24 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         disclosureStorageKey="my-groups-intro"
         disclosurePlacement="bottom-right"
         collapseBodyWhenClosed
+      />
+
+      <JoinGroupInlineForm
+        language={groupsLanguage}
+        value={inviteEntryValue}
+        onValueChange={(value) => {
+          setInviteEntryValue(value);
+          if (inviteEntryError) {
+            setInviteEntryError(null);
+          }
+          if (inviteEntryStatus) {
+            setInviteEntryStatus(null);
+          }
+        }}
+        onSubmit={handleInviteEntrySubmit}
+        isPending={isJoiningFromInviteEntry}
+        status={inviteEntryStatus}
+        error={inviteEntryError}
       />
 
       {confirmation || deleteConfirmation ? (
@@ -1471,18 +1613,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               If a manager deleted one of your groups, you can still sign in and keep playing anywhere else you are invited.
               Ask a manager for a fresh invite link when you are ready to join your next group.
             </p>
-            <InviteEntryForm
-              language={currentUser?.preferredLanguage}
-              value={inviteEntryValue}
-              onValueChange={(value) => {
-                setInviteEntryValue(value);
-                if (inviteEntryError) {
-                  setInviteEntryError(null);
-                }
-              }}
-              onSubmit={handleInviteEntrySubmit}
-              submitLabel={t(currentUser?.preferredLanguage, "groups.openInvite")}
-            />
           </div>
         </ManagementCard>
       ) : null}
@@ -3056,6 +3186,71 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
         onDismiss={() => setCelebrationTrophy(null)}
       />
     </section>
+  );
+}
+
+function JoinGroupInlineForm({
+  language,
+  value,
+  onValueChange,
+  onSubmit,
+  isPending,
+  status,
+  error
+}: {
+  language: string;
+  value: string;
+  onValueChange: (value: string) => void;
+  onSubmit: () => void;
+  isPending: boolean;
+  status: string | null;
+  error: string | null;
+}) {
+  const statusId = "my-groups-join-status";
+
+  return (
+    <form
+      className="ui-card px-3 py-3"
+      data-testid="my-groups-join-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <label htmlFor="my-groups-join-input" className="text-xs font-black uppercase tracking-[0.18em] text-gray-600">
+          {t(language, "groups.joinGroup")}
+        </label>
+        <span className="hidden text-[11px] font-semibold text-gray-500 sm:inline">
+          {t(language, "groups.pasteInviteCodeOrLink")}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+        <input
+          id="my-groups-join-input"
+          value={value}
+          onChange={(event) => onValueChange(event.target.value)}
+          placeholder={t(language, "groups.inviteCodeOrLink")}
+          className="min-w-0 flex-1 rounded-[0.9rem] border border-gray-300 bg-white px-3 py-2.5 text-sm font-semibold text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-accent focus:ring-2 focus:ring-accent-light"
+          autoComplete="one-time-code"
+          aria-describedby={status || error ? statusId : undefined}
+        />
+        <button
+          type="submit"
+          disabled={isPending}
+          className="inline-flex shrink-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-2.5 text-sm font-black uppercase tracking-[0.12em] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:min-w-[5.75rem]"
+        >
+          {isPending ? t(language, "groups.joining") : t(language, "groups.join")}
+        </button>
+      </div>
+      <p
+        id={statusId}
+        className={`mt-2 min-h-4 text-[11px] font-semibold ${error ? "text-red-700" : "text-gray-500"}`}
+        aria-live={error ? "assertive" : "polite"}
+      >
+        {status ?? ""}
+      </p>
+    </form>
   );
 }
 

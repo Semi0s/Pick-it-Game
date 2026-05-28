@@ -20,6 +20,42 @@ type OnboardingStep = {
 
 const SWIPE_THRESHOLD_PX = 40;
 
+function getOnboardingSteps(language?: string | null): OnboardingStep[] {
+  return [
+    {
+      title: t(language, "onboarding.step1Title"),
+      body: t(language, "onboarding.step1Body"),
+      icon: GroupStagePredictionsIcon,
+      visual: "group-stage"
+    },
+    {
+      title: t(language, "onboarding.step2Title"),
+      body: t(language, "onboarding.step2Body"),
+      icon: TrophyBadgeIcon,
+      visual: "third-place"
+    },
+    {
+      title: t(language, "onboarding.step3Title"),
+      body: t(language, "onboarding.step3Body"),
+      note: t(language, "onboarding.step3Note"),
+      icon: KnockoutScoreIcon,
+      visual: "knockout"
+    },
+    {
+      title: t(language, "onboarding.step4Title"),
+      body: t(language, "onboarding.step4Body"),
+      icon: LeaderboardPodiumIcon,
+      visual: "leaderboard"
+    },
+    {
+      title: t(language, "onboarding.step5Title"),
+      body: t(language, "onboarding.step5Body"),
+      icon: MyGroupsFlagIcon,
+      visual: "groups"
+    }
+  ];
+}
+
 export function StartPlayingChoiceClient({ language = "en" }: { language?: string | null }) {
   const router = useRouter();
   const [isSavingMode, setIsSavingMode] = useState(false);
@@ -30,42 +66,7 @@ export function StartPlayingChoiceClient({ language = "en" }: { language?: strin
   const touchStartXRef = useRef<number | null>(null);
   const lastAnimationRestartRef = useRef(0);
 
-  const steps = useMemo<OnboardingStep[]>(
-    () => [
-      {
-        title: t(language, "onboarding.step1Title"),
-        body: t(language, "onboarding.step1Body"),
-        icon: GroupStagePredictionsIcon,
-        visual: "group-stage"
-      },
-      {
-        title: t(language, "onboarding.step2Title"),
-        body: t(language, "onboarding.step2Body"),
-        icon: TrophyBadgeIcon,
-        visual: "third-place"
-      },
-      {
-        title: t(language, "onboarding.step3Title"),
-        body: t(language, "onboarding.step3Body"),
-        note: t(language, "onboarding.step3Note"),
-        icon: KnockoutScoreIcon,
-        visual: "knockout"
-      },
-      {
-        title: t(language, "onboarding.step4Title"),
-        body: t(language, "onboarding.step4Body"),
-        icon: LeaderboardPodiumIcon,
-        visual: "leaderboard"
-      },
-      {
-        title: t(language, "onboarding.step5Title"),
-        body: t(language, "onboarding.step5Body"),
-        icon: MyGroupsFlagIcon,
-        visual: "groups"
-      }
-    ],
-    [language]
-  );
+  const steps = useMemo<OnboardingStep[]>(() => getOnboardingSteps(language), [language]);
 
   const isFirstStep = stepIndex === 0;
   const isLastStep = stepIndex === steps.length - 1;
@@ -292,6 +293,146 @@ export function StartPlayingChoiceClient({ language = "en" }: { language?: strin
         )}
       </div>
     </section>
+  );
+}
+
+export function OnboardingReplayCarousel({
+  language = "en",
+  replayEpoch = 0,
+  onClose
+}: {
+  language?: string | null;
+  replayEpoch?: number;
+  onClose?: () => void;
+}) {
+  const [stepIndex, setStepIndex] = useState(0);
+  const [animationEpoch, setAnimationEpoch] = useState(0);
+  const [stepOpenEpoch, setStepOpenEpoch] = useState(0);
+  const touchStartXRef = useRef<number | null>(null);
+  const steps = useMemo<OnboardingStep[]>(() => getOnboardingSteps(language), [language]);
+  const isFirstStep = stepIndex === 0;
+  const isLastStep = stepIndex === steps.length - 1;
+  const currentStep = steps[stepIndex] ?? steps[0];
+
+  function replayFromStart() {
+    setStepIndex(0);
+    setStepOpenEpoch((value) => value + 1);
+    setAnimationEpoch((value) => value + 1);
+  }
+
+  function goToStep(nextIndex: number) {
+    const clampedIndex = Math.max(0, Math.min(steps.length - 1, nextIndex));
+    if (clampedIndex === stepIndex) {
+      return;
+    }
+
+    setStepIndex(clampedIndex);
+    setStepOpenEpoch((value) => value + 1);
+  }
+
+  function handleTouchStart(event: TouchEvent<HTMLDivElement>) {
+    const touch = event.touches[0];
+    touchStartXRef.current = touch ? touch.clientX : null;
+  }
+
+  function handleTouchEnd(event: TouchEvent<HTMLDivElement>) {
+    const touch = event.changedTouches[0];
+    const startX = touchStartXRef.current;
+    touchStartXRef.current = null;
+    if (!touch || startX === null) {
+      return;
+    }
+
+    const deltaX = touch.clientX - startX;
+    if (Math.abs(deltaX) < SWIPE_THRESHOLD_PX) {
+      return;
+    }
+
+    goToStep(stepIndex + (deltaX < 0 ? 1 : -1));
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      goToStep(stepIndex - 1);
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      goToStep(stepIndex + 1);
+    }
+  }
+
+  const CurrentIcon = currentStep.icon;
+
+  useEffect(() => {
+    setStepIndex(0);
+    setStepOpenEpoch((value) => value + 1);
+    setAnimationEpoch((value) => value + 1);
+  }, [replayEpoch]);
+
+  return (
+    <div
+      className="mt-4 rounded-[1.25rem] border border-gray-200 bg-white p-3"
+      role="region"
+      aria-roledescription="carousel"
+      aria-label={t(language, "onboarding.tutorialAria")}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-text shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
+          <CurrentIcon className="h-6 w-6" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-xl font-black leading-tight text-gray-950">{currentStep.title}</h2>
+          <p className="mt-1 text-sm font-normal leading-5 text-gray-600">{currentStep.body}</p>
+          {currentStep.note ? <p className="mt-1 text-xs font-normal leading-5 text-gray-500">{currentStep.note}</p> : null}
+        </div>
+      </div>
+
+      <div className="mt-3" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        <TutorialHelperStage
+          visual={currentStep.visual}
+          animationEpoch={animationEpoch}
+          playbackEpoch={stepOpenEpoch}
+          language={language}
+        />
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => goToStep(stepIndex - 1)}
+          disabled={isFirstStep}
+          aria-label={t(language, "onboarding.previousStep")}
+          className="inline-flex min-h-10 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {t(language, "common.back")}
+        </button>
+        <p className="min-w-[3.5rem] text-center text-xs font-black uppercase tracking-[0.14em] text-gray-400" aria-live="polite">
+          {t(language, "onboarding.stepLabel", { current: stepIndex + 1, total: steps.length })}
+        </p>
+        <button
+          type="button"
+          onClick={isLastStep ? replayFromStart : () => goToStep(stepIndex + 1)}
+          aria-label={isLastStep ? t(language, "help.replayAgain") : t(language, "onboarding.nextStep")}
+          className="inline-flex min-h-10 items-center justify-center rounded-[0.9rem] border border-accent bg-accent-light px-4 py-2 text-sm font-bold text-accent-dark transition hover:border-accent-dark hover:bg-accent-light/80"
+        >
+          {isLastStep ? t(language, "help.replayAgain") : t(language, "common.next")}
+        </button>
+      </div>
+
+      {onClose ? (
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-3 w-full rounded-[0.85rem] border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-500 transition hover:border-gray-300 hover:bg-white"
+        >
+          {t(language, "common.close")}
+        </button>
+      ) : null}
+    </div>
   );
 }
 

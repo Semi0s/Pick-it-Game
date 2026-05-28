@@ -14,6 +14,8 @@ import { t, type TranslationParams } from "@/lib/strings";
 import type { AccessLevel } from "@/lib/tier-access";
 import { useCurrentUser } from "@/lib/use-current-user";
 
+export { normalizeInviteTokenInput } from "@/lib/group-join-input";
+
 export type PlayerManagementPermissions = {
   canViewAllPlayers: boolean;
   canInvitePlayers: boolean;
@@ -459,21 +461,6 @@ export function WindowChoiceRail({
       </div>
     </div>
   );
-}
-
-export function normalizeInviteTokenInput(value: string) {
-  const trimmedValue = value.trim();
-  if (!trimmedValue) {
-    return null;
-  }
-
-  try {
-    const parsedUrl = new URL(trimmedValue);
-    const inviteToken = parsedUrl.searchParams.get("invite");
-    return inviteToken?.trim() || null;
-  } catch {
-    return trimmedValue;
-  }
 }
 
 export function ManagementIntro({

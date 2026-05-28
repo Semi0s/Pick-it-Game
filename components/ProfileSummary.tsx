@@ -654,12 +654,26 @@ export function ProfileSummary({
       </div>
 
       <div id="followed-teams" className="ui-card scroll-mt-24 p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-lg font-bold">{t(uiLanguage, "profile.followedTeams")}</h3>
+                <InlineDisclosureButton
+                  isOpen={isFollowedTeamsOpen}
+                  variant="subtle"
+                  onClick={() => setIsFollowedTeamsOpen((current) => !current)}
+                />
+              </div>
+            </div>
+            <div className="ui-chip-sm shrink-0 border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-700">
+              {allTeamsFollowed ? t(uiLanguage, "profile.allTeams") : selectedFollowedTeams.length}
+            </div>
+          </div>
           <div className="min-w-0">
-            <h3 className="text-lg font-bold">{t(uiLanguage, "profile.followedTeams")}</h3>
             <p className="mt-1 text-sm font-normal text-gray-500">{t(uiLanguage, "profile.appFocusReminders")}</p>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+          <div className="flex justify-end">
             <button
               type="button"
               disabled={isUpdatingFollowedTeams || !hasPendingFollowedTeamsChanges}
@@ -668,14 +682,6 @@ export function ProfileSummary({
             >
               {isUpdatingFollowedTeams ? t(uiLanguage, "common.saving") : t(uiLanguage, "profile.saveFollowedTeams")}
             </button>
-            <div className="ui-chip-sm border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-700">
-              {allTeamsFollowed ? t(uiLanguage, "profile.allTeams") : selectedFollowedTeams.length}
-            </div>
-            <InlineDisclosureButton
-              isOpen={isFollowedTeamsOpen}
-              variant="subtle"
-              onClick={() => setIsFollowedTeamsOpen((current) => !current)}
-            />
           </div>
         </div>
         {isFollowedTeamsOpen ? (

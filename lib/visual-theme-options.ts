@@ -32,7 +32,7 @@ export function getVisualThemeSelectOptions(teams: Team[]): VisualThemeSelectOpt
   const oranjekoortsOption = specialVisualThemeOptions.find((option) => option.id === ORANJEKOORTS_VISUAL_THEME_ID);
 
   if (!oranjekoortsOption) {
-    return teamOptions;
+    return sortVisualThemeOptionsByLabel(teamOptions);
   }
 
   const visualOption = {
@@ -42,17 +42,8 @@ export function getVisualThemeSelectOptions(teams: Team[]): VisualThemeSelectOpt
     icon: oranjekoortsOption.icon,
     kind: "visual" as const
   };
-  const netherlandsIndex = teamOptions.findIndex((option) => option.id === "ned");
 
-  if (netherlandsIndex === -1) {
-    return [...teamOptions, visualOption];
-  }
-
-  return [
-    ...teamOptions.slice(0, netherlandsIndex + 1),
-    visualOption,
-    ...teamOptions.slice(netherlandsIndex + 1)
-  ];
+  return sortVisualThemeOptionsByLabel([...teamOptions, visualOption]);
 }
 
 export function getVisualThemeSelectValue(input: VisualThemeSelection): string {
@@ -89,4 +80,8 @@ export function parseVisualThemeSelectValue(value: string): VisualThemeSelection
     homeTeamId: normalizedValue,
     visualThemeId: null
   };
+}
+
+function sortVisualThemeOptionsByLabel(options: VisualThemeSelectOption[]) {
+  return [...options].sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
 }

@@ -240,6 +240,13 @@ export async function authenticateWithEmail(
     };
   }
 
+  if (mode === "login" && options?.accessCode?.trim()) {
+    const redemptionResult = await redeemAccessCodeForCurrentUser(options.accessCode);
+    if (!redemptionResult.ok) {
+      return redemptionResult;
+    }
+  }
+
   if (mode === "login") {
     try {
       const reconcileResponse = await fetch("/api/auth/reconcile", {
@@ -261,6 +268,34 @@ export async function authenticateWithEmail(
 
   const profile = response.data.user ? await fetchCurrentProfile() : null;
   return { ok: true, user: profile };
+}
+
+async function redeemAccessCodeForCurrentUser(accessCode: string): Promise<AuthResult> {
+  const response = await fetch("/api/access-codes/redeem", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ code: accessCode })
+  });
+
+  const result = await parseJsonResponse<{ ok: true; message?: string } | { ok: false; message?: string }>(
+    response,
+    "Could not redeem that invite code right now.",
+    "access-code redemption"
+  );
+
+  if (!response.ok || !result.ok) {
+    return {
+      ok: false,
+      message: result.ok ? "Could not redeem that invite code right now." : result.message ?? "Could not redeem that invite code right now."
+    };
+  }
+
+  return {
+    ok: true,
+    message: result.message
+  };
 }
 
 export async function fetchCurrentProfile(): Promise<UserProfile | null> {
@@ -1362,7 +1397,7 @@ async function signUpWithInviteContext(
     });
 
     const validationResult = await parseJsonResponse<
-      | { ok: true }
+      | { ok: true; existingAccount?: boolean }
       | { ok: false; message?: string }
     >(validationResponse, "Could not validate that code right now.", "access-code validation");
 
@@ -1388,6 +1423,13 @@ async function signUpWithInviteContext(
       return {
         data: { user: null, session: null },
         error: { message: validationResult.message ?? "That code is not valid or is no longer available." }
+      };
+    }
+
+    if (validationResult.existingAccount) {
+      return {
+        data: { user: null, session: null },
+        error: { message: "That email already has an account. Switch to sign in." }
       };
     }
 
