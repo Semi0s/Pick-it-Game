@@ -4052,7 +4052,7 @@ export async function fetchMyGroupsAction(): Promise<FetchMyGroupsResult> {
       fetchVisibleGroups(adminSupabase, currentUser),
       fetchJoinedPlayerGroupCount(adminSupabase, currentUser.userId)
     ]);
-    const groups = visibleGroups.filter((group) => group.canManage);
+    const groups = visibleGroups;
     const managedGroupCount = groups.filter((group) => group.canManage).length;
 
     return {

@@ -284,12 +284,13 @@ function getLocalizedEmblemSpec(
         scale: 1.08,
         leaderboardOpacity: 0.64,
         leaderboardScale: 1.42,
+        leaderboardYOffset: -9,
         node: (
           <>
-            <rect x="-30" y="-21" width="60" height="42" rx="10" fill={englandPanelFill} />
-            <rect x="-3.7" y="-21" width="7.4" height="42" rx="2.5" fill={a1} />
-            <rect x="-30" y="-3.7" width="60" height="7.4" rx="2.5" fill={a1} />
-            <Star x="0" y="-28" size={5.4} fill={englandStarFill} />
+            <rect x="-30" y="-21" width="60" height="42" fill={englandPanelFill} />
+            <rect x="-3.7" y="-21" width="7.4" height="42" fill={a1} />
+            <rect x="-30" y="-3.7" width="60" height="7.4" fill={a1} />
+            <Star x="0" y="-35" size={5.4} fill={englandStarFill} />
           </>
         )
       };

@@ -690,6 +690,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
     return orderedGroups.filter((group) => group.name.toLowerCase().includes(query));
   }, [managedSummaryGroups, isSuperAdmin, superAdminGroupQuery]);
+  const invitedSummaryGroups = useMemo(
+    () => summaryGroups.filter((group) => !group.canManage && group.userRole === "member"),
+    [summaryGroups]
+  );
   const activeTrophyGroup = trophySheetTarget ? groupDetailsById[trophySheetTarget.groupId] ?? null : null;
   const activeTrophyMember = activeTrophyGroup
     ? activeTrophyGroup.members.find((member) => member.userId === trophySheetTarget?.userId) ?? null
@@ -1322,7 +1326,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       }
 
       if (payload.alreadyMember) {
-        return { ok: false, message: tg("alreadyInGroup") };
+        return { ok: true, message: tg("alreadyInGroup") };
       }
 
       return { ok: true, message: payload.message ?? tg("joinedGroup") };
@@ -3159,6 +3163,36 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
           })
         )}
       </section>
+
+      {!isLoading && invitedSummaryGroups.length > 0 ? (
+        <section className="space-y-3">
+          <h3 className="text-xl font-black">{tg("invitedGroups")}</h3>
+          <div className="space-y-2">
+            {invitedSummaryGroups.map((group) => (
+              <div
+                key={`invited-${group.id}`}
+                className="ui-card flex items-center justify-between gap-3 px-3 py-3"
+              >
+                <div className="min-w-0 flex items-center gap-3">
+                  <Avatar name={group.name} avatarUrl={group.avatarUrl} size="sm" />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-black leading-tight text-gray-950">{group.name}</p>
+                    <p className="mt-0.5 text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">
+                      {tg("membersCount", { count: group.memberCount ?? 0 })}
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  href={getGroupLeaderboardHref(group)}
+                  className="inline-flex shrink-0 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
+                >
+                  {tg("leaderboard")}
+                </Link>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="space-y-3">
         <HierarchyPanel activeLevel={activeHierarchyLevel} activeDetails={hierarchyActiveDetails} />
