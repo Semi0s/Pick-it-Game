@@ -19,6 +19,7 @@ import {
   deleteManagedGroupAction,
   fetchManagedGroupDetailAction,
   fetchMyGroupsAction,
+  leaveJoinedGroupAction,
   removeManagedGroupAllowedEmailAction,
   removeManagedGroupAvatarAction,
   removeGroupMemberAction,
@@ -180,6 +181,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
   const [inviteEntryStatus, setInviteEntryStatus] = useState<string | null>(null);
   const [isJoiningFromInviteEntry, setIsJoiningFromInviteEntry] = useState(false);
+  const [leaveGroupConfirmId, setLeaveGroupConfirmId] = useState<string | null>(null);
+  const [leaveGroupPendingId, setLeaveGroupPendingId] = useState<string | null>(null);
   const [superAdminGroupQuery, setSuperAdminGroupQuery] = useState("");
   const [expandedGroupIds, setExpandedGroupIds] = useState<string[]>([]);
   const [groupDirectoryState, setGroupDirectoryState] = useState<
@@ -1281,6 +1284,26 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     } finally {
       setIsJoiningFromInviteEntry(false);
     }
+  }
+
+  async function handleLeaveInvitedGroup(groupId: string) {
+    if (leaveGroupPendingId) {
+      return;
+    }
+
+    setLeaveGroupPendingId(groupId);
+    const result = await leaveJoinedGroupAction(groupId);
+    setLeaveGroupPendingId(null);
+
+    if (!result.ok) {
+      showAppToast({ tone: "error", text: result.message });
+      return;
+    }
+
+    setLeaveGroupConfirmId(null);
+    showAppToast({ tone: "success", text: t(groupsLanguage, "leaderboard.leftGroupSuccess") });
+    await load();
+    router.refresh();
   }
 
   async function joinWithAccessCodeFirst(value: string): Promise<{ ok: boolean; message?: string }> {
@@ -3171,23 +3194,65 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             {invitedSummaryGroups.map((group) => (
               <div
                 key={`invited-${group.id}`}
-                className="ui-card flex items-center justify-between gap-3 px-3 py-3"
+                className="ui-card px-3 py-3"
               >
-                <div className="min-w-0 flex items-center gap-3">
-                  <Avatar name={group.name} avatarUrl={group.avatarUrl} size="sm" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-black leading-tight text-gray-950">{group.name}</p>
-                    <p className="mt-0.5 text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">
-                      {tg("membersCount", { count: group.memberCount ?? 0 })}
-                    </p>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex items-center gap-3">
+                    <Avatar name={group.name} avatarUrl={group.avatarUrl} size="sm" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-black leading-tight text-gray-950">{group.name}</p>
+                      <p className="mt-0.5 text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">
+                        {tg("membersCount", { count: group.memberCount ?? 0 })}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Link
+                      href={getGroupLeaderboardHref(group)}
+                      className="inline-flex rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
+                    >
+                      {tg("leaderboard")}
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => setLeaveGroupConfirmId(group.id)}
+                      disabled={leaveGroupPendingId === group.id}
+                      className="inline-flex rounded-[0.85rem] border border-red-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {t(groupsLanguage, "leaderboard.leaveGroup")}
+                    </button>
                   </div>
                 </div>
-                <Link
-                  href={getGroupLeaderboardHref(group)}
-                  className="inline-flex shrink-0 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
-                >
-                  {tg("leaderboard")}
-                </Link>
+                {leaveGroupConfirmId === group.id ? (
+                  <div className="mt-3 rounded-[1rem] border border-red-100 bg-red-50/80 px-3 py-3 text-center">
+                    <p className="text-[11px] font-black uppercase tracking-[0.16em] text-red-700">
+                      {t(groupsLanguage, "leaderboard.leaveGroupConfirmTitle")}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-red-800">
+                      {t(groupsLanguage, "leaderboard.leaveGroupSafetyCopy", { groupName: group.name })}
+                    </p>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setLeaveGroupConfirmId(null)}
+                        disabled={leaveGroupPendingId === group.id}
+                        className="rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wide text-gray-800 transition hover:border-gray-400 disabled:opacity-60"
+                      >
+                        {t(groupsLanguage, "common.cancel")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleLeaveInvitedGroup(group.id)}
+                        disabled={leaveGroupPendingId === group.id}
+                        className="rounded-[0.85rem] bg-red-600 px-3 py-2 text-xs font-black uppercase tracking-wide text-white transition hover:bg-red-700 disabled:opacity-60"
+                      >
+                        {leaveGroupPendingId === group.id
+                          ? t(groupsLanguage, "common.loading")
+                          : t(groupsLanguage, "leaderboard.confirmLeaveGroup")}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
