@@ -120,7 +120,7 @@ export default async function BracketBuilderPage() {
     awayTeamId: match.away_team_id ?? null
   })) satisfies KnockoutPlaceholderMatch[];
 
-  const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(roundOf32Placeholders);
+  const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(roundOf32Placeholders) || 8;
 
   return (
     <AppShell>
