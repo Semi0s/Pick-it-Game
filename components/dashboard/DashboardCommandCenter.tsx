@@ -174,6 +174,7 @@ function PerformancePanel({
         <MetricRow label="Pts" value={formatPoints(performance.globalPoints, language)} theme={theme} />
         <MetricRow label={t(language, "leaderboard.rank")} value={formatRank(performance.globalRank, language)} theme={theme} />
         <MetricSplitRow
+          groupLabel={t(language, "dashboard.groupsCompact")}
           leftLabel={t(language, "dashboard.invitedShort")}
           leftValue={formatNumber(performance.invitedGroups, language)}
           rightLabel={t(language, "dashboard.managedShort")}
@@ -263,11 +264,7 @@ function ReminderPanel({
             ))}
           </div>
         ) : upcomingMatches.length > 0 ? (
-          <div className="flex w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {upcomingMatches.map((match) => (
-              <CompactUpcomingMatch key={match.id} match={match} language={language} theme={theme} />
-            ))}
-          </div>
+          <UpcomingMatchSlider matches={upcomingMatches} language={language} theme={theme} />
         ) : (
           <div className="flex w-full items-center justify-center px-1 text-center">
             <p className={`text-[8px] font-semibold leading-3 ${getMutedTextClasses(theme)}`}>{t(language, "dashboard.noUpcomingMatch")}</p>
@@ -277,6 +274,92 @@ function ReminderPanel({
       {showSwipeCue ? <SwipeCueArrows theme={theme} /> : null}
       </div>
     </PanelShell>
+  );
+}
+
+function UpcomingMatchSlider({
+  matches,
+  language,
+  theme
+}: {
+  matches: DashboardMatchSummary[];
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
+  const sliderRef = useRef<HTMLDivElement | null>(null);
+  const snapTimerRef = useRef<number | null>(null);
+  const isPointerDownRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (snapTimerRef.current !== null) {
+        window.clearTimeout(snapTimerRef.current);
+      }
+    };
+  }, []);
+
+  function snapToNearestMatch(behavior: ScrollBehavior = "smooth") {
+    const slider = sliderRef.current;
+    if (!slider) {
+      return;
+    }
+
+    const slideWidth = slider.clientWidth;
+    if (slideWidth <= 0) {
+      return;
+    }
+
+    const maxIndex = Math.max(0, matches.length - 1);
+    const targetIndex = Math.min(maxIndex, Math.max(0, Math.round(slider.scrollLeft / slideWidth)));
+    const targetLeft = targetIndex * slideWidth;
+
+    if (Math.abs(slider.scrollLeft - targetLeft) <= 1) {
+      return;
+    }
+
+    slider.scrollTo({ left: targetLeft, behavior });
+  }
+
+  function scheduleSnap(delayMs = 90) {
+    if (snapTimerRef.current !== null) {
+      window.clearTimeout(snapTimerRef.current);
+    }
+
+    snapTimerRef.current = window.setTimeout(() => {
+      snapTimerRef.current = null;
+      if (!isPointerDownRef.current) {
+        snapToNearestMatch();
+      }
+    }, delayMs);
+  }
+
+  function handlePointerDown() {
+    isPointerDownRef.current = true;
+    if (snapTimerRef.current !== null) {
+      window.clearTimeout(snapTimerRef.current);
+      snapTimerRef.current = null;
+    }
+  }
+
+  function handlePointerRelease() {
+    isPointerDownRef.current = false;
+    scheduleSnap(24);
+  }
+
+  return (
+    <div
+      ref={sliderRef}
+      className="flex w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerRelease}
+      onPointerCancel={handlePointerRelease}
+      onPointerLeave={handlePointerRelease}
+      onScroll={() => scheduleSnap()}
+    >
+      {matches.map((match) => (
+        <CompactUpcomingMatch key={match.id} match={match} language={language} theme={theme} />
+      ))}
+    </div>
   );
 }
 
@@ -302,7 +385,7 @@ function CompactUpcomingMatch({
   theme: TriptychTheme;
 }) {
   return (
-    <div className="flex min-w-full snap-center flex-col items-center justify-center text-center [-webkit-text-size-adjust:100%] [text-size-adjust:100%]">
+    <div className="flex min-w-full snap-center flex-col items-center justify-center text-center [scroll-snap-stop:always] [-webkit-text-size-adjust:100%] [text-size-adjust:100%]">
       <p className={`max-w-full truncate font-semibold uppercase leading-none tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
         <span className="triptych-micro-copy">{formatReminderStageLabel(match, language)}</span>
       </p>
@@ -516,12 +599,14 @@ function MetricRow({
 }
 
 function MetricSplitRow({
+  groupLabel,
   leftLabel,
   leftValue,
   rightLabel,
   rightValue,
   theme
 }: {
+  groupLabel: string;
   leftLabel: string;
   leftValue: string;
   rightLabel: string;
@@ -529,21 +614,23 @@ function MetricSplitRow({
   theme: TriptychTheme;
 }) {
   return (
-    <div className="relative grid min-w-0 grid-cols-2 gap-7 py-1.5">
-      <span className={`pointer-events-none absolute bottom-1.5 left-1/2 -translate-x-1/2 font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
-        <span className="triptych-micro-copy">Groups</span>
+    <div className="flex min-w-0 flex-col gap-1 py-1.5">
+      <span className={`block text-center font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
+        <span className="triptych-micro-copy">{groupLabel}</span>
       </span>
-      <div className="min-w-0 text-center">
-        <span className={`block truncate font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
-          <span className="triptych-micro-copy">{leftLabel}</span>
-        </span>
-        <span className={`mt-1 block truncate text-center text-[12px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>{leftValue}</span>
-      </div>
-      <div className="min-w-0 text-center">
-        <span className={`block truncate font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
-          <span className="triptych-micro-copy">{rightLabel}</span>
-        </span>
-        <span className={`mt-1 block truncate text-center text-[12px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>{rightValue}</span>
+      <div className="grid min-w-0 grid-cols-2 gap-7">
+        <div className="min-w-0 text-center">
+          <span className={`block truncate font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
+            <span className="triptych-micro-copy">{leftLabel}</span>
+          </span>
+          <span className={`mt-1 block truncate text-center text-[12px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>{leftValue}</span>
+        </div>
+        <div className="min-w-0 text-center">
+          <span className={`block truncate font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
+            <span className="triptych-micro-copy">{rightLabel}</span>
+          </span>
+          <span className={`mt-1 block truncate text-center text-[12px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>{rightValue}</span>
+        </div>
       </div>
     </div>
   );

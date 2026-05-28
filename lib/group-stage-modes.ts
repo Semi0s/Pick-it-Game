@@ -145,7 +145,7 @@ export async function fetchUserLightSeedBuilderSnapshot(
   for (const row of (groupRankingRows ?? []) as GroupSeedRankingRecord[]) {
     const groupName = normalizeGroupKey(row.group_name) ?? row.group_name;
     const current = groupRankingMap.get(groupName) ?? [];
-    current.push(row.team_id);
+    current[row.rank_position - 1] = row.team_id;
     groupRankingMap.set(groupName, current);
   }
 
@@ -154,13 +154,26 @@ export async function fetchUserLightSeedBuilderSnapshot(
       .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
       .map(([groupName, rankedTeamIds]) => ({
         groupName,
-        rankedTeamIds
-      })),
+        rankedTeamIds: compactContiguousRankings(rankedTeamIds)
+      }))
+      .filter((ranking) => ranking.rankedTeamIds.length >= 4),
     thirdPlaceRankings: ((thirdPlaceRows ?? []) as ThirdPlaceRankingRecord[]).map((row) => ({
       teamId: row.team_id,
       rank: row.rank_position
     }))
   };
+}
+
+function compactContiguousRankings(rankedTeamIds: string[]) {
+  const compacted: string[] = [];
+  for (let index = 0; index < rankedTeamIds.length; index += 1) {
+    const teamId = rankedTeamIds[index]?.trim();
+    if (!teamId) {
+      break;
+    }
+    compacted.push(teamId);
+  }
+  return compacted;
 }
 
 export async function fetchUserGroupProjectionSourceMap(

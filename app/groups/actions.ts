@@ -12,6 +12,7 @@ import {
   type LightSeedBuilderSnapshot,
   type UserGroupProjectionSource
 } from "@/lib/group-stage-modes";
+import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
 import {
   buildProjectedGroupStandings,
   buildProjectedGroupStandingsFromSeedRankings,
@@ -19,7 +20,8 @@ import {
   buildQualifiedTeamSeedsFromManualThirdPlaceRanking,
   getRequiredThirdPlaceQualifierCount,
   resolveRoundOf32SeedAssignments,
-  type GroupSeedRankingInput
+  type GroupSeedRankingInput,
+  type ProjectedGroupStandings
 } from "@/lib/knockout-seeding";
 import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
 import { fetchTournamentEntrySettings, saveTournamentEntrySettings } from "@/lib/tournament-entry";
@@ -252,6 +254,16 @@ export async function saveLightSeedBuilderAction(
       fifaRank: team.fifa_rank ?? 0,
       flagEmoji: team.flag_emoji ?? ""
     }));
+    const expectedGroupNames = Array.from(
+      new Set(teams.map((team) => normalizeGroupKey(team.groupName) ?? team.groupName))
+    ).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+    const teamIdsByGroup = new Map<string, Set<string>>();
+    for (const team of teams) {
+      const groupName = normalizeGroupKey(team.groupName) ?? team.groupName;
+      const current = teamIdsByGroup.get(groupName) ?? new Set<string>();
+      current.add(team.id);
+      teamIdsByGroup.set(groupName, current);
+    }
     const incomingRankings: GroupSeedRankingInput[] = input.groupRankings.map((ranking) => ({
       groupName: normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
       rankedTeamIds: ranking.rankedTeamIds
@@ -268,7 +280,17 @@ export async function saveLightSeedBuilderAction(
     const rankings: GroupSeedRankingInput[] = Array.from(mergedRankingsByGroup.entries())
       .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
       .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
-    const standingsByGroup = buildProjectedGroupStandingsFromSeedRankings(teams, rankings);
+    const topTwoCompletionStatus = getGroupTopTwoCompletionStatus({
+      groupNames: expectedGroupNames,
+      rankings,
+      teamIdsByGroup
+    });
+    if (input.commitThirdPlaceRankings && !topTwoCompletionStatus.isComplete) {
+      return {
+        ok: false,
+        message: "Choose first and second place for every group before ranking third-place qualifiers."
+      };
+    }
     const requiredThirdPlaceCount = getRequiredThirdPlaceQualifierCount(
       ((roundOf32Rows ?? []) as KnockoutPlaceholderRow[]).map((match) => ({
         id: match.id,
@@ -280,22 +302,29 @@ export async function saveLightSeedBuilderAction(
         awayTeamId: null
       }))
     );
-    const completeRowsByGroup = new Map(
-      Array.from(standingsByGroup.entries())
-        .filter(([, standings]) => standings.isComplete)
-        .map(([groupId, standings]) => [groupId, standings.rows])
-    );
-    const availableThirdPlacePool = buildQualifiedTeamSeeds(completeRowsByGroup, completeRowsByGroup.size).rankedThirdPlaceTeams;
-    const availableThirdPlaceTeamIds = new Set(availableThirdPlacePool.map((team) => team.teamId));
-    const baseThirdPlaceIds = input.commitThirdPlaceRankings
-      ? input.rankedThirdPlaceTeamIds
-      : existingSnapshot.thirdPlaceRankings
-          .slice()
-          .sort((left, right) => left.rank - right.rank)
-          .map((row) => row.teamId);
-    const requestedThirdPlaceIds = Array.from(
-      new Set(baseThirdPlaceIds.filter((teamId) => availableThirdPlaceTeamIds.has(teamId)))
-    );
+    let requestedThirdPlaceIds: string[] = [];
+    let availableThirdPlaceTeamIds = new Set<string>();
+    let completeRowsByGroup = new Map<string, ProjectedGroupStandings["rows"]>();
+
+    if (topTwoCompletionStatus.isComplete) {
+      const standingsByGroup = buildProjectedGroupStandingsFromSeedRankings(teams, rankings);
+      completeRowsByGroup = new Map(
+        Array.from(standingsByGroup.entries())
+          .filter(([, standings]) => standings.isComplete)
+          .map(([groupId, standings]) => [groupId, standings.rows])
+      );
+      const availableThirdPlacePool = buildQualifiedTeamSeeds(completeRowsByGroup, completeRowsByGroup.size).rankedThirdPlaceTeams;
+      availableThirdPlaceTeamIds = new Set(availableThirdPlacePool.map((team) => team.teamId));
+      const baseThirdPlaceIds = input.commitThirdPlaceRankings
+        ? input.rankedThirdPlaceTeamIds
+        : existingSnapshot.thirdPlaceRankings
+            .slice()
+            .sort((left, right) => left.rank - right.rank)
+            .map((row) => row.teamId);
+      requestedThirdPlaceIds = Array.from(
+        new Set(baseThirdPlaceIds.filter((teamId) => availableThirdPlaceTeamIds.has(teamId)))
+      );
+    }
 
     if (input.commitThirdPlaceRankings && requestedThirdPlaceIds.length !== input.rankedThirdPlaceTeamIds.length) {
       return { ok: false, message: "Each third-place qualifier can only be ranked once." };
