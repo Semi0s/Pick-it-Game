@@ -15,6 +15,7 @@ import {
   type LightSeedBuilderSnapshot,
   type UserGroupProjectionSource
 } from "@/lib/group-stage-modes";
+import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
 import { formatGroupName, normalizeGroupKey } from "@/lib/group-standings";
 import {
   buildProjectedGroupStandingsFromSeedRankings,
@@ -305,6 +306,16 @@ export function BracketBuilderClient({
       ),
     [teams]
   );
+  const teamIdsByGroup = useMemo(() => {
+    const groups = new Map<string, Set<string>>();
+    for (const team of teams) {
+      const groupName = normalizeGroupKey(team.groupName) ?? team.groupName;
+      const current = groups.get(groupName) ?? new Set<string>();
+      current.add(team.id);
+      groups.set(groupName, current);
+    }
+    return groups;
+  }, [teams]);
   const customDragGhostTeam = customDragGhost ? teamsById.get(customDragGhost.teamId) ?? null : null;
 
   const sortedGroupNames = useMemo(
@@ -348,14 +359,20 @@ export function BracketBuilderClient({
     return [...preserved, ...missing];
   }, [derivedThirdPlacePool, thirdPlaceRankings]);
 
-  const areTopTwoQualifiersEstablished =
-    sortedGroupNames.length > 0 &&
-    touchedGroups.size >= sortedGroupNames.length &&
-    sortedGroupNames.every((groupName) => (groupRankingsByGroup.get(groupName) ?? []).filter(Boolean).length >= 2);
-  const hasUnlockedThirdPlacePhase =
-    areTopTwoQualifiersEstablished && touchedGroups.size >= sortedGroupNames.length;
+  const topTwoCompletionStatus = useMemo(
+    () =>
+      getGroupTopTwoCompletionStatus({
+        groupNames: sortedGroupNames,
+        rankings: groupRankings,
+        teamIdsByGroup,
+        touchedGroupNames: touchedGroups
+      }),
+    [groupRankings, sortedGroupNames, teamIdsByGroup, touchedGroups]
+  );
+  const hasUnlockedThirdPlacePhase = topTwoCompletionStatus.isComplete;
   const isThirdPlacePhase = hasUnlockedThirdPlacePhase && requiredThirdPlaceQualifierCount > 0;
   const hasCommittedThirdPlaceSelection =
+    isThirdPlacePhase &&
     requiredThirdPlaceQualifierCount > 0 &&
     ((initialSnapshot?.thirdPlaceRankings?.length ?? 0) >= requiredThirdPlaceQualifierCount || hasTouchedThirdPlaceRanking);
   const committedThirdPlaceRankingIds = useMemo(
@@ -758,7 +775,7 @@ export function BracketBuilderClient({
       const result = await saveLightSeedBuilderAction({
         groupRankings: touchedRankingsInput,
         rankedThirdPlaceTeamIds: committedThirdPlaceRankingIds,
-        commitThirdPlaceRankings: hasTouchedThirdPlaceRanking
+        commitThirdPlaceRankings: isThirdPlacePhase && hasTouchedThirdPlaceRanking
       });
 
       if (result.ok) {
@@ -779,6 +796,7 @@ export function BracketBuilderClient({
     hasSeenCompletionThisSession,
     hasTouchedThirdPlaceRanking,
     isComplete,
+    isThirdPlacePhase,
     isReadOnly,
     committedThirdPlaceRankingIds,
     requiredThirdPlaceQualifierCount,
@@ -1246,7 +1264,7 @@ export function BracketBuilderClient({
                 className="grid w-[7.6rem] grid-cols-12 gap-[2px]"
               >
                 {sortedGroupNames.map((groupName, index) => {
-                  const isComplete = touchedGroups.has(groupName);
+                  const isComplete = topTwoCompletionStatus.completeGroupNames.has(groupName);
                   const isActive = index === activeGroupIndex;
                   return (
                     <span

@@ -343,7 +343,9 @@ export function LoginForm({
 
       {!emailBoundInviteFlow && !promoManagerCode ? (
         <label className="block">
-          <span className="text-sm font-semibold text-gray-800">{t(uiLanguage, "auth.accessCode")}</span>
+          <span className="text-sm font-semibold text-gray-800">
+            {t(uiLanguage, mode === "login" ? "auth.accessCodeOptional" : "auth.accessCode")}
+          </span>
           <input
             value={accessCode}
             onChange={(event) => setAccessCode(event.target.value)}
@@ -352,7 +354,7 @@ export function LoginForm({
             autoComplete="one-time-code"
           />
           <p className="mt-2 text-sm font-medium text-gray-600">
-            {t(uiLanguage, "auth.accessCodeHelp")}
+            {t(uiLanguage, mode === "login" ? "auth.accessCodeHelp" : "auth.accessCodeSignupHelp")}
           </p>
         </label>
       ) : null}
@@ -398,7 +400,9 @@ export function LoginForm({
                 : t(uiLanguage, "auth.signInToJoin")
               : t(uiLanguage, "auth.createAccountToJoin")
             : mode === "login"
-              ? t(uiLanguage, "auth.signIn")
+              ? accessCode.trim()
+                ? t(uiLanguage, "auth.signInToJoin")
+                : t(uiLanguage, "auth.signIn")
               : t(uiLanguage, "auth.createAccount")}
       </button>
       {!isDemoFallback ? (
