@@ -130,7 +130,7 @@ export default async function BracketBuilderPage() {
           titleKey="bracket.selectAdvancingTeams"
           description={t(preferredLanguage, "bracket.pickQualifyingTeamsOnly")}
           secondaryNote={fullScoresEnabled ? t(preferredLanguage, "bracket.pickScoresEarnMorePoints") : t(preferredLanguage, "bracket.finishGroupThenKnockout")}
-          statusChipKey={knockoutStatus.isFullySeeded ? "common.locked" : "common.open"}
+          statusChipKey={knockoutStatus.isFullySeeded ? "common.locked" : "bracket.groupPhaseClosesJune11"}
           disclosureStorageKey="group-stage-top-card"
           disclosurePlacement="bottom-right"
           collapseBodyWhenClosed

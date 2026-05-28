@@ -7,7 +7,6 @@ import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { InlineDisclosureButton, WindowChoiceRail, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
 import {
   awardManagedGroupTrophyAction,
-  leaveJoinedGroupAction,
   listManagedGroupPlayersAction,
   type ManagedGroupDetails
 } from "@/app/my-groups/actions";
@@ -17,7 +16,6 @@ import { LeaderboardPlayerLocalizationBackground } from "@/components/localized-
 import { LocalizedCardBackground } from "@/components/localized-card/LocalizedCardBackground";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
-import { showAppToast } from "@/lib/app-toast";
 import { useAppLanguage } from "@/lib/app-language";
 import { parseJsonResponse } from "@/lib/fetch-json";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
@@ -236,67 +234,6 @@ function getLeaderboardNumericScore(profile: LeaderboardListItem, activePhase: L
   return profile.globalTopTenPoints ?? profile.totalPoints ?? 0;
 }
 
-function LeaveJoinedGroupControl({
-  group,
-  isConfirming,
-  isPending,
-  language,
-  onRequestConfirm,
-  onCancel,
-  onConfirm
-}: {
-  group: LeaderboardGroupNavItem;
-  isConfirming: boolean;
-  isPending: boolean;
-  language: string;
-  onRequestConfirm: () => void;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div className="mt-3 rounded-[1.15rem] border border-red-100 bg-red-50/70 px-3 py-3 text-center">
-      {isConfirming ? (
-        <div className="space-y-2">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-red-700">
-              {t(language, "leaderboard.leaveGroupConfirmTitle")}
-            </p>
-            <p className="mt-1 text-xs font-semibold leading-5 text-red-800">
-              {t(language, "leaderboard.leaveGroupSafetyCopy", { groupName: group.label })}
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={isPending}
-              className="rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wide text-gray-800 transition hover:border-gray-400 disabled:opacity-60"
-            >
-              {t(language, "common.cancel")}
-            </button>
-            <button
-              type="button"
-              onClick={onConfirm}
-              disabled={isPending}
-              className="rounded-[0.85rem] bg-red-600 px-3 py-2 text-xs font-black uppercase tracking-wide text-white transition hover:bg-red-700 disabled:opacity-60"
-            >
-              {isPending ? t(language, "common.loading") : t(language, "leaderboard.confirmLeaveGroup")}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={onRequestConfirm}
-          className="w-full rounded-[0.9rem] border border-red-200 bg-white px-3 py-2 text-xs font-black uppercase tracking-wide text-red-700 transition hover:border-red-300 hover:bg-red-50"
-        >
-          {t(language, "leaderboard.leaveGroup")}
-        </button>
-      )}
-    </div>
-  );
-}
-
 export function LeaderboardClient() {
   const { user, isLoading: isUserLoading } = useCurrentUser();
   const { activeLanguage: uiLanguage } = useAppLanguage();
@@ -333,8 +270,6 @@ export function LeaderboardClient() {
   const [managedAwardGroup, setManagedAwardGroup] = useState<ManagedGroupDetails | null>(null);
   const [managedTrophySheetTarget, setManagedTrophySheetTarget] = useState<{ groupId: string; userId: string } | null>(null);
   const [activeManagedTrophyKey, setActiveManagedTrophyKey] = useState<string | null>(null);
-  const [leaveGroupConfirmId, setLeaveGroupConfirmId] = useState<string | null>(null);
-  const [leaveGroupPendingId, setLeaveGroupPendingId] = useState<string | null>(null);
   const [celebrationTrophy, setCelebrationTrophy] = useState<{
     name: string;
     icon: string;
@@ -926,10 +861,6 @@ export function LeaderboardClient() {
     () => availableGroupOptions.find((group) => group.id === selectedGroupId) ?? null,
     [availableGroupOptions, selectedGroupId]
   );
-  const canLeaveSelectedJoinedGroup =
-    activeView === "my_groups" &&
-    Boolean(selectedGroupId) &&
-    selectedGroupSummary?.context === "joined";
   const phaseNavItems = useMemo(
     () => (switcher ? getPhaseNavItems(switcher, activePhase, uiLanguage) : []),
     [activePhase, switcher, uiLanguage]
@@ -1665,20 +1596,6 @@ export function LeaderboardClient() {
             );
           })}
 
-          {canLeaveSelectedJoinedGroup && selectedGroupSummary ? (
-            <LeaveJoinedGroupControl
-              group={selectedGroupSummary}
-              isConfirming={leaveGroupConfirmId === selectedGroupSummary.id}
-              isPending={leaveGroupPendingId === selectedGroupSummary.id}
-              language={uiLanguage}
-              onRequestConfirm={() => setLeaveGroupConfirmId(selectedGroupSummary.id)}
-              onCancel={() => setLeaveGroupConfirmId(null)}
-              onConfirm={() => {
-                void handleLeaveJoinedGroup(selectedGroupSummary.id);
-              }}
-            />
-          ) : null}
-
           {shallowLeaderboardSpacerHeight > 0 ? (
             <div aria-hidden className="pointer-events-none" style={{ height: `${shallowLeaderboardSpacerHeight}px` }} />
           ) : null}
@@ -1731,52 +1648,6 @@ export function LeaderboardClient() {
       />
     </div>
   );
-
-  async function handleLeaveJoinedGroup(groupId: string) {
-    if (leaveGroupPendingId) {
-      return;
-    }
-
-    setLeaveGroupPendingId(groupId);
-    const result = await leaveJoinedGroupAction(groupId);
-    setLeaveGroupPendingId(null);
-
-    if (!result.ok) {
-      showAppToast({ tone: "error", text: result.message });
-      return;
-    }
-
-    showAppToast({ tone: "success", text: t(uiLanguage, "leaderboard.leftGroupSuccess") });
-    setLeaveGroupConfirmId(null);
-
-    const remainingJoinedGroups = (switcher?.joinedGroups ?? []).filter((group) => group.id !== groupId);
-    setSwitcher((current) => {
-      if (!current) {
-        return current;
-      }
-
-      const nextJoinedGroups = current.joinedGroups.filter((group) => group.id !== groupId);
-      const nextTabs =
-        nextJoinedGroups.length > 0
-          ? current.tabs
-          : current.tabs.filter((tab) => tab.value !== "my_groups");
-
-      return {
-        ...current,
-        joinedGroups: nextJoinedGroups,
-        tabs: nextTabs
-      };
-    });
-
-    if (remainingJoinedGroups.length > 0) {
-      setSelectedGroupId(remainingJoinedGroups[0]!.id);
-    } else {
-      setSelectedGroupId("");
-      setActiveView("global");
-    }
-
-    setRefreshNonce((current) => current + 1);
-  }
 
   async function handleReactionToggle(eventId: string | null, emoji: string, reacted: boolean) {
     if (!eventId || !user) {

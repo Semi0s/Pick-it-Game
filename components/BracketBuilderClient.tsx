@@ -1248,7 +1248,12 @@ export function BracketBuilderClient({
               {t(language, "common.groupCount", { count: sortedGroupNames.length })}
             </div>
           </div>
-          <div className="grid grid-cols-[1.9rem_minmax(0,1fr)_1.9rem] items-center gap-0">
+          <div
+            className="grid grid-cols-[1.9rem_minmax(0,1fr)_1.9rem] items-center gap-0 select-none [touch-action:pan-y]"
+            onTouchStart={handleGroupSwipeTouchStart}
+            onTouchMove={handleGroupSwipeTouchMove}
+            onTouchEnd={handleGroupSwipeTouchEnd}
+          >
             <button
               type="button"
               onClick={() => goToGroup(activeGroupIndex - 1)}
