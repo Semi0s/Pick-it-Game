@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/AppShell";
+import { HelpOnboardingReplay } from "@/components/HelpOnboardingReplay";
 import helpDe from "@/content/help/de.json";
 import helpEn from "@/content/help/en.json";
 import helpEs from "@/content/help/es.json";
@@ -49,6 +50,8 @@ export default async function HelpPage() {
           </h1>
           <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">{t(language, "help.intro")}</p>
         </section>
+
+        <HelpOnboardingReplay language={language} />
 
         <div className="space-y-3">
           {content.sections.map((section, index) => (

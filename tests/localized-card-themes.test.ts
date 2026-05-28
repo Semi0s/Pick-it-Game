@@ -57,14 +57,14 @@ test("oranjekoorts resolves as an explicit visual theme without changing languag
   assert.equal(resolveLocalizedCardThemeId({ preferredLanguage: "de" }), "generic");
 });
 
-test("oranjekoorts appears immediately after netherlands in the visual theme menu", () => {
-  const sortedTeams = [...teams].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
-  const options = getVisualThemeSelectOptions(sortedTeams);
-  const netherlandsIndex = options.findIndex((option) => option.id === "ned");
+test("visual theme menu options are alphabetical and preserve special visual theme selection", () => {
+  const options = getVisualThemeSelectOptions(teams);
+  const labels = options.map((option) => option.label);
+  const sortedLabels = [...labels].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
   const oranjekoortsIndex = options.findIndex((option) => option.id === "oranjekoorts");
 
-  assert.notEqual(netherlandsIndex, -1);
-  assert.equal(oranjekoortsIndex, netherlandsIndex + 1);
+  assert.deepEqual(labels, sortedLabels);
+  assert.notEqual(oranjekoortsIndex, -1);
   assert.deepEqual(parseVisualThemeSelectValue("visual:oranjekoorts"), {
     homeTeamId: null,
     visualThemeId: "oranjekoorts"

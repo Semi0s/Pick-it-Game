@@ -43,6 +43,7 @@ export function LoginForm({
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingReset, setIsSendingReset] = useState(false);
+  const [invitePreviewError, setInvitePreviewError] = useState<string | null>(null);
   const [inviteContext, setInviteContext] = useState<{
     groupName: string;
     email: string;
@@ -52,6 +53,8 @@ export function LoginForm({
   } | null>(null);
   const isDemoFallback = isUsingDemoAuthFallback();
   const emailBoundInviteFlow = inviteFlow && Boolean(inviteToken);
+  const existingAccountInviteFlow = emailBoundInviteFlow && inviteContext?.existingAccount === true;
+  const isInvitePreviewLoading = emailBoundInviteFlow && !inviteContext && !invitePreviewError;
   const isEmailConfirmationNotice =
     mode === "login" &&
     Boolean(notice) &&
@@ -60,12 +63,20 @@ export function LoginForm({
   useEffect(() => {
     if (!inviteToken) {
       setInviteContext(null);
+      setInvitePreviewError(null);
       return;
     }
 
     let isMounted = true;
+    setInvitePreviewError(null);
     fetchGroupInvitePreviewAction(inviteToken).then((result) => {
-      if (!isMounted || !result.ok) {
+      if (!isMounted) {
+        return;
+      }
+
+      if (!result.ok) {
+        setInviteContext(null);
+        setInvitePreviewError(result.message);
         return;
       }
 
@@ -95,10 +106,27 @@ export function LoginForm({
     setEmail((current) => current || inviteContext.email);
   }, [inviteContext?.email]);
 
+  useEffect(() => {
+    if (existingAccountInviteFlow) {
+      setMode("login");
+    }
+  }, [existingAccountInviteFlow]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setNotice(null);
+    if (isInvitePreviewLoading) {
+      setError(t(uiLanguage, "common.loading"));
+      return;
+    }
+
+    if (mode === "signup" && existingAccountInviteFlow) {
+      setMode("login");
+      setNotice(t(uiLanguage, "auth.accountExistsSignInToAcceptInvite"));
+      return;
+    }
+
     if (mode === "signup" && !emailBoundInviteFlow && !promoManagerCode && !accessCode.trim()) {
       setError(t(uiLanguage, "auth.accessCodeRequired"));
       return;
@@ -109,12 +137,18 @@ export function LoginForm({
       nextPath,
       flow,
       language,
-      accessCode: mode === "signup" && !promoManagerCode ? accessCode : undefined,
+      accessCode: !promoManagerCode && accessCode.trim() ? accessCode : undefined,
       promoManagerCode: mode === "signup" ? promoManagerCode ?? undefined : undefined
     });
     setIsSubmitting(false);
 
     if (!result.ok) {
+      if (mode === "signup" && accessCode.trim() && result.message.toLowerCase().includes("already has an account")) {
+        setMode("login");
+        setNotice(t(uiLanguage, "auth.accountExistsSignInToJoin"));
+        return;
+      }
+
       setError(result.message);
       return;
     }
@@ -191,7 +225,13 @@ export function LoginForm({
 
       <div className="grid grid-cols-2 gap-2 rounded-[1rem] bg-white p-1">
         <ModeButton label={t(uiLanguage, "auth.signIn")} mode="login" isActive={mode === "login"} onClick={() => setMode("login")} />
-        <ModeButton label={t(uiLanguage, "auth.signUp")} mode="signup" isActive={mode === "signup"} onClick={() => setMode("signup")} />
+        <ModeButton
+          label={t(uiLanguage, "auth.signUp")}
+          mode="signup"
+          isActive={mode === "signup"}
+          onClick={() => setMode("signup")}
+          disabled={existingAccountInviteFlow}
+        />
       </div>
 
       {isEmailConfirmationNotice ? (
@@ -242,6 +282,12 @@ export function LoginForm({
         </p>
       ) : null}
 
+      {invitePreviewError ? (
+        <p className="rounded-[0.9rem] border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+          {invitePreviewError}
+        </p>
+      ) : null}
+
       <label className="block">
         <span className="text-sm font-semibold text-gray-800">{t(uiLanguage, "auth.email")}</span>
         <input
@@ -273,7 +319,7 @@ export function LoginForm({
         />
       </label>
 
-      {mode === "signup" && !emailBoundInviteFlow && !promoManagerCode ? (
+      {!emailBoundInviteFlow && !promoManagerCode ? (
         <label className="block">
           <span className="text-sm font-semibold text-gray-800">{t(uiLanguage, "auth.accessCode")}</span>
           <input
@@ -316,12 +362,12 @@ export function LoginForm({
 
       <button
         type="submit"
-        disabled={isSubmitting}
+        disabled={isSubmitting || isInvitePreviewLoading}
         className={`w-full rounded-[0.9rem] px-4 py-3 text-base font-bold text-white shadow-soft ${
           mode === "signup" ? "bg-orange-500 hover:bg-orange-500/95" : "bg-accent hover:bg-accent/95"
         }`}
       >
-        {isSubmitting
+        {isSubmitting || isInvitePreviewLoading
           ? t(uiLanguage, "auth.working")
           : emailBoundInviteFlow
             ? mode === "login"
@@ -368,15 +414,23 @@ type ModeButtonProps = {
   mode: AuthMode;
   isActive: boolean;
   onClick: () => void;
+  disabled?: boolean;
 };
 
-function ModeButton({ label, mode, isActive, onClick }: ModeButtonProps) {
+function ModeButton({ label, mode, isActive, onClick, disabled = false }: ModeButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={`rounded-[0.85rem] px-3 py-2 text-sm font-bold ${
-        isActive ? (mode === "signup" ? "bg-orange-500 text-white" : "bg-accent text-white") : "text-gray-600"
+        disabled
+          ? "cursor-not-allowed text-gray-400"
+          : isActive
+            ? mode === "signup"
+              ? "bg-orange-500 text-white"
+              : "bg-accent text-white"
+            : "text-gray-600"
       }`}
     >
       {label}
