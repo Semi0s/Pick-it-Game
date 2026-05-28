@@ -58,7 +58,11 @@ export async function POST(request: Request) {
       groupId: row?.group_id ?? null,
       alreadyMember: Boolean(row?.already_member),
       alreadyRedeemed: Boolean(row?.already_redeemed),
-      message: row?.already_member ? "You are already in that group." : row?.group_id ? "Group joined." : "Invite code applied."
+      message: row?.already_member
+        ? "You are already in that group. No new account is needed."
+        : row?.group_id
+          ? "Group joined."
+          : "Invite code applied."
     });
   } catch (error) {
     console.error("[access-code:redeem] Existing user redemption crashed.", error);

@@ -20,12 +20,13 @@ export async function POST(request: Request) {
       return NextResponse.json(result, { status: 200 });
     }
 
-    const existingAccount = await hasExistingAppUser(body.email);
+    const existingUserState = await getExistingAccessCodeUserState(body.email, result.code.groupId);
 
     console.info("[access-code:validate] Access code is available.", {
-      existingAccount
+      existingAccount: existingUserState.existingAccount,
+      alreadyMember: existingUserState.alreadyMember
     });
-    return NextResponse.json({ ok: true, existingAccount }, { status: 200 });
+    return NextResponse.json({ ok: true, ...existingUserState }, { status: 200 });
   } catch (error) {
     console.error("Could not validate access code.", error);
     return NextResponse.json(
@@ -38,10 +39,10 @@ export async function POST(request: Request) {
   }
 }
 
-async function hasExistingAppUser(email?: string) {
+async function getExistingAccessCodeUserState(email?: string, groupId?: string | null) {
   const normalizedEmail = email?.trim().toLowerCase();
   if (!normalizedEmail) {
-    return false;
+    return { existingAccount: false, alreadyMember: false };
   }
 
   const adminSupabase = createAdminClient();
@@ -55,8 +56,30 @@ async function hasExistingAppUser(email?: string) {
     console.warn("[access-code:validate] Could not check whether account already exists.", {
       message: error.message
     });
-    return false;
+    return { existingAccount: false, alreadyMember: false };
   }
 
-  return Boolean(data);
+  if (!data?.id) {
+    return { existingAccount: false, alreadyMember: false };
+  }
+
+  if (!groupId) {
+    return { existingAccount: true, alreadyMember: false };
+  }
+
+  const { data: member, error: memberError } = await adminSupabase
+    .from("group_members")
+    .select("id")
+    .eq("group_id", groupId)
+    .eq("user_id", data.id)
+    .maybeSingle();
+
+  if (memberError) {
+    console.warn("[access-code:validate] Could not check whether account is already in access-code group.", {
+      message: memberError.message
+    });
+    return { existingAccount: true, alreadyMember: false };
+  }
+
+  return { existingAccount: true, alreadyMember: Boolean(member) };
 }

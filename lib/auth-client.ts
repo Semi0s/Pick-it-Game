@@ -1397,7 +1397,7 @@ async function signUpWithInviteContext(
     });
 
     const validationResult = await parseJsonResponse<
-      | { ok: true; existingAccount?: boolean }
+      | { ok: true; existingAccount?: boolean; alreadyMember?: boolean }
       | { ok: false; message?: string }
     >(validationResponse, "Could not validate that code right now.", "access-code validation");
 
@@ -1429,7 +1429,11 @@ async function signUpWithInviteContext(
     if (validationResult.existingAccount) {
       return {
         data: { user: null, session: null },
-        error: { message: "That email already has an account. Switch to sign in." }
+        error: {
+          message: validationResult.alreadyMember
+            ? "That email already has an account and is already in this group. Sign in instead."
+            : "That email already has an account. Sign in with this code to join the group."
+        }
       };
     }
 

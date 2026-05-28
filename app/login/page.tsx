@@ -1,6 +1,10 @@
 import Image from "next/image";
 import { LoginForm } from "@/components/LoginForm";
 
+function readSearchParam(value: string | string[] | undefined) {
+  return typeof value === "string" ? value : undefined;
+}
+
 function extractInviteTokenFromNextPath(nextPath?: string) {
   if (!nextPath?.startsWith("/")) {
     return null;
@@ -23,13 +27,19 @@ export default async function LoginPage({
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const confirmed = resolvedSearchParams.confirmed === "1";
   const reset = resolvedSearchParams.reset === "1";
-  const mode = typeof resolvedSearchParams.mode === "string" ? resolvedSearchParams.mode : undefined;
-  const flow = typeof resolvedSearchParams.flow === "string" ? resolvedSearchParams.flow : undefined;
-  const language = typeof resolvedSearchParams.lang === "string" ? resolvedSearchParams.lang : undefined;
-  const callbackError = typeof resolvedSearchParams.error === "string" ? resolvedSearchParams.error : undefined;
-  const next = typeof resolvedSearchParams.next === "string" ? resolvedSearchParams.next : undefined;
-  const promoManagerCode = typeof resolvedSearchParams.promoCode === "string" ? resolvedSearchParams.promoCode : undefined;
-  const inviteToken = extractInviteTokenFromNextPath(next);
+  const mode = readSearchParam(resolvedSearchParams.mode);
+  const flow = readSearchParam(resolvedSearchParams.flow);
+  const language = readSearchParam(resolvedSearchParams.lang);
+  const callbackError = readSearchParam(resolvedSearchParams.error);
+  const next = readSearchParam(resolvedSearchParams.next);
+  const promoManagerCode = readSearchParam(resolvedSearchParams.promoCode);
+  const nextInviteValue = extractInviteTokenFromNextPath(next);
+  const accessCode =
+    readSearchParam(resolvedSearchParams.accessCode) ??
+    readSearchParam(resolvedSearchParams.code) ??
+    readSearchParam(resolvedSearchParams.inviteCode) ??
+    (flow === "invite" ? undefined : nextInviteValue);
+  const inviteToken = flow === "invite" ? nextInviteValue : null;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-neutral-950 px-4 py-8">
@@ -64,6 +74,7 @@ export default async function LoginPage({
             callbackError={callbackError}
             nextPath={next}
             inviteToken={inviteToken}
+            initialAccessCode={accessCode}
             promoManagerCode={promoManagerCode}
           />
         </div>
