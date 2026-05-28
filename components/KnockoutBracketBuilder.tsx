@@ -1147,12 +1147,13 @@ function ProjectedAndOfficialRoundView({
                         pendingConfirmation={null}
                         onSelect={() => undefined}
                         onAdjustScore={() => undefined}
-                      onSave={() => undefined}
-                      density="compact"
-                      side="left"
-                      showHeader={false}
-                      showMatchIdentity={false}
-                    />
+                        onSave={() => undefined}
+                        density="compact"
+                        side="left"
+                        showHeader={false}
+                        showMatchIdentity={false}
+                        isGroupPickPreview
+                      />
                     ) : (
                       <ComparisonPlaceholderCard
                         tone="projected"
@@ -1311,7 +1312,8 @@ function CurrentRoundMatchCard({
   density,
   side = "left",
   showHeader = true,
-  showMatchIdentity = true
+  showMatchIdentity = true,
+  isGroupPickPreview = false
 }: {
   match: KnockoutBracketMatchView;
   isPending: boolean;
@@ -1329,6 +1331,7 @@ function CurrentRoundMatchCard({
   side?: "left" | "right" | "center";
   showHeader?: boolean;
   showMatchIdentity?: boolean;
+  isGroupPickPreview?: boolean;
 }) {
   const language = useKnockoutLanguage();
   const landingMatchId = useContext(KnockoutLandingMatchContext);
@@ -1430,15 +1433,17 @@ function CurrentRoundMatchCard({
   const displayWinnerTeamId =
     shellState === "final" || isReadOnly ? match.savedWinnerTeamId ?? localWinnerTeamId : localWinnerTeamId;
   const homeSelected = Boolean(
-    displayWinnerTeamId &&
+    !isGroupPickPreview &&
+      displayWinnerTeamId &&
       [match.homeTeam?.id ?? null, match.seededHomeTeam?.id ?? null].includes(displayWinnerTeamId)
   );
   const awaySelected = Boolean(
-    displayWinnerTeamId &&
+    !isGroupPickPreview &&
+      displayWinnerTeamId &&
       [match.awayTeam?.id ?? null, match.seededAwayTeam?.id ?? null].includes(displayWinnerTeamId)
   );
   const projectedHomeComparisonState =
-    match.viewMode === "projected" && match.seededHomeTeam
+    !isGroupPickPreview && match.viewMode === "projected" && match.seededHomeTeam
       ? match.homeTeam
         ? match.homeTeam.id === match.seededHomeTeam.id
           ? "match"
@@ -1446,7 +1451,7 @@ function CurrentRoundMatchCard({
         : null
       : null;
   const projectedAwayComparisonState =
-    match.viewMode === "projected" && match.seededAwayTeam
+    !isGroupPickPreview && match.viewMode === "projected" && match.seededAwayTeam
       ? match.awayTeam
         ? match.awayTeam.id === match.seededAwayTeam.id
           ? "match"
@@ -1520,8 +1525,8 @@ function CurrentRoundMatchCard({
             }}
             density={density}
             side="left"
-            isReadOnly={isReadOnly}
-            canSelectByTap={requiresWinnerSelection}
+            isReadOnly={isReadOnly || isGroupPickPreview}
+            canSelectByTap={!isGroupPickPreview && requiresWinnerSelection}
             predictedScore={currentHomeScore}
             onIncrement={() => onAdjustScore(match.matchId, "home", 1)}
             onDecrement={() => onAdjustScore(match.matchId, "home", -1)}
@@ -1555,8 +1560,8 @@ function CurrentRoundMatchCard({
             }}
             density={density}
             side="right"
-            isReadOnly={isReadOnly}
-            canSelectByTap={requiresWinnerSelection}
+            isReadOnly={isReadOnly || isGroupPickPreview}
+            canSelectByTap={!isGroupPickPreview && requiresWinnerSelection}
             predictedScore={currentAwayScore}
             onIncrement={() => onAdjustScore(match.matchId, "away", 1)}
             onDecrement={() => onAdjustScore(match.matchId, "away", -1)}
@@ -1601,7 +1606,13 @@ function CurrentRoundMatchCard({
         </div>
       ) : null}
 
-      {match.status === "final" && match.viewMode === "official" ? (
+      {isGroupPickPreview ? (
+        <div className="mt-1.5 border-t border-amber-100/90 px-2 pt-2 text-center">
+          <p className="mx-auto max-w-[14rem] text-[10px] font-semibold leading-[1.25] tracking-[0.02em] text-amber-700">
+            {kt(language, "builtFromGroupPicks")}
+          </p>
+        </div>
+      ) : match.status === "final" && match.viewMode === "official" ? (
         <div className="mt-1.5 border-t border-gray-300 px-1 pt-2 text-center">
           <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
             <div className="flex min-w-0 items-center justify-start gap-2">

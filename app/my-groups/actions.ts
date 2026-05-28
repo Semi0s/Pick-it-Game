@@ -747,6 +747,7 @@ export type ResendGroupInviteResult =
 
 export type CancelGroupInviteResult = ResendGroupInviteResult;
 export type RemoveGroupMemberResult = ResendGroupInviteResult;
+export type LeaveJoinedGroupResult = ResendGroupInviteResult;
 export type UpdateGroupInviteNameResult = ResendGroupInviteResult;
 export type DeleteManagedGroupResult = ResendGroupInviteResult;
 export type UpdateManagedGroupLimitResult = ResendGroupInviteResult;
@@ -2405,6 +2406,75 @@ export async function removeGroupMemberAction(groupId: string, userId: string): 
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not remove that player."
+    };
+  }
+}
+
+export async function leaveJoinedGroupAction(groupId: string): Promise<LeaveJoinedGroupResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedGroupId = groupId.trim();
+  if (!trimmedGroupId) {
+    return { ok: false, message: "A valid group is required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const { data: membership, error: membershipError } = await adminSupabase
+      .from("group_members")
+      .select("id,role,group:groups!group_members_group_id_fkey(id,name,owner_user_id)")
+      .eq("group_id", trimmedGroupId)
+      .eq("user_id", currentUser.userId)
+      .maybeSingle();
+
+    if (membershipError) {
+      return { ok: false, message: membershipError.message };
+    }
+
+    const membershipRow = membership as
+      | {
+          id: string;
+          role: GroupMemberRole;
+          group?: { id: string; name: string; owner_user_id: string | null } | Array<{ id: string; name: string; owner_user_id: string | null }> | null;
+        }
+      | null;
+
+    if (!membershipRow) {
+      return { ok: false, message: "You are not in this group anymore." };
+    }
+
+    const group = Array.isArray(membershipRow.group) ? membershipRow.group[0] : membershipRow.group;
+    if (membershipRow.role === "manager" || group?.owner_user_id === currentUser.userId) {
+      return { ok: false, message: "Managers cannot leave a group from the invited leaderboard. Transfer or archive the group first." };
+    }
+
+    const { error } = await adminSupabase
+      .from("group_members")
+      .delete()
+      .eq("id", membershipRow.id);
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    console.info("[tier-access:joined-group-left]", {
+      userId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      groupId: trimmedGroupId
+    });
+
+    revalidatePath("/leaderboard");
+    revalidatePath("/my-groups");
+    revalidatePath("/dashboard");
+
+    return { ok: true, message: "You left the group. Your account and picks were kept." };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not leave that group."
     };
   }
 }
