@@ -279,7 +279,7 @@ export function BracketBuilderClient({
   const [groupSwipeOffsetX, setGroupSwipeOffsetX] = useState(0);
   const [isGroupSurfaceSwiping, setIsGroupSurfaceSwiping] = useState(false);
   const [supportsNativeRowDrag, setSupportsNativeRowDrag] = useState(false);
-  const [isThirdPlaceListOpen, setIsThirdPlaceListOpen] = useState(false);
+  const [isThirdPlaceListOpen, setIsThirdPlaceListOpen] = useState(true);
   const [groupProjectionSources, setGroupProjectionSources] = useState<Record<string, UserGroupProjectionSource>>(initialGroupProjectionSources);
   const [isFinalizingBracket, setIsFinalizingBracket] = useState(false);
   const [finalBracketSavedAt, setFinalBracketSavedAt] = useState<string | null>(null);

@@ -466,7 +466,7 @@ export async function sendCurrentUserPasswordReset(email: string): Promise<AuthR
 
   return {
     ok: true,
-    message: `Password reset email sent to ${normalizedEmail}.`
+    message: "If an account exists for that email, a password reset link will be sent."
   };
 }
 

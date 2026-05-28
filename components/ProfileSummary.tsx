@@ -399,7 +399,7 @@ export function ProfileSummary({
               type="button"
               disabled={isUploadingAvatar}
               onClick={() => avatarInputRef.current?.click()}
-              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-center text-xs font-bold leading-tight [overflow-wrap:anywhere] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
             >
               {isUploadingAvatar
                 ? t(uiLanguage, "profile.uploading")
@@ -425,7 +425,7 @@ export function ProfileSummary({
                   }
                   setIsUploadingAvatar(false);
                 }}
-                className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-center text-xs font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
               >
                 {isUploadingAvatar ? t(uiLanguage, "auth.working") : t(uiLanguage, "profile.removeAvatar")}
               </button>
@@ -463,7 +463,7 @@ export function ProfileSummary({
                     });
                     setIsSendingReset(false);
                   }}
-                  className="inline-flex min-w-0 items-center justify-center whitespace-nowrap rounded-[0.9rem] border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-[0.03em] text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:px-4 sm:text-sm sm:normal-case sm:tracking-normal"
+                  className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-2 py-3 text-center text-[10px] font-bold uppercase leading-[1.05] tracking-[0.01em] text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:px-4 sm:text-sm sm:normal-case sm:leading-tight sm:tracking-normal"
                 >
                   {isSendingReset ? t(uiLanguage, "profile.sending") : t(uiLanguage, "profile.resetMyPassword")}
                 </button>
@@ -472,7 +472,7 @@ export function ProfileSummary({
                   disabled={isUpdatingDisplayName}
                   onClick={() => void handleChangeDisplayName()}
                   aria-label={t(uiLanguage, "profile.changeDisplayName")}
-                  className="inline-flex min-w-0 items-center justify-center whitespace-nowrap rounded-[0.9rem] border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-[0.03em] text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:px-4 sm:text-sm sm:normal-case sm:tracking-normal"
+                  className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-2 py-3 text-center text-[10px] font-bold uppercase leading-[1.05] tracking-[0.01em] text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:px-4 sm:text-sm sm:normal-case sm:leading-tight sm:tracking-normal"
                 >
                   {isUpdatingDisplayName ? t(uiLanguage, "profile.updatingDisplayName") : t(uiLanguage, "profile.displayNameAction")}
                 </button>
@@ -484,7 +484,7 @@ export function ProfileSummary({
                   router.replace("/login");
                   router.refresh();
                 }}
-                className="inline-flex w-full min-w-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-3 text-sm font-bold transition"
+                className="inline-flex w-full min-w-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-3 text-center text-sm font-bold leading-tight [overflow-wrap:anywhere] transition"
               >
                 {t(uiLanguage, "profile.signOut")}
               </button>
@@ -504,7 +504,7 @@ export function ProfileSummary({
                   });
                   setIsSendingReset(false);
                 }}
-                className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+                className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-3 text-center text-sm font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
               >
                 {isSendingReset ? t(uiLanguage, "profile.sending") : t(uiLanguage, "profile.resetMyPassword")}
               </button>
@@ -515,7 +515,7 @@ export function ProfileSummary({
                   router.replace("/login");
                   router.refresh();
                 }}
-                className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-3 text-sm font-bold transition"
+                className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-3 text-center text-sm font-bold leading-tight [overflow-wrap:anywhere] transition"
               >
                 {t(uiLanguage, "profile.signOut")}
               </button>
@@ -753,7 +753,7 @@ export function ProfileSummary({
               type="button"
               disabled={isUpdatingFollowedTeams || !hasPendingFollowedTeamsChanges}
               onClick={handleSaveFollowedTeams}
-              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-center text-xs font-bold leading-tight [overflow-wrap:anywhere] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
             >
               {isUpdatingFollowedTeams ? t(uiLanguage, "common.saving") : t(uiLanguage, "profile.saveFollowedTeams")}
             </button>
@@ -791,7 +791,7 @@ export function ProfileSummary({
                     );
                     setFollowedTeamSelection("");
                   }}
-                  className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                  className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-center text-xs font-bold leading-tight [overflow-wrap:anywhere] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
                 >
                   {t(uiLanguage, "profile.addTeam")}
                 </button>
@@ -802,7 +802,7 @@ export function ProfileSummary({
                     setFollowedTeamIdsDraft(sortedTeams.map((team) => team.id));
                     setFollowedTeamSelection("");
                   }}
-                  className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                  className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-center text-xs font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
                 >
                   {t(uiLanguage, "profile.addAllTeams")}
                 </button>
