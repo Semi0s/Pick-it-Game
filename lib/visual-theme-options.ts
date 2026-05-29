@@ -83,5 +83,17 @@ export function parseVisualThemeSelectValue(value: string): VisualThemeSelection
 }
 
 function sortVisualThemeOptionsByLabel(options: VisualThemeSelectOption[]) {
-  return [...options].sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
+  const sortedOptions = [...options].sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
+  const oranjekoortsIndex = sortedOptions.findIndex((option) => option.id === ORANJEKOORTS_VISUAL_THEME_ID);
+  const netherlandsIndex = sortedOptions.findIndex((option) => option.kind === "team" && option.id === "ned");
+
+  if (oranjekoortsIndex === -1 || netherlandsIndex === -1 || oranjekoortsIndex === netherlandsIndex + 1) {
+    return sortedOptions;
+  }
+
+  const [oranjekoortsOption] = sortedOptions.splice(oranjekoortsIndex, 1);
+  const nextNetherlandsIndex = sortedOptions.findIndex((option) => option.kind === "team" && option.id === "ned");
+  sortedOptions.splice(nextNetherlandsIndex + 1, 0, oranjekoortsOption);
+
+  return sortedOptions;
 }
