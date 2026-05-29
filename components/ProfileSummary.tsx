@@ -6,7 +6,6 @@ import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import { VisualThemeMenu } from "@/components/VisualThemeMenu";
-import { clearCurrentUserTestPredictionsAction } from "@/app/admin/actions";
 import {
   clearCurrentUserAvatar,
   deleteCurrentUserAccount,
@@ -59,15 +58,9 @@ function compareTeamsByGroupThenName(left: ProfileTeam, right: ProfileTeam) {
 }
 
 export function ProfileSummary({
-  initialLegalDocument,
-  managedGroupCount = 0,
-  selfServiceTestResetEnabled = false,
-  showSelfServiceTestResetHint = false
+  initialLegalDocument
 }: {
   initialLegalDocument?: LegalDocument | null;
-  managedGroupCount?: number;
-  selfServiceTestResetEnabled?: boolean;
-  showSelfServiceTestResetHint?: boolean;
 }) {
   const router = useRouter();
   const { user, isLoading, refresh } = useCurrentUser();
@@ -87,11 +80,6 @@ export function ProfileSummary({
   const [deleteAccountConfirmation, setDeleteAccountConfirmation] = useState("");
   const [deleteAccountMessage, setDeleteAccountMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [showDeleteAccountPrompt, setShowDeleteAccountPrompt] = useState(false);
-  const [isTestingToolsOpen, setIsTestingToolsOpen] = useSessionDisclosureState("profile-testing-tools-disclosure", false);
-  const [testingResetConfirmation, setTestingResetConfirmation] = useState("");
-  const [testingResetAcknowledged, setTestingResetAcknowledged] = useState(false);
-  const [testingResetReason, setTestingResetReason] = useState("");
-  const [isClearingTestPredictions, setIsClearingTestPredictions] = useState(false);
   const [trophies, setTrophies] = useState<UserTrophy[]>([]);
   const [isLoadingTrophies, setIsLoadingTrophies] = useState(true);
   const [currentLegalDocument, setCurrentLegalDocument] = useState<CurrentLegalDocument | null>(
@@ -174,6 +162,24 @@ export function ProfileSummary({
   }, [user?.followedTeamIds]);
 
   useEffect(() => {
+    const openFollowedTeamsFromHash = () => {
+      if (window.location.hash !== "#followed-teams") {
+        return;
+      }
+
+      setIsProfileEditingOpen(true);
+      setIsFollowedTeamsOpen(true);
+    };
+
+    openFollowedTeamsFromHash();
+    window.addEventListener("hashchange", openFollowedTeamsFromHash);
+
+    return () => {
+      window.removeEventListener("hashchange", openFollowedTeamsFromHash);
+    };
+  }, [setIsFollowedTeamsOpen, setIsProfileEditingOpen]);
+
+  useEffect(() => {
     if (passwordMessage) {
       showAppToast(passwordMessage);
     }
@@ -234,13 +240,7 @@ export function ProfileSummary({
     planTier: user.planTier,
     managerLimits: user.managerLimits ?? null
   });
-  const hasOrganizerResetAccess = currentAccessLevel !== "player" || managedGroupCount > 0;
   const canEditDisplayName = compareAccessLevels(currentAccessLevel, "manager") >= 0;
-  const canUseSelfServiceTestingReset = selfServiceTestResetEnabled && hasOrganizerResetAccess;
-  const canSeeSelfServiceTestingResetHint =
-    showSelfServiceTestResetHint && hasOrganizerResetAccess && !selfServiceTestResetEnabled;
-  const hasPendingFollowedTeamsChanges =
-    JSON.stringify(followedTeamIdsDraft) !== JSON.stringify(user.followedTeamIds ?? []);
   const allTeamsFollowed = sortedTeams.length > 0 && followedTeamIdsDraft.length === sortedTeams.length;
   const selectedSpecialVisualTheme = getSpecialVisualThemeOption(user.visualThemeId ?? null);
   const membershipSummaryLines = currentTierAccess.limits.isUnlimited
@@ -285,25 +285,39 @@ export function ProfileSummary({
     setNotificationMessage({
       tone: "success",
       text: selection.visualThemeId
-        ? "Visual theme updated."
+        ? t(uiLanguage, "profile.homeTeamUpdated")
         : selection.homeTeamId
-          ? "Home team updated."
-          : "Visual theme reset to Auto/default."
+          ? t(uiLanguage, "profile.homeTeamUpdated")
+          : t(uiLanguage, "profile.homeTeamReset")
     });
     await refresh();
     setIsUpdatingHomeTeam(false);
   }
 
-  async function handleSaveFollowedTeams() {
+  async function handleSetFollowedTeams(nextTeamIds: string[]) {
+    if (isUpdatingFollowedTeams) {
+      return;
+    }
+
+    const previousTeamIds = followedTeamIdsDraft;
     setIsUpdatingFollowedTeams(true);
     setNotificationMessage(null);
-    const result = await updateCurrentUserFollowedTeams(followedTeamIdsDraft);
+    setFollowedTeamIdsDraft(nextTeamIds);
+    setFollowedTeamSelection("");
+
+    const result = await updateCurrentUserFollowedTeams(nextTeamIds);
     setNotificationMessage({
       tone: result.ok ? "success" : "error",
-      text: result.message ?? t(uiLanguage, "errors.generic")
+      text: result.ok
+        ? nextTeamIds.length > 0
+          ? t(uiLanguage, "profile.followedTeamsUpdated")
+          : t(uiLanguage, "profile.followedTeamsCleared")
+        : (result.message ?? t(uiLanguage, "errors.generic"))
     });
     if (result.ok) {
       await refresh();
+    } else {
+      setFollowedTeamIdsDraft(previousTeamIds);
     }
     setIsUpdatingFollowedTeams(false);
   }
@@ -552,6 +566,141 @@ export function ProfileSummary({
                 }}
               />
             </label>
+            <div id="followed-teams" className="mt-4 scroll-mt-24 rounded-[1rem] border border-gray-200 bg-gray-50/70 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h4 className="text-sm font-black text-gray-900">{t(uiLanguage, "profile.followedTeams")}</h4>
+                  <p className="mt-1 text-sm font-normal leading-5 text-gray-500">
+                    {t(uiLanguage, "profile.appFocusReminders")}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <div className="ui-chip-sm border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-700">
+                    {allTeamsFollowed ? t(uiLanguage, "profile.allTeams") : selectedFollowedTeams.length}
+                  </div>
+                  <InlineDisclosureButton
+                    isOpen={isFollowedTeamsOpen}
+                    variant="subtle"
+                    onClick={() => setIsFollowedTeamsOpen((current) => !current)}
+                  />
+                </div>
+              </div>
+              {isFollowedTeamsOpen ? (
+                <>
+                  <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                    <label className="min-w-0 flex-1">
+                      <span className="sr-only">{t(uiLanguage, "profile.chooseTeamToFollow")}</span>
+                      <select
+                        value={followedTeamSelection}
+                        disabled={isUpdatingFollowedTeams}
+                        onChange={(event) => setFollowedTeamSelection(event.target.value)}
+                        className="w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+                      >
+                        <option value="">{t(uiLanguage, "profile.addTeam")}</option>
+                        {availableFollowedTeamOptions.map((team) => (
+                          <option key={team.id} value={team.id}>
+                            {team.groupName} {team.flagEmoji ? `${team.flagEmoji} ` : ""}· {team.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={isUpdatingFollowedTeams || !followedTeamSelection || allTeamsFollowed}
+                        onClick={() => {
+                          if (!followedTeamSelection) {
+                            return;
+                          }
+
+                          const nextTeamIds = followedTeamIdsDraft.includes(followedTeamSelection)
+                            ? followedTeamIdsDraft
+                            : [...followedTeamIdsDraft, followedTeamSelection];
+                          void handleSetFollowedTeams(nextTeamIds);
+                        }}
+                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-center text-xs font-bold leading-tight [overflow-wrap:anywhere] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                      >
+                        {isUpdatingFollowedTeams ? t(uiLanguage, "common.saving") : t(uiLanguage, "profile.addTeam")}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isUpdatingFollowedTeams || allTeamsFollowed || sortedTeams.length === 0}
+                        onClick={() => {
+                          void handleSetFollowedTeams(sortedTeams.map((team) => team.id));
+                        }}
+                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-center text-xs font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                      >
+                        {t(uiLanguage, "profile.addAllTeams")}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {user.homeTeamId && !followedTeamIdsDraft.includes(user.homeTeamId) ? (
+                      <button
+                        type="button"
+                        disabled={isUpdatingFollowedTeams}
+                        onClick={() => {
+                          void handleSetFollowedTeams([user.homeTeamId as string, ...followedTeamIdsDraft]);
+                        }}
+                        className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+                      >
+                        {t(uiLanguage, "profile.addHomeTeam")}
+                      </button>
+                    ) : null}
+                    {followedTeamIdsDraft.length > 0 ? (
+                      <button
+                        type="button"
+                        disabled={isUpdatingFollowedTeams}
+                        onClick={() => {
+                          void handleSetFollowedTeams([]);
+                        }}
+                        className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+                      >
+                        {t(uiLanguage, "profile.clear")}
+                      </button>
+                    ) : null}
+                  </div>
+                  {allTeamsFollowed ? (
+                    <p className="mt-3 rounded-[0.9rem] border border-accent-light bg-accent-light/40 px-3 py-3 text-sm font-semibold text-accent-dark">
+                      {t(uiLanguage, "profile.allTeamsDashboardReminders")}
+                    </p>
+                  ) : null}
+                  <div className="mt-3 space-y-2">
+                    {selectedFollowedTeams.length > 0 ? (
+                      selectedFollowedTeams.map((team) => (
+                        <div key={team.id} className="flex items-start justify-between gap-3 rounded-[0.9rem] border border-gray-200 bg-white px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-black text-gray-950">
+                              {team.flagEmoji ? `${team.flagEmoji} ` : ""}{team.name}
+                            </p>
+                            <p className="mt-1 text-xs font-semibold text-gray-500">
+                              {team.groupName} {team.flagEmoji ? team.flagEmoji : ""}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={isUpdatingFollowedTeams}
+                            onClick={() => {
+                              void handleSetFollowedTeams(followedTeamIdsDraft.filter((teamId) => teamId !== team.id));
+                            }}
+                            className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-rose-300 bg-white px-3 py-2 text-xs font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                          >
+                            {t(uiLanguage, "common.remove")}
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="rounded-[0.9rem] border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-500">
+                        {t(uiLanguage, "profile.noTeamsSelected")}
+                      </p>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <p className="text-xs font-semibold text-gray-500">{t(uiLanguage, "profile.remindersFollowTeams")}</p>
+                  </div>
+                </>
+              ) : null}
+            </div>
             <label className="mt-4 block">
               <span className="text-sm font-bold text-gray-800">{copy.language}</span>
               <select
@@ -727,267 +876,6 @@ export function ProfileSummary({
           </>
         ) : null}
       </div>
-
-      <div id="followed-teams" className="ui-card scroll-mt-24 p-4">
-        <div className="flex flex-col gap-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-lg font-bold">{t(uiLanguage, "profile.followedTeams")}</h3>
-                <InlineDisclosureButton
-                  isOpen={isFollowedTeamsOpen}
-                  variant="subtle"
-                  onClick={() => setIsFollowedTeamsOpen((current) => !current)}
-                />
-              </div>
-            </div>
-            <div className="ui-chip-sm shrink-0 border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-700">
-              {allTeamsFollowed ? t(uiLanguage, "profile.allTeams") : selectedFollowedTeams.length}
-            </div>
-          </div>
-          <div className="min-w-0">
-            <p className="mt-1 text-sm font-normal text-gray-500">{t(uiLanguage, "profile.appFocusReminders")}</p>
-          </div>
-          <div className="flex justify-end">
-            <button
-              type="button"
-              disabled={isUpdatingFollowedTeams || !hasPendingFollowedTeamsChanges}
-              onClick={handleSaveFollowedTeams}
-              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-center text-xs font-bold leading-tight [overflow-wrap:anywhere] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
-            >
-              {isUpdatingFollowedTeams ? t(uiLanguage, "common.saving") : t(uiLanguage, "profile.saveFollowedTeams")}
-            </button>
-          </div>
-        </div>
-        {isFollowedTeamsOpen ? (
-          <>
-            <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-              <label className="min-w-0 flex-1">
-                <span className="sr-only">{t(uiLanguage, "profile.chooseTeamToFollow")}</span>
-                <select
-                  value={followedTeamSelection}
-                  onChange={(event) => setFollowedTeamSelection(event.target.value)}
-                  className="w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                >
-                  <option value="">{t(uiLanguage, "profile.addTeam")}</option>
-                  {availableFollowedTeamOptions.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.groupName} {team.flagEmoji ? `${team.flagEmoji} ` : ""}· {team.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  disabled={!followedTeamSelection || allTeamsFollowed}
-                  onClick={() => {
-                    if (!followedTeamSelection) {
-                      return;
-                    }
-
-                    setFollowedTeamIdsDraft((current) =>
-                      current.includes(followedTeamSelection) ? current : [...current, followedTeamSelection]
-                    );
-                    setFollowedTeamSelection("");
-                  }}
-                  className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-center text-xs font-bold leading-tight [overflow-wrap:anywhere] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
-                >
-                  {t(uiLanguage, "profile.addTeam")}
-                </button>
-                <button
-                  type="button"
-                  disabled={allTeamsFollowed || sortedTeams.length === 0}
-                  onClick={() => {
-                    setFollowedTeamIdsDraft(sortedTeams.map((team) => team.id));
-                    setFollowedTeamSelection("");
-                  }}
-                  className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-center text-xs font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
-                >
-                  {t(uiLanguage, "profile.addAllTeams")}
-                </button>
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {user.homeTeamId && !followedTeamIdsDraft.includes(user.homeTeamId) ? (
-                <button
-                  type="button"
-                  onClick={() => setFollowedTeamIdsDraft((current) => [user.homeTeamId as string, ...current])}
-                  className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                >
-                  {t(uiLanguage, "profile.addHomeTeam")}
-                </button>
-              ) : null}
-              {followedTeamIdsDraft.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFollowedTeamIdsDraft([]);
-                    setFollowedTeamSelection("");
-                  }}
-                  className="ui-chip-sm border border-gray-300 bg-white font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                >
-                  {t(uiLanguage, "profile.clear")}
-                </button>
-              ) : null}
-            </div>
-            {allTeamsFollowed ? (
-              <p className="mt-3 rounded-[0.9rem] border border-accent-light bg-accent-light/40 px-3 py-3 text-sm font-semibold text-accent-dark">
-                {t(uiLanguage, "profile.allTeamsDashboardReminders")}
-              </p>
-            ) : null}
-            <div className="mt-3 space-y-2">
-              {selectedFollowedTeams.length > 0 ? (
-                selectedFollowedTeams.map((team) => (
-                  <div key={team.id} className="flex items-start justify-between gap-3 rounded-[0.9rem] border border-gray-200 bg-white px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-black text-gray-950">
-                        {team.flagEmoji ? `${team.flagEmoji} ` : ""}{team.name}
-                      </p>
-                      <p className="mt-1 text-xs font-semibold text-gray-500">
-                        {team.groupName} {team.flagEmoji ? team.flagEmoji : ""}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFollowedTeamIdsDraft((current) => current.filter((teamId) => teamId !== team.id))
-                      }
-                      className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-rose-300 bg-white px-3 py-2 text-xs font-bold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 sm:text-sm"
-                    >
-                      {t(uiLanguage, "common.remove")}
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <p className="rounded-[0.9rem] border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-500">
-                  {t(uiLanguage, "profile.noTeamsSelected")}
-                </p>
-              )}
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <p className="text-xs font-semibold text-gray-500">{t(user.preferredLanguage, "profile.remindersFollowTeams")}</p>
-            </div>
-          </>
-        ) : null}
-      </div>
-
-      {canSeeSelfServiceTestingResetHint ? (
-        <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/50 p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-bold text-gray-900">Testing Tools</h3>
-            <span className="ui-chip-sm border border-amber-300 bg-white font-bold uppercase tracking-wide text-amber-800">
-              Hidden
-            </span>
-          </div>
-          <p className="mt-2 text-sm leading-6 text-gray-700">
-            The self-service testing reset is available for Captain tier and above, but it is currently disabled in this environment.
-          </p>
-          <p className="mt-2 text-xs font-semibold text-amber-900/80">
-            Set <code className="rounded bg-white/80 px-1 py-0.5 font-mono text-[11px]">ENABLE_SELF_SERVICE_TEST_RESETS=true</code>{" "}
-            and restart the app to show the <span className="font-bold">Clear My Test Predictions</span> panel on this page.
-          </p>
-        </div>
-      ) : null}
-
-      {canUseSelfServiceTestingReset ? (
-        <div className="ui-card border-amber-200 bg-amber-50/40 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h3 className="text-lg font-bold">Testing Tools</h3>
-              <span className="ui-chip-sm border border-amber-300 bg-white font-bold uppercase tracking-wide text-amber-800">
-                Testing only
-              </span>
-            </div>
-            <InlineDisclosureButton
-              isOpen={isTestingToolsOpen}
-              variant="subtle"
-              onClick={() => setIsTestingToolsOpen((current) => !current)}
-              className="shrink-0"
-            />
-          </div>
-
-          {isTestingToolsOpen ? (
-            <div className="mt-4 space-y-4">
-              <div>
-                <p className="text-sm leading-6 text-gray-700">
-                  Use this only while testing. It clears your saved picks so you can run through the experience again.
-                </p>
-                <p className="mt-1 text-xs font-semibold text-amber-900/80">
-                  Visible only when <code className="rounded bg-white/80 px-1 py-0.5 font-mono text-[11px]">ENABLE_SELF_SERVICE_TEST_RESETS=true</code>.
-                </p>
-              </div>
-              <div className="rounded-md border border-amber-300 bg-white px-4 py-3 text-sm font-semibold text-gray-700">
-                This is for testing only. It will clear your saved prediction data so you can test the app again. This cannot be undone.
-              </div>
-
-              <div className="rounded-md bg-white px-4 py-4">
-                <p className="text-sm font-bold text-gray-900">Clear your test predictions?</p>
-                <p className="mt-2 text-sm leading-6 text-gray-700">
-                  This will clear your saved group-stage, knockout, and projected knockout picks. Your account, groups, profile, and invitations will remain.
-                </p>
-
-                <label className="mt-4 block">
-                  <span className="text-sm font-bold text-gray-800">Typed confirmation</span>
-                  <input
-                    value={testingResetConfirmation}
-                    onChange={(event) => setTestingResetConfirmation(event.target.value)}
-                    placeholder="RESET MY PICKS"
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                  />
-                </label>
-
-                <label className="mt-4 block">
-                  <span className="text-sm font-bold text-gray-800">Reason</span>
-                  <input
-                    value={testingResetReason}
-                    onChange={(event) => setTestingResetReason(event.target.value)}
-                    placeholder="Testing reset reason"
-                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                  />
-                </label>
-
-                <label className="mt-4 flex items-start gap-3 text-sm font-semibold text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={testingResetAcknowledged}
-                    onChange={(event) => setTestingResetAcknowledged(event.target.checked)}
-                    className="mt-1 h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent"
-                  />
-                  <span>I understand this will clear my saved test predictions.</span>
-                </label>
-
-                <button
-                  type="button"
-                  disabled={isClearingTestPredictions}
-                  onClick={async () => {
-                    setIsClearingTestPredictions(true);
-                    const result = await clearCurrentUserTestPredictionsAction({
-                      confirmationText: testingResetConfirmation,
-                      acknowledged: testingResetAcknowledged,
-                      reason: testingResetReason
-                    });
-                    showAppToast({
-                      tone: result.ok ? "success" : "error",
-                      text: result.ok ? "Your test predictions were cleared." : (result.message ?? "Could not clear your test predictions. Please try again.")
-                    });
-                    if (result.ok) {
-                      setTestingResetConfirmation("");
-                      setTestingResetAcknowledged(false);
-                      setTestingResetReason("");
-                      await refresh();
-                    }
-                    setIsClearingTestPredictions(false);
-                  }}
-                  className="mt-4 w-full rounded-md border border-rose-300 bg-rose-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
-                >
-                  {isClearingTestPredictions ? "Clearing..." : "Clear My Test Predictions"}
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
 
       <div className="ui-card p-4">
         <h3 className="text-lg font-bold">{t(uiLanguage, "profile.trophies")}</h3>

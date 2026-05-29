@@ -128,11 +128,13 @@ function ProgressPanel({
   const tone = getProgressDisplayTone(progress, nowMs, isCompleteForDisplay);
   const statusLabel = getProgressStatusLabel(progress, language, nowMs);
   const progressHref = progress.phase === "knockout_stage" ? "/knockout" : "/bracket-builder";
+  const progressLabel =
+    progress.phase === "group_stage" ? t(language, "bracket.groupPicks") : progress.label;
 
   return (
     <Link
       href={progressHref}
-      aria-label={`${progress.label}: ${statusLabel}`}
+      aria-label={`${progressLabel}: ${statusLabel}`}
       className="block min-w-0 rounded-[1.15rem] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
     >
       <PanelShell
@@ -144,7 +146,7 @@ function ProgressPanel({
         <div className="flex h-full flex-col items-center justify-center pt-3 text-center">
           <DigitalWatchRing percentage={percentage} tone={tone} theme={theme} />
           <div className="-mt-0.5 space-y-0.5">
-            <p className={`max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{progress.label}</p>
+            <p className={`max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{progressLabel}</p>
             <p className={`max-w-full truncate font-semibold uppercase tracking-[0.1em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] ${getToneMetaTextClasses(tone, isCompleteForDisplay, progress.isLocked, theme)}`}>
               <span className="triptych-micro-copy">
               {statusLabel}
