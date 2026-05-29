@@ -1,5 +1,7 @@
 import Image from "next/image";
 import { LoginForm } from "@/components/LoginForm";
+import { normalizeLanguage } from "@/lib/i18n";
+import { t } from "@/lib/strings";
 
 function readSearchParam(value: string | string[] | undefined) {
   return typeof value === "string" ? value : undefined;
@@ -30,6 +32,7 @@ export default async function LoginPage({
   const mode = readSearchParam(resolvedSearchParams.mode);
   const flow = readSearchParam(resolvedSearchParams.flow);
   const language = readSearchParam(resolvedSearchParams.lang);
+  const uiLanguage = normalizeLanguage(language);
   const callbackError = readSearchParam(resolvedSearchParams.error);
   const next = readSearchParam(resolvedSearchParams.next);
   const promoManagerCode = readSearchParam(resolvedSearchParams.promoCode);
@@ -42,7 +45,7 @@ export default async function LoginPage({
   const inviteToken = flow === "invite" ? nextInviteValue : null;
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-neutral-950 px-4 py-8">
+    <main className="relative min-h-screen overflow-hidden bg-neutral-950 px-4 py-6">
       <Image
         src="/images/signin-stadium.jpeg"
         alt="Soccer stadium background"
@@ -51,9 +54,9 @@ export default async function LoginPage({
         className="object-cover object-center"
       />
       <div className="absolute inset-0 bg-black/30" aria-hidden />
-      <section className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] max-w-[17.85rem] flex-col justify-center">
-        <div className="mb-8 rounded-[1.35rem] border border-white/60 bg-white/90 p-4 shadow-2xl shadow-black/25">
-          <div className="mx-auto mb-6 max-w-[30rem]">
+      <section className="relative z-10 mx-auto flex min-h-[calc(100vh-3rem)] max-w-[17.85rem] flex-col justify-center">
+        <div className="mb-3 rounded-[1.35rem] border border-white/60 bg-white/90 p-3.5 shadow-2xl shadow-black/25">
+          <div className="mx-auto mb-4 mt-2 max-w-[30rem]">
             <Image
               src="/images/pickit-login-logo.png"
               alt="PICK-IT! World Cup 2026"
@@ -61,7 +64,7 @@ export default async function LoginPage({
               height={239}
               sizes="(max-width: 640px) 216px, 264px"
               priority
-              className="mx-auto h-auto w-full max-w-[12.25rem] object-contain sm:max-w-[13.75rem] md:max-w-[15rem]"
+              className="mx-auto h-auto w-full max-w-[11.5rem] object-contain sm:max-w-[13rem] md:max-w-[14.25rem]"
             />
           </div>
 
@@ -79,12 +82,23 @@ export default async function LoginPage({
           />
         </div>
 
-        <div className="mt-6 flex justify-center">
+        <div className="mb-2 flex justify-center">
+          <a
+            href="https://www.semiosdesign.com/pick-it-game"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center justify-center rounded-[0.75rem] border border-white/40 bg-white/90 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-900 shadow-lg shadow-black/15 transition hover:border-white hover:bg-white"
+          >
+            {t(uiLanguage, "auth.contactUs")}
+          </a>
+        </div>
+
+        <div className="mt-2 flex justify-center">
           <a
             href="https://www.semiosdesign.com"
             target="_blank"
             rel="noreferrer"
-            className="inline-flex flex-col items-center justify-center gap-2 text-center text-base font-semibold tracking-wide text-white transition hover:text-white/80"
+            className="inline-flex flex-col items-center justify-center gap-1.5 text-center text-[10px] font-normal tracking-wide text-white transition hover:text-white/80"
           >
             <Image
               src="/images/semios-orange-icon-auth.png"

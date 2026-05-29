@@ -470,6 +470,44 @@ export async function sendCurrentUserPasswordReset(email: string): Promise<AuthR
   };
 }
 
+export async function resendSignupConfirmationEmail(
+  email: string,
+  options?: { language?: string | null }
+): Promise<AuthResult> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    return { ok: false, message: "Enter a valid email address." };
+  }
+
+  if (!hasSupabaseConfig()) {
+    return { ok: true, message: "Confirmation email sent." };
+  }
+
+  const supabase = createClient();
+  const loginReturnPath = buildLoginReturnPath({
+    confirmed: true,
+    language: options?.language ?? undefined
+  });
+  const emailRedirectTo = buildAuthCallbackUrl(loginReturnPath, options?.language);
+  const { error } = await supabase.auth.resend({
+    type: "signup",
+    email: normalizedEmail,
+    options: {
+      emailRedirectTo
+    }
+  });
+
+  if (error) {
+    const safeAuthError = getSafeSupabaseErrorInfo(error, "Could not resend confirmation email.");
+    return {
+      ok: false,
+      message: safeAuthError.message || "Could not resend confirmation email."
+    };
+  }
+
+  return { ok: true, message: "Confirmation email sent." };
+}
+
 export async function fetchCurrentUserTrophies(): Promise<UserTrophy[]> {
   if (!hasSupabaseConfig()) {
     return [];
@@ -1384,7 +1422,7 @@ function getFriendlyAuthError(message: string, mode: AuthMode, options?: { hadAc
   }
 
   if (normalized.includes("email not confirmed") || normalized.includes("email_not_confirmed")) {
-    return "Your email still needs confirmation. Open the confirmation email, then sign in again.";
+    return "Please confirm your email before signing in. Check your inbox or junk folder for the confirmation link.";
   }
 
   if (normalized.includes("already registered") || normalized.includes("already been registered")) {
