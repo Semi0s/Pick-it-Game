@@ -176,9 +176,6 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
       <div className="rounded-[1.15rem] bg-gray-100 p-5">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(uiLanguage, "profile.profileSetup")}</p>
         <h1 className="mt-2 text-3xl font-black leading-tight">{t(uiLanguage, "profile.chooseAppearance")}</h1>
-        <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">
-          {t(uiLanguage, "profile.setupIntro")}
-        </p>
         {inviteGroupName ? (
           <p className="mt-2 text-sm font-semibold leading-6 text-accent-dark">
             {t(uiLanguage, "profile.finishJoiningGroup", { groupName: inviteGroupName })}
@@ -202,7 +199,6 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
 
         <label className="block">
           <span className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.preferredLanguage")}</span>
-          <p className="mt-1 text-sm font-semibold text-gray-500">{t(uiLanguage, "profile.languageHelp")}</p>
           <select
             value={preferredLanguage}
             onChange={(event) => setPreferredLanguage(normalizeLanguage(event.target.value))}
@@ -237,9 +233,6 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.followedTeams")}</span>
-                <span className="ui-chip-sm border border-gray-200 bg-white font-bold uppercase tracking-wide text-gray-500">
-                  {t(uiLanguage, "profile.optional")}
-                </span>
               </div>
               <p className="mt-1 text-sm font-normal leading-5 text-gray-500">
                 {t(uiLanguage, "profile.followedTeamsSetupHelp")}

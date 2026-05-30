@@ -45,6 +45,7 @@ type BracketSlideView = {
 const KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY = "knockout-active-slide";
 const KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY = "knockout-active-country-filter";
 const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
+const VISIBLE_KNOCKOUT_STAGE_IDS = new Set<KnockoutBracketMatchView["stage"]>(["r32"]);
 
 const KnockoutLanguageContext = createContext<SupportedLanguage>("en");
 const KnockoutLandingMatchContext = createContext<string | null>(null);
@@ -90,7 +91,14 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     () => deriveEditorView(baseView, predictions, draftWinnerByMatchId, draftScoreByMatchId),
     [baseView, draftScoreByMatchId, draftWinnerByMatchId, predictions]
   );
-  const slides = useMemo(() => buildBracketSlides(view, uiLanguage), [uiLanguage, view]);
+  const roundChoices = useMemo(() => buildBracketSlides(view, uiLanguage), [uiLanguage, view]);
+  const slides = useMemo(
+    () =>
+      roundChoices.filter(
+        (slide) => VISIBLE_KNOCKOUT_STAGE_IDS.has(slide.currentStage) && slide.currentMatches.length > 0
+      ),
+    [roundChoices]
+  );
   const activeSlide = slides[activeSlideIndex] ?? null;
   const activeFilterTeam = useMemo(() => {
     if (!selectedCountryFilter || !activeSlide) {
@@ -246,19 +254,28 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
             }
           }}
         >
-          {slides.map((slide, index) => {
+          {roundChoices.map((slide) => {
+            const enabledIndex = slides.findIndex((enabledSlide) => enabledSlide.id === slide.id);
+            const isEnabled = enabledIndex >= 0;
             const isActive = slide.id === slides[activeSlideIndex]?.id;
             return (
               <button
                 key={slide.id}
                 type="button"
-                onClick={() => goToSlide(index)}
-                data-choice-key={slide.id}
+                onClick={() => {
+                  if (isEnabled) {
+                    goToSlide(enabledIndex);
+                  }
+                }}
+                disabled={!isEnabled}
+                data-choice-key={isEnabled ? slide.id : undefined}
                 data-choice-active={isActive ? "true" : "false"}
                 className={`ui-cockpit-button transition ${
                   isActive
                     ? "bg-accent text-accent-text"
-                    : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
+                    : isEnabled
+                      ? "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
+                      : "cursor-not-allowed border border-gray-200 bg-gray-100 text-gray-400 opacity-85"
                 }`}
               >
                 {slide.title}
@@ -2792,9 +2809,9 @@ function buildBracketSlides(view: KnockoutBracketEditorView, language: Supported
       previousStage: null,
       previousLabel: null,
       previousMatches: [],
-      nextStage: "r16",
-      nextLabel: kt(language, "roundOf16"),
-      nextMatches: r16?.matches ?? [],
+      nextStage: null,
+      nextLabel: null,
+      nextMatches: [],
       champion: null,
       thirdPlaceMatch: null,
       layout: "split"
@@ -2886,5 +2903,5 @@ function buildBracketSlides(view: KnockoutBracketEditorView, language: Supported
     }
   ];
 
-  return slides.filter((slide) => slide.currentMatches.length > 0);
+  return slides;
 }

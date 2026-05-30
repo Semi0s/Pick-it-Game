@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BellRing, Clock3, ThumbsUp } from "lucide-react";
+import { BellRing, Clock3 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   getDeadlineUrgency,
@@ -9,7 +9,11 @@ import {
   type DashboardMatchSummary,
   type DashboardUrgencyTone
 } from "@/lib/dashboard-home";
-import { formatDate, formatNumber, formatRank as formatLocalizedRank, formatTime } from "@/lib/i18n-format";
+import {
+  GROUP_STAGE_UNSAVED_DRAFT_STORAGE_KEY,
+  hasCurrentUnsavedGroupStageDraft
+} from "@/lib/group-stage-unsaved-draft";
+import { formatDate, formatNumber, formatTime } from "@/lib/i18n-format";
 import { t } from "@/lib/strings";
 
 type DashboardCommandCenterProps = {
@@ -31,6 +35,7 @@ export function DashboardCommandCenter({ summary, language }: DashboardCommandCe
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [triptychTheme, setTriptychTheme] = useState<TriptychTheme>("light");
   const [darkAccentStyle, setDarkAccentStyle] = useState<CSSProperties>(FALLBACK_TRIPTYCH_DARK_ACCENT_STYLE);
+  const [hasUnsavedGroupStageDraft, setHasUnsavedGroupStageDraft] = useState(false);
   const triptychRef = useRef<HTMLElement | null>(null);
   const darkAccentSignatureRef = useRef("");
 
@@ -43,6 +48,26 @@ export function DashboardCommandCenter({ summary, language }: DashboardCommandCe
       window.clearInterval(intervalId);
     };
   }, []);
+
+  useEffect(() => {
+    const syncUnsavedDraftState = () => {
+      setHasUnsavedGroupStageDraft(
+        hasCurrentUnsavedGroupStageDraft(window.sessionStorage.getItem(GROUP_STAGE_UNSAVED_DRAFT_STORAGE_KEY), {
+          lastCommittedAt: summary.progress.lastCommittedAt
+        })
+      );
+    };
+
+    syncUnsavedDraftState();
+    window.addEventListener("focus", syncUnsavedDraftState);
+    window.addEventListener("pageshow", syncUnsavedDraftState);
+    window.addEventListener("storage", syncUnsavedDraftState);
+    return () => {
+      window.removeEventListener("focus", syncUnsavedDraftState);
+      window.removeEventListener("pageshow", syncUnsavedDraftState);
+      window.removeEventListener("storage", syncUnsavedDraftState);
+    };
+  }, [summary.progress.lastCommittedAt]);
 
   useEffect(() => {
     try {
@@ -98,8 +123,14 @@ export function DashboardCommandCenter({ summary, language }: DashboardCommandCe
       data-triptych-theme={triptychTheme}
       style={triptychTheme === "dark" ? darkAccentStyle : undefined}
     >
-      <div className="grid grid-cols-3 gap-2">
-        <ProgressPanel progress={summary.progress} nowMs={nowMs} language={language} theme={triptychTheme} />
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+        <ProgressPanel
+          progress={summary.progress}
+          nowMs={nowMs}
+          language={language}
+          theme={triptychTheme}
+          hasUnsavedGroupStageDraft={hasUnsavedGroupStageDraft}
+        />
         <PerformancePanel
           performance={summary.performance}
           language={language}
@@ -116,20 +147,28 @@ function ProgressPanel({
   progress,
   nowMs,
   language,
-  theme
+  theme,
+  hasUnsavedGroupStageDraft = false
 }: {
   progress: DashboardCommandCenterSummary["progress"];
   nowMs: number;
   language?: string | null;
   theme: TriptychTheme;
+  hasUnsavedGroupStageDraft?: boolean;
 }) {
   const percentage = progress.totalUnits > 0 ? Math.round((progress.completedUnits / progress.totalUnits) * 100) : 0;
   const isCompleteForDisplay = progress.isComplete || percentage >= 100;
   const tone = getProgressDisplayTone(progress, nowMs, isCompleteForDisplay);
   const statusLabel = getProgressStatusLabel(progress, language, nowMs);
-  const progressHref = progress.phase === "knockout_stage" ? "/knockout" : "/bracket-builder";
+  const shouldShowGroupStageNotSaved =
+    progress.phase === "group_stage" && (Boolean(progress.needsSave) || hasUnsavedGroupStageDraft);
+  const progressHref = progress.phase === "knockout_stage"
+    ? "/knockout"
+    : shouldShowGroupStageNotSaved
+      ? "/bracket-builder#group-stage-commit"
+      : "/bracket-builder#group-stage-picks";
   const progressLabel =
-    progress.phase === "group_stage" ? t(language, "bracket.groupPicks") : progress.label;
+    progress.phase === "group_stage" ? t(language, "dashboard.groupStage") : progress.label;
 
   return (
     <Link
@@ -140,12 +179,15 @@ function ProgressPanel({
       <PanelShell
         accentTone={tone}
         theme={theme}
-        header={<UrgencyIconChip tone={tone} isComplete={isCompleteForDisplay} language={language} theme={theme} />}
         className="transition hover:-translate-y-0.5 hover:border-accent/35 hover:shadow-[0_12px_26px_rgba(38,28,20,0.08),0_1px_2px_rgba(38,28,20,0.04)]"
       >
-        <div className="flex h-full flex-col items-center justify-center pt-3 text-center">
+        <div className="absolute right-[-8px] top-[-8px] z-20">
+          <UrgencyIconChip tone={tone} isComplete={isCompleteForDisplay} language={language} theme={theme} />
+        </div>
+        <div className="flex h-full -translate-y-2 flex-col items-center justify-center text-center">
           <DigitalWatchRing percentage={percentage} tone={tone} theme={theme} />
-          <div className="-mt-0.5 space-y-0.5">
+          {shouldShowGroupStageNotSaved ? <NotSavedMicroLabel language={language} theme={theme} /> : null}
+          <div className={`${shouldShowGroupStageNotSaved ? "mt-0 space-y-0.5" : "-mt-0.5 space-y-0.5"}`}>
             <p className={`max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{progressLabel}</p>
             <p className={`max-w-full truncate font-semibold uppercase tracking-[0.1em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] ${getToneMetaTextClasses(tone, isCompleteForDisplay, progress.isLocked, theme)}`}>
               <span className="triptych-micro-copy">
@@ -156,6 +198,14 @@ function ProgressPanel({
         </div>
       </PanelShell>
     </Link>
+  );
+}
+
+function NotSavedMicroLabel({ language, theme }: { language?: string | null; theme: TriptychTheme }) {
+  return (
+    <p className={`triptych-not-saved-blink -mt-0.5 max-w-full truncate text-center font-semibold uppercase tracking-[0.1em] ${theme === "dark" ? "text-red-200" : "text-red-700"}`}>
+      <span className="triptych-micro-copy">{t(language, "dashboard.notSaved")}</span>
+    </p>
   );
 }
 
@@ -172,8 +222,8 @@ function PerformancePanel({
 }) {
   return (
     <PanelShell accentTone="neutral" theme={theme} className="triptych-compact-type">
-      <div className={`relative flex h-full w-full flex-col justify-center divide-y px-1 pb-4 ${getDividerClasses(theme)}`}>
-        <MetricRow label="Pts" value={formatPoints(performance.globalPoints, language)} theme={theme} />
+      <div className={`relative flex h-full w-full flex-col justify-center divide-y px-1 pb-4 sm:px-10 lg:px-12 ${getDividerClasses(theme)}`}>
+        <MetricRow label={t(language, "leaderboard.points")} value={formatPoints(performance.globalPoints, language)} theme={theme} />
         <MetricRow label={t(language, "leaderboard.rank")} value={formatRank(performance.globalRank, language)} theme={theme} />
         <MetricSplitRow
           groupLabel={t(language, "dashboard.groupsCompact")}
@@ -306,14 +356,18 @@ function UpcomingMatchSlider({
       return;
     }
 
-    const slideWidth = slider.clientWidth;
-    if (slideWidth <= 0) {
+    const slides = Array.from(slider.children).filter(
+      (child): child is HTMLElement => child instanceof HTMLElement
+    );
+    if (slides.length === 0) {
       return;
     }
 
-    const maxIndex = Math.max(0, matches.length - 1);
-    const targetIndex = Math.min(maxIndex, Math.max(0, Math.round(slider.scrollLeft / slideWidth)));
-    const targetLeft = targetIndex * slideWidth;
+    const targetLeft = slides.reduce((nearestOffset, slide) => {
+      return Math.abs(slide.offsetLeft - slider.scrollLeft) < Math.abs(nearestOffset - slider.scrollLeft)
+        ? slide.offsetLeft
+        : nearestOffset;
+    }, slides[0]?.offsetLeft ?? 0);
 
     if (Math.abs(slider.scrollLeft - targetLeft) <= 1) {
       return;
@@ -387,7 +441,7 @@ function CompactUpcomingMatch({
   theme: TriptychTheme;
 }) {
   return (
-    <div className="flex min-w-full snap-center flex-col items-center justify-center text-center [scroll-snap-stop:always] [-webkit-text-size-adjust:100%] [text-size-adjust:100%]">
+    <div className="flex min-w-full shrink-0 basis-full snap-center flex-col items-center justify-center px-0 text-center [scroll-snap-stop:always] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:min-w-0 sm:basis-1/2 sm:px-5 lg:px-6">
       <p className={`max-w-full truncate font-semibold uppercase leading-none tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
         <span className="triptych-micro-copy">{formatReminderStageLabel(match, language)}</span>
       </p>
@@ -430,7 +484,7 @@ function PanelShell({
   children: ReactNode;
 }) {
   return (
-    <section className={`relative flex h-[200px] min-w-0 flex-col overflow-hidden rounded-[1.15rem] border px-2.5 py-2.5 [-webkit-text-size-adjust:100%] [text-size-adjust:100%] ${getPanelShellClasses(accentTone, theme)} ${className}`.trim()}>
+    <section className={`relative flex h-[200px] min-w-0 flex-col overflow-hidden rounded-[1.15rem] border px-2.5 py-2.5 [-webkit-text-size-adjust:100%] [text-size-adjust:100%] sm:h-56 sm:px-3.5 sm:py-3.5 lg:h-60 ${getPanelShellClasses(accentTone, theme)} ${className}`.trim()}>
       <div className={`pointer-events-none absolute inset-px rounded-[1.05rem] ${getPanelInnerSurfaceClasses(accentTone, theme)}`} />
       <div className={`pointer-events-none absolute -right-8 top-0 h-20 w-20 rounded-full blur-2xl ${getPanelGlowClasses(accentTone, theme)}`} />
       <div className={`pointer-events-none absolute inset-x-4 top-0 h-px ${theme === "dark" ? "bg-white/10" : "bg-white/75"}`} />
@@ -472,7 +526,7 @@ function UrgencyIconChip({
 
 function getUrgencyIcon(tone: DashboardUrgencyTone, isComplete: boolean) {
   if (isComplete || tone === "green" || tone === "neutral") {
-    return ThumbsUp;
+    return Clock3;
   }
 
   if (tone === "orange") {
@@ -530,7 +584,7 @@ function DigitalWatchRing({
   );
 
   return (
-    <div className="relative h-[109px] w-[109px]">
+    <div className="relative h-[109px] w-[109px] sm:h-32 sm:w-32 lg:h-36 lg:w-36">
       <div className={`absolute inset-4 rounded-full blur-xl ${getRingGlowClasses(tone, theme)}`} />
       <svg viewBox="-52 -52 104 104" className="relative h-full w-full drop-shadow-[0_3px_8px_rgba(15,23,42,0.06)]" aria-hidden>
         <defs>
@@ -563,9 +617,9 @@ function DigitalWatchRing({
         ))}
       </svg>
       <div className="absolute inset-0 flex translate-x-[3px] items-center justify-center">
-        <p className={`tabular-nums text-[20px] font-black leading-none tracking-[-0.04em] ${getPrimaryTextClasses(theme)}`}>
+        <p className={`tabular-nums text-[20px] font-black leading-none tracking-[-0.04em] sm:text-2xl lg:text-[27px] ${getPrimaryTextClasses(theme)}`}>
           <span>{clampedPercentage}</span>
-          <sup className={`ml-0.5 align-super text-[6px] font-black tracking-normal ${getMutedTextClasses(theme)}`}>%</sup>
+          <sup className={`ml-0.5 align-super text-[6px] font-black tracking-normal sm:text-[8px] ${getMutedTextClasses(theme)}`}>%</sup>
         </p>
       </div>
     </div>
@@ -588,8 +642,9 @@ function MetricRow({
       <span className={`min-w-0 font-semibold uppercase leading-[0.95] tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
         {labelLines ? (
           <>
-            <span className="triptych-micro-copy triptych-micro-copy-left block truncate">{labelLines[0]}</span>
-            <span className="triptych-micro-copy triptych-micro-copy-left block truncate">{labelLines[1]}</span>
+            <span className="triptych-micro-copy triptych-micro-copy-left block truncate sm:hidden">{labelLines[0]}</span>
+            <span className="triptych-micro-copy triptych-micro-copy-left block truncate sm:hidden">{labelLines[1]}</span>
+            <span className="triptych-micro-copy triptych-micro-copy-left hidden truncate sm:block">{labelLines.join(" ")}</span>
           </>
         ) : (
           <span className="triptych-micro-copy triptych-micro-copy-left block truncate">{label}</span>
@@ -1186,7 +1241,7 @@ function formatPoints(value: number | null, language?: string | null) {
 }
 
 function formatRank(value: number | null, language?: string | null) {
-  return typeof value === "number" ? formatLocalizedRank(value, language) : "—";
+  return typeof value === "number" ? formatNumber(value, language) : "—";
 }
 
 function getProgressStatusLabel(

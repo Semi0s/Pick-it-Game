@@ -108,8 +108,8 @@ export function getTournamentModePrompt(activeMode: TournamentEntryMode | null) 
   return null;
 }
 
-export function shouldHideDockForPath(pathname: string, onboardingFlag: string | null) {
-  return pathname.startsWith("/start-playing") || pathname === "/profile-setup" || onboardingFlag === "1";
+export function shouldHideDockForPath(pathname: string) {
+  return pathname === "/profile-setup";
 }
 
 export function shouldApplyHomeTeamAdvantage(enabled: boolean, leaderboardScope: "group" | "global" | "personal") {

@@ -48,7 +48,7 @@ export const teams: Team[] = [
   { id: "bra", name: "Brazil", shortName: "BRA", groupName: "C", fifaRank: 6, flagEmoji: "🇧🇷" },
   { id: "mar", name: "Morocco", shortName: "MAR", groupName: "C", fifaRank: 8, flagEmoji: "🇲🇦" },
   { id: "hai", name: "Haiti", shortName: "HAI", groupName: "C", fifaRank: 83, flagEmoji: "🇭🇹" },
-  { id: "sco", name: "Scotland", shortName: "SCO", groupName: "C", fifaRank: 43, flagEmoji: "🏴" },
+  { id: "sco", name: "Scotland", shortName: "SCO", groupName: "C", fifaRank: 43, flagEmoji: "\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}" },
   { id: "usa", name: "United States", shortName: "USA", groupName: "D", fifaRank: 16, flagEmoji: "🇺🇸" },
   { id: "par", name: "Paraguay", shortName: "PAR", groupName: "D", fifaRank: 40, flagEmoji: "🇵🇾" },
   { id: "aus", name: "Australia", shortName: "AUS", groupName: "D", fifaRank: 27, flagEmoji: "🇦🇺" },

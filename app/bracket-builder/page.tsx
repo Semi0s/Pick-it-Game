@@ -17,6 +17,9 @@ import {
 } from "@/lib/group-stage-modes";
 import { getRequiredThirdPlaceQualifierCount, type KnockoutPlaceholderMatch } from "@/lib/knockout-seeding";
 import { getConfiguredGroupPredictionMode, isFullScoresModeEnabled } from "@/lib/group-prediction-mode";
+import { getGroupStageSaveStatus } from "@/lib/dashboard-home";
+import { normalizeGroupKey } from "@/lib/group-standings";
+import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
 import { normalizeLanguage } from "@/lib/i18n";
@@ -24,6 +27,7 @@ import { t } from "@/lib/strings";
 import { logSafeSupabaseError } from "@/lib/supabase-errors";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
+import { fetchTournamentEntrySettings } from "@/lib/tournament-entry";
 import type { MatchWithTeams } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -62,19 +66,51 @@ export default async function BracketBuilderPage() {
   let initialSnapshot: LightSeedBuilderSnapshot | null = null;
   let hasSavedSnapshot = false;
   let initialGroupProjectionSources: Record<string, UserGroupProjectionSource> = {};
+  let initialFinalBracketSavedAt: string | null = null;
+  let latestGroupStageChangedAt: string | null = null;
   try {
-    const [savedSnapshot, sourceMap] = await Promise.all([
+    const [
+      savedSnapshot,
+      sourceMap,
+      tournamentEntrySettings,
+      latestGroupSeedUpdateResult,
+      latestThirdPlaceUpdateResult
+    ] = await Promise.all([
       fetchUserLightSeedBuilderSnapshot(adminSupabase, authUser.id),
-      fetchUserGroupProjectionSourceMap(adminSupabase, authUser.id)
+      fetchUserGroupProjectionSourceMap(adminSupabase, authUser.id),
+      fetchTournamentEntrySettings(adminSupabase, authUser.id).catch(() => null),
+      adminSupabase
+        .from("user_group_seed_rankings")
+        .select("updated_at")
+        .eq("user_id", authUser.id)
+        .order("updated_at", { ascending: false })
+        .limit(1),
+      adminSupabase
+        .from("user_best_third_rankings")
+        .select("updated_at")
+        .eq("user_id", authUser.id)
+        .order("updated_at", { ascending: false })
+        .limit(1)
     ]);
     hasSavedSnapshot = savedSnapshot.groupRankings.length > 0;
     initialSnapshot = hasSavedSnapshot ? savedSnapshot : null;
     initialGroupProjectionSources = Object.fromEntries(sourceMap.entries());
+    latestGroupStageChangedAt = getLatestTimestamp([
+      ((latestGroupSeedUpdateResult.data as Array<{ updated_at: string | null }> | null) ?? [])[0]?.updated_at ?? null,
+      ((latestThirdPlaceUpdateResult.data as Array<{ updated_at: string | null }> | null) ?? [])[0]?.updated_at ?? null
+    ]);
+    initialFinalBracketSavedAt =
+      tournamentEntrySettings?.tournamentEntryMode === "easy_bracket" &&
+      (tournamentEntrySettings.tournamentEntryState === "active" || tournamentEntrySettings.tournamentEntryState === "locked")
+        ? tournamentEntrySettings.tournamentEntrySubmittedAt
+        : null;
   } catch (error) {
     logSafeSupabaseError("bracket-builder-snapshot-load", error, { userId: authUser.id, recoverable: true });
     initialSnapshot = null;
     hasSavedSnapshot = false;
     initialGroupProjectionSources = {};
+    initialFinalBracketSavedAt = null;
+    latestGroupStageChangedAt = null;
   }
 
   let knockoutStatus = safeFetchKnockoutStructureStatusFallback();
@@ -121,6 +157,51 @@ export default async function BracketBuilderPage() {
   })) satisfies KnockoutPlaceholderMatch[];
 
   const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(roundOf32Placeholders) || 8;
+  const groupNames = Array.from(
+    new Set(
+      localMatches
+        .map((match) => normalizeGroupKey(match.groupName) ?? match.groupName)
+        .filter((groupName): groupName is string => Boolean(groupName))
+    )
+  ).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const teamIdsByGroup = new Map<string, Set<string>>();
+  for (const match of localMatches) {
+    const groupName = normalizeGroupKey(match.groupName) ?? match.groupName;
+    if (!groupName) {
+      continue;
+    }
+
+    const current = teamIdsByGroup.get(groupName) ?? new Set<string>();
+    if (match.homeTeamId) {
+      current.add(match.homeTeamId);
+    }
+    if (match.awayTeamId) {
+      current.add(match.awayTeamId);
+    }
+    teamIdsByGroup.set(groupName, current);
+  }
+  const savedGroupNames = new Set(
+    (initialSnapshot?.groupRankings ?? []).map((ranking) => normalizeGroupKey(ranking.groupName) ?? ranking.groupName)
+  );
+  const topTwoCompletionStatus = getGroupTopTwoCompletionStatus({
+    groupNames,
+    rankings: initialSnapshot?.groupRankings ?? [],
+    teamIdsByGroup,
+    touchedGroupNames: savedGroupNames
+  });
+  const selectedThirdPlaceCount = Math.min(initialSnapshot?.thirdPlaceRankings?.length ?? 0, requiredThirdPlaceQualifierCount);
+  const groupStageSaveStatus = getGroupStageSaveStatus({
+    completedGroups: topTwoCompletionStatus.completeGroupNames.size,
+    totalGroups: Math.max(groupNames.length, 12),
+    selectedThirdPlaceCount,
+    requiredThirdPlaceCount: requiredThirdPlaceQualifierCount,
+    hasSavedProgress: Boolean(
+      (initialSnapshot?.groupRankings.length ?? 0) > 0 ||
+      (initialSnapshot?.thirdPlaceRankings.length ?? 0) > 0
+    ),
+    committedAt: initialFinalBracketSavedAt,
+    latestChangedAt: latestGroupStageChangedAt
+  });
 
   return (
     <AppShell>
@@ -138,17 +219,26 @@ export default async function BracketBuilderPage() {
         <BracketBuilderClient
           initialMatches={localMatches}
           initialKnockoutSeeded={knockoutStatus.isFullySeeded}
-          initialSnapshot={initialSnapshot}
-        hasSavedSnapshot={hasSavedSnapshot}
-        initialGroupProjectionSources={initialGroupProjectionSources}
-        requiredThirdPlaceQualifierCount={requiredThirdPlaceQualifierCount}
-        roundOf32Placeholders={roundOf32Placeholders}
-        groupStageDueAt={GROUP_PHASE_START_AT}
-        knockoutProjectedPreview={projectedKnockoutComparisonView}
-        fullScoresEnabled={fullScoresEnabled || authUser.role === "admin"}
-        language={preferredLanguage}
+        initialSnapshot={initialSnapshot}
+          hasSavedSnapshot={hasSavedSnapshot}
+          initialGroupProjectionSources={initialGroupProjectionSources}
+          initialFinalBracketSavedAt={initialFinalBracketSavedAt}
+          initialGroupStageNeedsSave={groupStageSaveStatus.needsSave}
+          initialGroupStageChangedAt={latestGroupStageChangedAt}
+          requiredThirdPlaceQualifierCount={requiredThirdPlaceQualifierCount}
+          roundOf32Placeholders={roundOf32Placeholders}
+          groupStageDueAt={GROUP_PHASE_START_AT}
+          knockoutProjectedPreview={projectedKnockoutComparisonView}
+          fullScoresEnabled={fullScoresEnabled || authUser.role === "admin"}
+          language={preferredLanguage}
         />
       </div>
     </AppShell>
   );
+}
+
+function getLatestTimestamp(values: Array<string | null | undefined>) {
+  return values
+    .filter((value): value is string => Boolean(value))
+    .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null;
 }

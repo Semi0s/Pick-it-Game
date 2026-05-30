@@ -81,7 +81,7 @@ export function StartPlayingChoiceClient({ language = "en" }: { language?: strin
       return;
     }
 
-    router.push("/bracket-builder?onboarding=1");
+    router.push("/bracket-builder");
   }
 
   async function handleHome() {

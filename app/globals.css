@@ -148,6 +148,37 @@ select {
     transform: scale(0.72);
   }
 
+  .mini-standings-table {
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (min-width: 768px) {
+    .mini-standings-table .triptych-micro-copy {
+      font-size: 11px;
+      transform: scale(0.9);
+    }
+
+    .mini-standings-table .triptych-micro-copy-tight {
+      transform: scale(0.82);
+    }
+  }
+
+  .group-stage-probability-badge {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @supports (-webkit-hyphens: none) {
+    .group-stage-probability-badge {
+      font-size: 6px;
+    }
+  }
+
+  .triptych-not-saved-blink {
+    animation: triptych-not-saved-blink 1800ms ease-in-out infinite;
+  }
+
   .knockout-landing-pop {
     animation: knockout-landing-pop 1200ms ease-out 1;
     box-shadow: inset 0 0 0 2px rgba(var(--app-accent-rgb), 0.28);
@@ -159,6 +190,18 @@ select {
 
   .ui-cockpit-trigger {
     @apply flex min-h-10 w-full items-center justify-between rounded-[0.95rem] border border-gray-300 bg-white px-3 py-1.5 text-left;
+  }
+}
+
+@keyframes triptych-not-saved-blink {
+  0%,
+  48%,
+  100% {
+    opacity: 1;
+  }
+
+  62% {
+    opacity: 0.28;
   }
 }
 
@@ -177,6 +220,10 @@ select {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .triptych-not-saved-blink {
+    animation: none;
+  }
+
   .knockout-landing-pop {
     animation: none;
   }

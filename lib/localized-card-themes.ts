@@ -54,6 +54,8 @@ export type LocalizedCardEmblemKind =
 
 export const ORANJEKOORTS_VISUAL_THEME_ID = "oranjekoorts" as const;
 export type SpecialVisualThemeId = typeof ORANJEKOORTS_VISUAL_THEME_ID;
+const LIGHT_ACCENT_REFERENCE_SURFACE = "#F3F4F6";
+const MIN_LIGHT_ACCENT_REFERENCE_CONTRAST = 1.3;
 
 export type SpecialVisualThemeOption = {
   id: SpecialVisualThemeId;
@@ -177,7 +179,7 @@ export const localizedCardThemes = {
     colors: ["#FCD116", "#CE1126", "#003893"],
     patternColors: ["#003893", "#CE1126", "#003893", "#003893", "#CE1126"],
     accent: "#003893",
-    accentLight: "#E3ECFF",
+    accentLight: "#FFE45A",
     accentDark: "#002B6E",
     accentText: "#FFFFFF",
     flagAccent: "#CE1126",
@@ -1173,8 +1175,11 @@ export function getLocalizedCardCssVars(theme: LocalizedCardTheme): CSSPropertie
 export function getAppAccentCssVars(theme: LocalizedCardTheme): CSSProperties {
   const fallbackTheme = localizedCardThemes.generic;
   const accent = getSafeAccentColor(theme, fallbackTheme);
-  const accentLight = theme.accentLight ?? fallbackTheme.accentLight;
   const accentDark = theme.accentDark ?? fallbackTheme.accentDark;
+  const accentLight =
+    theme.id === "ecuador"
+      ? theme.accentLight ?? fallbackTheme.accentLight
+      : getReadableLightAccentColor(theme.accentLight ?? fallbackTheme.accentLight, accent, accentDark);
   const preferredAccentText = theme.accentText ?? fallbackTheme.accentText;
   const accentText = getSafeAccentTextColor(accent, preferredAccentText);
   const accentFill = theme.useNeutralAccent
@@ -1297,6 +1302,38 @@ function getSafeAccentColor(theme: LocalizedCardTheme, fallbackTheme: LocalizedC
   ) as string[];
 
   return candidates.find((candidate) => getRelativeLuminance(candidate) <= 0.94) ?? fallbackTheme.accent;
+}
+
+function getReadableLightAccentColor(accentLight: string, accent: string, accentDark: string) {
+  if (getContrastRatio(accentLight, LIGHT_ACCENT_REFERENCE_SURFACE) >= MIN_LIGHT_ACCENT_REFERENCE_CONTRAST) {
+    return accentLight;
+  }
+
+  const targets = [accent, accentDark].filter((color): color is string => Boolean(parseCssColor(color)));
+  let bestCandidate: { color: string; mixAmount: number } | null = null;
+
+  for (const target of targets) {
+    for (let mixStep = 1; mixStep <= 11; mixStep += 1) {
+      const mixAmount = mixStep * 0.05;
+      const candidate = mixColor(accentLight, target, mixAmount);
+      if (!candidate) {
+        break;
+      }
+
+      if (getContrastRatio(candidate, LIGHT_ACCENT_REFERENCE_SURFACE) >= MIN_LIGHT_ACCENT_REFERENCE_CONTRAST) {
+        if (!bestCandidate || mixAmount < bestCandidate.mixAmount) {
+          bestCandidate = { color: candidate, mixAmount };
+        }
+        break;
+      }
+    }
+  }
+
+  return (
+    bestCandidate?.color ??
+    darkenColorToContrast(accentLight, LIGHT_ACCENT_REFERENCE_SURFACE, MIN_LIGHT_ACCENT_REFERENCE_CONTRAST) ??
+    accentLight
+  );
 }
 
 function getSafeAccentTextColor(accent: string, preferredTextColor: string) {
@@ -1464,6 +1501,20 @@ function darkenColorToContrast(color: string, textColor: string, minimumContrast
   }
 
   return toHexColor(r, g, b);
+}
+
+function mixColor(fromColor: string, toColor: string, amount: number) {
+  const from = parseCssColor(fromColor);
+  const to = parseCssColor(toColor);
+  if (!from || !to) {
+    return null;
+  }
+
+  return toHexColor(
+    from[0] + (to[0] - from[0]) * amount,
+    from[1] + (to[1] - from[1]) * amount,
+    from[2] + (to[2] - from[2]) * amount
+  );
 }
 
 function toRgbChannels(color: string) {
