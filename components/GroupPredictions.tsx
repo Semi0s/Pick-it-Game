@@ -2138,6 +2138,8 @@ function PredictionChoiceRail({
       activeItemKey={activeItemKey}
       onActiveItemChange={onActiveItemChange}
       showControls={showControls}
+      motionMode="anchored"
+      allowAnchoredTouchScroll
     >
       {children}
     </WindowChoiceRail>

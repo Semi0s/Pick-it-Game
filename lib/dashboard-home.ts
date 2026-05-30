@@ -50,6 +50,10 @@ export type DashboardProgressSummary = {
   urgencyTone: DashboardUrgencyTone;
   isComplete: boolean;
   isLocked: boolean;
+  needsSave?: boolean;
+  hasUncommittedChanges?: boolean;
+  lastCommittedAt?: string | null;
+  lastChangedAt?: string | null;
 };
 
 export type DashboardCommandCenterSummary = {
@@ -60,6 +64,7 @@ export type DashboardCommandCenterSummary = {
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const DISMISSIBLE_MESSAGE_LIMIT = 48;
+const GROUP_STAGE_COMMIT_GRACE_MS = 10 * 1000;
 export const DASHBOARD_HOME_MESSAGE_STORAGE_KEY_PREFIX = "pickit.dismissedHomeMessages";
 
 export function getDashboardHomeMessageStorageKey(input: {
@@ -134,6 +139,64 @@ export function getDeadlineUrgency(
   }
 
   return "green";
+}
+
+export function hasMeaningfulGroupStageChangesAfterCommit(input: {
+  latestChangedAt?: string | null;
+  committedAt?: string | null;
+  graceMs?: number;
+}): boolean {
+  if (!input.latestChangedAt || !input.committedAt) {
+    return false;
+  }
+
+  const latestChangedMs = new Date(input.latestChangedAt).getTime();
+  const committedMs = new Date(input.committedAt).getTime();
+
+  if (!Number.isFinite(latestChangedMs) || !Number.isFinite(committedMs)) {
+    return false;
+  }
+
+  return latestChangedMs - committedMs > (input.graceMs ?? GROUP_STAGE_COMMIT_GRACE_MS);
+}
+
+export function getGroupStageSaveStatus(input: {
+  completedGroups: number;
+  totalGroups: number;
+  selectedThirdPlaceCount: number;
+  requiredThirdPlaceCount: number;
+  hasSavedProgress: boolean;
+  committedAt?: string | null;
+  latestChangedAt?: string | null;
+  graceMs?: number;
+}): {
+  isComplete: boolean;
+  hasCommittedEntry: boolean;
+  hasMeaningfulChangesAfterCommit: boolean;
+  needsSave: boolean;
+} {
+  const totalGroups = Math.max(input.totalGroups, 0);
+  const completedGroups = Math.min(Math.max(input.completedGroups, 0), totalGroups);
+  const requiresThirdPlace = input.requiredThirdPlaceCount > 0;
+  const thirdPlaceComplete =
+    !requiresThirdPlace || input.selectedThirdPlaceCount >= input.requiredThirdPlaceCount;
+  const totalUnits = totalGroups + (requiresThirdPlace ? 1 : 0);
+  const completedUnits = completedGroups + (thirdPlaceComplete && requiresThirdPlace ? 1 : 0);
+  const isComplete = totalUnits > 0 && completedUnits >= totalUnits;
+  const hasCommittedEntry = Boolean(input.committedAt);
+  const hasMeaningfulChangesAfterCommit = hasMeaningfulGroupStageChangesAfterCommit({
+    latestChangedAt: input.latestChangedAt,
+    committedAt: input.committedAt,
+    graceMs: input.graceMs
+  });
+  const hasAnyGroupStageState = input.hasSavedProgress || hasCommittedEntry;
+
+  return {
+    isComplete,
+    hasCommittedEntry,
+    hasMeaningfulChangesAfterCommit,
+    needsSave: hasAnyGroupStageState && (!hasCommittedEntry || !isComplete || hasMeaningfulChangesAfterCommit)
+  };
 }
 
 export function getDeadlineLabel(
@@ -292,6 +355,10 @@ export function getPredictionProgress(
         requiredThirdPlaceCount: number;
         deadlineAt: string | null;
         now?: number;
+        needsSave?: boolean;
+        hasUncommittedChanges?: boolean;
+        lastCommittedAt?: string | null;
+        lastChangedAt?: string | null;
       }
     | {
         phase: "knockout_stage";
@@ -341,7 +408,11 @@ export function getPredictionProgress(
       deadlineLabel: getDeadlineLabel(input.deadlineAt, input.now),
       urgencyTone: getDeadlineUrgency(input.deadlineAt, input.now),
       isComplete,
-      isLocked: Boolean(input.deadlineAt && new Date(input.deadlineAt).getTime() <= (input.now ?? Date.now()))
+      isLocked: Boolean(input.deadlineAt && new Date(input.deadlineAt).getTime() <= (input.now ?? Date.now())),
+      needsSave: Boolean(input.needsSave),
+      hasUncommittedChanges: Boolean(input.hasUncommittedChanges),
+      lastCommittedAt: input.lastCommittedAt ?? null,
+      lastChangedAt: input.lastChangedAt ?? null
     };
   }
 

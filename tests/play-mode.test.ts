@@ -45,16 +45,17 @@ test("Home Team Advantage stays group-only", () => {
   assert.equal(shouldApplyHomeTeamAdvantage(true, "personal"), false);
 });
 
-test("onboarding hides dock", () => {
-  assert.equal(shouldHideDockForPath("/start-playing", null), true);
-  assert.equal(shouldHideDockForPath("/groups", "1"), true);
+test("profile setup hides dock until the app shell is ready", () => {
+  assert.equal(shouldHideDockForPath("/profile-setup"), true);
 });
 
-test("exiting onboarding restores dock on normal app routes", () => {
-  assert.equal(shouldHideDockForPath("/groups", null), false);
-  assert.equal(shouldHideDockForPath("/leaderboard", null), false);
+test("onboarding and normal app routes show dock", () => {
+  assert.equal(shouldHideDockForPath("/start-playing"), false);
+  assert.equal(shouldHideDockForPath("/groups"), false);
+  assert.equal(shouldHideDockForPath("/bracket-builder"), false);
+  assert.equal(shouldHideDockForPath("/leaderboard"), false);
 });
 
 test("legacy normal app entry shows dock", () => {
-  assert.equal(shouldHideDockForPath("/dashboard", null), false);
+  assert.equal(shouldHideDockForPath("/dashboard"), false);
 });

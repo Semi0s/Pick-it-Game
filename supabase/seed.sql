@@ -19,7 +19,7 @@ insert into public.teams (id, name, short_name, group_name, fifa_rank, flag_emoj
   ('bra', 'Brazil', 'BRA', 'C', 6, '🇧🇷'),
   ('mar', 'Morocco', 'MAR', 'C', 8, '🇲🇦'),
   ('hai', 'Haiti', 'HAI', 'C', 83, '🇭🇹'),
-  ('sco', 'Scotland', 'SCO', 'C', 43, '🏴'),
+  ('sco', 'Scotland', 'SCO', 'C', 43, U&'\+01F3F4\+0E0067\+0E0062\+0E0073\+0E0063\+0E0074\+0E007F'),
   ('usa', 'United States', 'USA', 'D', 16, '🇺🇸'),
   ('par', 'Paraguay', 'PAR', 'D', 40, '🇵🇾'),
   ('aus', 'Australia', 'AUS', 'D', 27, '🇦🇺'),

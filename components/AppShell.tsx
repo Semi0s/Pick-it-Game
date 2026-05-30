@@ -146,7 +146,6 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading } = useCurrentUser();
-  const [onboardingFlag, setOnboardingFlag] = useState<string | null>(null);
   const { activeLanguage, setActiveLanguage } = useResolvedAppLanguage(user, isLoading);
   const dockLanguage = activeLanguage;
   const displayLanguage = activeLanguage;
@@ -176,33 +175,11 @@ export function AppShell({ children }: AppShellProps) {
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
   const [headerHeight, setHeaderHeight] = useState(72);
-  const isOnboardingExperience = shouldHideDockForPath(pathname, onboardingFlag);
-  const onboardingExitHref = pathname === "/start-playing" ? "/dashboard" : "/start-playing";
-  const onboardingExitLabel = pathname === "/start-playing" ? t(displayLanguage, "common.close") : t(displayLanguage, "common.back");
-  const shouldShowOnboardingHeaderExit = isOnboardingExperience && pathname !== "/start-playing";
-  const shouldShowAccountButton = pathname !== "/start-playing";
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const syncOnboardingFlag = () => {
-      try {
-        const nextFlag = new URLSearchParams(window.location.search).get("onboarding");
-        setOnboardingFlag(nextFlag);
-      } catch {
-        setOnboardingFlag(null);
-      }
-    };
-
-    syncOnboardingFlag();
-    window.addEventListener("popstate", syncOnboardingFlag);
-
-    return () => {
-      window.removeEventListener("popstate", syncOnboardingFlag);
-    };
-  }, [pathname]);
+  const isOnboardingExperience = shouldHideDockForPath(pathname);
+  const onboardingExitHref = "/start-playing";
+  const onboardingExitLabel = t(displayLanguage, "common.back");
+  const shouldShowOnboardingHeaderExit = isOnboardingExperience;
+  const shouldShowAccountButton = true;
 
   useEffect(() => {
     if (!isLanguageMenuOpen) {

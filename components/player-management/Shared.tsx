@@ -250,8 +250,10 @@ export function WindowChoiceRail({
   const edgeControlWidth = 24;
   const beltGutterWidth = 40;
   const anchoredEdgeGutterWidth = edgeControlWidth + 10;
-  const baseScrollerClassName = "flex min-w-max gap-1.5 px-0.5 pb-0.5";
   const isAnchored = motionMode === "anchored";
+  const baseScrollerClassName = isAnchored
+    ? "flex min-w-max gap-1.5 px-0.5 pb-0.5 [&>button]:snap-center"
+    : "flex min-w-max gap-1.5 px-0.5 pb-0.5";
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -399,7 +401,7 @@ export function WindowChoiceRail({
           className={`min-w-0 select-none ${
             isAnchored
               ? allowAnchoredTouchScroll
-                ? "touch-pan-x overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch]"
+                ? "touch-pan-x snap-x snap-mandatory scroll-smooth overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-px-10 [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch]"
                 : "overflow-x-hidden overflow-y-hidden"
               : "touch-pan-y overflow-hidden"
           }`}

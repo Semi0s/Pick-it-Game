@@ -107,7 +107,7 @@ test("generic theme keeps the current green accent fallback", () => {
 
   assert.equal(theme.id, "generic");
   assert.equal(accentVars["--app-accent"], "#56A24F");
-  assert.equal(accentVars["--app-accent-light"], "#DCEFD8");
+  assert.equal(accentVars["--app-accent-light"], "#CADCC7");
   assert.equal(accentVars["--app-accent-dark"], "#3F8C39");
   assert.equal(accentVars["--app-accent-text"], "#111111");
   assert.equal(accentVars["--app-accent-fill"], "#437E3E");
@@ -152,8 +152,22 @@ test("quiet red-accent themes keep red identity while softening button fills", (
 
     assert.equal(theme.useNeutralAccent, true);
     assert.notEqual(accentVars["--app-accent"], accentVars["--app-accent-fill"]);
-    assert.equal(accentVars["--app-accent-fill"], theme.accentLight);
+    assert.equal(accentVars["--app-accent-fill"], accentVars["--app-accent-light"]);
     assert.equal(accentVars["--app-accent-fill-hover"], theme.borderColor);
+  }
+});
+
+test("theme light accents stay visible against the Group Stage empty LED gray", () => {
+  for (const team of teams) {
+    const theme = getLocalizedCardTheme({ homeTeamId: team.id });
+    const accentVars = getAppAccentCssVars(theme) as Record<string, string | undefined>;
+    const accentLight = accentVars["--app-accent-light"];
+
+    assert.ok(accentLight, `Expected ${team.id} to produce a light accent`);
+    assert.ok(
+      getContrastRatioForTest(accentLight!, "#F3F4F6") >= 1.3,
+      `Light accent for ${team.id} is too close to gray-100: ${accentLight}`
+    );
   }
 });
 

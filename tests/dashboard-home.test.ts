@@ -6,16 +6,20 @@ import {
   formatCountdown,
   getDashboardHomeMessageStorageKey,
   getDeadlineUrgency,
+  getGroupStageSaveStatus,
   getLiveMatches,
   getNextMatch,
   getPredictionProgress,
   getReminderLabel,
+  hasMeaningfulGroupStageChangesAfterCommit,
   isMessageDismissed,
   parseDismissedMessageIds,
   restoreMessageId,
   serializeDismissedMessageIds,
   type DashboardMatchSummary
 } from "../lib/dashboard-home.ts";
+import { getPickProbabilityForTeam } from "../lib/group-pick-probability.ts";
+import { shouldUseOfficialGroupStandingsOrder } from "../lib/group-standings.ts";
 
 const BASE_NOW = Date.UTC(2026, 4, 23, 12, 0, 0);
 
@@ -126,6 +130,85 @@ test("group-stage prediction progress handles empty, partial, and complete state
   assert.equal(complete.headline, "All group picks saved.");
 });
 
+test("group-stage commit comparison ignores the finalize autosave grace window", () => {
+  const committedAt = new Date(BASE_NOW).toISOString();
+
+  assert.equal(
+    hasMeaningfulGroupStageChangesAfterCommit({
+      committedAt,
+      latestChangedAt: new Date(BASE_NOW + 5_000).toISOString()
+    }),
+    false
+  );
+  assert.equal(
+    hasMeaningfulGroupStageChangesAfterCommit({
+      committedAt,
+      latestChangedAt: new Date(BASE_NOW + 60_000).toISOString()
+    }),
+    true
+  );
+  assert.equal(
+    hasMeaningfulGroupStageChangesAfterCommit({
+      committedAt: null,
+      latestChangedAt: new Date(BASE_NOW + 60_000).toISOString()
+    }),
+    false
+  );
+});
+
+test("group-stage save status mirrors the Group Stage saved timestamp gate", () => {
+  const committedAt = new Date(BASE_NOW).toISOString();
+
+  assert.equal(
+    getGroupStageSaveStatus({
+      completedGroups: 0,
+      totalGroups: 12,
+      selectedThirdPlaceCount: 0,
+      requiredThirdPlaceCount: 8,
+      hasSavedProgress: false,
+      committedAt: null,
+      latestChangedAt: null
+    }).needsSave,
+    false
+  );
+  assert.equal(
+    getGroupStageSaveStatus({
+      completedGroups: 8,
+      totalGroups: 12,
+      selectedThirdPlaceCount: 0,
+      requiredThirdPlaceCount: 8,
+      hasSavedProgress: true,
+      committedAt: null,
+      latestChangedAt: new Date(BASE_NOW - 60_000).toISOString()
+    }).needsSave,
+    true
+  );
+  assert.equal(
+    getGroupStageSaveStatus({
+      completedGroups: 12,
+      totalGroups: 12,
+      selectedThirdPlaceCount: 8,
+      requiredThirdPlaceCount: 8,
+      hasSavedProgress: true,
+      committedAt,
+      latestChangedAt: new Date(BASE_NOW + 5_000).toISOString()
+    }).needsSave,
+    false
+  );
+  assert.equal(
+    getGroupStageSaveStatus({
+      completedGroups: 12,
+      totalGroups: 12,
+      selectedThirdPlaceCount: 8,
+      requiredThirdPlaceCount: 8,
+      hasSavedProgress: true,
+      committedAt,
+      latestChangedAt: new Date(BASE_NOW + 60_000).toISOString()
+    }).needsSave,
+    true
+  );
+});
+
 test("knockout prediction progress handles no predictions, partial predictions, and completion", () => {
   const empty = getPredictionProgress({
     phase: "knockout_stage",
@@ -222,5 +305,97 @@ test("countdown formatter handles missing, same-day, and future kickoff states",
   assert.match(
     formatCountdown(new Date(BASE_NOW + 3 * 24 * 60 * 60 * 1000).toISOString(), BASE_NOW),
     /[A-Z][a-z]{2}\s+\d{1,2},/
+  );
+});
+
+test("pick probability uses exact placement for top two and advance probability for lower picks", () => {
+  const rows = [
+    { teamId: "cze", teamName: "Czechia", rank: 4, played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 },
+    { teamId: "kor", teamName: "Korea", rank: 2, played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 },
+    { teamId: "mex", teamName: "Mexico", rank: 3, played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 },
+    { teamId: "rsa", teamName: "South Africa", rank: 1, played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 }
+  ];
+
+  assert.deepEqual(getPickProbabilityForTeam({ rows, teamId: "cze", predictedPlace: 1 }), {
+    probability: 68,
+    predictedPlace: 1,
+    mode: "exact_place",
+    targetLabel: "1st"
+  });
+  assert.deepEqual(getPickProbabilityForTeam({ rows, teamId: "rsa", predictedPlace: 4 }), {
+    probability: 12,
+    predictedPlace: 4,
+    mode: "advance",
+    targetLabel: "advance"
+  });
+  assert.equal(getPickProbabilityForTeam({ rows, teamId: "rsa", predictedPlace: null }), null);
+
+  const finalRows = rows.map((row) => ({ ...row, played: 3 }));
+  assert.deepEqual(getPickProbabilityForTeam({ rows: finalRows, teamId: "kor", predictedPlace: 2 }), {
+    probability: 100,
+    predictedPlace: 2,
+    mode: "exact_place",
+    targetLabel: "2nd"
+  });
+  assert.deepEqual(getPickProbabilityForTeam({ rows: finalRows, teamId: "cze", predictedPlace: 1 }), {
+    probability: 0,
+    predictedPlace: 1,
+    mode: "exact_place",
+    targetLabel: "1st"
+  });
+  assert.deepEqual(getPickProbabilityForTeam({ rows: finalRows, teamId: "mex", predictedPlace: 3, isAdvancing: true }), {
+    probability: 100,
+    predictedPlace: 3,
+    mode: "advance",
+    targetLabel: "advance"
+  });
+  assert.deepEqual(getPickProbabilityForTeam({ rows: finalRows, teamId: "rsa", predictedPlace: 4, isAdvancing: false }), {
+    probability: 0,
+    predictedPlace: 4,
+    mode: "advance",
+    targetLabel: "advance"
+  });
+});
+
+test("mini standings keep prediction order before kickoff even if scheduled rows have stale scores", () => {
+  const futureKickoff = new Date(BASE_NOW + 24 * 60 * 60 * 1000).toISOString();
+  const pastKickoff = new Date(BASE_NOW - 60 * 1000).toISOString();
+  const futureScheduledWithScore = {
+    stage: "group" as const,
+    status: "scheduled" as const,
+    kickoffTime: futureKickoff,
+    homeScore: 2,
+    awayScore: 1
+  };
+
+  assert.equal(
+    shouldUseOfficialGroupStandingsOrder([futureScheduledWithScore], BASE_NOW),
+    false
+  );
+  assert.equal(
+    shouldUseOfficialGroupStandingsOrder(
+      [
+        {
+          stage: "group",
+          status: "live",
+          kickoffTime: futureKickoff
+        }
+      ],
+      BASE_NOW
+    ),
+    true
+  );
+  assert.equal(
+    shouldUseOfficialGroupStandingsOrder(
+      [
+        {
+          stage: "group",
+          status: "scheduled",
+          kickoffTime: pastKickoff
+        }
+      ],
+      BASE_NOW
+    ),
+    true
   );
 });

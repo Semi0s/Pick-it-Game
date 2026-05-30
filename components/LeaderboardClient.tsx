@@ -2519,6 +2519,8 @@ function LeaderboardChoiceRail({
       nextLabel={nextLabel}
       activeItemKey={activeItemKey}
       onActiveItemChange={onActiveItemChange}
+      motionMode="anchored"
+      allowAnchoredTouchScroll
     >
       {children}
     </WindowChoiceRail>

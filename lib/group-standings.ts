@@ -28,7 +28,8 @@ export function createMiniGroupStandingsRow(team: Team): MiniGroupStandingsRow {
     goalsFor: 0,
     goalsAgainst: 0,
     goalDifference: 0,
-    points: 0
+    points: 0,
+    flagEmoji: team.flagEmoji
   };
 }
 
@@ -81,6 +82,24 @@ export function sortMiniGroupStandingsRows(left: MiniGroupStandingsRow, right: M
   }
 
   return left.teamName.localeCompare(right.teamName);
+}
+
+export function shouldUseOfficialGroupStandingsOrder(
+  matches: Array<Pick<MatchWithTeams, "stage" | "status" | "kickoffTime">>,
+  now = Date.now()
+) {
+  return matches.some((match) => {
+    if (match.stage !== "group") {
+      return false;
+    }
+
+    if (match.status === "live" || match.status === "final") {
+      return true;
+    }
+
+    const kickoffMs = new Date(match.kickoffTime).getTime();
+    return Number.isFinite(kickoffMs) && kickoffMs <= now;
+  });
 }
 
 export function buildFinalGroupStandings(matches: MatchWithTeams[], groupName: string) {

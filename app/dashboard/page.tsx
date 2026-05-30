@@ -5,6 +5,8 @@ import { fetchDashboardCommandCenterData } from "@/lib/dashboard-home-data";
 import { fetchGlobalChallengeSummaryForUser } from "@/lib/global-challenge-data";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
 import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
+import { fetchUserLightSeedBuilderSnapshot, type LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export default async function DashboardPage() {
@@ -26,6 +28,9 @@ export default async function DashboardPage() {
     : null;
   const groupAccessResult = user
     ? await fetchDashboardGroupAccessForUser(user.id).catch(() => null)
+    : null;
+  const lightSeedSnapshot: LightSeedBuilderSnapshot | null = user
+    ? await fetchUserLightSeedBuilderSnapshot(createAdminClient(), user.id).catch(() => null)
     : null;
 
   return (
@@ -67,6 +72,7 @@ export default async function DashboardPage() {
           managedGroupCount: groupAccessResult.groupAccess.managedGroupCount,
           dashboardUiResetEpoch: groupAccessResult.dashboardUiResetEpoch
         } : null}
+        initialLightSeedSnapshot={lightSeedSnapshot}
       />
     </AppShell>
   );

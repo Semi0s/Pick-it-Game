@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent, type WheelEvent } from "react";
 import { CalendarDays, Trophy, X } from "lucide-react";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
@@ -28,8 +28,10 @@ import { fetchGroupMatchesForPredictions, getLocalGroupMatches } from "@/lib/gro
 import {
   getGroupShortLabel,
   normalizeGroupKey,
-  resolvePreferredStandingsGroupSelection
+  resolvePreferredStandingsGroupSelection,
+  shouldUseOfficialGroupStandingsOrder
 } from "@/lib/group-standings";
+import { getPickProbabilityForTeam, type PickProbabilityPlace } from "@/lib/group-pick-probability";
 import { buildGroupStandingsByGroup, buildQualifiedTeamSeeds } from "@/lib/knockout-seeding";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { shouldHideStrategyModeForLaunch } from "@/lib/group-prediction-mode";
@@ -37,6 +39,7 @@ import { normalizeInviteTokenInput } from "@/components/player-management/Shared
 import { useAppLanguage } from "@/lib/app-language";
 import { t } from "@/lib/strings";
 import { dismissCurrentUserMessageId } from "@/lib/auth-client";
+import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 
@@ -47,6 +50,9 @@ const DASHBOARD_STANDINGS_GROUP_STORAGE_KEY = "dashboard-standings-group";
 const DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY = "dashboard-standings-disclosure";
 const DASHBOARD_HOW_TO_PLAY_DISCLOSURE_STORAGE_KEY = "dashboard-how-to-play-disclosure";
 const DASHBOARD_GROUP_MATCH_REFRESH_INTERVAL_MS = 15000;
+const DASHBOARD_STANDINGS_SWIPE_THRESHOLD_PX = 42;
+const DASHBOARD_STANDINGS_SWIPE_EXIT_MS = 190;
+const DASHBOARD_STANDINGS_WHEEL_COOLDOWN_MS = 760;
 type DashboardGroupAccessResponse = {
   ok: true;
   groupAccess: {
@@ -71,7 +77,8 @@ function isDashboardGroupAccessResponse(value: unknown): value is DashboardGroup
 export function DashboardOverview({
   initialGlobalChallengeSummary,
   initialCommandCenterSummary,
-  initialGroupAccess
+  initialGroupAccess,
+  initialLightSeedSnapshot
 }: {
   initialGlobalChallengeSummary?: {
     groupStrategy: { points: number | null; maxPoints: number; status: string };
@@ -87,6 +94,7 @@ export function DashboardOverview({
     managedGroupCount: number;
     dashboardUiResetEpoch: number;
   } | null;
+  initialLightSeedSnapshot?: LightSeedBuilderSnapshot | null;
 }) {
   const router = useRouter();
   const { user, isLoading: isCurrentUserLoading } = useCurrentUser();
@@ -116,6 +124,18 @@ export function DashboardOverview({
     DASHBOARD_HOW_TO_PLAY_DISCLOSURE_STORAGE_KEY,
     false
   );
+  const standingsSwipeTouchRef = useRef<{
+    startX: number | null;
+    startY: number | null;
+    isSwiping: boolean;
+  }>({ startX: null, startY: null, isSwiping: false });
+  const standingsSwipeAnimationTimeoutRef = useRef<number | null>(null);
+  const standingsSwipeWheelDeltaRef = useRef(0);
+  const standingsSwipeWheelResetTimeoutRef = useRef<number | null>(null);
+  const standingsSwipeWheelCooldownTimeoutRef = useRef<number | null>(null);
+  const standingsSwipeWheelIsCoolingDownRef = useRef(false);
+  const [standingsSwipeOffsetX, setStandingsSwipeOffsetX] = useState(0);
+  const [isStandingsSurfaceSwiping, setIsStandingsSurfaceSwiping] = useState(false);
   const refreshGroupAccess = useCallback(async () => {
     if (!user) {
       setGroupAccess(null);
@@ -289,6 +309,7 @@ export function DashboardOverview({
     storedGroup: selectedStandingsGroup,
     homeTeamGroup: homeTeamGroupName
   });
+  const resolvedStandingsGroupIndex = Math.max(0, availableStandingsGroups.indexOf(resolvedStandingsGroup));
   const allGroupTeams = useMemo(
     () =>
       Array.from(
@@ -324,6 +345,25 @@ export function DashboardOverview({
       ),
     [allGroupTeams, groupMatches]
   );
+  const predictedPlacementByTeamId = useMemo(() => {
+    const placements = new Map<string, PickProbabilityPlace>();
+    for (const ranking of initialLightSeedSnapshot?.groupRankings ?? []) {
+      ranking.rankedTeamIds.slice(0, 4).forEach((teamId, index) => {
+        placements.set(teamId, (index + 1) as PickProbabilityPlace);
+      });
+    }
+    return placements;
+  }, [initialLightSeedSnapshot]);
+  const predictedThirdPlaceQualifierTeamIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const ranking of initialLightSeedSnapshot?.thirdPlaceRankings ?? []) {
+      if (ranking.rank <= 8) {
+        ids.add(ranking.teamId);
+      }
+    }
+    return ids;
+  }, [initialLightSeedSnapshot]);
+  const hasGroupStageStarted = useMemo(() => shouldUseOfficialGroupStandingsOrder(groupMatches), [groupMatches]);
   const qualifyingThirdPlaceTeamIds = useMemo(() => {
     const ids = new Set<string>();
 
@@ -340,15 +380,55 @@ export function DashboardOverview({
   }, [standingsByGroup]);
   const tournamentStandingsRows = useMemo(() => {
     const rows = resolvedStandingsGroup ? standingsByGroup.get(resolvedStandingsGroup) ?? [] : [];
-    return rows.map((row, index) => ({
-      ...row,
-      teamCode: row.teamCode ?? row.teamName.slice(0, 3).toUpperCase(),
-      rank: row.rank || index + 1,
-      isHomeTeam: Boolean(user?.homeTeamId && row.teamId === user.homeTeamId),
-      isQualifier: index < 2 || (index === 2 && qualifyingThirdPlaceTeamIds.has(row.teamId)),
-      isPossibleQualifier: false
-    }));
-  }, [qualifyingThirdPlaceTeamIds, resolvedStandingsGroup, standingsByGroup, user?.homeTeamId]);
+    const remainingMatches = groupMatches
+      .filter((match) => normalizeGroupKey(match.groupName) === resolvedStandingsGroup && match.status !== "final")
+      .map((match) => ({ status: match.status }));
+    const groupIsFinal = rows.length > 0 && rows.every((row) => row.played >= 3);
+    const shouldUsePredictionOrder =
+      !hasGroupStageStarted && rows.some((row) => predictedPlacementByTeamId.has(row.teamId));
+    const displayRows = shouldUsePredictionOrder
+      ? [...rows].sort((left, right) => {
+          const leftPrediction = predictedPlacementByTeamId.get(left.teamId) ?? Number.POSITIVE_INFINITY;
+          const rightPrediction = predictedPlacementByTeamId.get(right.teamId) ?? Number.POSITIVE_INFINITY;
+          if (leftPrediction !== rightPrediction) {
+            return leftPrediction - rightPrediction;
+          }
+          return left.teamName.localeCompare(right.teamName);
+        })
+      : rows;
+
+    return displayRows.map((row, index) => {
+      const displayRank = shouldUsePredictionOrder ? index + 1 : row.rank || index + 1;
+      const isQualifier = shouldUsePredictionOrder
+        ? index < 2 || predictedThirdPlaceQualifierTeamIds.has(row.teamId)
+        : index < 2 || (index === 2 && qualifyingThirdPlaceTeamIds.has(row.teamId));
+      return {
+        ...row,
+        teamCode: row.teamCode ?? row.teamName.slice(0, 3).toUpperCase(),
+        rank: displayRank,
+        isHomeTeam: Boolean(user?.homeTeamId && row.teamId === user.homeTeamId),
+        isQualifier,
+        isPossibleQualifier: false,
+        isEliminated: groupIsFinal && !isQualifier,
+        pickProbability: getPickProbabilityForTeam({
+          rows,
+          remainingMatches,
+          teamId: row.teamId,
+          predictedPlace: predictedPlacementByTeamId.get(row.teamId) ?? null,
+          isAdvancing: isQualifier
+        })
+      };
+    });
+  }, [
+    groupMatches,
+    hasGroupStageStarted,
+    predictedPlacementByTeamId,
+    predictedThirdPlaceQualifierTeamIds,
+    qualifyingThirdPlaceTeamIds,
+    resolvedStandingsGroup,
+    standingsByGroup,
+    user?.homeTeamId
+  ]);
   useEffect(() => {
     if (!availableStandingsGroups.length) {
       return;
@@ -368,6 +448,20 @@ export function DashboardOverview({
     selectedStandingsGroupState.hasStoredValue,
     setSelectedStandingsGroup
   ]);
+
+  useEffect(() => {
+    return () => {
+      if (standingsSwipeAnimationTimeoutRef.current !== null) {
+        window.clearTimeout(standingsSwipeAnimationTimeoutRef.current);
+      }
+      if (standingsSwipeWheelResetTimeoutRef.current !== null) {
+        window.clearTimeout(standingsSwipeWheelResetTimeoutRef.current);
+      }
+      if (standingsSwipeWheelCooldownTimeoutRef.current !== null) {
+        window.clearTimeout(standingsSwipeWheelCooldownTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const messageStorageKey = getDashboardHomeMessageStorageKey({
@@ -448,6 +542,188 @@ export function DashboardOverview({
 
     setShowDashboardLogoHint(false);
   }, [currentUserId, dashboardLogoHintMessageId, isCurrentUserLoading]);
+
+  function getStandingsSwipeTravelDistance() {
+    if (typeof window === "undefined") {
+      return 360;
+    }
+
+    return Math.max(320, Math.min(window.innerWidth * 0.9, 540));
+  }
+
+  function getBoundedStandingsSwipeOffset(deltaX: number) {
+    const isPullingPastStart = deltaX > 0 && resolvedStandingsGroupIndex === 0;
+    const isPullingPastEnd = deltaX < 0 && resolvedStandingsGroupIndex === availableStandingsGroups.length - 1;
+    const resistedDelta = isPullingPastStart || isPullingPastEnd ? deltaX * 0.28 : deltaX;
+    return Math.max(-118, Math.min(118, resistedDelta));
+  }
+
+  function updateStandingsSurfaceSwipe(deltaX: number) {
+    setIsStandingsSurfaceSwiping(true);
+    setStandingsSwipeOffsetX(getBoundedStandingsSwipeOffset(deltaX));
+  }
+
+  function finishStandingsSurfaceSwipe(deltaX: number) {
+    setIsStandingsSurfaceSwiping(false);
+
+    const targetIndex = deltaX < 0 ? resolvedStandingsGroupIndex + 1 : resolvedStandingsGroupIndex - 1;
+    const boundedTargetIndex = Math.max(0, Math.min(availableStandingsGroups.length - 1, targetIndex));
+    const shouldChangeGroup =
+      Math.abs(deltaX) >= DASHBOARD_STANDINGS_SWIPE_THRESHOLD_PX && boundedTargetIndex !== resolvedStandingsGroupIndex;
+
+    if (!shouldChangeGroup) {
+      setStandingsSwipeOffsetX(0);
+      return;
+    }
+
+    if (standingsSwipeAnimationTimeoutRef.current !== null) {
+      window.clearTimeout(standingsSwipeAnimationTimeoutRef.current);
+    }
+
+    const swipeDirection = deltaX < 0 ? -1 : 1;
+    const travelDistance = getStandingsSwipeTravelDistance();
+
+    setStandingsSwipeOffsetX(swipeDirection * travelDistance);
+    standingsSwipeAnimationTimeoutRef.current = window.setTimeout(() => {
+      standingsSwipeAnimationTimeoutRef.current = null;
+      setIsStandingsSurfaceSwiping(true);
+      setSelectedStandingsGroup(availableStandingsGroups[boundedTargetIndex]);
+      setStandingsSwipeOffsetX(-swipeDirection * travelDistance);
+
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          setIsStandingsSurfaceSwiping(false);
+          setStandingsSwipeOffsetX(0);
+        });
+      });
+    }, DASHBOARD_STANDINGS_SWIPE_EXIT_MS);
+  }
+
+  function coolDownStandingsWheelSwipe() {
+    standingsSwipeWheelIsCoolingDownRef.current = true;
+    if (standingsSwipeWheelCooldownTimeoutRef.current !== null) {
+      window.clearTimeout(standingsSwipeWheelCooldownTimeoutRef.current);
+    }
+    standingsSwipeWheelCooldownTimeoutRef.current = window.setTimeout(() => {
+      standingsSwipeWheelIsCoolingDownRef.current = false;
+      standingsSwipeWheelCooldownTimeoutRef.current = null;
+    }, DASHBOARD_STANDINGS_WHEEL_COOLDOWN_MS);
+  }
+
+  function handleStandingsSwipeTouchStart(event: TouchEvent<HTMLElement>) {
+    if (availableStandingsGroups.length < 2) {
+      standingsSwipeTouchRef.current = { startX: null, startY: null, isSwiping: false };
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    standingsSwipeTouchRef.current = {
+      startX: touch?.clientX ?? null,
+      startY: touch?.clientY ?? null,
+      isSwiping: false
+    };
+  }
+
+  function handleStandingsSwipeTouchMove(event: TouchEvent<HTMLElement>) {
+    const { startX, startY } = standingsSwipeTouchRef.current;
+    if (availableStandingsGroups.length < 2 || startX === null || startY === null) {
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    if (!touch) {
+      return;
+    }
+
+    const deltaX = touch.clientX - startX;
+    const deltaY = touch.clientY - startY;
+    if (!standingsSwipeTouchRef.current.isSwiping) {
+      if (Math.abs(deltaX) < 10 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.15) {
+        return;
+      }
+
+      standingsSwipeTouchRef.current.isSwiping = true;
+    }
+
+    event.preventDefault();
+    updateStandingsSurfaceSwipe(deltaX);
+  }
+
+  function handleStandingsSwipeTouchEnd(event: TouchEvent<HTMLElement>) {
+    const { startX, startY, isSwiping } = standingsSwipeTouchRef.current;
+    standingsSwipeTouchRef.current = { startX: null, startY: null, isSwiping: false };
+
+    if (availableStandingsGroups.length < 2 || startX === null || startY === null) {
+      setIsStandingsSurfaceSwiping(false);
+      setStandingsSwipeOffsetX(0);
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    if (!touch) {
+      setIsStandingsSurfaceSwiping(false);
+      setStandingsSwipeOffsetX(0);
+      return;
+    }
+
+    const deltaX = touch.clientX - startX;
+    const deltaY = touch.clientY - startY;
+    if (!isSwiping && (Math.abs(deltaX) < DASHBOARD_STANDINGS_SWIPE_THRESHOLD_PX || Math.abs(deltaX) <= Math.abs(deltaY))) {
+      setIsStandingsSurfaceSwiping(false);
+      setStandingsSwipeOffsetX(0);
+      return;
+    }
+
+    finishStandingsSurfaceSwipe(deltaX);
+  }
+
+  function handleStandingsSwipeTouchCancel() {
+    standingsSwipeTouchRef.current = { startX: null, startY: null, isSwiping: false };
+    setIsStandingsSurfaceSwiping(false);
+    setStandingsSwipeOffsetX(0);
+  }
+
+  function handleStandingsSwipeWheel(event: WheelEvent<HTMLElement>) {
+    if (
+      availableStandingsGroups.length < 2 ||
+      standingsSwipeWheelIsCoolingDownRef.current ||
+      standingsSwipeAnimationTimeoutRef.current !== null
+    ) {
+      return;
+    }
+
+    if (Math.abs(event.deltaX) < 4 || Math.abs(event.deltaX) <= Math.abs(event.deltaY) * 1.15) {
+      return;
+    }
+
+    event.preventDefault();
+    standingsSwipeWheelDeltaRef.current += event.deltaX;
+
+    if (standingsSwipeWheelResetTimeoutRef.current !== null) {
+      window.clearTimeout(standingsSwipeWheelResetTimeoutRef.current);
+    }
+    standingsSwipeWheelResetTimeoutRef.current = window.setTimeout(() => {
+      standingsSwipeWheelDeltaRef.current = 0;
+      standingsSwipeWheelResetTimeoutRef.current = null;
+      setIsStandingsSurfaceSwiping(false);
+      setStandingsSwipeOffsetX(0);
+    }, 180);
+
+    const gestureDeltaX = -standingsSwipeWheelDeltaRef.current;
+    updateStandingsSurfaceSwipe(gestureDeltaX);
+
+    if (Math.abs(gestureDeltaX) < DASHBOARD_STANDINGS_SWIPE_THRESHOLD_PX) {
+      return;
+    }
+
+    standingsSwipeWheelDeltaRef.current = 0;
+    if (standingsSwipeWheelResetTimeoutRef.current !== null) {
+      window.clearTimeout(standingsSwipeWheelResetTimeoutRef.current);
+      standingsSwipeWheelResetTimeoutRef.current = null;
+    }
+    coolDownStandingsWheelSwipe();
+    finishStandingsSurfaceSwipe(gestureDeltaX);
+  }
 
   function handleInviteEntrySubmit() {
     const token = normalizeInviteTokenInput(inviteEntryValue);
@@ -565,7 +841,9 @@ export function DashboardOverview({
         />
       ) : null}
 
-      <DashboardCommandCenter summary={initialCommandCenterSummary} language={displayLanguage} />
+      <div className="pb-2">
+        <DashboardCommandCenter summary={initialCommandCenterSummary} language={displayLanguage} />
+      </div>
 
       {availableStandingsGroups.length > 0 ? (
         <section className="space-y-3">
@@ -584,6 +862,8 @@ export function DashboardOverview({
                 activeItemKey={resolvedStandingsGroup}
                 onActiveItemChange={setSelectedStandingsGroup}
                 showControls={availableStandingsGroups.length > 1}
+                motionMode="anchored"
+                allowAnchoredTouchScroll
               >
                 {availableStandingsGroups.map((groupName) => {
                   const isActive = resolvedStandingsGroup === groupName;
@@ -612,12 +892,29 @@ export function DashboardOverview({
                 })}
               </WindowChoiceRail>
 
-              <GroupStandingsMiniTable
-                rows={tournamentStandingsRows}
-                emptyState={t(displayLanguage, "dashboard.standingsEmpty")}
-              />
-              <p className="text-[11px] font-semibold text-gray-500">
-                {t(displayLanguage, "dashboard.standingsAdvanceRule")}
+              <div
+                className="overflow-hidden select-none [touch-action:pan-y]"
+                onTouchStart={handleStandingsSwipeTouchStart}
+                onTouchMove={handleStandingsSwipeTouchMove}
+                onTouchEnd={handleStandingsSwipeTouchEnd}
+                onTouchCancel={handleStandingsSwipeTouchCancel}
+                onWheel={handleStandingsSwipeWheel}
+              >
+                <div
+                  className={isStandingsSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}
+                  style={{
+                    transform: standingsSwipeOffsetX ? `translate3d(${standingsSwipeOffsetX}px, 0, 0)` : undefined
+                  }}
+                >
+                  <GroupStandingsMiniTable
+                    rows={tournamentStandingsRows}
+                    emptyState={t(displayLanguage, "dashboard.standingsEmpty")}
+                    language={displayLanguage}
+                  />
+                </div>
+              </div>
+              <p className="text-center font-semibold uppercase tracking-[0.1em] text-gray-500">
+                <span className="triptych-micro-copy">{t(displayLanguage, "dashboard.standingsAdvanceRule")}</span>
               </p>
             </>
           ) : null}

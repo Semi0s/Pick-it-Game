@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   filterMatchesByTeamIds,
+  getGroupStageSaveStatus,
   getPredictionProgress,
   getLiveMatches,
   getNextMatch,
@@ -9,6 +10,8 @@ import {
   type DashboardCommandCenterSummary,
   type DashboardMatchSummary
 } from "@/lib/dashboard-home";
+import { normalizeGroupKey } from "@/lib/group-standings";
+import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
 import { fetchGlobalLeaderboardRankSummaryForUser } from "@/lib/leaderboard-data";
 import { EXPECTED_KNOCKOUT_MATCH_COUNTS, isRoundOf32Stage, normalizeKnockoutStage } from "@/lib/match-stage";
 import { getGroupMatches, teams as demoTeams } from "@/lib/mock-data";
@@ -16,6 +19,7 @@ import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
 import { isMissingColumnError, isMissingRelationError } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
+import { fetchTournamentEntrySettings } from "@/lib/tournament-entry";
 import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { fetchUserLightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { getRequiredThirdPlaceQualifierCount } from "@/lib/knockout-seeding";
@@ -58,6 +62,10 @@ type OwnedGroupRow = {
   id: string;
 };
 
+type UpdatedAtRow = {
+  updated_at: string | null;
+};
+
 export async function fetchDashboardCommandCenterData(userId: string): Promise<DashboardCommandCenterSummary> {
   if (!userId) {
     return buildFallbackDashboardCommandCenter();
@@ -78,7 +86,10 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     knockoutPredictionsResult,
     globalRankResult,
     userSettingsResult,
-    totalPlayersResult
+    totalPlayersResult,
+    tournamentEntrySettings,
+    latestGroupSeedUpdateResult,
+    latestThirdPlaceUpdateResult
   ] = await Promise.all([
     adminSupabase
       .from("teams")
@@ -100,7 +111,20 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       totalPoints: null
     })),
     adminSupabase.from("user_settings").select("followed_team_ids").eq("user_id", userId).maybeSingle(),
-    adminSupabase.from("users").select("id", { count: "exact", head: true })
+    adminSupabase.from("users").select("id", { count: "exact", head: true }),
+    fetchTournamentEntrySettings(adminSupabase, userId).catch(() => null),
+    adminSupabase
+      .from("user_group_seed_rankings")
+      .select("updated_at")
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false })
+      .limit(1),
+    adminSupabase
+      .from("user_best_third_rankings")
+      .select("updated_at")
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
   ]);
 
   const teams = ((teamsResult.data as TeamRow[] | null) ?? []).length
@@ -149,13 +173,35 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
   );
   const visibleGroupIds = Array.from(new Set([...joinedGroupIds, ...managedGroupIds]));
 
-  const totalGroups = Math.max(
-    new Set(teams.map((team) => team.group_name).filter(Boolean)).size,
-    12
+  const groupNames = Array.from(
+    new Set(
+      teams
+        .map((team) => normalizeGroupKey(team.group_name) ?? team.group_name)
+        .filter((groupName): groupName is string => Boolean(groupName))
+    )
+  ).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const totalGroups = Math.max(groupNames.length, 12);
+  const teamIdsByGroup = new Map<string, Set<string>>();
+  for (const team of teams) {
+    const groupName = normalizeGroupKey(team.group_name) ?? team.group_name;
+    if (!groupName) {
+      continue;
+    }
+
+    const current = teamIdsByGroup.get(groupName) ?? new Set<string>();
+    current.add(team.id);
+    teamIdsByGroup.set(groupName, current);
+  }
+  const savedGroupNames = new Set(
+    (snapshot?.groupRankings ?? []).map((ranking) => normalizeGroupKey(ranking.groupName) ?? ranking.groupName)
   );
-  const completedGroupCount = (snapshot?.groupRankings ?? []).filter(
-    (ranking) => new Set((ranking.rankedTeamIds ?? []).filter(Boolean)).size >= 4
-  ).length;
+  const topTwoCompletionStatus = getGroupTopTwoCompletionStatus({
+    groupNames,
+    rankings: snapshot?.groupRankings ?? [],
+    teamIdsByGroup,
+    touchedGroupNames: savedGroupNames
+  });
+  const completedGroupCount = topTwoCompletionStatus.completeGroupNames.size;
   const roundOf32Placeholders = matches
     .filter((match) => isRoundOf32Stage(match.stage))
     .map((match) => ({
@@ -169,6 +215,26 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     }));
   const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(roundOf32Placeholders) || 8;
   const selectedThirdPlaceCount = Math.min(snapshot?.thirdPlaceRankings?.length ?? 0, requiredThirdPlaceQualifierCount);
+  const latestGroupStageChangedAt = getLatestTimestamp([
+    ((latestGroupSeedUpdateResult.data as UpdatedAtRow[] | null) ?? [])[0]?.updated_at ?? null,
+    ((latestThirdPlaceUpdateResult.data as UpdatedAtRow[] | null) ?? [])[0]?.updated_at ?? null
+  ]);
+  const groupStageCommittedAt =
+    tournamentEntrySettings?.tournamentEntryMode === "easy_bracket" &&
+    (tournamentEntrySettings.tournamentEntryState === "active" || tournamentEntrySettings.tournamentEntryState === "locked") &&
+    tournamentEntrySettings.tournamentEntrySubmittedAt
+      ? tournamentEntrySettings.tournamentEntrySubmittedAt
+      : null;
+  const hasGroupStageSnapshot = Boolean((snapshot?.groupRankings.length ?? 0) > 0 || (snapshot?.thirdPlaceRankings.length ?? 0) > 0);
+  const groupStageSaveStatus = getGroupStageSaveStatus({
+    completedGroups: completedGroupCount,
+    totalGroups,
+    selectedThirdPlaceCount,
+    requiredThirdPlaceCount: requiredThirdPlaceQualifierCount,
+    hasSavedProgress: hasGroupStageSnapshot,
+    committedAt: groupStageCommittedAt,
+    latestChangedAt: latestGroupStageChangedAt
+  });
 
   const knockoutCounts = {
     r32: 0,
@@ -220,7 +286,11 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         totalGroups,
         selectedThirdPlaceCount,
         requiredThirdPlaceCount: requiredThirdPlaceQualifierCount,
-        deadlineAt: GROUP_PHASE_START_AT
+        deadlineAt: GROUP_PHASE_START_AT,
+        needsSave: groupStageSaveStatus.needsSave,
+        hasUncommittedChanges: groupStageSaveStatus.hasMeaningfulChangesAfterCommit,
+        lastCommittedAt: groupStageCommittedAt,
+        lastChangedAt: latestGroupStageChangedAt
       });
 
   return {
@@ -240,6 +310,12 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       liveMatches: reminderLiveMatches
     }
   };
+}
+
+function getLatestTimestamp(values: Array<string | null | undefined>) {
+  return values
+    .filter((value): value is string => Boolean(value))
+    .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null;
 }
 
 function buildFallbackDashboardCommandCenter(): DashboardCommandCenterSummary {

@@ -434,6 +434,7 @@ export async function saveLightSeedBuilderAction(
 
     revalidatePath("/groups");
     revalidatePath("/bracket-builder");
+    revalidatePath("/dashboard");
     revalidatePath("/knockout");
     revalidatePath("/strategy");
 
