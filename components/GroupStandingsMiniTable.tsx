@@ -238,7 +238,7 @@ function PickProbabilityCell({
       >
         <span
           aria-hidden
-          className="relative inline-flex h-3.5 w-3.5 shrink-0 rounded-full md:h-5 md:w-5"
+          className="mini-pick-probability-ring relative inline-flex shrink-0 rounded-full"
           style={{
             background: `conic-gradient(rgb(var(--app-accent-rgb)) ${probability * 3.6}deg, rgba(148, 163, 184, 0.22) 0deg)`
           }}

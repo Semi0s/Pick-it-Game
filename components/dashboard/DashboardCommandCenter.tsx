@@ -225,12 +225,12 @@ function PerformancePanel({
       <div className={`relative flex h-full w-full flex-col justify-center divide-y px-1 pb-4 sm:px-10 lg:px-12 ${getDividerClasses(theme)}`}>
         <MetricRow label={t(language, "leaderboard.points")} value={formatPoints(performance.globalPoints, language)} theme={theme} />
         <MetricRow label={t(language, "leaderboard.rank")} value={formatRank(performance.globalRank, language)} theme={theme} />
-        <MetricSplitRow
-          groupLabel={t(language, "dashboard.groupsCompact")}
-          leftLabel={t(language, "dashboard.invitedShort")}
-          leftValue={formatNumber(performance.invitedGroups, language)}
-          rightLabel={t(language, "dashboard.managedShort")}
-          rightValue={formatNumber(performance.managedGroups, language)}
+        <GroupsSummaryRows
+          title={t(language, "dashboard.myGroups")}
+          invitedLabel={t(language, "dashboard.invitedShort")}
+          invitedValue={formatNumber(performance.invitedGroups, language)}
+          managedLabel={t(language, "dashboard.managedShort")}
+          managedValue={formatNumber(performance.managedGroups, language)}
           theme={theme}
         />
         <MetricRow
@@ -655,39 +655,39 @@ function MetricRow({
   );
 }
 
-function MetricSplitRow({
-  groupLabel,
-  leftLabel,
-  leftValue,
-  rightLabel,
-  rightValue,
+function GroupsSummaryRows({
+  title,
+  invitedLabel,
+  invitedValue,
+  managedLabel,
+  managedValue,
   theme
 }: {
-  groupLabel: string;
-  leftLabel: string;
-  leftValue: string;
-  rightLabel: string;
-  rightValue: string;
+  title: string;
+  invitedLabel: string;
+  invitedValue: string;
+  managedLabel: string;
+  managedValue: string;
   theme: TriptychTheme;
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-1 py-1.5">
-      <span className={`block text-center font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
-        <span className="triptych-micro-copy">{groupLabel}</span>
-      </span>
-      <div className="grid min-w-0 grid-cols-2 gap-7">
-        <div className="min-w-0 text-center">
-          <span className={`block truncate font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
-            <span className="triptych-micro-copy">{leftLabel}</span>
-          </span>
-          <span className={`mt-1 block truncate text-center text-[12px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>{leftValue}</span>
-        </div>
-        <div className="min-w-0 text-center">
-          <span className={`block truncate font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
-            <span className="triptych-micro-copy">{rightLabel}</span>
-          </span>
-          <span className={`mt-1 block truncate text-center text-[12px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>{rightValue}</span>
-        </div>
+    <div className="flex min-w-0 flex-col gap-1.5 py-1.5">
+      <p className={`truncate text-center font-black uppercase leading-none tracking-[0.1em] ${getPrimaryTextClasses(theme)}`}>
+        <span className="triptych-micro-copy">{title}</span>
+      </p>
+      <div className="mx-auto grid w-full max-w-[8.5rem] grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-1">
+        <span className={`truncate text-left font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
+          <span className="triptych-micro-copy triptych-micro-copy-left">{invitedLabel}:</span>
+        </span>
+        <span className={`triptych-regular-value text-right text-[12px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>
+          {invitedValue}
+        </span>
+        <span className={`truncate text-left font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
+          <span className="triptych-micro-copy triptych-micro-copy-left">{managedLabel}:</span>
+        </span>
+        <span className={`triptych-regular-value text-right text-[12px] font-black leading-none tracking-[-0.04em] tabular-nums ${getPrimaryTextClasses(theme)}`}>
+          {managedValue}
+        </span>
       </div>
     </div>
   );

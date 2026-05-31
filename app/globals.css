@@ -25,6 +25,9 @@
   --app-header-padding-bottom: 8px;
   --app-header-sticky-offset: calc(var(--app-header-padding-top) + var(--app-header-content-height) + var(--app-header-padding-bottom));
   --app-sticky-rail-gap: 1.5rem;
+  --triptych-micro-scale: 1.2;
+  --mini-table-micro-scale: 1.2;
+  --probability-indicator-scale: 1.2;
   --app-accent-rgb: 86 162 79;
   --app-accent-light-rgb: 220 239 216;
   --app-accent-dark-rgb: 63 140 57;
@@ -158,6 +161,30 @@ select {
 
   .ui-chip-icon-sm {
     @apply inline-flex h-6 w-6 items-center justify-center rounded-full text-[9px] leading-none;
+  }
+
+  .ui-micro-scale-100 {
+    --triptych-micro-scale: 1;
+    --mini-table-micro-scale: 1;
+    --probability-indicator-scale: 1;
+  }
+
+  .ui-micro-scale-110 {
+    --triptych-micro-scale: 1.1;
+    --mini-table-micro-scale: 1.1;
+    --probability-indicator-scale: 1.1;
+  }
+
+  .ui-micro-scale-120 {
+    --triptych-micro-scale: 1.2;
+    --mini-table-micro-scale: 1.2;
+    --probability-indicator-scale: 1.2;
+  }
+
+  .ui-micro-scale-125 {
+    --triptych-micro-scale: 1.25;
+    --mini-table-micro-scale: 1.25;
+    --probability-indicator-scale: 1.25;
   }
 
   .app-shell {
@@ -331,7 +358,7 @@ select {
 
   .triptych-micro-copy {
     display: inline-block;
-    font-size: 8px;
+    font-size: calc(8px * var(--triptych-micro-scale, 1));
     line-height: 1;
     transform: scale(0.82);
     transform-origin: center;
@@ -352,12 +379,13 @@ select {
   }
 
   .mini-standings-table {
+    --triptych-micro-scale: var(--mini-table-micro-scale, 1);
     font-variant-numeric: tabular-nums;
   }
 
   @media (min-width: 768px) {
     .mini-standings-table .triptych-micro-copy {
-      font-size: 11px;
+      font-size: calc(11px * var(--mini-table-micro-scale, 1));
       transform: scale(0.9);
     }
 
@@ -369,12 +397,43 @@ select {
   .group-stage-probability-badge {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    font-size: calc(7px * var(--probability-indicator-scale, 1));
     font-variant-numeric: tabular-nums;
+  }
+
+  @media (min-width: 640px) {
+    .group-stage-probability-badge {
+      font-size: calc(8px * var(--probability-indicator-scale, 1));
+    }
+  }
+
+  .group-stage-probability-ring {
+    height: calc(0.75rem * var(--probability-indicator-scale, 1));
+    width: calc(0.75rem * var(--probability-indicator-scale, 1));
+  }
+
+  @media (min-width: 640px) {
+    .group-stage-probability-ring {
+      height: calc(0.875rem * var(--probability-indicator-scale, 1));
+      width: calc(0.875rem * var(--probability-indicator-scale, 1));
+    }
+  }
+
+  .mini-pick-probability-ring {
+    height: calc(0.875rem * var(--probability-indicator-scale, 1));
+    width: calc(0.875rem * var(--probability-indicator-scale, 1));
+  }
+
+  @media (min-width: 768px) {
+    .mini-pick-probability-ring {
+      height: calc(1.25rem * var(--probability-indicator-scale, 1));
+      width: calc(1.25rem * var(--probability-indicator-scale, 1));
+    }
   }
 
   @supports (-webkit-hyphens: none) {
     .group-stage-probability-badge {
-      font-size: 6px;
+      font-size: calc(6px * var(--probability-indicator-scale, 1));
     }
   }
 
