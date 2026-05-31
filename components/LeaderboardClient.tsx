@@ -1437,8 +1437,8 @@ export function LeaderboardClient() {
       ) : null}
 
       <section
-        className="sticky z-[14] -mx-4 bg-white px-4 pb-2 pt-1.5 shadow-[0_12px_22px_-18px_rgba(15,23,42,0.45)] sm:mx-0 sm:rounded-lg sm:border sm:border-gray-200 sm:px-3"
-        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px) + 10px)" }}
+        className="compact-landscape-sticky-rail sticky z-[14] -mx-4 !overflow-visible bg-white px-4 pb-2 pt-1.5 shadow-[0_12px_22px_-18px_rgba(15,23,42,0.45)] sm:mx-0 sm:rounded-lg sm:!rounded-t-none sm:border sm:border-gray-200 sm:px-3"
+        style={{ top: "calc(var(--app-header-sticky-offset, var(--app-header-height, 72px)) + var(--app-sticky-rail-gap, 1.5rem))" }}
       >
         {renderSwitcherControls("px-1")}
       </section>

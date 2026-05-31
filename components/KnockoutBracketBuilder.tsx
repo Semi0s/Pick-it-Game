@@ -241,8 +241,8 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     <KnockoutLandingMatchContext.Provider value={landingMatchId}>
     <section className="space-y-3">
       <div
-        className="sticky z-[14] w-full overflow-x-hidden rounded-lg bg-white px-3 py-1.5 sm:border sm:border-gray-200 sm:px-4"
-        style={{ top: "calc(var(--app-header-height, 72px) + env(safe-area-inset-top, 0px) + 10px)" }}
+        className="compact-landscape-sticky-rail sticky z-[14] w-full !overflow-visible rounded-lg !rounded-t-none bg-white px-3 py-1.5 sm:border sm:border-gray-200 sm:px-4"
+        style={{ top: "calc(var(--app-header-sticky-offset, var(--app-header-height, 72px)) + var(--app-sticky-rail-gap, 1.5rem))" }}
       >
         <KnockoutPhaseChoiceRail
           showControls={slides.length > 1}
