@@ -181,13 +181,13 @@ function SelectionProbabilityBadge({
 
   return (
     <span
-      className="group-stage-probability-badge inline-flex shrink-0 items-center gap-1 text-[7px] font-normal leading-none text-gray-500 sm:gap-1.5 sm:text-[8px]"
+      className="group-stage-probability-badge inline-flex shrink-0 items-center gap-1 font-normal leading-none text-gray-500 sm:gap-1.5"
       aria-label={`${normalizedProbability}%`}
       title={`${normalizedProbability}%`}
     >
       <span
         aria-hidden
-        className="relative inline-flex h-3 w-3 shrink-0 rounded-full sm:h-3.5 sm:w-3.5"
+        className="group-stage-probability-ring relative inline-flex shrink-0 rounded-full"
         style={{
           background: `conic-gradient(rgb(var(--app-accent-rgb)) ${normalizedProbability * 3.6}deg, #f3f4f6 0deg)`
         }}
