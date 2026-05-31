@@ -18,6 +18,13 @@
   --app-accent-ring: #88c783;
   --app-logo-secondary-accent: #ffffff;
   --app-logo-check-accent: #56a24f;
+  --app-logo-height: 38px;
+  --app-logo-width: 92px;
+  --app-header-content-height: 38px;
+  --app-header-padding-top: calc(env(safe-area-inset-top, 0px) + 14px);
+  --app-header-padding-bottom: 8px;
+  --app-header-sticky-offset: calc(var(--app-header-padding-top) + var(--app-header-content-height) + var(--app-header-padding-bottom));
+  --app-sticky-rail-gap: 1.5rem;
   --app-accent-rgb: 86 162 79;
   --app-accent-light-rgb: 220 239 216;
   --app-accent-dark-rgb: 63 140 57;
@@ -37,6 +44,43 @@
   --error-text: #ffffff;
   --success: #56a24f;
   --success-text: #ffffff;
+}
+
+@media (min-width: 640px) {
+  :root {
+    --app-header-content-height: 38px;
+  }
+}
+
+@media (min-width: 768px) {
+  :root {
+    --app-logo-height: 40px;
+    --app-logo-width: 97px;
+    --app-header-content-height: 40px;
+    --app-header-padding-top: calc(env(safe-area-inset-top, 0px) + 20px);
+    --app-header-padding-bottom: 12px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 950px) {
+  :root {
+    --app-logo-height: 36px;
+    --app-logo-width: 87px;
+    --app-header-content-height: 36px;
+    --app-header-padding-top: calc(env(safe-area-inset-top, 0px) + 7px);
+    --app-header-padding-bottom: 4px;
+    --app-sticky-rail-gap: 0.5rem;
+  }
+}
+
+@media (min-width: 1200px) {
+  :root {
+    --app-logo-height: 50px;
+    --app-logo-width: 121px;
+    --app-header-content-height: 50px;
+    --app-header-padding-top: calc(env(safe-area-inset-top, 0px) + 30px);
+    --app-header-padding-bottom: 16px;
+  }
 }
 
 html {
@@ -114,6 +158,165 @@ select {
 
   .ui-chip-icon-sm {
     @apply inline-flex h-6 w-6 items-center justify-center rounded-full text-[9px] leading-none;
+  }
+
+  .app-shell {
+    padding-bottom: var(--app-shell-padding-bottom);
+  }
+
+  .app-header {
+    padding-top: var(--app-header-padding-top);
+    padding-bottom: var(--app-header-padding-bottom);
+  }
+
+  .app-header-logo {
+    height: var(--app-logo-height);
+    transform: translateY(7px);
+    width: var(--app-logo-width);
+  }
+
+  .bottom-nav-dock {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .compact-landscape-sticky-rail {
+    isolation: isolate;
+    overflow: visible;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+
+  .compact-landscape-sticky-rail::before {
+    content: "";
+    position: absolute;
+    z-index: 20;
+    left: 0;
+    right: 0;
+    top: calc(0px - var(--app-sticky-rail-gap, 1.5rem));
+    height: calc(var(--app-sticky-rail-gap, 1.5rem) + 2px);
+    background: #ffffff;
+    pointer-events: none;
+  }
+
+  @media (orientation: landscape) and (max-height: 520px) and (max-width: 950px) {
+    :root {
+      --landscape-dock-width: 77px;
+    }
+
+    .app-shell {
+      min-height: 100dvh;
+      padding-left: calc(var(--landscape-dock-width) + env(safe-area-inset-left, 0px));
+      padding-bottom: 0;
+    }
+
+    .app-shell .app-header {
+      min-height: 40px;
+      padding-top: var(--app-header-padding-top);
+      padding-bottom: var(--app-header-padding-bottom);
+    }
+
+    .app-header .nonessential-header-copy {
+      display: none;
+    }
+
+    .app-shell .main-content {
+      max-width: none;
+      min-height: calc(100dvh - var(--app-header-sticky-offset, var(--app-header-height, 44px)));
+      padding: 0.5rem 0.75rem 0.75rem;
+    }
+
+    .app-shell .bottom-nav-dock {
+      inset: 0 auto 0 env(safe-area-inset-left, 0px);
+      width: var(--landscape-dock-width);
+      height: 100dvh;
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      border-top-width: 0;
+      border-right: 1px solid rgb(64 64 64);
+    }
+
+    .bottom-nav-dock .bottom-nav-dock-inner {
+      display: flex;
+      height: 100%;
+      max-width: none;
+      flex-direction: column;
+      justify-content: center;
+      gap: 0.55rem;
+      padding: 0.55rem 0.45rem;
+    }
+
+    .bottom-nav-dock .bottom-nav-dock-item {
+      min-height: 58px;
+      width: 100%;
+      padding: 0.5rem 0.25rem;
+    }
+
+    .bottom-nav-dock .bottom-nav-dock-item svg {
+      height: 1.5rem;
+      width: 1.5rem;
+    }
+
+    .bottom-nav-dock .bottom-nav-dock-label {
+      display: block;
+      max-width: 100%;
+      overflow: visible;
+      text-align: center;
+      text-overflow: clip;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      font-size: 7.5px;
+      line-height: 1.2;
+    }
+
+    .bottom-nav-dock .bottom-nav-active-indicator {
+      inset: 9px 4px 9px auto;
+      width: 3px;
+      height: auto;
+      border-radius: 999px;
+    }
+
+    @supports (-webkit-hyphens: none) {
+      :root {
+        --landscape-dock-width: 105px;
+      }
+
+      .bottom-nav-dock .bottom-nav-dock-label {
+        font-size: 6.8px;
+        letter-spacing: -0.01em;
+      }
+    }
+
+    .dashboard-top-card {
+      min-height: 52px;
+      max-height: none;
+      border-radius: 0.85rem;
+    }
+
+    .dashboard-top-card .dashboard-top-card-inner {
+      display: flex;
+      min-height: 52px;
+      align-items: center;
+      padding: 0.45rem 0.8rem;
+    }
+
+    .dashboard-top-card .dashboard-top-card-large-copy,
+    .dashboard-top-card .dashboard-top-card-name,
+    .dashboard-top-card .dashboard-top-card-action {
+      display: none;
+    }
+
+    .dashboard-top-card .dashboard-top-card-compact-summary {
+      display: block;
+      width: 100%;
+      line-height: 1.1;
+    }
+
+    .app-shell .compact-landscape-sticky-rail {
+      top: calc(var(--app-header-sticky-offset, var(--app-header-height, 44px)) + var(--app-sticky-rail-gap, 0.5rem)) !important;
+      margin-top: 0;
+      border-radius: 0 0 0.85rem 0.85rem;
+      box-shadow: 0 10px 16px -16px rgba(15, 23, 42, 0.5);
+    }
   }
 
   .triptych-compact-type {

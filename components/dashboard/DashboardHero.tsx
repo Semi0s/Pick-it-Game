@@ -7,6 +7,7 @@ import { getLocalizedCardCssVars, getLocalizedCardThemeForUserSurface } from "@/
 type DashboardHeroProps = {
   userId?: string | null;
   name: string;
+  compactSummary?: string;
   dashboardCopy: { hello: string; help: string };
   visualThemeId?: string | null;
   homeTeamId?: string | null;
@@ -14,6 +15,7 @@ type DashboardHeroProps = {
 };
 
 export function DashboardHero({
+  compactSummary,
   dashboardCopy,
   name,
   visualThemeId,
@@ -25,19 +27,22 @@ export function DashboardHero({
 
   return (
     <section
-      className="overflow-hidden rounded-lg bg-white"
+      className="dashboard-top-card overflow-hidden rounded-lg bg-white"
       style={{
         ...localizedCardVars,
         borderColor: "var(--localized-card-border)"
       }}
     >
-      <div className="relative overflow-hidden px-5 py-4 text-[color:var(--localized-card-text)]">
+      <div className="dashboard-top-card-inner relative overflow-hidden px-5 py-4 text-[color:var(--localized-card-text)]">
         <LocalizedCardBackground theme={localizedTheme} />
         <div className="relative flex items-start justify-between gap-3">
-          <p className="text-[1.9rem] font-black uppercase leading-none tracking-[0.08em] text-[color:var(--localized-card-text)] sm:text-[2.35rem]">
+          <p className="dashboard-top-card-large-copy text-[1.9rem] font-black uppercase leading-none tracking-[0.08em] text-[color:var(--localized-card-text)] sm:text-[2.35rem]">
             {dashboardCopy.hello}
           </p>
-          <div className="-mr-1 flex shrink-0 items-center">
+          <p className="dashboard-top-card-compact-summary hidden min-w-0 truncate text-[0.82rem] font-black uppercase leading-none tracking-[0.06em] text-[color:var(--localized-card-text)]">
+            {compactSummary ?? name}
+          </p>
+          <div className="dashboard-top-card-action -mr-1 flex shrink-0 items-center">
             <Link
               href="/help"
               className="inline-flex h-12 w-12 items-center justify-center rounded-md text-[color:var(--localized-card-secondary-text)] transition hover:text-[color:var(--localized-card-text)]"
@@ -57,7 +62,7 @@ export function DashboardHero({
           </div>
         </div>
         <div className="relative -mt-1.5">
-          <h2 className="text-xl font-black leading-none text-[color:var(--localized-card-text)] sm:text-2xl">{name}</h2>
+          <h2 className="dashboard-top-card-name text-xl font-black leading-none text-[color:var(--localized-card-text)] sm:text-2xl">{name}</h2>
         </div>
       </div>
     </section>

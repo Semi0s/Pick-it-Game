@@ -510,24 +510,24 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <AppLanguageProvider activeLanguage={activeLanguage} setActiveLanguage={setActiveLanguage}>
       <div
-        className="min-h-screen overflow-x-clip bg-white text-gray-950"
+        className="app-shell min-h-screen overflow-x-clip bg-white text-gray-950"
         style={
           {
-            paddingBottom: isOnboardingExperience ? "0px" : "calc(4.85rem + env(safe-area-inset-bottom, 0px))",
+            "--app-shell-padding-bottom": isOnboardingExperience ? "0px" : "calc(4.85rem + env(safe-area-inset-bottom, 0px))",
             "--app-header-height": `${headerHeight}px`,
             ...getAppAccentCssVars(accentTheme)
           } as CSSProperties
         }
       >
-      <header ref={headerRef} className="sticky top-0 z-20 bg-white">
-        <div className="mx-auto flex max-w-4xl items-center justify-between gap-2.5 px-3 py-2 sm:px-4">
+      <header ref={headerRef} className="app-header sticky top-0 z-20 bg-white">
+        <div className="mx-auto flex max-w-4xl items-center justify-between gap-2.5 pl-5 pr-3 sm:pl-6 sm:pr-4">
           <Link href="/dashboard" className="shrink-0" aria-label={t(displayLanguage, "dashboard.homeAria")}>
             <ThemedPickItLogo
               alt="PICK-IT! World Cup 2026"
               src="/images/pickit-header-logo-v4.svg"
-              sizes="(max-width: 430px) 119px, (max-width: 640px) 148px, 187px"
+              sizes="(max-width: 767px) 92px, (max-width: 1199px) 97px, 121px"
               priority
-              className="w-[clamp(7.425rem,30.6vw,11.7rem)] min-w-[7.425rem] max-w-[11.7rem] shrink-0"
+              className="app-header-logo shrink-0"
             />
           </Link>
           <div className="flex shrink-0 items-center gap-1.5 max-[430px]:gap-1">
@@ -597,14 +597,14 @@ export function AppShell({ children }: AppShellProps) {
                 className="inline-flex items-center gap-1.5 rounded-[0.85rem] border border-gray-300 px-2 py-1.5 text-[11px] font-semibold text-gray-700 max-[399px]:h-8 max-[399px]:gap-1 max-[399px]:px-2.25 max-[399px]:py-0 max-[399px]:text-[10px] sm:px-2.5"
               >
                 <CircleUserRound aria-hidden className="h-[17.5px] w-[17.5px] max-[399px]:h-[15px] max-[399px]:w-[15px]" />
-                <span className="max-[430px]:hidden">{t(dockLanguage, "profile.profile")}</span>
+                <span className="nonessential-header-copy max-[430px]:hidden">{t(dockLanguage, "profile.profile")}</span>
               </Link>
             ) : null}
           </div>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-4xl px-4 pb-5 pt-6">
+      <main className="main-content mx-auto w-full max-w-4xl px-4 pb-5 pt-6">
         {readinessBanner ? (
           <div className="mb-4 rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
             {readinessBanner}
@@ -642,11 +642,10 @@ export function AppShell({ children }: AppShellProps) {
 
       {isOnboardingExperience ? null : (
         <nav
-          className="fixed inset-x-0 bottom-0 z-30 border-t border-neutral-700 bg-neutral-900"
-          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+          className="bottom-nav-dock fixed inset-x-0 bottom-0 z-30 border-t border-neutral-700 bg-neutral-900"
         >
           <div
-            className="relative mx-auto grid w-full max-w-4xl gap-0.5 px-2 pb-0.5 pt-1"
+            className="bottom-nav-dock-inner relative mx-auto grid w-full max-w-4xl gap-0.5 px-2 pb-0.5 pt-1"
             style={{ gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))` }}
           >
             {navItems.map((item) => {
@@ -658,7 +657,7 @@ export function AppShell({ children }: AppShellProps) {
                   key={item.href}
                   href={item.href}
                   aria-label={item.ariaLabel}
-                  className={`relative flex min-h-[3.35rem] w-full min-w-0 touch-manipulation select-none flex-col items-center justify-center gap-0.5 rounded-md px-1.5 py-1.5 text-[10px] font-semibold leading-none transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-100/20 active:scale-[0.985] sm:text-[11px] ${
+                  className={`bottom-nav-dock-item relative flex min-h-[3.35rem] w-full min-w-0 touch-manipulation select-none flex-col items-center justify-center gap-0.5 rounded-md px-1.5 py-1.5 text-[10px] font-semibold leading-none transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-100/20 active:scale-[0.985] sm:text-[11px] ${
                     isActive
                       ? "bg-neutral-800 text-neutral-50"
                       : "text-neutral-400 hover:text-neutral-200"
@@ -668,14 +667,14 @@ export function AppShell({ children }: AppShellProps) {
                   {isActive ? (
                     <span
                       aria-hidden
-                      className="absolute inset-x-4 top-0.5 h-0.5 rounded-full bg-accent/85"
+                      className="bottom-nav-active-indicator absolute inset-x-4 top-0.5 h-0.5 rounded-full bg-accent/85"
                     />
                   ) : null}
                   <Icon
                     aria-hidden
                     className={`h-5 w-5 shrink-0 ${isActive ? "text-accent-light" : ""}`}
                   />
-                  <span className="truncate text-center leading-tight">{item.label}</span>
+                  <span className="bottom-nav-dock-label truncate text-center leading-tight">{item.label}</span>
                 </Link>
               );
             })}

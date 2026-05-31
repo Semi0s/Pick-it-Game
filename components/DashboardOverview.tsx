@@ -37,6 +37,7 @@ import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { shouldHideStrategyModeForLaunch } from "@/lib/group-prediction-mode";
 import { normalizeInviteTokenInput } from "@/components/player-management/Shared";
 import { useAppLanguage } from "@/lib/app-language";
+import { formatNumber } from "@/lib/i18n-format";
 import { t } from "@/lib/strings";
 import { dismissCurrentUserMessageId } from "@/lib/auth-client";
 import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
@@ -302,6 +303,15 @@ export function DashboardOverview({
     hello: t(displayLanguage, "dashboard.hello"),
     help: t(displayLanguage, "dashboard.help")
   };
+  const dashboardHeroCompactSummary = [
+    user?.name ?? "Player",
+    typeof initialCommandCenterSummary.performance.globalPoints === "number"
+      ? `${formatNumber(initialCommandCenterSummary.performance.globalPoints, displayLanguage)} ${t(displayLanguage, "leaderboard.points")}`
+      : null,
+    typeof initialCommandCenterSummary.performance.globalRank === "number"
+      ? `${t(displayLanguage, "leaderboard.rank")} ${formatNumber(initialCommandCenterSummary.performance.globalRank, displayLanguage)}`
+      : null
+  ].filter(Boolean).join(" · ");
   const dashboardLogoHintMessageId = DASHBOARD_LOGO_HINT_MESSAGE_ID;
   const legacyLanguageScopedLogoHintMessageId = `${DASHBOARD_LOGO_HINT_MESSAGE_ID}:${displayLanguage}`;
   const { selectedGroup: resolvedStandingsGroup } = resolvePreferredStandingsGroupSelection({
@@ -759,6 +769,7 @@ export function DashboardOverview({
       <DashboardHero
         userId={user?.id ?? null}
         name={user?.name ?? "Player"}
+        compactSummary={dashboardHeroCompactSummary}
         dashboardCopy={dashboardCopy}
         visualThemeId={user?.visualThemeId ?? null}
         homeTeamId={user?.homeTeamId ?? null}
