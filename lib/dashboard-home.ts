@@ -54,6 +54,7 @@ export type DashboardProgressSummary = {
   hasUncommittedChanges?: boolean;
   lastCommittedAt?: string | null;
   lastChangedAt?: string | null;
+  hasCompletedBracketOnce?: boolean;
 };
 
 export type DashboardCommandCenterSummary = {

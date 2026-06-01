@@ -230,6 +230,7 @@ export default async function BracketBuilderPage() {
           groupStageDueAt={GROUP_PHASE_START_AT}
           knockoutProjectedPreview={projectedKnockoutComparisonView}
           fullScoresEnabled={fullScoresEnabled || authUser.role === "admin"}
+          userId={authUser.id}
           language={preferredLanguage}
         />
       </div>

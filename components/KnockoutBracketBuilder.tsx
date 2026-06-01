@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, CheckSquare, Trophy, X } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { useSearchParams } from "next/navigation";
 import { previewBracketPredictionImpactAction, saveBracketPredictionAction } from "@/app/knockout/actions";
 import { WindowChoiceRail, useSessionJsonState } from "@/components/player-management/Shared";
@@ -16,11 +16,13 @@ import {
   type KnockoutBracketEditorView,
   type KnockoutBracketMatchView
 } from "@/lib/bracket-predictions";
+import { useSessionViewState } from "@/lib/session-view-state";
 import type { BracketPrediction } from "@/lib/types";
 
 type KnockoutBracketBuilderProps = {
   initialView: KnockoutBracketEditorView;
   projectedComparisonView?: KnockoutBracketEditorView | null;
+  userId?: string | null;
   language?: string | null;
 };
 
@@ -42,10 +44,33 @@ type BracketSlideView = {
   layout: "split" | "focus" | "finale";
 };
 
-const KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY = "knockout-active-slide";
-const KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY = "knockout-active-country-filter";
 const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
 const VISIBLE_KNOCKOUT_STAGE_IDS = new Set<KnockoutBracketMatchView["stage"]>(["r32"]);
+
+type KnockoutViewState = {
+  activeSlideIndex: number;
+  selectedCountryFilter: string;
+};
+
+const DEFAULT_KNOCKOUT_VIEW_STATE: KnockoutViewState = {
+  activeSlideIndex: 0,
+  selectedCountryFilter: ""
+};
+
+function validateKnockoutViewState(value: unknown): KnockoutViewState | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<KnockoutViewState>;
+  return {
+    activeSlideIndex:
+      typeof candidate.activeSlideIndex === "number" && Number.isFinite(candidate.activeSlideIndex)
+        ? Math.max(0, Math.floor(candidate.activeSlideIndex))
+        : 0,
+    selectedCountryFilter: typeof candidate.selectedCountryFilter === "string" ? candidate.selectedCountryFilter : ""
+  };
+}
 
 const KnockoutLanguageContext = createContext<SupportedLanguage>("en");
 const KnockoutLandingMatchContext = createContext<string | null>(null);
@@ -58,7 +83,7 @@ function kt(language: SupportedLanguage, key: string, params?: TranslationParams
   return t(language, `knockout.${key}`, params);
 }
 
-export function KnockoutBracketBuilder({ initialView, projectedComparisonView = null, language }: KnockoutBracketBuilderProps) {
+export function KnockoutBracketBuilder({ initialView, projectedComparisonView = null, userId = null, language }: KnockoutBracketBuilderProps) {
   const { activeLanguage } = useAppLanguage();
   const uiLanguage = normalizeLanguage(activeLanguage ?? language);
   const searchParams = useSearchParams();
@@ -75,10 +100,32 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     teamId: string | null;
     affectedCount: number;
   } | null>(null);
-  const [activeSlideIndex, setActiveSlideIndex] = useSessionJsonState<number>(KNOCKOUT_ACTIVE_SLIDE_STORAGE_KEY, 0);
-  const [selectedCountryFilter, setSelectedCountryFilter] = useSessionJsonState<string>(
-    KNOCKOUT_ACTIVE_COUNTRY_FILTER_STORAGE_KEY,
-    ""
+  const [knockoutViewState, setKnockoutViewState] = useSessionViewState<KnockoutViewState>({
+    key: "knockout",
+    userId,
+    defaultValue: DEFAULT_KNOCKOUT_VIEW_STATE,
+    validate: validateKnockoutViewState
+  });
+  const activeSlideIndex = knockoutViewState.activeSlideIndex;
+  const selectedCountryFilter = knockoutViewState.selectedCountryFilter;
+  const setActiveSlideIndex = useCallback(
+    (nextValue: SetStateAction<number>) => {
+      setKnockoutViewState((current) => ({
+        ...current,
+        activeSlideIndex: typeof nextValue === "function" ? nextValue(current.activeSlideIndex) : nextValue
+      }));
+    },
+    [setKnockoutViewState]
+  );
+  const setSelectedCountryFilter = useCallback(
+    (nextValue: SetStateAction<string>) => {
+      setKnockoutViewState((current) => ({
+        ...current,
+        selectedCountryFilter:
+          typeof nextValue === "function" ? nextValue(current.selectedCountryFilter) : nextValue
+      }));
+    },
+    [setKnockoutViewState]
   );
   const [transitionReady, setTransitionReady] = useState(true);
   const [landingMatchId, setLandingMatchId] = useState<string | null>(null);

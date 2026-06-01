@@ -60,6 +60,8 @@ export function LocalizedEmblem({
   const shouldUseEmblemAsset = theme.emblemAsset && !(theme.id === "france" && variant === "leaderboard");
 
   if (shouldUseEmblemAsset) {
+    const assetOpacity = getEmblemAssetOpacity(theme, variant, config.assetOpacity);
+
     return (
       <image
         href={theme.emblemAsset}
@@ -67,8 +69,9 @@ export function LocalizedEmblem({
         y={config.assetY}
         width={config.assetWidth}
         height={config.assetHeight}
-        opacity={config.assetOpacity}
+        opacity={assetOpacity}
         preserveAspectRatio="xMidYMid meet"
+        style={getEmblemAssetStyle(theme)}
       />
     );
   }
@@ -101,6 +104,28 @@ export function LocalizedEmblem({
       {spec.node}
     </g>
   );
+}
+
+function getEmblemAssetOpacity(
+  theme: LocalizedCardTheme,
+  variant: LocalizedEmblemVariant,
+  fallbackOpacity: number
+) {
+  if (theme.id === "germany") {
+    return variant === "leaderboard" ? 0.46 : 0.22;
+  }
+
+  return fallbackOpacity;
+}
+
+function getEmblemAssetStyle(theme: LocalizedCardTheme): CSSProperties | undefined {
+  if (theme.id !== "germany") {
+    return undefined;
+  }
+
+  return {
+    filter: "grayscale(1) contrast(0.92) brightness(1.08)"
+  };
 }
 
 function getLocalizedEmblemSpec(

@@ -1,6 +1,7 @@
 "use client";
 
 import { t } from "@/lib/strings";
+import type { PickProbabilityResult } from "@/lib/group-pick-probability";
 
 export type MiniGroupStandingsRow = {
   teamId: string;
@@ -20,12 +21,7 @@ export type MiniGroupStandingsRow = {
   isQualifier?: boolean;
   isPossibleQualifier?: boolean;
   isEliminated?: boolean;
-  pickProbability?: {
-    probability: number | null;
-    predictedPlace: 1 | 2 | 3 | 4;
-    mode: "exact_place" | "advance";
-    targetLabel: "1st" | "2nd" | "advance";
-  } | null;
+  pickProbability?: PickProbabilityResult | null;
 };
 
 export type MiniGroupStandingsMovement = "up" | "down";
@@ -55,6 +51,8 @@ export function GroupStandingsMiniTable({
     );
   }
 
+  const showPickProbabilityColumn = rows.some((row) => row.pickProbability);
+
   return (
     <div className={className ?? ""}>
       <div className="mx-auto w-full max-w-[38rem] md:max-w-[46rem]">
@@ -69,7 +67,9 @@ export function GroupStandingsMiniTable({
             <col className="w-[0.8rem] sm:w-[0.95rem] md:w-[2rem]" />
             <col className="w-[1.05rem] sm:w-[1.25rem] md:w-[2.35rem]" />
             <col className="w-[1.15rem] sm:w-[1.35rem] md:w-[2.45rem]" />
-            <col className="w-[6.65rem] min-[390px]:w-[7.65rem] sm:w-[8.65rem] md:w-[12rem]" />
+            {showPickProbabilityColumn ? (
+              <col className="w-[6.65rem] min-[390px]:w-[7.65rem] sm:w-[8.65rem] md:w-[12rem]" />
+            ) : null}
           </colgroup>
           <thead className="text-[9px] font-bold uppercase tracking-wide text-gray-500 md:text-[11px]">
             <tr>
@@ -102,14 +102,16 @@ export function GroupStandingsMiniTable({
               <th className="px-0 py-1 text-center whitespace-nowrap md:py-2">
                 <span className="triptych-micro-copy">Pts</span>
               </th>
-              <th className="py-1 pl-4 text-left whitespace-nowrap sm:pl-5 md:py-2 md:pl-7" title={t(language, "dashboard.pickProbabilityTooltip")}>
-                <span className="triptych-micro-copy triptych-micro-copy-left md:hidden">
-                  {t(language, "dashboard.pickProbabilityShort")}
-                </span>
-                <span className="triptych-micro-copy triptych-micro-copy-left hidden md:inline-block">
-                  {t(language, "dashboard.pickProbabilityHeader")}
-                </span>
-              </th>
+              {showPickProbabilityColumn ? (
+                <th className="py-1 pl-4 text-left whitespace-nowrap sm:pl-5 md:py-2 md:pl-7" title={t(language, "dashboard.pickProbabilityTooltip")}>
+                  <span className="triptych-micro-copy triptych-micro-copy-left md:hidden">
+                    {t(language, "dashboard.pickProbabilityShort")}
+                  </span>
+                  <span className="triptych-micro-copy triptych-micro-copy-left hidden md:inline-block">
+                    {t(language, "dashboard.pickProbabilityHeader")}
+                  </span>
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
@@ -185,9 +187,11 @@ export function GroupStandingsMiniTable({
                   <td className="px-0 py-1 text-center font-bold text-gray-900 md:py-2.5">
                     <span className="triptych-micro-copy">{row.points}</span>
                   </td>
-                  <td className="py-1 pl-4 text-left sm:pl-5 md:py-2.5 md:pl-7">
-                    <PickProbabilityCell row={row} language={language} />
-                  </td>
+                  {showPickProbabilityColumn ? (
+                    <td className="py-1 pl-4 text-left sm:pl-5 md:py-2.5 md:pl-7">
+                      <PickProbabilityCell row={row} language={language} />
+                    </td>
+                  ) : null}
                 </tr>
               );
             })}
@@ -216,6 +220,7 @@ function PickProbabilityCell({
 
   const probability = Math.max(0, Math.min(100, pickProbability.probability));
   const isExactPlace = pickProbability.mode === "exact_place";
+  const isAdvanceViaThird = pickProbability.mode === "advance_via_third";
   const placeLabel =
     pickProbability.predictedPlace === 1 || pickProbability.predictedPlace === 2
       ? formatPredictedPlace(pickProbability.predictedPlace, language)
@@ -225,34 +230,41 @@ function PickProbabilityCell({
         percent: probability,
         place: placeLabel
       })
-    : t(language, "dashboard.pickProbabilityAdvanceAria", {
-        percent: probability
-      });
+    : isAdvanceViaThird
+      ? pickProbability.ariaLabel
+      : t(language, "dashboard.pickProbabilityAdvanceAria", {
+          percent: probability
+        });
 
   return (
     <span className="flex w-full justify-start">
       <span
-        className="triptych-micro-copy triptych-micro-copy-left inline-flex max-w-full items-center justify-start gap-1 truncate text-left font-semibold leading-none text-gray-500 md:gap-2"
+        className="triptych-micro-copy triptych-micro-copy-left inline-flex max-w-full items-center justify-start gap-1 truncate text-left font-semibold leading-none text-gray-500 md:gap-1.5"
         title={ariaLabel}
         aria-label={ariaLabel}
       >
+        <span className="shrink-0">{probability}%</span>
         <span
           aria-hidden
-          className="mini-pick-probability-ring relative inline-flex shrink-0 rounded-full"
+          className="mini-pick-probability-ring inline-flex shrink-0 rounded-full"
           style={{
-            background: `conic-gradient(rgb(var(--app-accent-rgb)) ${probability * 3.6}deg, rgba(148, 163, 184, 0.22) 0deg)`
+            background: `conic-gradient(rgb(var(--app-accent-rgb)) ${probability * 3.6}deg, #f3f4f6 0deg)`
           }}
-        >
-          <span className="absolute inset-[3px] rounded-full bg-white md:inset-[4px]" />
-        </span>
-        <span className="min-w-0 truncate md:min-w-[8.5rem]">
-          <span>{probability}%</span>
+        />
+        <span className="min-w-0 truncate md:min-w-[6.75rem]">
           {isExactPlace ? (
             <>
               <span className="hidden min-[390px]:inline"> {t(language, "dashboard.pickProbabilityForWord")} </span>
               <span className="hidden min-[390px]:inline text-accent-dark">{placeLabel}</span>
               <span className="hidden min-[360px]:inline min-[390px]:hidden"> </span>
               <span className="hidden min-[360px]:inline min-[390px]:hidden text-accent-dark">{placeLabel}</span>
+            </>
+          ) : isAdvanceViaThird ? (
+            <>
+              <span className="hidden min-[360px]:inline">
+                {" "}
+                {t(language, "dashboard.pickProbabilityViaThirdCompact")}
+              </span>
             </>
           ) : (
             <>

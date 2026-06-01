@@ -35,6 +35,7 @@ import { t } from "@/lib/strings";
 import { hasDirectorAccess } from "@/lib/tier-access";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY, LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import { useCurrentUser } from "@/lib/use-current-user";
+import { buildSessionViewStateStorageKey } from "@/lib/session-view-state";
 
 const DEFAULT_SWITCHER_STATE = {
   activeView: "my_groups" as LeaderboardSwitcherView,
@@ -81,11 +82,6 @@ const DEFAULT_SUBSELECTION_STATE: LeaderboardSubselectionState = {
   managerByPhaseAndView: {}
 };
 
-const LEADERBOARD_SWITCHER_STORAGE_KEY = "leaderboard-switcher-state";
-const LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY = "leaderboard-activity-disclosure";
-const LEADERBOARD_ACTIVITY_MORE_STORAGE_KEY = "leaderboard-activity-more";
-const LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY = "leaderboard-leader-summary-state";
-const LEADERBOARD_SUBSELECTION_STORAGE_KEY = "leaderboard-subselection-state";
 const LEADERBOARD_TIME_ZONE = "America/New_York";
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
 const LEADERBOARD_STABLE_CONTENT_MIN_HEIGHT = "clamp(24rem, 54vh, 38rem)";
@@ -238,6 +234,27 @@ export function LeaderboardClient() {
   const { user, isLoading: isUserLoading } = useCurrentUser();
   const { activeLanguage: uiLanguage } = useAppLanguage();
   const searchParams = useSearchParams();
+  const leaderboardViewStorageUserId = user?.id ?? null;
+  const leaderboardSwitcherStorageKey = useMemo(
+    () => buildSessionViewStateStorageKey({ key: "leaderboard:switcher", userId: leaderboardViewStorageUserId }),
+    [leaderboardViewStorageUserId]
+  );
+  const leaderboardActivityDisclosureStorageKey = useMemo(
+    () => buildSessionViewStateStorageKey({ key: "leaderboard:activity-disclosure", userId: leaderboardViewStorageUserId }),
+    [leaderboardViewStorageUserId]
+  );
+  const leaderboardActivityMoreStorageKey = useMemo(
+    () => buildSessionViewStateStorageKey({ key: "leaderboard:activity-more", userId: leaderboardViewStorageUserId }),
+    [leaderboardViewStorageUserId]
+  );
+  const leaderboardLeaderSummaryStorageKey = useMemo(
+    () => buildSessionViewStateStorageKey({ key: "leaderboard:leader-summary", userId: leaderboardViewStorageUserId }),
+    [leaderboardViewStorageUserId]
+  );
+  const leaderboardSubselectionStorageKey = useMemo(
+    () => buildSessionViewStateStorageKey({ key: "leaderboard:subselection", userId: leaderboardViewStorageUserId }),
+    [leaderboardViewStorageUserId]
+  );
   const [users, setUsers] = useState<LeaderboardListItem[]>([]);
   const [groupStandings, setGroupStandings] = useState<GroupStandingItem[]>([]);
   const [teamStandings, setTeamStandings] = useState<TeamStandingItem[]>([]);
@@ -258,11 +275,11 @@ export function LeaderboardClient() {
   const [lastCommentAtByEvent, setLastCommentAtByEvent] = useState<Record<string, number>>({});
   const [pendingActivityAnchorId, setPendingActivityAnchorId] = useState<string | null>(null);
   const [isActivityExpanded, setIsActivityExpanded] = useSessionDisclosureState(
-    LEADERBOARD_ACTIVITY_DISCLOSURE_STORAGE_KEY,
+    leaderboardActivityDisclosureStorageKey,
     false
   );
   const [isActivityMoreOpen, setIsActivityMoreOpen] = useSessionDisclosureState(
-    LEADERBOARD_ACTIVITY_MORE_STORAGE_KEY,
+    leaderboardActivityMoreStorageKey,
     false
   );
   const [isPhaseNavOpen, setIsPhaseNavOpen] = useState(false);
@@ -283,7 +300,7 @@ export function LeaderboardClient() {
     Partial<Record<LeaderboardPhase, LeaderboardSwitcherView>>
   >({});
   const [subselectionState, setSubselectionState] = useSessionJsonState<LeaderboardSubselectionState>(
-    LEADERBOARD_SUBSELECTION_STORAGE_KEY,
+    leaderboardSubselectionStorageKey,
     DEFAULT_SUBSELECTION_STATE
   );
   const [dismissedDailyWinnerKeys, setDismissedDailyWinnerKeys] = useState<string[]>([]);
@@ -347,7 +364,7 @@ export function LeaderboardClient() {
   useEffect(() => {
     try {
       let storedSwitcherState: LeaderboardStoredSwitcherState | null = null;
-      const storedValue = window.sessionStorage.getItem(LEADERBOARD_SWITCHER_STORAGE_KEY);
+      const storedValue = window.sessionStorage.getItem(leaderboardSwitcherStorageKey);
       if (storedValue) {
         storedSwitcherState = JSON.parse(storedValue) as LeaderboardStoredSwitcherState;
         if (storedSwitcherState.phaseViewByPhase) {
@@ -389,13 +406,20 @@ export function LeaderboardClient() {
         if (storedSwitcherState.selectedManagerId) {
           setSelectedManagerId(storedSwitcherState.selectedManagerId);
         }
+      } else {
+        setHasExplicitSwitcherPreference(false);
+        setRememberedViewByPhase({});
+        setActivePhase(DEFAULT_LEADERBOARD_PHASE);
+        setActiveView(DEFAULT_SWITCHER_STATE.activeView);
+        setSelectedGroupId(DEFAULT_SWITCHER_STATE.selectedGroupId);
+        setSelectedManagerId(DEFAULT_SWITCHER_STATE.selectedManagerId);
       }
     } catch (caughtError) {
       console.warn("Could not restore leaderboard switcher state.", caughtError);
     } finally {
       setHasRestoredSwitcherPreference(true);
     }
-  }, [searchParams]);
+  }, [leaderboardSwitcherStorageKey, searchParams]);
 
   useEffect(() => {
     setHasRestoredDailyWinnerDismissal(false);
@@ -481,7 +505,7 @@ export function LeaderboardClient() {
 
   useEffect(() => {
     try {
-      const storedValue = window.sessionStorage.getItem(LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY);
+      const storedValue = window.sessionStorage.getItem(leaderboardLeaderSummaryStorageKey);
       if (!storedValue) {
         return;
       }
@@ -503,7 +527,7 @@ export function LeaderboardClient() {
     } finally {
       setHasRestoredLeaderSummaryState(true);
     }
-  }, []);
+  }, [leaderboardLeaderSummaryStorageKey]);
 
   useEffect(() => {
     if (!hasRestoredLeaderSummaryState) {
@@ -512,13 +536,13 @@ export function LeaderboardClient() {
 
     try {
       window.sessionStorage.setItem(
-        LEADERBOARD_LEADER_SUMMARY_STORAGE_KEY,
+        leaderboardLeaderSummaryStorageKey,
         JSON.stringify(leaderSummaryStateByContext)
       );
     } catch (caughtError) {
       console.warn("Could not save leaderboard leader summary state.", caughtError);
     }
-  }, [hasRestoredLeaderSummaryState, leaderSummaryStateByContext]);
+  }, [hasRestoredLeaderSummaryState, leaderboardLeaderSummaryStorageKey, leaderSummaryStateByContext]);
 
   useEffect(() => {
     let isMounted = true;
@@ -790,7 +814,7 @@ export function LeaderboardClient() {
     };
 
     try {
-      window.sessionStorage.setItem(LEADERBOARD_SWITCHER_STORAGE_KEY, JSON.stringify(nextState));
+      window.sessionStorage.setItem(leaderboardSwitcherStorageKey, JSON.stringify(nextState));
     } catch (caughtError) {
       console.warn("Could not persist leaderboard switcher state.", caughtError);
     }
@@ -798,6 +822,7 @@ export function LeaderboardClient() {
     activePhase,
     activeView,
     hasRestoredSwitcherPreference,
+    leaderboardSwitcherStorageKey,
     rememberedViewByPhase,
     selectedGroupId,
     selectedManagerId

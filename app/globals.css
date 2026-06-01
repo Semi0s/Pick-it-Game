@@ -378,6 +378,36 @@ select {
     transform: scale(0.72);
   }
 
+  .triptych-scoring-chart {
+    width: calc(100% + 0.9rem);
+    margin-inline: -0.45rem;
+    height: clamp(104px, 34dvh, 174px);
+    max-height: 174px;
+    min-height: 104px;
+  }
+
+  .triptych-scoring-preview-chart {
+    width: calc(100% + 0.9rem);
+    margin-inline: -0.45rem;
+    height: clamp(122px, 36dvh, 176px);
+    max-height: 176px;
+    min-height: 122px;
+  }
+
+  @media (orientation: landscape) and (max-height: 520px) and (max-width: 950px) {
+    .triptych-scoring-chart {
+      height: clamp(70px, 24dvh, 104px);
+      max-height: 104px;
+      min-height: 70px;
+    }
+
+    .triptych-scoring-preview-chart {
+      height: clamp(74px, 24dvh, 108px);
+      max-height: 108px;
+      min-height: 74px;
+    }
+  }
+
   .mini-standings-table {
     --triptych-micro-scale: var(--mini-table-micro-scale, 1);
     font-variant-numeric: tabular-nums;

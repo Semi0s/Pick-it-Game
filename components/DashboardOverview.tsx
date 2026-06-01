@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent, type WheelEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction, type TouchEvent, type WheelEvent } from "react";
 import { CalendarDays, Trophy, X } from "lucide-react";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
@@ -12,9 +12,7 @@ import { DashboardHero } from "@/components/dashboard/DashboardHero";
 import { DashboardNoGroupsPanel } from "@/components/dashboard/DashboardNoGroupsPanel";
 import {
   InlineDisclosureButton,
-  WindowChoiceRail,
-  useSessionDisclosureState,
-  useSessionJsonState
+  WindowChoiceRail
 } from "@/components/player-management/Shared";
 import {
   dismissMessageId,
@@ -31,7 +29,13 @@ import {
   resolvePreferredStandingsGroupSelection,
   shouldUseOfficialGroupStandingsOrder
 } from "@/lib/group-standings";
-import { getPickProbabilityForTeam, type PickProbabilityPlace } from "@/lib/group-pick-probability";
+import {
+  getThirdPlaceCandidatePoolFromGroupRankings,
+  getPickProbabilityForTeam,
+  shouldShowMiniTablePickProbability,
+  type PickProbabilityPlace,
+  type PickProbabilityTeam
+} from "@/lib/group-pick-probability";
 import { buildGroupStandingsByGroup, buildQualifiedTeamSeeds } from "@/lib/knockout-seeding";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 import { shouldHideStrategyModeForLaunch } from "@/lib/group-prediction-mode";
@@ -43,17 +47,27 @@ import { dismissCurrentUserMessageId } from "@/lib/auth-client";
 import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
+import { useSessionViewState } from "@/lib/session-view-state";
 
 const DASHBOARD_LOGO_HINT_MESSAGE_ID = "dashboard-logo-hint-v2";
 const DASHBOARD_LOGO_HINT_DISMISSED_STORAGE_KEY_PREFIX = "pickit:dashboard-logo-hint-dismissed";
 const DASHBOARD_LOGO_HINT_DISMISSED_SESSION_KEY_PREFIX = "pickit:dashboard-logo-hint-dismissed-session";
-const DASHBOARD_STANDINGS_GROUP_STORAGE_KEY = "dashboard-standings-group";
-const DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY = "dashboard-standings-disclosure";
-const DASHBOARD_HOW_TO_PLAY_DISCLOSURE_STORAGE_KEY = "dashboard-how-to-play-disclosure";
 const DASHBOARD_GROUP_MATCH_REFRESH_INTERVAL_MS = 15000;
 const DASHBOARD_STANDINGS_SWIPE_THRESHOLD_PX = 42;
 const DASHBOARD_STANDINGS_SWIPE_EXIT_MS = 190;
 const DASHBOARD_STANDINGS_WHEEL_COOLDOWN_MS = 760;
+
+type DashboardViewState = {
+  selectedStandingsGroup: string;
+  isStandingsOpen: boolean;
+  isHowToPlayOpen: boolean;
+};
+
+const DEFAULT_DASHBOARD_VIEW_STATE: DashboardViewState = {
+  selectedStandingsGroup: "",
+  isStandingsOpen: true,
+  isHowToPlayOpen: false
+};
 type DashboardGroupAccessResponse = {
   ok: true;
   groupAccess: {
@@ -73,6 +87,28 @@ function isDashboardGroupAccessResponse(value: unknown): value is DashboardGroup
   }
 
   return "ok" in value;
+}
+
+function validateDashboardViewState(value: unknown): DashboardViewState | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<DashboardViewState>;
+  return {
+    selectedStandingsGroup:
+      typeof candidate.selectedStandingsGroup === "string"
+        ? normalizeGroupKey(candidate.selectedStandingsGroup) ?? candidate.selectedStandingsGroup
+        : DEFAULT_DASHBOARD_VIEW_STATE.selectedStandingsGroup,
+    isStandingsOpen:
+      typeof candidate.isStandingsOpen === "boolean"
+        ? candidate.isStandingsOpen
+        : DEFAULT_DASHBOARD_VIEW_STATE.isStandingsOpen,
+    isHowToPlayOpen:
+      typeof candidate.isHowToPlayOpen === "boolean"
+        ? candidate.isHowToPlayOpen
+        : DEFAULT_DASHBOARD_VIEW_STATE.isHowToPlayOpen
+  };
 }
 
 export function DashboardOverview({
@@ -113,17 +149,42 @@ export function DashboardOverview({
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
   const [showDashboardLogoHint, setShowDashboardLogoHint] = useState(false);
-  const [selectedStandingsGroup, setSelectedStandingsGroup, selectedStandingsGroupState] = useSessionJsonState<string>(
-    DASHBOARD_STANDINGS_GROUP_STORAGE_KEY,
-    ""
+  const [dashboardViewState, setDashboardViewState, dashboardViewStateMeta] = useSessionViewState<DashboardViewState>({
+    key: "dashboard",
+    userId: currentUserId,
+    defaultValue: DEFAULT_DASHBOARD_VIEW_STATE,
+    validate: validateDashboardViewState
+  });
+  const selectedStandingsGroup = dashboardViewState.selectedStandingsGroup;
+  const isStandingsOpen = dashboardViewState.isStandingsOpen;
+  const isHowToPlayOpen = dashboardViewState.isHowToPlayOpen;
+  const setSelectedStandingsGroup = useCallback(
+    (nextValue: SetStateAction<string>) => {
+      setDashboardViewState((current) => ({
+        ...current,
+        selectedStandingsGroup:
+          typeof nextValue === "function" ? nextValue(current.selectedStandingsGroup) : nextValue
+      }));
+    },
+    [setDashboardViewState]
   );
-  const [isStandingsOpen, setIsStandingsOpen] = useSessionDisclosureState(
-    DASHBOARD_STANDINGS_DISCLOSURE_STORAGE_KEY,
-    true
+  const setIsStandingsOpen = useCallback(
+    (nextValue: SetStateAction<boolean>) => {
+      setDashboardViewState((current) => ({
+        ...current,
+        isStandingsOpen: typeof nextValue === "function" ? nextValue(current.isStandingsOpen) : nextValue
+      }));
+    },
+    [setDashboardViewState]
   );
-  const [isHowToPlayOpen, setIsHowToPlayOpen] = useSessionDisclosureState(
-    DASHBOARD_HOW_TO_PLAY_DISCLOSURE_STORAGE_KEY,
-    false
+  const setIsHowToPlayOpen = useCallback(
+    (nextValue: SetStateAction<boolean>) => {
+      setDashboardViewState((current) => ({
+        ...current,
+        isHowToPlayOpen: typeof nextValue === "function" ? nextValue(current.isHowToPlayOpen) : nextValue
+      }));
+    },
+    [setDashboardViewState]
   );
   const standingsSwipeTouchRef = useRef<{
     startX: number | null;
@@ -303,6 +364,7 @@ export function DashboardOverview({
     hello: t(displayLanguage, "dashboard.hello"),
     help: t(displayLanguage, "dashboard.help")
   };
+  const hasCompletedGroupBracketOnce = Boolean(initialCommandCenterSummary.progress.hasCompletedBracketOnce);
   const dashboardHeroCompactSummary = [
     user?.name ?? "Player",
     typeof initialCommandCenterSummary.performance.globalPoints === "number"
@@ -337,6 +399,10 @@ export function DashboardOverview({
         ).values()
       ),
     [groupMatches]
+  );
+  const allGroupTeamsById = useMemo(
+    () => new Map(allGroupTeams.map((team) => [team.id, team] as const)),
+    [allGroupTeams]
   );
   const standingsByGroup = useMemo(
     () =>
@@ -373,6 +439,21 @@ export function DashboardOverview({
     }
     return ids;
   }, [initialLightSeedSnapshot]);
+  const predictedThirdPlaceRankingIndexByTeamId = useMemo(() => {
+    const rankings = new Map<string, number>();
+    for (const ranking of initialLightSeedSnapshot?.thirdPlaceRankings ?? []) {
+      rankings.set(ranking.teamId, Math.max(0, ranking.rank - 1));
+    }
+    return rankings;
+  }, [initialLightSeedSnapshot]);
+  const predictedThirdPlaceCandidatePool = useMemo(
+    () =>
+      getThirdPlaceCandidatePoolFromGroupRankings(
+        initialLightSeedSnapshot?.groupRankings ?? [],
+        allGroupTeamsById
+      ),
+    [allGroupTeamsById, initialLightSeedSnapshot]
+  );
   const hasGroupStageStarted = useMemo(() => shouldUseOfficialGroupStandingsOrder(groupMatches), [groupMatches]);
   const qualifyingThirdPlaceTeamIds = useMemo(() => {
     const ids = new Set<string>();
@@ -390,6 +471,9 @@ export function DashboardOverview({
   }, [standingsByGroup]);
   const tournamentStandingsRows = useMemo(() => {
     const rows = resolvedStandingsGroup ? standingsByGroup.get(resolvedStandingsGroup) ?? [] : [];
+    const groupTeamsForProbability = rows
+      .map((row) => allGroupTeamsById.get(row.teamId))
+      .filter((team): team is PickProbabilityTeam => Boolean(team));
     const remainingMatches = groupMatches
       .filter((match) => normalizeGroupKey(match.groupName) === resolvedStandingsGroup && match.status !== "final")
       .map((match) => ({ status: match.status }));
@@ -412,6 +496,12 @@ export function DashboardOverview({
       const isQualifier = shouldUsePredictionOrder
         ? index < 2 || predictedThirdPlaceQualifierTeamIds.has(row.teamId)
         : index < 2 || (index === 2 && qualifyingThirdPlaceTeamIds.has(row.teamId));
+      const predictedPlace = predictedPlacementByTeamId.get(row.teamId) ?? null;
+      const shouldShowPickProbability = shouldShowMiniTablePickProbability({
+        predictedPlace,
+        isSelectedThirdPlaceQualifier: predictedThirdPlaceQualifierTeamIds.has(row.teamId),
+        hasCompletedBracketOnce: hasCompletedGroupBracketOnce
+      });
       return {
         ...row,
         teamCode: row.teamCode ?? row.teamName.slice(0, 3).toUpperCase(),
@@ -420,20 +510,30 @@ export function DashboardOverview({
         isQualifier,
         isPossibleQualifier: false,
         isEliminated: groupIsFinal && !isQualifier,
-        pickProbability: getPickProbabilityForTeam({
-          rows,
-          remainingMatches,
-          teamId: row.teamId,
-          predictedPlace: predictedPlacementByTeamId.get(row.teamId) ?? null,
-          isAdvancing: isQualifier
-        })
+        pickProbability: shouldShowPickProbability
+          ? getPickProbabilityForTeam({
+              rows,
+              remainingMatches,
+              teamId: row.teamId,
+              team: allGroupTeamsById.get(row.teamId) ?? null,
+              groupTeams: groupTeamsForProbability,
+              thirdPlacePool: predictedThirdPlaceCandidatePool,
+              thirdPlaceRankingIndex: predictedThirdPlaceRankingIndexByTeamId.get(row.teamId) ?? null,
+              predictedPlace,
+              isAdvancing: isQualifier
+            })
+          : null
       };
     });
   }, [
     groupMatches,
+    allGroupTeamsById,
+    hasCompletedGroupBracketOnce,
     hasGroupStageStarted,
     predictedPlacementByTeamId,
     predictedThirdPlaceQualifierTeamIds,
+    predictedThirdPlaceCandidatePool,
+    predictedThirdPlaceRankingIndexByTeamId,
     qualifyingThirdPlaceTeamIds,
     resolvedStandingsGroup,
     standingsByGroup,
@@ -445,7 +545,7 @@ export function DashboardOverview({
     }
 
     const hasValidStoredSelection =
-      selectedStandingsGroupState.hasStoredValue && availableStandingsGroups.includes(selectedStandingsGroup);
+      dashboardViewStateMeta.hasStoredValue && availableStandingsGroups.includes(selectedStandingsGroup);
 
     if (!hasValidStoredSelection && resolvedStandingsGroup !== selectedStandingsGroup) {
       setSelectedStandingsGroup(resolvedStandingsGroup);
@@ -455,7 +555,7 @@ export function DashboardOverview({
     resolvedStandingsGroup,
     availableStandingsGroups,
     selectedStandingsGroup,
-    selectedStandingsGroupState.hasStoredValue,
+    dashboardViewStateMeta.hasStoredValue,
     setSelectedStandingsGroup
   ]);
 
@@ -853,11 +953,16 @@ export function DashboardOverview({
       ) : null}
 
       <div className="pb-2">
-        <DashboardCommandCenter summary={initialCommandCenterSummary} language={displayLanguage} />
+        <DashboardCommandCenter
+          summary={initialCommandCenterSummary}
+          initialLightSeedSnapshot={initialLightSeedSnapshot}
+          userId={currentUserId}
+          language={displayLanguage}
+        />
       </div>
 
       {availableStandingsGroups.length > 0 ? (
-        <section className="space-y-3">
+        <section className="space-y-3 pt-4 sm:pt-5">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(displayLanguage, "dashboard.tournamentStandings")}</p>
             <InlineDisclosureButton
