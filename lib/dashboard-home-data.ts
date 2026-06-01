@@ -271,7 +271,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     .filter((match) => normalizeKnockoutStage(match.stage) === "final")
     .some((match) => savedKnockoutPredictions.includes(match.id));
 
-  const progress = isKnockoutActive
+  const progressBase = isKnockoutActive
     ? getPredictionProgress({
         phase: "knockout_stage",
         savedPredictionCount: savedKnockoutPredictions.length,
@@ -292,6 +292,10 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         lastCommittedAt: groupStageCommittedAt,
         lastChangedAt: latestGroupStageChangedAt
       });
+  const progress = {
+    ...progressBase,
+    hasCompletedBracketOnce: groupStageSaveStatus.hasCommittedEntry
+  };
 
   return {
     progress,

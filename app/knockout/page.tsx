@@ -108,6 +108,7 @@ export default async function KnockoutPage() {
           <KnockoutBracketBuilder
             initialView={primaryBracketView}
             projectedComparisonView={shouldShowOfficialBracket ? projectedComparisonView : null}
+            userId={user?.id ?? null}
             language={language}
           />
         </div>

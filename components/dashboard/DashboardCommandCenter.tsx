@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { BellRing, Clock3 } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { BellRing, ChevronDown, ChevronUp, Clock3, Moon, SunMedium } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode, type TouchEvent } from "react";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import {
   getDeadlineUrgency,
   type DashboardCommandCenterSummary,
@@ -11,13 +12,23 @@ import {
 } from "@/lib/dashboard-home";
 import {
   GROUP_STAGE_UNSAVED_DRAFT_STORAGE_KEY,
-  hasCurrentUnsavedGroupStageDraft
+  hasCurrentUnsavedGroupStageDraft,
+  parseUnsavedGroupStageDraft
 } from "@/lib/group-stage-unsaved-draft";
+import {
+  calculateScenarioImpactFromSeedDraft,
+  formatSignedScenarioDelta,
+  type ScenarioImpactSummary
+} from "@/lib/group-stage-scenario-impact";
+import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { formatDate, formatNumber, formatTime } from "@/lib/i18n-format";
+import { useSessionViewState } from "@/lib/session-view-state";
 import { t } from "@/lib/strings";
 
 type DashboardCommandCenterProps = {
   summary: DashboardCommandCenterSummary;
+  initialLightSeedSnapshot?: LightSeedBuilderSnapshot | null;
+  userId?: string | null;
   language?: string | null;
 };
 
@@ -28,14 +39,56 @@ type RgbColor = {
   b: number;
 };
 
+type TriptychScoringTrackPoint = {
+  checkpointId: string;
+  label: string;
+  projectedPoints: number;
+  actualLockedPoints: number;
+};
+
+type TriptychScoringLens =
+  | {
+      mode: "pre_lock";
+      expectedDelta: number | null;
+      betterThanSavedPct: number | null;
+    }
+  | {
+      mode: "post_lock";
+      expectedTotalPoints: number | null;
+      lockedPoints: number | null;
+      points: TriptychScoringTrackPoint[];
+    };
+
 const DASHBOARD_TRIPTYCH_THEME_STORAGE_KEY = "pickit:dashboard-triptych-theme";
 const FALLBACK_TRIPTYCH_DARK_ACCENT_STYLE = getTriptychDarkAccentStyle({ r: 159, g: 229, b: 143 });
+const SCENARIO_IMPACT_SWIPE_THRESHOLD_PX = 36;
+const DEFAULT_THIRD_PLACE_QUALIFIER_COUNT = 8;
 
-export function DashboardCommandCenter({ summary, language }: DashboardCommandCenterProps) {
+type TriptychLeftPanelViewState = {
+  isScoringLensOpen: boolean;
+};
+
+const DEFAULT_TRIPTYCH_LEFT_PANEL_VIEW_STATE: TriptychLeftPanelViewState = {
+  isScoringLensOpen: false
+};
+
+function validateTriptychLeftPanelViewState(value: unknown): TriptychLeftPanelViewState | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<TriptychLeftPanelViewState>;
+  return {
+    isScoringLensOpen: Boolean(candidate.isScoringLensOpen)
+  };
+}
+
+export function DashboardCommandCenter({ summary, initialLightSeedSnapshot, userId, language }: DashboardCommandCenterProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [triptychTheme, setTriptychTheme] = useState<TriptychTheme>("light");
   const [darkAccentStyle, setDarkAccentStyle] = useState<CSSProperties>(FALLBACK_TRIPTYCH_DARK_ACCENT_STYLE);
   const [hasUnsavedGroupStageDraft, setHasUnsavedGroupStageDraft] = useState(false);
+  const [scenarioImpact, setScenarioImpact] = useState<ScenarioImpactSummary | null>(null);
   const triptychRef = useRef<HTMLElement | null>(null);
   const darkAccentSignatureRef = useRef("");
 
@@ -51,9 +104,18 @@ export function DashboardCommandCenter({ summary, language }: DashboardCommandCe
 
   useEffect(() => {
     const syncUnsavedDraftState = () => {
+      const rawDraft = window.sessionStorage.getItem(GROUP_STAGE_UNSAVED_DRAFT_STORAGE_KEY);
+      const draft = parseUnsavedGroupStageDraft(rawDraft);
       setHasUnsavedGroupStageDraft(
-        hasCurrentUnsavedGroupStageDraft(window.sessionStorage.getItem(GROUP_STAGE_UNSAVED_DRAFT_STORAGE_KEY), {
+        hasCurrentUnsavedGroupStageDraft(rawDraft, {
           lastCommittedAt: summary.progress.lastCommittedAt
+        })
+      );
+      setScenarioImpact(
+        calculateScenarioImpactFromSeedDraft({
+          savedSnapshot: initialLightSeedSnapshot,
+          draft,
+          requiredThirdPlaceCount: DEFAULT_THIRD_PLACE_QUALIFIER_COUNT
         })
       );
     };
@@ -67,7 +129,7 @@ export function DashboardCommandCenter({ summary, language }: DashboardCommandCe
       window.removeEventListener("pageshow", syncUnsavedDraftState);
       window.removeEventListener("storage", syncUnsavedDraftState);
     };
-  }, [summary.progress.lastCommittedAt]);
+  }, [initialLightSeedSnapshot, summary.progress.lastCommittedAt]);
 
   useEffect(() => {
     try {
@@ -116,6 +178,16 @@ export function DashboardCommandCenter({ summary, language }: DashboardCommandCe
     });
   }
 
+  const scoringLens = useMemo(
+    () =>
+      getTriptychScoringLens({
+        progress: summary.progress,
+        performance: summary.performance,
+        scenarioImpact
+      }),
+    [scenarioImpact, summary.performance, summary.progress]
+  );
+
   return (
     <section
       ref={triptychRef}
@@ -128,8 +200,10 @@ export function DashboardCommandCenter({ summary, language }: DashboardCommandCe
           progress={summary.progress}
           nowMs={nowMs}
           language={language}
+          userId={userId}
           theme={triptychTheme}
           hasUnsavedGroupStageDraft={hasUnsavedGroupStageDraft}
+          scoringLens={scoringLens}
         />
         <PerformancePanel
           performance={summary.performance}
@@ -147,15 +221,29 @@ function ProgressPanel({
   progress,
   nowMs,
   language,
+  userId,
   theme,
-  hasUnsavedGroupStageDraft = false
+  hasUnsavedGroupStageDraft = false,
+  scoringLens
 }: {
   progress: DashboardCommandCenterSummary["progress"];
   nowMs: number;
   language?: string | null;
+  userId?: string | null;
   theme: TriptychTheme;
   hasUnsavedGroupStageDraft?: boolean;
+  scoringLens?: TriptychScoringLens | null;
 }) {
+  const [leftPanelViewState, setLeftPanelViewState] = useSessionViewState<TriptychLeftPanelViewState>({
+    key: "dashboard-triptych-left-panel",
+    userId,
+    defaultValue: DEFAULT_TRIPTYCH_LEFT_PANEL_VIEW_STATE,
+    validate: validateTriptychLeftPanelViewState
+  });
+  const scenarioImpactTouchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const scenarioImpactSwipeClickBlockRef = useRef(false);
+  const scenarioImpactSwipeClickResetTimeoutRef = useRef<number | null>(null);
+  const scoringLensContentId = useId();
   const percentage = progress.totalUnits > 0 ? Math.round((progress.completedUnits / progress.totalUnits) * 100) : 0;
   const isCompleteForDisplay = progress.isComplete || percentage >= 100;
   const tone = getProgressDisplayTone(progress, nowMs, isCompleteForDisplay);
@@ -169,35 +257,125 @@ function ProgressPanel({
       : "/bracket-builder#group-stage-picks";
   const progressLabel =
     progress.phase === "group_stage" ? t(language, "dashboard.groupStage") : progress.label;
+  const shouldShowScoringLens = Boolean(scoringLens);
+  const isScoringLensOpen = leftPanelViewState.isScoringLensOpen;
+  const isShowingScoringLens = isScoringLensOpen && Boolean(scoringLens);
+  const contentViewportBottomClass = shouldShowScoringLens ? "bottom-7" : "bottom-0";
+
+  useEffect(() => {
+    return () => {
+      if (scenarioImpactSwipeClickResetTimeoutRef.current !== null) {
+        window.clearTimeout(scenarioImpactSwipeClickResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  function toggleScoringLensPeek() {
+    setLeftPanelViewState((current) => ({ ...current, isScoringLensOpen: !current.isScoringLensOpen }));
+  }
+
+  function blockNextScenarioImpactClick() {
+    scenarioImpactSwipeClickBlockRef.current = true;
+    if (scenarioImpactSwipeClickResetTimeoutRef.current !== null) {
+      window.clearTimeout(scenarioImpactSwipeClickResetTimeoutRef.current);
+    }
+
+    scenarioImpactSwipeClickResetTimeoutRef.current = window.setTimeout(() => {
+      scenarioImpactSwipeClickBlockRef.current = false;
+      scenarioImpactSwipeClickResetTimeoutRef.current = null;
+    }, 180);
+  }
+
+  function handleScenarioImpactTouchStart(event: TouchEvent<HTMLElement>) {
+    const touch = event.changedTouches[0];
+    scenarioImpactTouchStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+
+  function handleScenarioImpactTouchEnd(event: TouchEvent<HTMLElement>) {
+    const start = scenarioImpactTouchStartRef.current;
+    scenarioImpactTouchStartRef.current = null;
+    const endY = event.changedTouches[0]?.clientY ?? null;
+    const endX = event.changedTouches[0]?.clientX ?? null;
+    if (!start || endY === null || endX === null) {
+      return;
+    }
+
+    const deltaY = endY - start.y;
+    const deltaX = endX - start.x;
+    const absY = Math.abs(deltaY);
+    if (absY < SCENARIO_IMPACT_SWIPE_THRESHOLD_PX || absY < Math.abs(deltaX) * 1.2) {
+      return;
+    }
+
+    blockNextScenarioImpactClick();
+    if (deltaY < 0) {
+      setLeftPanelViewState((current) => ({ ...current, isScoringLensOpen: true }));
+    } else {
+      setLeftPanelViewState((current) => ({ ...current, isScoringLensOpen: false }));
+    }
+  }
+
+  function handleProgressLinkClickCapture(event: MouseEvent<HTMLAnchorElement>) {
+    if (!scenarioImpactSwipeClickBlockRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+  }
 
   return (
-    <Link
-      href={progressHref}
-      aria-label={`${progressLabel}: ${statusLabel}`}
-      className="block min-w-0 rounded-[1.15rem] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+    <PanelShell
+      accentTone={tone}
+      theme={theme}
+      className="transition-colors hover:border-accent/35 hover:shadow-[0_12px_26px_rgba(38,28,20,0.08),0_1px_2px_rgba(38,28,20,0.04)]"
     >
-      <PanelShell
-        accentTone={tone}
-        theme={theme}
-        className="transition hover:-translate-y-0.5 hover:border-accent/35 hover:shadow-[0_12px_26px_rgba(38,28,20,0.08),0_1px_2px_rgba(38,28,20,0.04)]"
-      >
+      {!isShowingScoringLens ? (
         <div className="absolute right-[-8px] top-[-8px] z-20">
           <UrgencyIconChip tone={tone} isComplete={isCompleteForDisplay} language={language} theme={theme} />
         </div>
-        <div className="flex h-full -translate-y-2 flex-col items-center justify-center text-center">
-          <DigitalWatchRing percentage={percentage} tone={tone} theme={theme} />
-          {shouldShowGroupStageNotSaved ? <NotSavedMicroLabel language={language} theme={theme} /> : null}
-          <div className={`${shouldShowGroupStageNotSaved ? "mt-0 space-y-0.5" : "-mt-0.5 space-y-0.5"}`}>
-            <p className={`max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{progressLabel}</p>
-            <p className={`max-w-full truncate font-semibold uppercase tracking-[0.1em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] ${getToneMetaTextClasses(tone, isCompleteForDisplay, progress.isLocked, theme)}`}>
-              <span className="triptych-micro-copy">
-              {statusLabel}
-              </span>
-            </p>
-          </div>
+      ) : null}
+      <Link
+        href={progressHref}
+        aria-label={`${progressLabel}: ${statusLabel}`}
+        onClickCapture={shouldShowScoringLens ? handleProgressLinkClickCapture : undefined}
+        onTouchStart={shouldShowScoringLens ? handleScenarioImpactTouchStart : undefined}
+        onTouchEnd={shouldShowScoringLens ? handleScenarioImpactTouchEnd : undefined}
+        className="flex h-full w-full min-w-0 items-center justify-center rounded-[1rem] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+      >
+        <div id={scoringLensContentId} className="relative h-full w-full min-w-0 text-center">
+          {isShowingScoringLens && scoringLens ? (
+            <div className={`absolute inset-x-0 top-0 ${contentViewportBottomClass} flex items-center justify-center`}>
+              <TriptychScoringOutlookContent scoringLens={scoringLens} language={language} theme={theme} />
+            </div>
+          ) : (
+            <div className={`absolute inset-x-0 top-0 ${contentViewportBottomClass} flex flex-col items-center justify-center text-center`}>
+              <DigitalWatchRing percentage={percentage} tone={tone} theme={theme} />
+              {shouldShowGroupStageNotSaved ? <NotSavedMicroLabel language={language} theme={theme} /> : null}
+              <div className={`${shouldShowGroupStageNotSaved ? "mt-0 space-y-0.5" : "-mt-0.5 space-y-0.5"}`}>
+                <p className={`max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{progressLabel}</p>
+                <p className={`max-w-full truncate font-semibold uppercase tracking-[0.1em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] ${getToneMetaTextClasses(tone, isCompleteForDisplay, progress.isLocked, theme)}`}>
+                  <span className="triptych-micro-copy">
+                  {statusLabel}
+                  </span>
+                </p>
+              </div>
+            </div>
+          )}
         </div>
-      </PanelShell>
-    </Link>
+      </Link>
+      {shouldShowScoringLens ? (
+        <TriptychPanelViewCue
+          isOpen={isScoringLensOpen}
+          onToggle={toggleScoringLensPeek}
+          onTouchStart={handleScenarioImpactTouchStart}
+          onTouchEnd={handleScenarioImpactTouchEnd}
+          contentId={scoringLensContentId}
+          language={language}
+          theme={theme}
+        />
+      ) : null}
+    </PanelShell>
   );
 }
 
@@ -206,6 +384,338 @@ function NotSavedMicroLabel({ language, theme }: { language?: string | null; the
     <p className={`triptych-not-saved-blink -mt-0.5 max-w-full truncate text-center font-semibold uppercase tracking-[0.1em] ${theme === "dark" ? "text-red-200" : "text-red-700"}`}>
       <span className="triptych-micro-copy">{t(language, "dashboard.notSaved")}</span>
     </p>
+  );
+}
+
+function TriptychScoringOutlookContent({
+  scoringLens,
+  language,
+  theme
+}: {
+  scoringLens: TriptychScoringLens;
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
+  if (scoringLens.mode === "post_lock") {
+    const expectedLabel = scoringLens.expectedTotalPoints !== null
+      ? formatNumber(scoringLens.expectedTotalPoints, language)
+      : "—";
+    const lockedLabel = scoringLens.lockedPoints !== null
+      ? formatNumber(scoringLens.lockedPoints, language)
+      : "—";
+    const ariaLabel = t(language, "dashboard.scoringTrackAria", {
+      expected: expectedLabel,
+      locked: lockedLabel
+    });
+
+    return (
+      <div
+        className="flex h-full min-w-0 translate-y-1 flex-col items-center justify-center px-1 pb-1 text-center"
+        aria-label={ariaLabel}
+      >
+        <ScoringLensTitle label={t(language, "dashboard.scoringTrack")} theme={theme} />
+        <TriptychScoringSparkline points={scoringLens.points} language={language} theme={theme} />
+        <ScoringTrackKey language={language} theme={theme} mode="track" />
+        <p className={`mt-0.5 max-w-full truncate font-semibold leading-tight ${theme === "dark" ? "text-slate-400" : "text-slate-500"}`}>
+          <span className="triptych-micro-copy">
+            {t(language, "dashboard.scoringTrackSummary", {
+              expected: expectedLabel,
+              locked: lockedLabel
+            })}
+          </span>
+        </p>
+      </div>
+    );
+  }
+
+  const outlookLabel =
+    scoringLens.expectedDelta === null || scoringLens.betterThanSavedPct === null
+      ? null
+      : t(language, "dashboard.scoringExpectedBetter", {
+          delta: formatSignedScenarioDelta(scoringLens.expectedDelta),
+          percent: scoringLens.betterThanSavedPct
+        });
+
+  return (
+    <div
+      className="flex h-full min-w-0 translate-y-1 flex-col items-center justify-center px-0 pb-0 pt-0 text-center"
+      aria-label={t(language, "dashboard.scoringOutlookAria", {
+        label: outlookLabel ?? t(language, "dashboard.scoringWaitingToStart")
+      })}
+    >
+      {outlookLabel ? (
+        <p className={`mt-1 max-w-full truncate text-[12px] font-black leading-tight tracking-[-0.03em] sm:text-[13px] ${getPrimaryTextClasses(theme)}`}>
+          {outlookLabel}
+        </p>
+      ) : null}
+      <TriptychScoringPreviewChart language={language} theme={theme} />
+      <ScoringTrackKey language={language} theme={theme} mode="preview" />
+    </div>
+  );
+}
+
+function ScoringLensTitle({
+  label,
+  theme
+}: {
+  label: string;
+  theme: TriptychTheme;
+}) {
+  const titleParts = getStackedScoringTitleParts(label);
+
+  return (
+    <p className={`max-w-full text-center text-[9px] font-black uppercase leading-[0.95] tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
+      {titleParts.map((part, index) => (
+        <span key={`${part}-${index}`} className="block truncate">
+          {part}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function TriptychScoringSparkline({
+  points,
+  language,
+  theme
+}: {
+  points: TriptychScoringTrackPoint[];
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
+  const savedStroke = theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)";
+  const actualStroke = theme === "dark" ? "#fbbf24" : "#d97706";
+  const gridStroke = theme === "dark" ? "rgba(226, 232, 240, 0.16)" : "rgba(100, 116, 139, 0.16)";
+  const tickFill = theme === "dark" ? "rgba(226, 232, 240, 0.62)" : "rgba(71, 85, 105, 0.62)";
+  const yDomain = useMemo<[number, number]>(() => {
+    const values = points.flatMap((point) => [point.projectedPoints, point.actualLockedPoints]);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const spread = Math.max(1, max - min);
+    const padding = Math.max(2, Math.round(spread * 0.12));
+    return [Math.max(0, min - padding), max + padding];
+  }, [points]);
+
+  const chartData = useMemo(
+    () =>
+      points.map((point) => ({
+        ...point,
+        projected: point.projectedPoints,
+        actual: point.actualLockedPoints
+      })),
+    [points]
+  );
+
+  return (
+    <div className="triptych-scoring-chart relative mt-0.5">
+      <span
+        aria-hidden
+        className={`pointer-events-none absolute left-0 top-0 z-10 text-[6px] font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}
+      >
+        {t(language, "dashboard.scoringAxisPoints")}
+      </span>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={chartData} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
+          <CartesianGrid stroke={gridStroke} strokeWidth={0.7} strokeDasharray="1 5" />
+          <XAxis
+            dataKey="label"
+            height={12}
+            interval="preserveStartEnd"
+            minTickGap={10}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: tickFill, fontSize: 6, fontWeight: 600 }}
+          />
+          <YAxis
+            width={20}
+            domain={yDomain}
+            tickCount={3}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: tickFill, fontSize: 6, fontWeight: 600 }}
+          />
+          <Line
+            type="monotone"
+            dataKey="projected"
+            stroke={savedStroke}
+            strokeWidth={2}
+            dot={false}
+            activeDot={false}
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="actual"
+            stroke={actualStroke}
+            strokeWidth={2}
+            dot={false}
+            activeDot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function TriptychScoringPreviewChart({
+  language,
+  theme
+}: {
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
+  const axisStroke = theme === "dark" ? "rgba(226, 232, 240, 0.38)" : "rgba(100, 116, 139, 0.34)";
+  const tickStroke = theme === "dark" ? "rgba(226, 232, 240, 0.32)" : "rgba(100, 116, 139, 0.26)";
+  const gridStroke = theme === "dark" ? "rgba(226, 232, 240, 0.28)" : "rgba(100, 116, 139, 0.26)";
+  const labelFill = theme === "dark" ? "rgba(226, 232, 240, 0.72)" : "rgba(71, 85, 105, 0.68)";
+  const valueFill = theme === "dark" ? "rgba(226, 232, 240, 0.58)" : "rgba(71, 85, 105, 0.58)";
+  const waitingFill = theme === "dark" ? "#fca5a5" : "#b91c1c";
+  const yGuides = [
+    { y: 12, label: "100" },
+    { y: 69, label: "50" },
+    { y: 126, label: "0" }
+  ];
+  const xGuides = [42, 66, 90, 116];
+
+  return (
+    <div
+      className="triptych-scoring-preview-chart mt-1"
+      aria-label={t(language, "dashboard.scoringPreviewAria")}
+    >
+      <svg viewBox="0 0 120 150" role="img" className="h-full w-full overflow-visible">
+        {yGuides.map(({ y }) => (
+          <line key={`grid-y-${y}`} x1="20" y1={y} x2="116" y2={y} stroke={gridStroke} strokeWidth="0.95" strokeDasharray="1 4" />
+        ))}
+        {xGuides.map((x) => (
+          <line key={`grid-x-${x}`} x1={x} y1="12" x2={x} y2="126" stroke={gridStroke} strokeWidth="0.95" strokeDasharray="1 4" />
+        ))}
+        <line x1="20" y1="12" x2="20" y2="126" stroke={axisStroke} strokeWidth="1.2" strokeLinecap="round" />
+        <line x1="20" y1="126" x2="116" y2="126" stroke={axisStroke} strokeWidth="1.2" strokeLinecap="round" />
+        {yGuides.map(({ y, label }) => (
+          <g key={`y-${label}`}>
+            <line x1="16" y1={y} x2="20" y2={y} stroke={tickStroke} strokeWidth="1.4" strokeLinecap="round" />
+            <text x="13" y={y + 2.5} fill={valueFill} fontSize="6.5" fontWeight="600" textAnchor="end">
+              {label}
+            </text>
+          </g>
+        ))}
+        {xGuides.slice(0, -1).map((x) => (
+          <line key={`x-${x}`} x1={x} y1="126" x2={x} y2="130" stroke={tickStroke} strokeWidth="1.4" strokeLinecap="round" />
+        ))}
+        <text
+          x="20"
+          y="8"
+          fill={labelFill}
+          fontSize="6"
+          fontWeight="600"
+          letterSpacing="0.08em"
+          textAnchor="start"
+        >
+          {t(language, "dashboard.scoringAxisPoints")}
+        </text>
+        <text
+          x="68"
+          y="72"
+          fill={waitingFill}
+          fontSize="8.2"
+          fontWeight="800"
+          letterSpacing="0.11em"
+          textAnchor="middle"
+        >
+          {t(language, "dashboard.scoringWaitingToStart")}
+        </text>
+        <text
+          x="116"
+          y="146"
+          fill={labelFill}
+          fontSize="6"
+          fontWeight="600"
+          letterSpacing="0.08em"
+          textAnchor="end"
+        >
+          {t(language, "dashboard.scoringAxisTime")}
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+function ScoringTrackKey({
+  language,
+  theme,
+  mode = "track"
+}: {
+  language?: string | null;
+  theme: TriptychTheme;
+  mode?: "track" | "preview";
+}) {
+  const firstLabel = mode === "preview"
+    ? t(language, "dashboard.scoringSavedShort")
+    : t(language, "dashboard.scoringProjectedShort");
+
+  return (
+    <p className={`mt-1 inline-flex max-w-full flex-col items-start justify-center gap-1 overflow-visible py-0.5 font-semibold uppercase tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
+      <span className="inline-flex items-center gap-1 leading-[1.15]">
+        <span
+          aria-hidden
+          className="h-1.5 w-1.5 rounded-full"
+          style={{ background: theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)" }}
+        />
+        <span className="triptych-micro-copy">{firstLabel}</span>
+      </span>
+      <span className="inline-flex items-center gap-1 leading-[1.15]">
+        <span
+          aria-hidden
+          className="h-1.5 w-1.5 rounded-full"
+          style={{ background: theme === "dark" ? "#fbbf24" : "#d97706" }}
+        />
+        <span className="triptych-micro-copy">
+          {t(language, "dashboard.scoringActualShort")}
+        </span>
+      </span>
+    </p>
+  );
+}
+
+function TriptychPanelViewCue({
+  isOpen,
+  onToggle,
+  onTouchStart,
+  onTouchEnd,
+  contentId,
+  language,
+  theme
+}: {
+  isOpen: boolean;
+  onToggle: () => void;
+  onTouchStart: (event: TouchEvent<HTMLButtonElement>) => void;
+  onTouchEnd: (event: TouchEvent<HTMLButtonElement>) => void;
+  contentId: string;
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
+  return (
+    <div
+      className={`absolute inset-x-1 bottom-[-3px] z-20 flex items-end justify-center text-[12px] leading-none ${theme === "dark" ? "text-white/40" : "text-slate-400/80"}`}
+    >
+      <button
+        type="button"
+        aria-expanded={isOpen}
+        aria-controls={contentId}
+        aria-label={t(language, isOpen ? "dashboard.hideScoringLens" : "dashboard.showScoringLens")}
+        onClick={onToggle}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        className="flex h-7 w-8 items-end justify-center rounded-full pb-0.5 transition-colors hover:text-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+      >
+        {isOpen ? (
+          <ChevronDown aria-hidden className="h-3 w-3" strokeWidth={2.25} />
+        ) : (
+          <ChevronUp aria-hidden className="h-3 w-3" strokeWidth={2.25} />
+        )}
+      </button>
+    </div>
   );
 }
 
@@ -220,6 +730,8 @@ function PerformancePanel({
   theme: TriptychTheme;
   onToggleTheme: () => void;
 }) {
+  const ThemeToggleIcon = theme === "dark" ? SunMedium : Moon;
+
   return (
     <PanelShell accentTone="neutral" theme={theme} className="triptych-compact-type">
       <div className={`relative flex h-full w-full flex-col justify-center divide-y px-1 pb-4 sm:px-10 lg:px-12 ${getDividerClasses(theme)}`}>
@@ -244,11 +756,10 @@ function PerformancePanel({
           aria-checked={theme === "dark"}
           aria-label={t(language, theme === "dark" ? "dashboard.triptychSwitchToLightAria" : "dashboard.triptychSwitchToDarkAria")}
           onClick={onToggleTheme}
-          className={`absolute bottom-0 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[8px] font-semibold uppercase leading-none tracking-[0.12em] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${getTriptychToggleClasses(theme)}`}
+          title={t(language, theme === "dark" ? "dashboard.triptychSwitchToLight" : "dashboard.triptychSwitchToDark")}
+          className={`absolute bottom-0 left-1/2 z-10 flex h-6 w-6 -translate-x-1/2 items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${getTriptychToggleClasses(theme)}`}
         >
-          <span className="triptych-micro-copy triptych-micro-copy-tight">
-            {t(language, theme === "dark" ? "dashboard.triptychSwitchToLight" : "dashboard.triptychSwitchToDark")}
-          </span>
+          <ThemeToggleIcon aria-hidden className="h-3.5 w-3.5" strokeWidth={2.1} />
         </button>
       </div>
     </PanelShell>
@@ -423,10 +934,9 @@ function SwipeCueArrows({ theme }: { theme: TriptychTheme }) {
   return (
     <div
       aria-hidden
-      className={`pointer-events-none absolute inset-x-1 bottom-0 flex items-center justify-between text-[12px] font-semibold leading-none ${theme === "dark" ? "text-white/40" : "text-slate-400/80"}`}
+      className={`pointer-events-none absolute inset-x-1 bottom-0 flex items-center justify-center text-[12px] font-semibold leading-none tracking-[0.18em] ${theme === "dark" ? "text-white/40" : "text-slate-400/80"}`}
     >
-      <span>‹</span>
-      <span>›</span>
+      <span>•••</span>
     </div>
   );
 }
@@ -814,8 +1324,140 @@ function polarToCartesian(radius: number, angleInDegrees: number) {
 
 function getTriptychToggleClasses(theme: TriptychTheme) {
   return theme === "dark"
-    ? "border-[color:var(--triptych-dark-accent)] bg-[color:var(--triptych-dark-accent-soft)] [color:var(--triptych-dark-accent-text)]"
-    : "border-stone-200 bg-white text-slate-500 hover:border-accent/35 hover:text-accent-dark";
+    ? "[color:var(--triptych-dark-accent-text)] hover:text-white"
+    : "text-slate-500 hover:text-accent-dark";
+}
+
+function getStackedScoringTitleParts(label: string) {
+  const trimmedLabel = label.trim();
+  if (!trimmedLabel) {
+    return [label];
+  }
+
+  const spacedParts = trimmedLabel.split(/\s+/).filter(Boolean);
+  if (spacedParts.length === 2) {
+    return spacedParts;
+  }
+
+  if (spacedParts.length > 2) {
+    return [spacedParts.slice(0, -1).join(" "), spacedParts[spacedParts.length - 1]];
+  }
+
+  const hyphenParts = trimmedLabel.split("-").filter(Boolean);
+  if (hyphenParts.length === 2) {
+    return hyphenParts;
+  }
+
+  return [trimmedLabel];
+}
+
+function getTriptychScoringLens({
+  progress,
+  performance,
+  scenarioImpact
+}: {
+  progress: DashboardCommandCenterSummary["progress"];
+  performance: DashboardCommandCenterSummary["performance"];
+  scenarioImpact: ScenarioImpactSummary | null;
+}): TriptychScoringLens | null {
+  if (!progress.hasCompletedBracketOnce) {
+    return null;
+  }
+
+  const isPastDeadline = progress.deadlineAt
+    ? new Date(progress.deadlineAt).getTime() <= Date.now()
+    : false;
+  const isPostLock =
+    progress.phase === "knockout_stage" ||
+    progress.isLocked ||
+    isPastDeadline;
+
+  if (isPostLock) {
+    const lockedPoints = performance.globalPoints;
+    const expectedTotalPoints = getProjectedScoringTotal(progress, lockedPoints);
+    return {
+      mode: "post_lock",
+      expectedTotalPoints,
+      lockedPoints,
+      points: getScoringTrackPoints({
+        progress,
+        expectedTotalPoints,
+        lockedPoints
+      })
+    };
+  }
+
+  if (
+    !scenarioImpact ||
+    (scenarioImpact.affectedPickCount === 0 && scenarioImpact.openThirdPlaceSlots === 0)
+  ) {
+    return {
+      mode: "pre_lock",
+      expectedDelta: null,
+      betterThanSavedPct: null
+    };
+  }
+
+  // TODO: Replace this deterministic estimate with simulation-derived expected
+  // delta and better-than-saved percentage when scoring snapshots are available.
+  const expectedDelta = Math.round((scenarioImpact.riskDelta + scenarioImpact.upsideDelta) / 2);
+  const betterThanSavedPct = clampNumeric(
+    50 + scenarioImpact.affectedPickCount * 6 - scenarioImpact.openThirdPlaceSlots * 10,
+    51,
+    86
+  );
+
+  return {
+    mode: "pre_lock",
+    expectedDelta,
+    betterThanSavedPct
+  };
+}
+
+function clampNumeric(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getProjectedScoringTotal(
+  progress: DashboardCommandCenterSummary["progress"],
+  lockedPoints: number | null
+) {
+  if (lockedPoints === null) {
+    return null;
+  }
+
+  const remainingUnits = Math.max(0, progress.totalUnits - progress.completedUnits);
+  return lockedPoints + Math.max(8, Math.round(remainingUnits * 2.5));
+}
+
+function getScoringTrackPoints({
+  progress,
+  expectedTotalPoints,
+  lockedPoints
+}: {
+  progress: DashboardCommandCenterSummary["progress"];
+  expectedTotalPoints: number | null;
+  lockedPoints: number | null;
+}): TriptychScoringTrackPoint[] {
+  const labels = ["Lock", "G1", "G2", "R16", "QF", "SF", "Final"];
+  const expectedTotal = expectedTotalPoints ?? Math.max(1, lockedPoints ?? 0);
+  const actualTotal = lockedPoints ?? 0;
+  const progressRatio = progress.totalUnits > 0
+    ? Math.max(0, Math.min(1, progress.completedUnits / progress.totalUnits))
+    : 0.25;
+  const currentCheckpoint = Math.max(1, Math.round(progressRatio * (labels.length - 1)));
+
+  return labels.map((label, index) => {
+    const projectedProgress = index / (labels.length - 1);
+    const actualProgress = index <= currentCheckpoint ? index / currentCheckpoint : 1;
+
+    return {
+      checkpointId: label.toLowerCase(),
+      label,
+      projectedPoints: Math.round(expectedTotal * projectedProgress),
+      actualLockedPoints: Math.round(actualTotal * actualProgress)
+    };
+  });
 }
 
 function getPrimaryTextClasses(theme: TriptychTheme) {

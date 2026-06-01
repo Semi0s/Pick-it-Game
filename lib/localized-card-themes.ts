@@ -211,7 +211,8 @@ export const localizedCardThemes = {
     borderColor: "#3F3F46",
     controlZoneTint: "rgba(255,255,255,0.1)",
     patternVariant: "bands",
-    emblemKind: "none"
+    emblemKind: "germany",
+    emblemAsset: "/patterns/germany-bundesadler.svg"
   },
   japan: {
     id: "japan",

@@ -18,7 +18,15 @@ import {
   serializeDismissedMessageIds,
   type DashboardMatchSummary
 } from "../lib/dashboard-home.ts";
-import { getPickProbabilityForTeam } from "../lib/group-pick-probability.ts";
+import {
+  getAdvanceTotalProbability,
+  getAdvanceViaThirdProbabilityResult,
+  getGroupSelectionProbability,
+  getPickProbabilityForTeam,
+  getThirdPlaceCandidatePoolFromGroupRankings,
+  getThirdPlaceSelectionProbability,
+  shouldShowMiniTablePickProbability
+} from "../lib/group-pick-probability.ts";
 import { shouldUseOfficialGroupStandingsOrder } from "../lib/group-standings.ts";
 
 const BASE_NOW = Date.UTC(2026, 4, 23, 12, 0, 0);
@@ -309,52 +317,216 @@ test("countdown formatter handles missing, same-day, and future kickoff states",
 });
 
 test("pick probability uses exact placement for top two and advance probability for lower picks", () => {
+  const teams = [
+    { id: "cze", name: "Czechia", shortName: "CZE", groupName: "Group A", fifaRank: 39, fifaPoints: 1510, flagEmoji: "🇨🇿" },
+    { id: "kor", name: "Korea", shortName: "KOR", groupName: "Group A", fifaRank: 23, fifaPoints: 1585, flagEmoji: "🇰🇷" },
+    { id: "mex", name: "Mexico", shortName: "MEX", groupName: "Group A", fifaRank: 14, fifaPoints: 1660, flagEmoji: "🇲🇽" },
+    { id: "rsa", name: "South Africa", shortName: "RSA", groupName: "Group A", fifaRank: 59, fifaPoints: 1410, flagEmoji: "🇿🇦" }
+  ];
   const rows = [
     { teamId: "cze", teamName: "Czechia", rank: 4, played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 },
     { teamId: "kor", teamName: "Korea", rank: 2, played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 },
     { teamId: "mex", teamName: "Mexico", rank: 3, played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 },
     { teamId: "rsa", teamName: "South Africa", rank: 1, played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 }
   ];
+  const thirdPlacePool = [teams[2], teams[1], teams[0]];
 
-  assert.deepEqual(getPickProbabilityForTeam({ rows, teamId: "cze", predictedPlace: 1 }), {
-    probability: 68,
-    predictedPlace: 1,
-    mode: "exact_place",
-    targetLabel: "1st"
+  const topPick = getPickProbabilityForTeam({
+    rows,
+    teamId: "cze",
+    team: teams[0],
+    groupTeams: teams,
+    predictedPlace: 1
   });
-  assert.deepEqual(getPickProbabilityForTeam({ rows, teamId: "rsa", predictedPlace: 4 }), {
-    probability: 12,
-    predictedPlace: 4,
-    mode: "advance",
-    targetLabel: "advance"
+  assert.equal(topPick?.probability, getGroupSelectionProbability(teams[0], 1, teams));
+  assert.equal(topPick?.probability, 50);
+  assert.equal(topPick?.mode, "exact_place");
+  assert.equal(topPick?.targetLabel, "1st");
+  assert.equal(topPick?.source, "finish_1");
+
+  const lowerPick = getPickProbabilityForTeam({
+    rows,
+    teamId: "rsa",
+    team: teams[3],
+    groupTeams: teams,
+    thirdPlacePool,
+    thirdPlaceRankingIndex: 3,
+    predictedPlace: 4
   });
+  assert.equal(lowerPick?.probability, getAdvanceTotalProbability({
+    team: teams[3],
+    groupTeams: teams,
+    thirdPlacePool,
+    thirdPlaceRankingIndex: 3
+  }));
+  assert.equal(lowerPick?.mode, "advance_total");
+  assert.equal(lowerPick?.targetLabel, "advance");
+  assert.equal(lowerPick?.source, "advance_total");
   assert.equal(getPickProbabilityForTeam({ rows, teamId: "rsa", predictedPlace: null }), null);
 
+  const unavailablePick = getPickProbabilityForTeam({ rows, teamId: "rsa", predictedPlace: 4 });
+  assert.equal(unavailablePick?.probability, null);
+  assert.equal(unavailablePick?.source, "unavailable");
+  assert.equal(unavailablePick?.isUnavailable, true);
+
   const finalRows = rows.map((row) => ({ ...row, played: 3 }));
-  assert.deepEqual(getPickProbabilityForTeam({ rows: finalRows, teamId: "kor", predictedPlace: 2 }), {
-    probability: 100,
-    predictedPlace: 2,
-    mode: "exact_place",
-    targetLabel: "2nd"
+  assert.equal(getPickProbabilityForTeam({ rows: finalRows, teamId: "kor", predictedPlace: 2 })?.probability, 100);
+  assert.equal(getPickProbabilityForTeam({ rows: finalRows, teamId: "cze", predictedPlace: 1 })?.probability, 0);
+  assert.equal(
+    getPickProbabilityForTeam({ rows: finalRows, teamId: "mex", predictedPlace: 3, isAdvancing: true })?.probability,
+    100
+  );
+  assert.equal(
+    getPickProbabilityForTeam({ rows: finalRows, teamId: "rsa", predictedPlace: 4, isAdvancing: false })?.probability,
+    0
+  );
+});
+
+test("third-place mini standings use the full candidate pool for canonical advance probability", () => {
+  const teams = [
+    { id: "a1", name: "Argentina", shortName: "ARG", groupName: "Group A", fifaRank: 2, fifaPoints: 1870, flagEmoji: "🇦🇷" },
+    { id: "a2", name: "Austria", shortName: "AUT", groupName: "Group A", fifaRank: 25, fifaPoints: 1570, flagEmoji: "🇦🇹" },
+    { id: "cze", name: "Czechia", shortName: "CZE", groupName: "Group A", fifaRank: 39, fifaPoints: 1510, flagEmoji: "🇨🇿" },
+    { id: "a4", name: "Angola", shortName: "ANG", groupName: "Group A", fifaRank: 86, fifaPoints: 1280, flagEmoji: "🇦🇴" },
+    { id: "b1", name: "Belgium", shortName: "BEL", groupName: "Group B", fifaRank: 8, fifaPoints: 1730, flagEmoji: "🇧🇪" },
+    { id: "b2", name: "Bolivia", shortName: "BOL", groupName: "Group B", fifaRank: 77, fifaPoints: 1320, flagEmoji: "🇧🇴" },
+    { id: "kor", name: "Korea", shortName: "KOR", groupName: "Group B", fifaRank: 23, fifaPoints: 1585, flagEmoji: "🇰🇷" },
+    { id: "b4", name: "Benin", shortName: "BEN", groupName: "Group B", fifaRank: 92, fifaPoints: 1250, flagEmoji: "🇧🇯" },
+    { id: "c1", name: "Croatia", shortName: "CRO", groupName: "Group C", fifaRank: 10, fifaPoints: 1710, flagEmoji: "🇭🇷" },
+    { id: "c2", name: "Cameroon", shortName: "CMR", groupName: "Group C", fifaRank: 49, fifaPoints: 1460, flagEmoji: "🇨🇲" },
+    { id: "mex", name: "Mexico", shortName: "MEX", groupName: "Group C", fifaRank: 14, fifaPoints: 1660, flagEmoji: "🇲🇽" },
+    { id: "c4", name: "Curaçao", shortName: "CUW", groupName: "Group C", fifaRank: 82, fifaPoints: 1295, flagEmoji: "🇨🇼" },
+    { id: "d1", name: "Denmark", shortName: "DEN", groupName: "Group D", fifaRank: 21, fifaPoints: 1605, flagEmoji: "🇩🇰" },
+    { id: "d2", name: "Dominican Republic", shortName: "DOM", groupName: "Group D", fifaRank: 142, fifaPoints: 1080, flagEmoji: "🇩🇴" },
+    { id: "jpn", name: "Japan", shortName: "JPN", groupName: "Group D", fifaRank: 18, fifaPoints: 1630, flagEmoji: "🇯🇵" },
+    { id: "d4", name: "Djibouti", shortName: "DJI", groupName: "Group D", fifaRank: 190, fifaPoints: 870, flagEmoji: "🇩🇯" },
+    { id: "e1", name: "Ecuador", shortName: "ECU", groupName: "Group E", fifaRank: 24, fifaPoints: 1580, flagEmoji: "🇪🇨" },
+    { id: "e2", name: "Egypt", shortName: "EGY", groupName: "Group E", fifaRank: 32, fifaPoints: 1545, flagEmoji: "🇪🇬" },
+    { id: "sen", name: "Senegal", shortName: "SEN", groupName: "Group E", fifaRank: 20, fifaPoints: 1620, flagEmoji: "🇸🇳" },
+    { id: "e4", name: "El Salvador", shortName: "SLV", groupName: "Group E", fifaRank: 81, fifaPoints: 1300, flagEmoji: "🇸🇻" },
+    { id: "f1", name: "France", shortName: "FRA", groupName: "Group F", fifaRank: 3, fifaPoints: 1840, flagEmoji: "🇫🇷" },
+    { id: "f2", name: "Finland", shortName: "FIN", groupName: "Group F", fifaRank: 62, fifaPoints: 1400, flagEmoji: "🇫🇮" },
+    { id: "usa", name: "United States", shortName: "USA", groupName: "Group F", fifaRank: 13, fifaPoints: 1670, flagEmoji: "🇺🇸" },
+    { id: "f4", name: "Faroe Islands", shortName: "FRO", groupName: "Group F", fifaRank: 136, fifaPoints: 1105, flagEmoji: "🇫🇴" },
+    { id: "g1", name: "Germany", shortName: "GER", groupName: "Group G", fifaRank: 16, fifaPoints: 1650, flagEmoji: "🇩🇪" },
+    { id: "g2", name: "Ghana", shortName: "GHA", groupName: "Group G", fifaRank: 65, fifaPoints: 1380, flagEmoji: "🇬🇭" },
+    { id: "can", name: "Canada", shortName: "CAN", groupName: "Group G", fifaRank: 30, fifaPoints: 1540, flagEmoji: "🇨🇦" },
+    { id: "g4", name: "Guatemala", shortName: "GUA", groupName: "Group G", fifaRank: 101, fifaPoints: 1210, flagEmoji: "🇬🇹" },
+    { id: "h1", name: "Hungary", shortName: "HUN", groupName: "Group H", fifaRank: 36, fifaPoints: 1525, flagEmoji: "🇭🇺" },
+    { id: "h2", name: "Honduras", shortName: "HON", groupName: "Group H", fifaRank: 78, fifaPoints: 1315, flagEmoji: "🇭🇳" },
+    { id: "tun", name: "Tunisia", shortName: "TUN", groupName: "Group H", fifaRank: 35, fifaPoints: 1530, flagEmoji: "🇹🇳" },
+    { id: "h4", name: "Haiti", shortName: "HAI", groupName: "Group H", fifaRank: 89, fifaPoints: 1270, flagEmoji: "🇭🇹" },
+    { id: "i1", name: "Italy", shortName: "ITA", groupName: "Group I", fifaRank: 9, fifaPoints: 1720, flagEmoji: "🇮🇹" },
+    { id: "i2", name: "Iceland", shortName: "ISL", groupName: "Group I", fifaRank: 70, fifaPoints: 1350, flagEmoji: "🇮🇸" },
+    { id: "ecu", name: "Ecuador", shortName: "ECU", groupName: "Group I", fifaRank: 24, fifaPoints: 1580, flagEmoji: "🇪🇨" },
+    { id: "i4", name: "India", shortName: "IND", groupName: "Group I", fifaRank: 121, fifaPoints: 1140, flagEmoji: "🇮🇳" }
+  ];
+  const teamsById = new Map(teams.map((team) => [team.id, team] as const));
+  const groupRankings = [
+    { rankedTeamIds: ["a1", "a2", "cze", "a4"] },
+    { rankedTeamIds: ["b1", "b2", "kor", "b4"] },
+    { rankedTeamIds: ["c1", "c2", "mex", "c4"] },
+    { rankedTeamIds: ["d1", "d2", "jpn", "d4"] },
+    { rankedTeamIds: ["e1", "e2", "sen", "e4"] },
+    { rankedTeamIds: ["f1", "f2", "usa", "f4"] },
+    { rankedTeamIds: ["g1", "g2", "can", "g4"] },
+    { rankedTeamIds: ["h1", "h2", "tun", "h4"] },
+    { rankedTeamIds: ["i1", "i2", "ecu", "i4"] }
+  ];
+  const candidatePool = getThirdPlaceCandidatePoolFromGroupRankings(groupRankings, teamsById);
+  const selectedQualifierPool = candidatePool.slice(0, 8);
+  const czechia = teamsById.get("cze");
+  const rows = groupRankings[0].rankedTeamIds.map((teamId, index) => ({
+    teamId,
+    rank: index + 1,
+    played: 0,
+    goalsFor: 0,
+    goalDifference: 0,
+    points: 0
+  }));
+
+  assert.deepEqual(candidatePool.map((team) => team.id), ["cze", "kor", "mex", "jpn", "sen", "usa", "can", "tun", "ecu"]);
+  assert.notEqual(
+    getThirdPlaceSelectionProbability(czechia!, 2, candidatePool),
+    getThirdPlaceSelectionProbability(czechia!, 2, selectedQualifierPool)
+  );
+
+  const lowerPick = getPickProbabilityForTeam({
+    rows,
+    teamId: "cze",
+    team: czechia,
+    groupTeams: groupRankings[0].rankedTeamIds.map((teamId) => teamsById.get(teamId)!),
+    thirdPlacePool: candidatePool,
+    thirdPlaceRankingIndex: 2,
+    predictedPlace: 3
   });
-  assert.deepEqual(getPickProbabilityForTeam({ rows: finalRows, teamId: "cze", predictedPlace: 1 }), {
-    probability: 0,
-    predictedPlace: 1,
-    mode: "exact_place",
-    targetLabel: "1st"
+
+  assert.equal(lowerPick?.probability, getAdvanceTotalProbability({
+    team: czechia!,
+    groupTeams: groupRankings[0].rankedTeamIds.map((teamId) => teamsById.get(teamId)!),
+    thirdPlacePool: candidatePool,
+    thirdPlaceRankingIndex: 2
+  }));
+  assert.equal(lowerPick?.source, "advance_total");
+  assert.equal(lowerPick?.fullLabel, `${lowerPick?.probability}% to advance`);
+  assert.equal(lowerPick?.compactLabel, `${lowerPick?.probability}% adv`);
+
+  const viaThirdPick = getAdvanceViaThirdProbabilityResult({
+    team: czechia!,
+    thirdPlacePool: candidatePool,
+    thirdPlaceRankingIndex: 2
   });
-  assert.deepEqual(getPickProbabilityForTeam({ rows: finalRows, teamId: "mex", predictedPlace: 3, isAdvancing: true }), {
-    probability: 100,
-    predictedPlace: 3,
-    mode: "advance",
-    targetLabel: "advance"
-  });
-  assert.deepEqual(getPickProbabilityForTeam({ rows: finalRows, teamId: "rsa", predictedPlace: 4, isAdvancing: false }), {
-    probability: 0,
-    predictedPlace: 4,
-    mode: "advance",
-    targetLabel: "advance"
-  });
+  assert.equal(viaThirdPick.probability, getThirdPlaceSelectionProbability(czechia!, 2, candidatePool));
+  assert.equal(viaThirdPick.mode, "advance_via_third");
+  assert.equal(viaThirdPick.source, "advance_via_third");
+  assert.equal(viaThirdPick.compactLabel, `${viaThirdPick.probability}% via 3rd`);
+});
+
+test("mini standings probability only appears for meaningful qualifying picks", () => {
+  assert.equal(
+    shouldShowMiniTablePickProbability({
+      predictedPlace: 1,
+      hasCompletedBracketOnce: true
+    }),
+    true
+  );
+  assert.equal(
+    shouldShowMiniTablePickProbability({
+      predictedPlace: 2,
+      hasCompletedBracketOnce: true
+    }),
+    true
+  );
+  assert.equal(
+    shouldShowMiniTablePickProbability({
+      predictedPlace: 3,
+      isSelectedThirdPlaceQualifier: true,
+      hasCompletedBracketOnce: true
+    }),
+    true
+  );
+  assert.equal(
+    shouldShowMiniTablePickProbability({
+      predictedPlace: 3,
+      isSelectedThirdPlaceQualifier: false,
+      hasCompletedBracketOnce: true
+    }),
+    false
+  );
+  assert.equal(
+    shouldShowMiniTablePickProbability({
+      predictedPlace: 4,
+      hasCompletedBracketOnce: true
+    }),
+    false
+  );
+  assert.equal(
+    shouldShowMiniTablePickProbability({
+      predictedPlace: 1,
+      hasCompletedBracketOnce: false
+    }),
+    false
+  );
 });
 
 test("mini standings keep prediction order before kickoff even if scheduled rows have stale scores", () => {
