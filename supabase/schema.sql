@@ -195,7 +195,7 @@ create table public.side_picks (
 create table public.leaderboard_entries (
   user_id uuid primary key references public.users(id) on delete cascade,
   total_points integer not null default 0,
-  rank integer not null default 0,
+  rank integer not null default 1,
   updated_at timestamptz not null default now()
 );
 

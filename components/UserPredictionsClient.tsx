@@ -152,13 +152,19 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
                   }
 
                   return (
-                    <div key={prediction.id} className="ui-card-soft p-3">
-                      <div className="mb-2 flex items-center justify-between gap-3">
-                        <p className="text-sm font-black text-gray-950">
-                          {match.homeTeam?.flagEmoji} {match.homeTeam?.shortName} vs {match.awayTeam?.flagEmoji}{" "}
+                    <div key={prediction.id} className="ui-card-soft min-w-0 overflow-hidden p-3">
+                      <div className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                        <p className="min-w-0 truncate text-sm font-black text-gray-950">
+                          <span className="native-flag-emoji inline-flex h-[1.2em] w-[1.45em] items-center justify-center overflow-hidden align-[-0.15em] leading-none">
+                            <span aria-hidden className="block leading-none">{match.homeTeam?.flagEmoji}</span>
+                          </span>{" "}
+                          {match.homeTeam?.shortName} vs{" "}
+                          <span className="native-flag-emoji inline-flex h-[1.2em] w-[1.45em] items-center justify-center overflow-hidden align-[-0.15em] leading-none">
+                            <span aria-hidden className="block leading-none">{match.awayTeam?.flagEmoji}</span>
+                          </span>{" "}
                           {match.awayTeam?.shortName}
                         </p>
-                        <span className="rounded-md bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-600">
+                        <span className="shrink-0 rounded-md bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-600">
                           {getPredictionStateLabel(match.status)}
                         </span>
                       </div>

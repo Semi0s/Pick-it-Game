@@ -50,14 +50,14 @@ export function SocialPredictionList({ match, predictions, currentUserId, curren
 
   return (
     <details className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wide text-gray-900">
-        <span className="flex items-center gap-2">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wide text-gray-900 [&::-webkit-details-marker]:hidden">
+        <span className="flex min-w-0 items-center gap-2">
           <span>{t(language, "bracket.groupPicks")}</span>
-          <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600">
+          <span className="shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600">
             {predictionStateLabel}
           </span>
         </span>
-        <span className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600">
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600">
           {t(language, "common.pickCount", { count: otherPredictions.length })}
           <ChevronDown aria-hidden className="h-4 w-4" />
         </span>
@@ -94,7 +94,7 @@ export function PredictionRow({ prediction }: PredictionRowProps) {
           <p className="truncate text-sm font-bold text-gray-900">{prediction.user.name}</p>
         </div>
       </div>
-      <span className="rounded-md bg-accent-light px-2 py-1 text-sm font-black text-accent-dark">
+      <span className="shrink-0 whitespace-nowrap rounded-md bg-accent-light px-2 py-1 text-sm font-black text-accent-dark">
         {getScoreLabel(prediction.predictedHomeScore, prediction.predictedAwayScore)}
       </span>
     </div>

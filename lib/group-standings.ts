@@ -1,6 +1,6 @@
-import type { MatchWithTeams, Team } from "@/lib/types";
-import type { MiniGroupStandingsRow } from "@/components/GroupStandingsMiniTable";
-import type { GroupStagePredictionForProjection } from "@/lib/knockout-seeding";
+import type { MatchWithTeams, Team } from "./types.ts";
+import type { MiniGroupStandingsRow } from "../components/GroupStandingsMiniTable";
+import type { GroupStagePredictionForProjection } from "./knockout-seeding.ts";
 
 export function normalizeGroupKey(value?: string | null) {
   if (!value) {

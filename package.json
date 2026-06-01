@@ -2,6 +2,7 @@
   "name": "pick-it",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,9 +10,21 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "node --test --experimental-strip-types tests/**/*.test.ts",
-    "scoring:audit": "node --experimental-strip-types scripts/scoring-audit.ts"
+    "scoring:audit": "node --experimental-strip-types scripts/scoring-audit.ts",
+    "cap:sync": "cap sync",
+    "cap:open:ios": "cap open ios",
+    "cap:open:android": "cap open android",
+    "cap:run:ios": "cap run ios",
+    "cap:run:android": "cap run android"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.4",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/browser": "^8.0.3",
+    "@capacitor/cli": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/ios": "^8.3.4",
+    "@capacitor/keyboard": "^8.0.3",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.48.1",
     "clsx": "^2.1.1",

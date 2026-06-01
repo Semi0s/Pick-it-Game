@@ -1349,6 +1349,36 @@ export function BracketBuilderClient({
     }
   }
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const clearStaleDragState = () => {
+      clearCustomTouchDragState();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        clearStaleDragState();
+      }
+    };
+
+    window.addEventListener("pointerup", clearStaleDragState);
+    window.addEventListener("pointercancel", clearStaleDragState);
+    window.addEventListener("blur", clearStaleDragState);
+    window.addEventListener("pagehide", clearStaleDragState);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("pointerup", clearStaleDragState);
+      window.removeEventListener("pointercancel", clearStaleDragState);
+      window.removeEventListener("blur", clearStaleDragState);
+      window.removeEventListener("pagehide", clearStaleDragState);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearStaleDragState();
+    };
+  }, []);
+
   function activateCustomTouchDrag(state: NonNullable<typeof customDragStateRef.current>) {
     state.isDragging = true;
     if (state.kind === "group") {
@@ -2362,8 +2392,8 @@ export function BracketBuilderClient({
         : t(language, "bracket.saveProgress");
 
     return (
-      <div className="space-y-1">
-        <div className={`grid gap-2 ${canRestoreLastSavedBracket ? "grid-cols-2" : "grid-cols-1"}`}>
+      <div className="group-stage-save-restore-control space-y-1">
+        <div className={`group-stage-save-restore-grid grid gap-2 ${canRestoreLastSavedBracket ? "grid-cols-2" : "grid-cols-1"}`}>
           <ActionButton
             fullWidth
             tone={hasInteracted ? "accent" : "neutral"}
@@ -2399,8 +2429,8 @@ export function BracketBuilderClient({
 
     if (hasUncommittedFinalChanges) {
       return (
-        <div className="space-y-1">
-          <div className={`grid gap-2 ${canRestoreLastSavedBracket ? "grid-cols-2" : "grid-cols-1"}`}>
+        <div className="group-stage-save-restore-control space-y-1">
+          <div className={`group-stage-save-restore-grid grid gap-2 ${canRestoreLastSavedBracket ? "grid-cols-2" : "grid-cols-1"}`}>
             <ActionButton
               fullWidth
               tone="accent"
