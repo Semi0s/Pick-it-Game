@@ -1,18 +1,18 @@
-import { applyGroupStandingsResult, createMiniGroupStandingsRow } from "@/lib/group-standings";
+import { applyGroupStandingsResult, createMiniGroupStandingsRow } from "./group-standings.ts";
 import {
   buildFifa2026RoundOf32FromSeeds,
   buildFifa2026RoundOf32StoredMatchIdLookup,
   sourceToGroupLetter,
   type Fifa2026QualifiedSeed,
   type Fifa2026RoundOf32Side
-} from "@/lib/fifa-2026-knockout-seeding";
+} from "./fifa-2026-knockout-seeding.ts";
 import {
   isFifa2026GroupLetter,
   type Fifa2026GroupLetter,
   type Fifa2026SeedSource
-} from "@/lib/fifa-2026-third-place-permutations";
-import type { Team } from "@/lib/types";
-import type { MiniGroupStandingsRow } from "@/components/GroupStandingsMiniTable";
+} from "./fifa-2026-third-place-permutations.ts";
+import type { Team } from "./types.ts";
+import type { MiniGroupStandingsRow } from "../components/GroupStandingsMiniTable";
 
 export type GroupStageMatchForSeeding = {
   id: string;

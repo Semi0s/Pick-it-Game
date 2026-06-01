@@ -148,7 +148,7 @@ type Mismatch = {
 };
 
 type AuditReport = {
-  mode: "dry-run" | "apply";
+  mode: "dry-run" | "apply" | "leaderboard-cache";
   generatedAt: string;
   counts: {
     usersChecked: number;
@@ -172,6 +172,11 @@ loadEnvFile(".env");
 
 const args = new Set(process.argv.slice(2));
 const applyRepairs = args.has("--apply");
+const applyLeaderboardCacheOnly = args.has("--apply-leaderboard-cache");
+if (applyRepairs && applyLeaderboardCacheOnly) {
+  console.error("Use either --apply or --apply-leaderboard-cache, not both.");
+  process.exit(1);
+}
 const reportPath = process.argv
   .slice(2)
   .find((arg) => arg.startsWith("--report="))
@@ -187,7 +192,7 @@ async function main() {
   });
 
   const report: AuditReport = {
-    mode: applyRepairs ? "apply" : "dry-run",
+    mode: applyRepairs ? "apply" : applyLeaderboardCacheOnly ? "leaderboard-cache" : "dry-run",
     generatedAt: new Date().toISOString(),
     counts: {
       usersChecked: 0,
@@ -543,6 +548,15 @@ async function main() {
     mismatch.kind === "leaderboard_entries.total_points" ||
     mismatch.kind === "leaderboard_entries.rank"
   ).length;
+  const leaderboardCacheMismatches = report.mismatches.filter((mismatch) =>
+    mismatch.kind === "leaderboard_entries.total_points" ||
+    mismatch.kind === "leaderboard_entries.rank"
+  );
+  const leaderboardCacheMismatchUserIds = new Set(
+    leaderboardCacheMismatches
+      .map((mismatch) => mismatch.userId)
+      .filter((userId): userId is string => Boolean(userId))
+  );
 
   auditGroupScopedCanonicalTotals({
     groupMembers,
@@ -584,8 +598,37 @@ async function main() {
     );
   }
 
+  if (applyLeaderboardCacheOnly) {
+    const leaderboardCacheRowsToRepair = rankedUserTotals.filter((entry) =>
+      leaderboardCacheMismatchUserIds.has(entry.user_id)
+    );
+
+    if (leaderboardCacheRowsToRepair.length > 0) {
+      const { error: leaderboardUpsertError } = await supabase.from("leaderboard_entries").upsert(
+        leaderboardCacheRowsToRepair.map((entry) => ({
+          user_id: entry.user_id,
+          total_points: entry.total_points,
+          rank: entry.rank,
+          updated_at: new Date().toISOString()
+        })),
+        { onConflict: "user_id" }
+      );
+      if (leaderboardUpsertError) {
+        throw new Error(leaderboardUpsertError.message);
+      }
+    }
+
+    report.warnings.push(
+      "Leaderboard cache mode only updates mismatched leaderboard_entries.total_points and leaderboard_entries.rank from canonical Group Phase ladder + recomputed knockout + standard side-pick totals."
+    );
+  }
+
   report.counts.mismatches = report.mismatches.length;
-  report.counts.appliedRepairs = applyRepairs ? report.mismatches.length : 0;
+  report.counts.appliedRepairs = applyRepairs
+    ? report.mismatches.length
+    : applyLeaderboardCacheOnly
+      ? leaderboardCacheMismatches.length
+      : 0;
 
   if (reportPath) {
     const absolutePath = path.resolve(reportPath);

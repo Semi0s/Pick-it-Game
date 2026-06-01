@@ -133,10 +133,39 @@ function LeaderboardPlayerRow({
       : "border-gray-200 bg-white shadow-[0_6px_18px_rgba(15,23,42,0.04)]";
   const rankTone = isCurrentUser ? "text-accent-dark" : isLightlyHighlighted ? "text-gray-800" : "text-gray-700";
 
+  const rowContent = (
+    <>
+      <span
+        className={`flex min-w-[2.15rem] flex-col items-center justify-center px-0.5 py-1 text-center ${rankTone}`}
+      >
+        <span className="text-lg font-black leading-none">{profile.rank ?? index + 1}</span>
+        <span className="mt-0.5 inline-block origin-top scale-[0.62] text-[8px] font-black uppercase tracking-wide leading-none">
+          Place
+        </span>
+      </span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <Avatar
+          name={profile.name}
+          avatarUrl={profile.avatarUrl}
+          size="md"
+          className="h-[3.45rem] w-[3.45rem] text-base"
+        />
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="min-w-0 flex-1 self-center">
+            <span className="min-w-0 truncate text-sm font-black text-gray-950 sm:text-[0.95rem]">
+              {profile.name}
+              {isCurrentUser ? " (You)" : ""}
+            </span>
+          </span>
+        </span>
+      </span>
+    </>
+  );
+
   return (
     <div
       key={profile.id}
-      className={`relative overflow-hidden rounded-[1.2rem] border px-3 py-2 ${rowTone}`}
+      className={`relative isolate overflow-hidden rounded-[1.2rem] border bg-white px-3 py-2 ${rowTone}`}
       style={localizedCardVars}
     >
       <LeaderboardPlayerLocalizationBackground theme={localizedTheme} />
@@ -145,35 +174,18 @@ function LeaderboardPlayerRow({
           {scoreLabel}: {scoreValue}
         </span>
       </div>
-      <Link
-        href={`/leaderboard/${profile.id}`}
-        className="relative z-10 grid min-h-[3.65rem] min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 pr-20"
-      >
-        <span
-          className={`flex min-w-[2.15rem] flex-col items-center justify-center px-0.5 py-1 text-center ${rankTone}`}
+      {isCurrentUser ? (
+        <div className="relative z-10 grid min-h-[3.65rem] min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 pr-20">
+          {rowContent}
+        </div>
+      ) : (
+        <Link
+          href={`/leaderboard/${profile.id}`}
+          className="relative z-10 grid min-h-[3.65rem] min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 pr-20"
         >
-          <span className="text-lg font-black leading-none">{profile.rank ?? index + 1}</span>
-          <span className="mt-0.5 inline-block origin-top scale-[0.62] text-[8px] font-black uppercase tracking-wide leading-none">
-            Place
-          </span>
-        </span>
-        <span className="flex min-w-0 items-center gap-1.5">
-          <Avatar
-            name={profile.name}
-            avatarUrl={profile.avatarUrl}
-            size="md"
-            className="h-[3.45rem] w-[3.45rem] text-base"
-          />
-          <span className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="min-w-0 flex-1 self-center">
-              <span className="min-w-0 truncate text-sm font-black text-gray-950 sm:text-[0.95rem]">
-                {profile.name}
-                {isCurrentUser ? " (You)" : ""}
-              </span>
-            </span>
-          </span>
-        </span>
-      </Link>
+          {rowContent}
+        </Link>
+      )}
       {canAwardManagedTrophies && (profile.id !== currentUserId || canSelfAwardTrophies) ? (
         <button
           type="button"

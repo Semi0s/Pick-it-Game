@@ -1,10 +1,17 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { APP_NAME, APP_TAGLINE } from "@/lib/branding";
+import { CapacitorShellBridge } from "@/components/CapacitorShellBridge";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: APP_NAME,
   description: APP_TAGLINE
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover"
 };
 
 export default function RootLayout({
@@ -14,7 +21,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen font-sans antialiased">{children}</body>
+      <body className="min-h-screen font-sans antialiased">
+        <CapacitorShellBridge />
+        {children}
+      </body>
     </html>
   );
 }

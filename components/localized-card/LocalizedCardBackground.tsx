@@ -34,12 +34,16 @@ function LocalizedCardBackgroundComponent({
   const patternForegroundFill = getPatternForegroundFill(theme);
 
   return (
-    <div className={`pointer-events-none absolute inset-0 overflow-hidden ${className ?? ""}`.trim()} aria-hidden>
+    <div
+      className={`localized-card-background pointer-events-none absolute inset-0 overflow-hidden ${className ?? ""}`.trim()}
+      data-localized-theme={theme.id}
+      aria-hidden
+    >
       <div className="absolute inset-0 bg-[var(--localized-card-bg)]" />
       <div className="absolute inset-0">
         <svg
           viewBox="0 0 587.16 163.41"
-          className="absolute left-1/2 top-1/2 h-[118%] w-[111%] -translate-x-1/2 -translate-y-1/2"
+          className="localized-card-pattern-svg absolute left-1/2 top-1/2 h-[118%] w-[111%] -translate-x-1/2 -translate-y-1/2"
           preserveAspectRatio="xMidYMid slice"
           style={{
             filter: isLightTheme ? "saturate(1.18) contrast(1.03)" : undefined

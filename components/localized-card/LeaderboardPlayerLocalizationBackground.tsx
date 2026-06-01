@@ -43,7 +43,8 @@ export function LeaderboardPlayerLocalizationBackground({
   return (
     <div
       aria-hidden
-      className="pointer-events-none absolute inset-0 overflow-hidden"
+      className="leaderboard-player-localization-background pointer-events-none absolute inset-0 overflow-hidden"
+      data-localized-theme={theme.id}
       style={
         {
           "--leaderboard-card-primary": patternColors.primary,
@@ -54,7 +55,8 @@ export function LeaderboardPlayerLocalizationBackground({
           "--leaderboard-card-accent-2": patternColors.secondaryOne,
           "--leaderboard-card-accent-3": patternColors.secondaryTwo,
           "--leaderboard-card-accent-4": patternColors.neutral,
-          "--leaderboard-card-accent-5": patternColors.primary
+          "--leaderboard-card-accent-5": patternColors.primary,
+          "--leaderboard-card-android-background": getLeaderboardAndroidFallbackBackground(theme)
         } as CSSProperties
       }
     >
@@ -63,15 +65,15 @@ export function LeaderboardPlayerLocalizationBackground({
       >
         <svg
           viewBox="0 0 325.99 73.36"
-          className="absolute left-[26%] top-[-30%] h-[160%] w-[300%] sm:left-auto sm:right-[-36%] sm:top-[-24%] sm:h-[148%] sm:w-[142%] md:right-[-46%] lg:right-[-54%]"
+          className="leaderboard-player-localization-svg absolute left-[26%] top-[-30%] h-[160%] w-[300%] sm:left-auto sm:right-[-36%] sm:top-[-24%] sm:h-[148%] sm:w-[142%] md:right-[-46%] lg:right-[-54%]"
           preserveAspectRatio="xMinYMid meet"
         >
           {LEADERBOARD_PATTERN_PATHS.map((path) => (
             <path
               key={path.d}
+              className={path.mixBlendMode ? "leaderboard-card-blend-path" : undefined}
               d={path.d}
               fill={path.fill}
-              style={path.mixBlendMode ? { mixBlendMode: path.mixBlendMode } : undefined}
             />
           ))}
           <LocalizedEmblem theme={theme} variant="leaderboard" accentPrefix="leaderboard-card" />
@@ -138,4 +140,45 @@ function createLeaderboardPatternPalette(
     secondaryTwo,
     neutral
   };
+}
+
+function getLeaderboardAndroidFallbackBackground(theme: LocalizedCardTheme) {
+  switch (theme.id) {
+    case "spain":
+      return "linear-gradient(90deg, transparent 0 45%, #AA151B 45% 58%, #F1BF00 58% 86%, #AA151B 86% 100%)";
+    case "ecuador":
+    case "colombia":
+      return "linear-gradient(90deg, transparent 0 45%, #FCD116 45% 72%, #003893 72% 86%, #CE1126 86% 100%)";
+    case "germany":
+      return "linear-gradient(90deg, transparent 0 45%, #000000 45% 63%, #DD0000 63% 81%, #FFCE00 81% 100%)";
+    case "france":
+      return "linear-gradient(90deg, transparent 0 45%, #243C8F 45% 63%, #FFFFFF 63% 81%, #E3342F 81% 100%)";
+    case "mexico":
+      return "linear-gradient(90deg, transparent 0 45%, #006847 45% 63%, #FFFFFF 63% 81%, #CE1126 81% 100%)";
+    case "usa":
+      return "linear-gradient(90deg, transparent 0 45%, #243C8F 45% 58%, #FFFFFF 58% 68%, #D32F2F 68% 78%, #FFFFFF 78% 88%, #D32F2F 88% 100%)";
+    case "argentina":
+    case "uruguay":
+      return "linear-gradient(90deg, transparent 0 45%, #74ACDF 45% 61%, #FFFFFF 61% 78%, #74ACDF 78% 100%)";
+    case "japan":
+      return "radial-gradient(circle at 82% 50%, #BC002D 0 12%, transparent 13%), linear-gradient(90deg, transparent 0 45%, #F1F3F5 45% 100%)";
+    case "korea":
+      return "linear-gradient(90deg, transparent 0 45%, #FFFFFF 45% 64%, #CD2E3A 64% 82%, #0047A0 82% 100%)";
+    case "portugal":
+      return "linear-gradient(90deg, transparent 0 45%, #046A38 45% 63%, #DA291C 63% 100%)";
+    case "brazil":
+      return "linear-gradient(90deg, transparent 0 45%, #009B3A 45% 67%, #FFDF00 67% 84%, #002776 84% 100%)";
+    case "belgium":
+      return "linear-gradient(90deg, transparent 0 45%, #000000 45% 63%, #FCD116 63% 81%, #ED2939 81% 100%)";
+    case "canada":
+      return "linear-gradient(90deg, transparent 0 45%, #D80621 45% 62%, #F1F3F5 62% 82%, #D80621 82% 100%)";
+    case "england":
+      return "linear-gradient(90deg, transparent 0 45%, #FFFFFF 45% 70%, #CE1126 70% 84%, #FFFFFF 84% 100%)";
+    case "netherlands":
+      return "linear-gradient(90deg, transparent 0 45%, #AE1C28 45% 63%, #FFFFFF 63% 81%, #21468B 81% 100%)";
+    case "oranjekoorts":
+      return "linear-gradient(90deg, transparent 0 45%, #FF7900 45% 76%, #21468B 76% 100%)";
+    default:
+      return "linear-gradient(90deg, transparent 0 48%, var(--leaderboard-card-primary) 48% 66%, var(--leaderboard-card-secondary-1) 66% 82%, var(--leaderboard-card-secondary-2) 82% 100%)";
+  }
 }

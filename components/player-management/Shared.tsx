@@ -862,7 +862,7 @@ export function ActionButton({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`${fullWidth ? "w-full" : ""} rounded-md border px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 ${className}`}
+      className={`ui-action-button ${fullWidth ? "w-full" : ""} inline-flex min-h-11 min-w-0 items-center justify-center rounded-md border px-4 py-3 text-center text-sm font-bold leading-tight [overflow-wrap:anywhere] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 ${className}`}
     >
       {children}
     </button>

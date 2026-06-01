@@ -105,6 +105,14 @@ Apply mode repairs:
 
 Important: apply mode uses canonical Group Phase ladder points, recomputed knockout points, and standard side-pick totals for standard/global totals. Legacy full-score group rows are repaired only for compatibility/auditability.
 
+Leaderboard-cache-only repair mode:
+
+```bash
+npm run scoring:audit -- --apply-leaderboard-cache
+```
+
+Use this when dry-run only reports `leaderboard_entries.total_points` or `leaderboard_entries.rank` mismatches. This mode only updates mismatched `leaderboard_entries` cache rows from canonical scoring; it does not update prediction rows, score rows, matches, or scoring rules.
+
 Optional report file:
 
 ```bash

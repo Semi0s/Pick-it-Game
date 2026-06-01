@@ -1294,8 +1294,8 @@ function MatchFlag({
 }) {
   if (flagEmoji) {
     return (
-      <span aria-label={teamName} title={teamName} className={`inline-flex items-center leading-none ${className}`}>
-        <span aria-hidden className="text-[1.7em]">{flagEmoji}</span>
+      <span aria-label={teamName} title={teamName} className={`native-flag-emoji inline-flex h-[1.25em] w-[1.65em] items-center justify-center overflow-hidden leading-none ${className}`}>
+        <span aria-hidden className="block text-[1.7em] leading-none">{flagEmoji}</span>
       </span>
     );
   }

@@ -107,6 +107,68 @@ body {
   font-synthesis-weight: none;
 }
 
+body.capacitor-native {
+  --app-native-safe-area-top: max(env(safe-area-inset-top, 0px), 42px);
+  --app-header-padding-top: calc(var(--app-native-safe-area-top) + 12px);
+}
+
+.leaderboard-card-blend-path {
+  mix-blend-mode: multiply;
+}
+
+body.capacitor-native .leaderboard-card-blend-path {
+  mix-blend-mode: normal !important;
+  opacity: 0.32;
+}
+
+body.capacitor-android .localized-card-background,
+body.capacitor-android .leaderboard-player-localization-background {
+  contain: paint;
+  transform: translateZ(0);
+}
+
+body.capacitor-android .leaderboard-player-localization-background::before {
+  content: "";
+  position: absolute;
+  inset: -8%;
+  background: var(--leaderboard-card-android-background);
+  opacity: 0.2;
+  transform: translateZ(0);
+}
+
+body.capacitor-android .leaderboard-player-localization-svg {
+  backface-visibility: hidden;
+  display: none !important;
+}
+
+body.capacitor-android .leaderboard-player-localization-background {
+  opacity: 1;
+}
+
+body.capacitor-android .native-flag-emoji {
+  contain: paint;
+  font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  transform: translateZ(0);
+}
+
+body.capacitor-android .group-stage-save-restore-control {
+  contain: layout paint;
+  isolation: isolate;
+  transform: translateZ(0);
+}
+
+body.capacitor-android .group-stage-save-restore-grid {
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+body.capacitor-android .ui-action-button {
+  appearance: none;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  transition: none !important;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -202,6 +264,10 @@ select {
     width: var(--app-logo-width);
   }
 
+  body.capacitor-native .app-header-logo {
+    transform: none;
+  }
+
   .bottom-nav-dock {
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
@@ -228,6 +294,11 @@ select {
   @media (orientation: landscape) and (max-height: 520px) and (max-width: 950px) {
     :root {
       --landscape-dock-width: 77px;
+    }
+
+    body.capacitor-native {
+      --app-native-safe-area-top: max(env(safe-area-inset-top, 0px), 8px);
+      --app-header-padding-top: calc(var(--app-native-safe-area-top) + 5px);
     }
 
     .app-shell {
