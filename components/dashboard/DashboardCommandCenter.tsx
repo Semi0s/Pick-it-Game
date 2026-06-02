@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { BellRing, ChevronDown, ChevronUp, Clock3, Moon, SunMedium } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode, type TouchEvent } from "react";
+import { Component, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type MouseEvent, type ReactNode, type TouchEvent } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import {
   getDeadlineUrgency,
@@ -71,6 +71,46 @@ type TriptychLeftPanelViewState = {
 const DEFAULT_TRIPTYCH_LEFT_PANEL_VIEW_STATE: TriptychLeftPanelViewState = {
   isScoringLensOpen: false
 };
+
+type ScoringLensErrorBoundaryProps = {
+  children: ReactNode;
+  fallback?: ReactNode;
+  resetKey: string;
+};
+
+type ScoringLensErrorBoundaryState = {
+  hasError: boolean;
+};
+
+class ScoringLensErrorBoundary extends Component<ScoringLensErrorBoundaryProps, ScoringLensErrorBoundaryState> {
+  state: ScoringLensErrorBoundaryState = {
+    hasError: false
+  };
+
+  static getDerivedStateFromError(): ScoringLensErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidUpdate(previousProps: ScoringLensErrorBoundaryProps) {
+    if (this.state.hasError && previousProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("Triptych scoring lens failed to render.", error, errorInfo.componentStack);
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback ?? null;
+    }
+
+    return this.props.children;
+  }
+}
 
 function validateTriptychLeftPanelViewState(value: unknown): TriptychLeftPanelViewState | null {
   if (!value || typeof value !== "object") {
@@ -346,7 +386,12 @@ function ProgressPanel({
         <div id={scoringLensContentId} className="relative h-full w-full min-w-0 text-center">
           {isShowingScoringLens && scoringLens ? (
             <div className={`absolute inset-x-0 top-0 ${contentViewportBottomClass} flex items-center justify-center`}>
-              <TriptychScoringOutlookContent scoringLens={scoringLens} language={language} theme={theme} />
+              <ScoringLensErrorBoundary
+                resetKey={`${scoringLens.mode}:${theme}:${language ?? "default"}`}
+                fallback={<ScoringLensFallback language={language} theme={theme} />}
+              >
+                <TriptychScoringOutlookContent scoringLens={scoringLens} language={language} theme={theme} />
+              </ScoringLensErrorBoundary>
             </div>
           ) : (
             <div className={`absolute inset-x-0 top-0 ${contentViewportBottomClass} flex flex-col items-center justify-center text-center`}>
@@ -384,6 +429,26 @@ function NotSavedMicroLabel({ language, theme }: { language?: string | null; the
     <p className={`triptych-not-saved-blink -mt-0.5 max-w-full truncate text-center font-semibold uppercase tracking-[0.1em] ${theme === "dark" ? "text-red-200" : "text-red-700"}`}>
       <span className="triptych-micro-copy">{t(language, "dashboard.notSaved")}</span>
     </p>
+  );
+}
+
+function ScoringLensFallback({
+  language,
+  theme
+}: {
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
+  return (
+    <div
+      className="flex h-full min-w-0 items-center justify-center px-1 text-center"
+      role="status"
+      aria-label={t(language, "dashboard.scoringWaitingToStart")}
+    >
+      <span className={`triptych-micro-copy font-semibold uppercase tracking-[0.12em] ${getMutedTextClasses(theme)}`}>
+        {t(language, "dashboard.scoringWaitingToStart")}
+      </span>
+    </div>
   );
 }
 
@@ -487,24 +552,39 @@ function TriptychScoringSparkline({
   const actualStroke = theme === "dark" ? "#fbbf24" : "#d97706";
   const gridStroke = theme === "dark" ? "rgba(226, 232, 240, 0.16)" : "rgba(100, 116, 139, 0.16)";
   const tickFill = theme === "dark" ? "rgba(226, 232, 240, 0.62)" : "rgba(71, 85, 105, 0.62)";
+  const chartData = useMemo(
+    () =>
+      points
+        .filter((point) => Number.isFinite(point.projectedPoints) && Number.isFinite(point.actualLockedPoints))
+        .map((point) => ({
+          ...point,
+          projected: point.projectedPoints,
+          actual: point.actualLockedPoints
+        })),
+    [points]
+  );
   const yDomain = useMemo<[number, number]>(() => {
-    const values = points.flatMap((point) => [point.projectedPoints, point.actualLockedPoints]);
+    const values = chartData.flatMap((point) => [point.projected, point.actual]);
+    if (values.length === 0) {
+      return [0, 1];
+    }
+
     const min = Math.min(...values);
     const max = Math.max(...values);
     const spread = Math.max(1, max - min);
     const padding = Math.max(2, Math.round(spread * 0.12));
     return [Math.max(0, min - padding), max + padding];
-  }, [points]);
+  }, [chartData]);
 
-  const chartData = useMemo(
-    () =>
-      points.map((point) => ({
-        ...point,
-        projected: point.projectedPoints,
-        actual: point.actualLockedPoints
-      })),
-    [points]
-  );
+  if (chartData.length === 0) {
+    return (
+      <div className="triptych-scoring-chart relative mt-0.5 flex items-center justify-center">
+        <span className={`triptych-micro-copy font-semibold uppercase tracking-[0.12em] ${getMutedTextClasses(theme)}`}>
+          {t(language, "dashboard.scoringWaitingToStart")}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="triptych-scoring-chart relative mt-0.5">
