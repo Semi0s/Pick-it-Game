@@ -951,7 +951,7 @@ export function BracketBuilderClient({
     usesExplicitThirdPlaceSelection &&
     hasInteracted &&
     hasScenarioChanges;
-  const showBracketImpactOverlay = hasCompletedBracketOnce && hasScenarioChanges;
+  const showBracketImpactOverlay = shouldShowScenarioImpact;
   const scenarioAffectedSlotById = useMemo(
     () => new Map(scenarioImpact.affectedSlots.map((slot) => [slot.slotId, slot])),
     [scenarioImpact.affectedSlots]
