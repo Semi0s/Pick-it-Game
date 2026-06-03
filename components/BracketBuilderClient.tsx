@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type SetStateAction, type TouchEvent, type WheelEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type SetStateAction, type TouchEvent, type WheelEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, ChevronUp, ExternalLink, GitFork, GripVertical, TriangleAlert, X } from "lucide-react";
 import { saveLightSeedBuilderAction } from "@/app/groups/actions";
@@ -111,6 +111,11 @@ type GroupStageViewState = {
   isThirdPlaceListOpen: boolean;
 };
 
+type TopTwoSlotDraft = {
+  firstTeamId: string | null;
+  secondTeamId: string | null;
+};
+
 const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
 const BRACKET_BUILDER_COMPLETION_SEEN_STORAGE_KEY = "bracket-builder-completion-seen";
 
@@ -123,6 +128,8 @@ const CUSTOM_TOUCH_DRAG_HANDLE_HOLD_MS = 120;
 const CUSTOM_TOUCH_DRAG_MOVE_HOLD_MS = 165;
 const CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX = 28;
 const CUSTOM_TOUCH_DRAG_HANDLE_MOVE_THRESHOLD_PX = 16;
+const GROUP_TOP_SLOT_DROP_ID_PREFIX = "group-top-slot-";
+const GROUP_AVAILABLE_POOL_DROP_ID = "group-available-pool";
 const THIRD_PLACE_OPEN_SLOT_DROP_ID_PREFIX = "third-place-open-slot-";
 
 const DEFAULT_GROUP_STAGE_VIEW_STATE: GroupStageViewState = {
@@ -476,6 +483,7 @@ export function BracketBuilderClient({
     isDragging: boolean;
     isGroupSwipe: boolean;
     targetId: string;
+    tapAction?: "select-next";
   } | null>(null);
   const committedSnapshotRef = useRef<LightSeedBuilderSnapshot | null>(
     initialSnapshot && hasSavedSnapshot && !initialGroupStageNeedsSave
@@ -546,6 +554,7 @@ export function BracketBuilderClient({
   const [groupRankings, setGroupRankings] = useState<LightSeedBuilderSnapshot["groupRankings"]>(
     initialDisplayGroupRankings
   );
+  const [topTwoSlotDraftsByGroup, setTopTwoSlotDraftsByGroup] = useState<Record<string, TopTwoSlotDraft>>({});
   const [thirdPlaceRankings, setThirdPlaceRankings] = useState<string[]>(
     initialSnapshot?.thirdPlaceRankings?.length
       ? [...initialSnapshot.thirdPlaceRankings].sort((left, right) => left.rank - right.rank).map((row) => row.teamId)
@@ -562,6 +571,7 @@ export function BracketBuilderClient({
   const [draggedThirdPlaceTeamId, setDraggedThirdPlaceTeamId] = useState<string | null>(null);
   const [dragOverThirdPlaceTeamId, setDragOverThirdPlaceTeamId] = useState<string | null>(null);
   const [customDragGhost, setCustomDragGhost] = useState<CustomDragGhost | null>(null);
+  const [topTwoAnnouncement, setTopTwoAnnouncement] = useState("");
   const [thirdPlaceReplacementCandidateId, setThirdPlaceReplacementCandidateId] = useState<string | null>(null);
   const [highlightedScenarioSlotIds, setHighlightedScenarioSlotIds] = useState<Set<string>>(() => new Set());
   const [openBracketChangeSlotId, setOpenBracketChangeSlotId] = useState<string | null>(null);
@@ -654,11 +664,64 @@ export function BracketBuilderClient({
     [groupRankings]
   );
 
+  const topTwoCompletionRankings = useMemo(
+    () =>
+      groupRankings.map((ranking) => {
+        const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
+        const draft = topTwoSlotDraftsByGroup[groupName];
+        return draft
+          ? {
+              ...ranking,
+              rankedTeamIds: [draft.firstTeamId ?? "", draft.secondTeamId ?? ""]
+            }
+          : ranking;
+      }),
+    [groupRankings, topTwoSlotDraftsByGroup]
+  );
+  const topTwoCompletionTouchedGroups = useMemo(() => {
+    const draftGroupNames = Object.keys(topTwoSlotDraftsByGroup);
+    if (draftGroupNames.length === 0) {
+      return touchedGroups;
+    }
+
+    const next = new Set(touchedGroups);
+    for (const groupName of draftGroupNames) {
+      next.add(groupName);
+    }
+    return next;
+  }, [topTwoSlotDraftsByGroup, touchedGroups]);
+  const topTwoCompletionStatus = useMemo(
+    () =>
+      getGroupTopTwoCompletionStatus({
+        groupNames: sortedGroupNames,
+        rankings: topTwoCompletionRankings,
+        teamIdsByGroup,
+        touchedGroupNames: topTwoCompletionTouchedGroups
+      }),
+    [sortedGroupNames, teamIdsByGroup, topTwoCompletionRankings, topTwoCompletionTouchedGroups]
+  );
+  const hasIncompleteTopTwoDraft = useMemo(
+    () =>
+      Object.values(topTwoSlotDraftsByGroup).some(
+        (draft) => !draft.firstTeamId || !draft.secondTeamId
+      ),
+    [topTwoSlotDraftsByGroup]
+  );
+  const incompleteTopTwoDraftGroupNames = useMemo(
+    () =>
+      new Set(
+        Object.entries(topTwoSlotDraftsByGroup)
+          .filter(([, draft]) => !draft.firstTeamId || !draft.secondTeamId)
+          .map(([groupName]) => groupName)
+      ),
+    [topTwoSlotDraftsByGroup]
+  );
+
   const derivedThirdPlacePool = useMemo(
     () =>
       sortedGroupNames
         .map((groupName) => {
-          if (!touchedGroups.has(groupName)) {
+          if (!topTwoCompletionStatus.completeGroupNames.has(groupName)) {
             return null;
           }
           const rankedTeamIds = groupRankingsByGroup.get(groupName) ?? [];
@@ -666,7 +729,7 @@ export function BracketBuilderClient({
           return thirdPlaceTeamId ? teamsById.get(thirdPlaceTeamId) ?? null : null;
         })
         .filter((team): team is RankedTeam => Boolean(team)),
-    [groupRankingsByGroup, sortedGroupNames, teamsById, touchedGroups]
+    [groupRankingsByGroup, sortedGroupNames, teamsById, topTwoCompletionStatus.completeGroupNames]
   );
   const derivedThirdPlacePoolIds = useMemo(
     () => new Set(derivedThirdPlacePool.map((team) => team.id)),
@@ -700,16 +763,6 @@ export function BracketBuilderClient({
     usesExplicitThirdPlaceSelection
   ]);
 
-  const topTwoCompletionStatus = useMemo(
-    () =>
-      getGroupTopTwoCompletionStatus({
-        groupNames: sortedGroupNames,
-        rankings: groupRankings,
-        teamIdsByGroup,
-        touchedGroupNames: touchedGroups
-      }),
-    [groupRankings, sortedGroupNames, teamIdsByGroup, touchedGroups]
-  );
   const hasUnlockedThirdPlacePhase = topTwoCompletionStatus.isComplete;
   const isThirdPlacePhase = hasUnlockedThirdPlacePhase && requiredThirdPlaceQualifierCount > 0;
   const shouldShowThirdPlaceCard = requiredThirdPlaceQualifierCount > 0;
@@ -755,19 +808,55 @@ export function BracketBuilderClient({
     : isFinishButtonQuiet && finalBracketSavedAt
       ? t(language, "bracket.savedAt", { time: formatSavedTimeLabel(finalBracketSavedAt, language) })
       : t(language, "bracket.finishBracket");
+  const isReadOnly = useMemo(() => {
+    if (initialKnockoutSeeded) {
+      return true;
+    }
+
+    if (!groupStageDueAt) {
+      return false;
+    }
+
+    return new Date(groupStageDueAt).getTime() <= Date.now();
+  }, [groupStageDueAt, initialKnockoutSeeded]);
   const canOpenProjectedKnockoutMatches = hasSavedSnapshot || Boolean(finalBracketSavedAt);
   const canAdvanceFromEasyBracket = hasSavedSnapshot || Boolean(finalBracketSavedAt);
   const activeGroupName = sortedGroupNames[activeGroupIndex] ?? null;
   const isActiveGroupScoreApplied = activeGroupName ? groupProjectionSources[activeGroupName] === "score_applied" : false;
+  const activeGroupTeamIds = useMemo(
+    () => (activeGroupName ? groupRankingsByGroup.get(activeGroupName) ?? [] : []),
+    [activeGroupName, groupRankingsByGroup]
+  );
   const activeGroupTeams = useMemo(
     () =>
-      activeGroupName
-        ? (groupRankingsByGroup.get(activeGroupName) ?? [])
-            .map((teamId) => teamsById.get(teamId) ?? null)
-            .filter((team): team is RankedTeam => Boolean(team))
-        : [],
-    [activeGroupName, groupRankingsByGroup, teamsById]
+      activeGroupTeamIds
+        .map((teamId) => teamsById.get(teamId) ?? null)
+        .filter((team): team is RankedTeam => Boolean(team)),
+    [activeGroupTeamIds, teamsById]
   );
+  const hasTouchedActiveGroup = activeGroupName ? touchedGroups.has(activeGroupName) : false;
+  const activeTopTwoDraft = activeGroupName ? topTwoSlotDraftsByGroup[activeGroupName] ?? null : null;
+  const shouldUseStoredActiveTopTwo =
+    !activeTopTwoDraft && Boolean(activeGroupName) && (hasTouchedActiveGroup || isActiveGroupScoreApplied || isReadOnly);
+  const selectedFirstTeamId = activeTopTwoDraft
+    ? activeTopTwoDraft.firstTeamId
+    : shouldUseStoredActiveTopTwo
+      ? activeGroupTeamIds[0] ?? null
+      : null;
+  const selectedSecondTeamId = activeTopTwoDraft
+    ? activeTopTwoDraft.secondTeamId
+    : shouldUseStoredActiveTopTwo
+      ? activeGroupTeamIds[1] ?? null
+      : null;
+  const selectedFirstTeam = selectedFirstTeamId ? teamsById.get(selectedFirstTeamId) ?? null : null;
+  const selectedSecondTeam = selectedSecondTeamId ? teamsById.get(selectedSecondTeamId) ?? null : null;
+  const availableGroupTeams = useMemo(
+    () => activeGroupTeams.filter((team) => team.id !== selectedFirstTeamId && team.id !== selectedSecondTeamId),
+    [activeGroupTeams, selectedFirstTeamId, selectedSecondTeamId]
+  );
+  const isActiveTopTwoComplete = Boolean(selectedFirstTeamId && selectedSecondTeamId);
+  const availableGroupTeamColumnCount = Math.max(1, availableGroupTeams.length);
+  const availableGroupTeamPoolMaxWidthRem = Math.min(34, Math.max(8.5, availableGroupTeamColumnCount * 8.5));
 
   useEffect(() => {
     if (!groupStageViewStateMeta.hasHydrated) {
@@ -857,21 +946,35 @@ export function BracketBuilderClient({
       ),
     [currentRankingsInput, touchedGroups]
   );
+  const saveableTouchedRankingsInput = useMemo<GroupSeedRankingInput[]>(
+    () =>
+      hasIncompleteTopTwoDraft
+        ? touchedRankingsInput.filter(
+            (ranking) =>
+              !incompleteTopTwoDraftGroupNames.has(normalizeGroupKey(ranking.groupName) ?? ranking.groupName)
+          )
+        : touchedRankingsInput,
+    [hasIncompleteTopTwoDraft, incompleteTopTwoDraftGroupNames, touchedRankingsInput]
+  );
   const committedSnapshot = committedSnapshotRef.current;
   const hasRestorableBracketChanges = useMemo(
     () =>
       hasLightSeedBuilderSnapshotChanges({
-        currentGroupRankings: touchedRankingsInput,
+        currentGroupRankings: saveableTouchedRankingsInput,
         currentThirdPlaceTeamIds: committedThirdPlaceRankingIds,
         savedSnapshot: committedSnapshot
       }),
-    [committedSnapshot, committedThirdPlaceRankingIds, touchedRankingsInput]
+    [committedSnapshot, committedThirdPlaceRankingIds, saveableTouchedRankingsInput]
   );
-  const canRestoreLastSavedBracket = Boolean(committedSnapshot) && hasRestorableBracketChanges;
+  const hasSaveableProgressChanges = Boolean(
+    hasRestorableBracketChanges ||
+      (!committedSnapshot && saveableTouchedRankingsInput.length > 0)
+  );
+  const canRestoreLastSavedBracket = Boolean(committedSnapshot) && (hasRestorableBracketChanges || hasIncompleteTopTwoDraft);
   const hasUncommittedFinalChanges = isComplete && hasRestorableBracketChanges;
   const previewRankingsInput = useMemo<GroupSeedRankingInput[]>(
-    () => (hasSavedSnapshot || hasInteracted ? touchedRankingsInput : []),
-    [hasInteracted, hasSavedSnapshot, touchedRankingsInput]
+    () => (hasSavedSnapshot || hasInteracted ? saveableTouchedRankingsInput : []),
+    [hasInteracted, hasSavedSnapshot, saveableTouchedRankingsInput]
   );
 
   const projectedStandings = useMemo(
@@ -1044,18 +1147,6 @@ export function BracketBuilderClient({
     });
   }, [initialKnockoutSeeded, projectedBracket.matches, projectedComparisonRound, teamsById]);
 
-  const isReadOnly = useMemo(() => {
-    if (initialKnockoutSeeded) {
-      return true;
-    }
-
-    if (!groupStageDueAt) {
-      return false;
-    }
-
-    return new Date(groupStageDueAt).getTime() <= Date.now();
-  }, [groupStageDueAt, initialKnockoutSeeded]);
-
   const nearDeadlineMessage = useMemo(() => {
     if (!groupStageDueAt || isReadOnly || isComplete) {
       return null;
@@ -1138,6 +1229,7 @@ export function BracketBuilderClient({
           ? draft.thirdPlaceRankings.filter((teamId): teamId is string => typeof teamId === "string" && teamId.length > 0)
           : []
       );
+      setTopTwoSlotDraftsByGroup({});
       setTouchedGroups(
         new Set(
           Array.isArray(draft.touchedGroupNames)
@@ -1158,7 +1250,7 @@ export function BracketBuilderClient({
   }, [defaultSnapshot.groupRankings, initialFinalBracketSavedAt, isReadOnly, language]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || isReadOnly || !hasInteracted) {
+    if (typeof window === "undefined" || isReadOnly || !hasInteracted || hasIncompleteTopTwoDraft) {
       return;
     }
 
@@ -1180,6 +1272,7 @@ export function BracketBuilderClient({
     currentRankingsInput,
     explicitThirdPlaceSelectionIds,
     hasInteracted,
+    hasIncompleteTopTwoDraft,
     hasTouchedThirdPlaceRanking,
     isReadOnly,
     normalizedThirdPlaceRankings,
@@ -1402,10 +1495,11 @@ export function BracketBuilderClient({
   }
 
   function beginCustomTouchDrag(
-    event: React.PointerEvent<HTMLDivElement>,
+    event: React.PointerEvent<HTMLElement>,
     kind: "group" | "third",
     teamId: string,
-    disabled: boolean
+    disabled: boolean,
+    tapAction?: "select-next"
   ) {
     if (supportsNativeRowDrag || disabled || event.pointerType === "mouse") {
       return;
@@ -1416,10 +1510,14 @@ export function BracketBuilderClient({
       return;
     }
 
+    const isHandleDrag = Boolean(target?.closest("[data-row-drag-handle='true']"));
+    if (kind === "third" && !isHandleDrag) {
+      return;
+    }
+
     event.preventDefault();
     clearCustomTouchDragState();
     const rect = event.currentTarget.getBoundingClientRect();
-    const isHandleDrag = Boolean(target?.closest("[data-row-drag-handle='true']"));
     event.currentTarget.setPointerCapture?.(event.pointerId);
     customDragStateRef.current = {
       kind,
@@ -1437,7 +1535,8 @@ export function BracketBuilderClient({
       isHandleDrag,
       isDragging: false,
       isGroupSwipe: false,
-      targetId: teamId
+      targetId: teamId,
+      tapAction
     };
 
     customDragHoldTimeoutRef.current = window.setTimeout(() => {
@@ -1450,7 +1549,7 @@ export function BracketBuilderClient({
     }, isHandleDrag ? CUSTOM_TOUCH_DRAG_HANDLE_HOLD_MS : CUSTOM_TOUCH_DRAG_HOLD_MS);
   }
 
-  function handleCustomTouchDragMove(event: React.PointerEvent<HTMLDivElement>) {
+  function handleCustomTouchDragMove(event: React.PointerEvent<HTMLElement>) {
     const state = customDragStateRef.current;
     if (!state || state.pointerId !== event.pointerId) {
       return;
@@ -1521,6 +1620,22 @@ export function BracketBuilderClient({
     }
 
     if (state.kind === "group") {
+      const slot = element.closest<HTMLElement>("[data-group-slot-id]");
+      if (slot?.dataset.groupSlotId) {
+        const slotIndex = slot.dataset.groupSlotId === "1" ? "1" : "0";
+        const targetId = `${GROUP_TOP_SLOT_DROP_ID_PREFIX}${slotIndex}`;
+        state.targetId = targetId;
+        setDragOverTeamId(targetId);
+        return;
+      }
+
+      const pool = element.closest<HTMLElement>("[data-group-pool-dropzone]");
+      if (pool) {
+        state.targetId = GROUP_AVAILABLE_POOL_DROP_ID;
+        setDragOverTeamId(GROUP_AVAILABLE_POOL_DROP_ID);
+        return;
+      }
+
       const targetRow = element.closest<HTMLElement>("[data-group-team-id]");
       const targetId = targetRow?.dataset.groupTeamId ?? state.teamId;
       state.targetId = targetId;
@@ -1541,7 +1656,7 @@ export function BracketBuilderClient({
     setDragOverThirdPlaceTeamId(targetId);
   }
 
-  function handleCustomTouchDragEnd(event: React.PointerEvent<HTMLDivElement>) {
+  function handleCustomTouchDragEnd(event: React.PointerEvent<HTMLElement>) {
     const state = customDragStateRef.current;
     if (!state || state.pointerId !== event.pointerId) {
       return;
@@ -1555,11 +1670,13 @@ export function BracketBuilderClient({
 
     const { isDragging, kind, targetId } = state;
     if (!isDragging) {
-      if (kind === "group") {
-        if (activeGroupName) {
-          acceptCurrentGroupRanking(activeGroupName);
-        }
-      } else {
+      if (kind === "group" && state.tapAction === "select-next") {
+        selectGroupTeamIntoNextOpenSlot(state.teamId);
+        clearCustomTouchDragState();
+        return;
+      }
+
+      if (kind === "third") {
         acceptCurrentThirdPlaceRanking();
       }
       clearCustomTouchDragState();
@@ -1631,17 +1748,171 @@ export function BracketBuilderClient({
     );
   }
 
-  function acceptCurrentGroupRanking(groupName: string) {
-    if (touchedGroups.has(groupName) || groupProjectionSources[groupName] === "score_applied") {
-      return;
+  function getTopTwoSlotsForGroup(groupName: string): TopTwoSlotDraft {
+    const draft = topTwoSlotDraftsByGroup[groupName];
+    if (draft) {
+      return draft;
     }
 
+    const shouldUseStoredSlots =
+      touchedGroups.has(groupName) || groupProjectionSources[groupName] === "score_applied" || isReadOnly;
     const currentOrder = groupRankingsByGroup.get(groupName) ?? [];
-    if (currentOrder.length === 0) {
+    return {
+      firstTeamId: shouldUseStoredSlots ? currentOrder[0] ?? null : null,
+      secondTeamId: shouldUseStoredSlots ? currentOrder[1] ?? null : null
+    };
+  }
+
+  function buildTopTwoRanking(groupName: string, firstTeamId: string, secondTeamId: string) {
+    const currentOrder = groupRankingsByGroup.get(groupName) ?? [];
+    return [
+      firstTeamId,
+      secondTeamId,
+      ...currentOrder.filter((teamId) => teamId !== firstTeamId && teamId !== secondTeamId)
+    ];
+  }
+
+  function clearTopTwoDraft(groupName: string) {
+    setTopTwoSlotDraftsByGroup((current) => {
+      if (!current[groupName]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[groupName];
+      return next;
+    });
+  }
+
+  function markTopTwoSlotDraftChanged(groupName: string) {
+    markBracketChanged();
+    setHasInteracted(true);
+    setGroupProjectionSources((current) => ({
+      ...current,
+      [groupName]: "builder_manual"
+    }));
+  }
+
+  function applyTopTwoSlots(groupName: string, firstTeamId: string | null, secondTeamId: string | null) {
+    if (isReadOnly || groupProjectionSources[groupName] === "score_applied") {
       return;
     }
 
-    updateGroupRanking(groupName, currentOrder);
+    const normalizedFirstTeamId = firstTeamId && teamsById.has(firstTeamId) ? firstTeamId : null;
+    const normalizedSecondTeamId = secondTeamId && teamsById.has(secondTeamId) ? secondTeamId : null;
+    if (normalizedFirstTeamId && normalizedSecondTeamId && normalizedFirstTeamId === normalizedSecondTeamId) {
+      return;
+    }
+
+    if (normalizedFirstTeamId && normalizedSecondTeamId) {
+      clearTopTwoDraft(groupName);
+      updateGroupRanking(groupName, buildTopTwoRanking(groupName, normalizedFirstTeamId, normalizedSecondTeamId));
+      return;
+    }
+
+    markTopTwoSlotDraftChanged(groupName);
+    setTopTwoSlotDraftsByGroup((current) => ({
+      ...current,
+      [groupName]: {
+        firstTeamId: normalizedFirstTeamId,
+        secondTeamId: normalizedSecondTeamId
+      }
+    }));
+  }
+
+  function getTopTwoSlotPlaceLabel(slotIndex: 0 | 1) {
+    return t(language, slotIndex === 0 ? "bracket.topTwoFirstPlaceShort" : "bracket.topTwoSecondPlaceShort");
+  }
+
+  function selectGroupTeamIntoNextOpenSlot(teamId: string) {
+    if (!activeGroupName || isReadOnly || isActiveGroupScoreApplied) {
+      return;
+    }
+
+    const team = teamsById.get(teamId);
+    if (!team) {
+      return;
+    }
+
+    const slots = getTopTwoSlotsForGroup(activeGroupName);
+    if (!slots.firstTeamId) {
+      applyTopTwoSlots(activeGroupName, teamId, slots.secondTeamId);
+      setTopTwoAnnouncement(t(language, "bracket.topTwoTeamSelectedAnnouncement", {
+        teamName: team.name,
+        place: getTopTwoSlotPlaceLabel(0)
+      }));
+      return;
+    }
+
+    if (!slots.secondTeamId) {
+      applyTopTwoSlots(activeGroupName, slots.firstTeamId, teamId);
+      setTopTwoAnnouncement(t(language, "bracket.topTwoTeamSelectedAnnouncement", {
+        teamName: team.name,
+        place: getTopTwoSlotPlaceLabel(1)
+      }));
+      return;
+    }
+
+    showAppToast({ tone: "tip", text: t(language, "bracket.topTwoSlotsFull") });
+  }
+
+  function moveGroupTeamToTopTwoSlot(teamId: string, slotIndex: 0 | 1) {
+    if (!activeGroupName || isReadOnly || isActiveGroupScoreApplied) {
+      return;
+    }
+
+    const team = teamsById.get(teamId);
+    if (!team) {
+      return;
+    }
+
+    const slots = getTopTwoSlotsForGroup(activeGroupName);
+    let nextFirstTeamId = slots.firstTeamId;
+    let nextSecondTeamId = slots.secondTeamId;
+
+    if (slotIndex === 0) {
+      if (teamId === slots.firstTeamId) {
+        return;
+      }
+      nextFirstTeamId = teamId;
+      nextSecondTeamId = teamId === slots.secondTeamId ? slots.firstTeamId : slots.secondTeamId;
+    } else {
+      if (teamId === slots.secondTeamId) {
+        return;
+      }
+      nextSecondTeamId = teamId;
+      nextFirstTeamId = teamId === slots.firstTeamId ? slots.secondTeamId : slots.firstTeamId;
+    }
+
+    applyTopTwoSlots(activeGroupName, nextFirstTeamId, nextSecondTeamId);
+    setTopTwoAnnouncement(t(language, "bracket.topTwoTeamSelectedAnnouncement", {
+      teamName: team.name,
+      place: getTopTwoSlotPlaceLabel(slotIndex)
+    }));
+  }
+
+  function removeGroupTeamFromTopTwo(teamId: string) {
+    if (!activeGroupName || isReadOnly || isActiveGroupScoreApplied) {
+      return;
+    }
+
+    const team = teamsById.get(teamId);
+    const slots = getTopTwoSlotsForGroup(activeGroupName);
+    if (teamId !== slots.firstTeamId && teamId !== slots.secondTeamId) {
+      return;
+    }
+
+    applyTopTwoSlots(
+      activeGroupName,
+      teamId === slots.firstTeamId ? null : slots.firstTeamId,
+      teamId === slots.secondTeamId ? null : slots.secondTeamId
+    );
+    if (team) {
+      setTopTwoAnnouncement(t(language, "bracket.topTwoTeamRemovedAnnouncement", {
+        teamName: team.name,
+        place: teamId === slots.firstTeamId ? getTopTwoSlotPlaceLabel(0) : getTopTwoSlotPlaceLabel(1)
+      }));
+    }
   }
 
   function acceptCurrentThirdPlaceRanking() {
@@ -1781,30 +2052,6 @@ export function BracketBuilderClient({
     setThirdPlaceReplacementCandidateId(null);
   }
 
-  function removeExplicitThirdPlaceQualifier(teamId: string) {
-    if (isReadOnly || !usesExplicitThirdPlaceSelection) {
-      return;
-    }
-
-    markThirdPlaceSelectionChanged();
-    setThirdPlaceRankings((current) => current.filter((candidateId) => candidateId !== teamId));
-    setThirdPlaceReplacementCandidateId((current) => (current === teamId ? null : current));
-  }
-
-  function toggleExplicitThirdPlaceQualifier(teamId: string) {
-    if (committedThirdPlaceRankingIds.includes(teamId)) {
-      removeExplicitThirdPlaceQualifier(teamId);
-      return;
-    }
-
-    if (committedThirdPlaceRankingIds.length >= requiredThirdPlaceQualifierCount) {
-      setThirdPlaceReplacementCandidateId(teamId);
-      return;
-    }
-
-    addExplicitThirdPlaceQualifier(teamId);
-  }
-
   function moveThirdPlaceTeam(index: number, direction: -1 | 1) {
     if (usesExplicitThirdPlaceSelection) {
       const sourceTeamId = normalizedThirdPlaceRankings[index];
@@ -1920,7 +2167,33 @@ export function BracketBuilderClient({
   function handleDropReorder(targetTeamId: string, sourceTeamIdOverride?: string | null) {
     const sourceTeamId = sourceTeamIdOverride ?? draggedTeamIdRef.current ?? draggedTeamId;
 
-    if (isReadOnly || !activeGroupName || isActiveGroupScoreApplied || !sourceTeamId || sourceTeamId === targetTeamId) {
+    if (isReadOnly || !activeGroupName || isActiveGroupScoreApplied || !sourceTeamId) {
+      draggedTeamIdRef.current = null;
+      setDraggedTeamId(null);
+      setDragOverTeamId(null);
+      return;
+    }
+
+    if (targetTeamId.startsWith(GROUP_TOP_SLOT_DROP_ID_PREFIX)) {
+      moveGroupTeamToTopTwoSlot(
+        sourceTeamId,
+        targetTeamId.endsWith("1") ? 1 : 0
+      );
+      draggedTeamIdRef.current = null;
+      setDraggedTeamId(null);
+      setDragOverTeamId(null);
+      return;
+    }
+
+    if (targetTeamId === GROUP_AVAILABLE_POOL_DROP_ID) {
+      removeGroupTeamFromTopTwo(sourceTeamId);
+      draggedTeamIdRef.current = null;
+      setDraggedTeamId(null);
+      setDragOverTeamId(null);
+      return;
+    }
+
+    if (sourceTeamId === targetTeamId) {
       draggedTeamIdRef.current = null;
       setDraggedTeamId(null);
       setDragOverTeamId(null);
@@ -1941,6 +2214,23 @@ export function BracketBuilderClient({
     draggedTeamIdRef.current = null;
     setDraggedTeamId(null);
     setDragOverTeamId(null);
+  }
+
+  function handleGroupPoolDragOver(event: DragEvent<HTMLElement>) {
+    const sourceTeamId = draggedTeamIdRef.current ?? draggedTeamId;
+    if (isReadOnly || isActiveGroupScoreApplied || !sourceTeamId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverTeamId(GROUP_AVAILABLE_POOL_DROP_ID);
+  }
+
+  function handleGroupPoolDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    handleDropReorder(GROUP_AVAILABLE_POOL_DROP_ID, getDragTransferTeamId(event));
   }
 
   function goToGroup(nextIndex: number) {
@@ -2231,16 +2521,27 @@ export function BracketBuilderClient({
   }
 
   async function handleSaveProgress() {
-    if (isReadOnly || isSavingProgress || isFinalizingBracket || isRestoringBracket || !hasInteracted) {
+    if (
+      isReadOnly ||
+      isSavingProgress ||
+      isFinalizingBracket ||
+      isRestoringBracket ||
+      !hasSaveableProgressChanges
+    ) {
       return;
     }
+
+    const remainingTopTwoDrafts = Object.fromEntries(
+      Object.entries(topTwoSlotDraftsByGroup).filter(([, draft]) => !draft.firstTeamId || !draft.secondTeamId)
+    );
+    const hasRemainingTopTwoDrafts = Object.keys(remainingTopTwoDrafts).length > 0;
 
     setIsSavingProgress(true);
     setSaveState("saving");
     setSaveMessage(t(language, "common.saving"));
 
     const result = await saveLightSeedBuilderAction({
-      groupRankings: touchedRankingsInput,
+      groupRankings: saveableTouchedRankingsInput,
       rankedThirdPlaceTeamIds: committedThirdPlaceRankingIds,
       commitThirdPlaceRankings: isThirdPlacePhase && hasTouchedThirdPlaceRanking
     });
@@ -2254,26 +2555,29 @@ export function BracketBuilderClient({
       return;
     }
 
-    setHasInteracted(false);
-    setChangedSinceAt(null);
     const savedAt = new Date().toISOString();
     setCommittedBracketSavedAt(savedAt);
     committedSnapshotRef.current = cloneLightSeedBuilderSnapshot({
-      groupRankings: touchedRankingsInput,
+      groupRankings: saveableTouchedRankingsInput,
       thirdPlaceRankings: committedThirdPlaceRankingIds.map((teamId, index) => ({
         teamId,
         rank: index + 1
       }))
     });
     committedSnapshotIsFinalRef.current = false;
-    clearUnsavedGroupStageDraft();
+    setTopTwoSlotDraftsByGroup(remainingTopTwoDrafts);
+    setHasInteracted(hasRemainingTopTwoDrafts);
+    setChangedSinceAt(hasRemainingTopTwoDrafts ? changedSinceAt ?? new Date().toISOString() : null);
+    if (!hasRemainingTopTwoDrafts) {
+      clearUnsavedGroupStageDraft();
+    }
     setSaveState("saved");
     setSaveMessage(t(language, "bracket.progressSaved"));
     showAppToast({ tone: "tip", text: t(language, "bracket.progressSaved") });
   }
 
   async function handleFinalizeBracket() {
-    if (isReadOnly || !isComplete || isFinalizingBracket) {
+    if (isReadOnly || !isComplete || isFinalizingBracket || hasIncompleteTopTwoDraft) {
       return;
     }
 
@@ -2282,7 +2586,7 @@ export function BracketBuilderClient({
     setSaveMessage(t(language, "common.saving"));
 
     const result = await saveLightSeedBuilderAction({
-      groupRankings: touchedRankingsInput,
+      groupRankings: saveableTouchedRankingsInput,
       rankedThirdPlaceTeamIds: committedThirdPlaceRankingIds,
       commitThirdPlaceRankings: true,
       finalizeTournamentEntry: true
@@ -2304,7 +2608,7 @@ export function BracketBuilderClient({
     setCommittedBracketSavedAt(savedAt);
     setChangedSinceAt(null);
     committedSnapshotRef.current = cloneLightSeedBuilderSnapshot({
-      groupRankings: touchedRankingsInput,
+      groupRankings: saveableTouchedRankingsInput,
       thirdPlaceRankings: committedThirdPlaceRankingIds.map((teamId, index) => ({
         teamId,
         rank: index + 1
@@ -2312,6 +2616,7 @@ export function BracketBuilderClient({
     });
     committedSnapshotIsFinalRef.current = true;
     setHasInteracted(false);
+    setTopTwoSlotDraftsByGroup({});
     clearUnsavedGroupStageDraft();
 
     if (!hasSeenCompletionThisSession) {
@@ -2372,6 +2677,7 @@ export function BracketBuilderClient({
       })
     );
     setThirdPlaceRankings(restoredThirdPlaceIds);
+    setTopTwoSlotDraftsByGroup({});
     setTouchedGroups(new Set(committedSnapshot.groupRankings.map((ranking) => normalizeGroupKey(ranking.groupName) ?? ranking.groupName)));
     setHasTouchedThirdPlaceRanking(restoredThirdPlaceIds.length >= requiredThirdPlaceQualifierCount && requiredThirdPlaceQualifierCount > 0);
     setHasInteracted(false);
@@ -2396,10 +2702,16 @@ export function BracketBuilderClient({
         <div className={`group-stage-save-restore-grid grid gap-2 ${canRestoreLastSavedBracket ? "grid-cols-2" : "grid-cols-1"}`}>
           <ActionButton
             fullWidth
-            tone={hasInteracted ? "accent" : "neutral"}
-            disabled={isReadOnly || isSavingProgress || isFinalizingBracket || isRestoringBracket || !hasInteracted}
-            onClick={handleSaveProgress}
-          >
+            tone={hasSaveableProgressChanges ? "accent" : "neutral"}
+            disabled={
+              isReadOnly ||
+              isSavingProgress ||
+            isFinalizingBracket ||
+            isRestoringBracket ||
+            !hasSaveableProgressChanges
+          }
+          onClick={handleSaveProgress}
+        >
             {isSavingProgress ? t(language, "common.saving") : savedProgressLabel}
           </ActionButton>
           {canRestoreLastSavedBracket ? (
@@ -2724,12 +3036,12 @@ export function BracketBuilderClient({
           tabIndex={-1}
           className={`scroll-mt-[calc(var(--app-header-height)+0.75rem)] rounded-[1rem] border px-3 py-2 text-center focus:outline-none ${isThirdPlacePhase ? "border-amber-200 bg-amber-50 text-amber-900" : "border-gray-200 bg-gray-50 text-gray-500"}`}
         >
-          <p className="text-[10px] font-black uppercase tracking-[0.08em]">
-            {isThirdPlacePhase
-              ? t(language, "bracket.pickThirdPlaceQualifiers", { count: requiredThirdPlaceQualifierCount })
-              : t(language, "bracket.topTwoQualify")}
-          </p>
-          <div className="mt-2">
+          {isThirdPlacePhase ? (
+            <p className="text-[10px] font-black uppercase tracking-[0.08em]">
+              {t(language, "bracket.pickThirdPlaceQualifiers", { count: requiredThirdPlaceQualifierCount })}
+            </p>
+          ) : null}
+          <div className={isThirdPlacePhase ? "mt-2" : ""}>
             {renderManualProgressSaveControl()}
           </div>
         </section>
@@ -2866,89 +3178,60 @@ export function BracketBuilderClient({
               })}
             </div>
           </div>
-          <div className="px-1">
-            <p className="truncate text-[11px] font-bold uppercase tracking-[0.14em] text-accent-dark">
-              {t(language, "bracket.pickFirstSecondHere")}
+          <div className="px-1 text-center">
+            <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-accent-dark">
+              {isActiveTopTwoComplete
+                ? t(language, "bracket.topTwoGroupCompletePrompt")
+                : t(language, "bracket.topTwoInstruction")}
             </p>
           </div>
         </div>
 
         <div
-          className={`overflow-hidden rounded-[1.15rem] border border-gray-200 ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
+          className={`overflow-hidden rounded-[1.15rem] border border-gray-200 bg-white shadow-sm ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
           style={{
             transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
           }}
+          data-disable-group-swipe="true"
         >
-          {activeGroupTeams.map((team, index) => {
-            const hasTouchedActiveGroup = activeGroupName ? touchedGroups.has(activeGroupName) : false;
-            const shouldMuteUntouchedGroup =
-              !hasTouchedActiveGroup && !isActiveGroupScoreApplied && !isReadOnly;
-            const isTopTwo = index < 2;
-            const isThirdPlaceTeam = index === 2;
-            const canAcceptCurrentQualifyingOrder =
-              !isReadOnly && !isActiveGroupScoreApplied && Boolean(activeGroupName) && isTopTwo && !touchedGroups.has(activeGroupName);
-            const thirdPlaceSelectionIndex = committedThirdPlaceRankingIds.indexOf(team.id);
-            const thirdPlaceRankingIndex = thirdPlaceSelectionIndex >= 0
-              ? thirdPlaceSelectionIndex
-              : Math.max(0, sortThirdPlaceSelectionByProbability([...committedThirdPlaceRankingIds, team.id]).indexOf(team.id));
-            const rowPickProbability = isTopTwo
+          <span aria-live="polite" className="sr-only">{topTwoAnnouncement}</span>
+          {[0, 1].map((slotIndexValue) => {
+            const slotIndex = slotIndexValue as 0 | 1;
+            const slotId = `${GROUP_TOP_SLOT_DROP_ID_PREFIX}${slotIndex}`;
+            const team = slotIndex === 0 ? selectedFirstTeam : selectedSecondTeam;
+            const placeLabel = getTopTwoSlotPlaceLabel(slotIndex);
+            const pickProbability = team && hasCompletedBracketOnce
               ? getGroupStagePickProbability({
                   team,
-                  predictedPlace: index === 0 ? 1 : 2
+                  predictedPlace: slotIndex === 0 ? 1 : 2
                 })
-              : getGroupStagePickProbability({
-                  team,
-                  predictedPlace: 3,
-                  thirdPlaceRankingIndex
-                });
-            const isThirdPlaceQualified =
-              isThirdPlacePhase &&
-              hasCommittedThirdPlaceSelection &&
-              isThirdPlaceTeam &&
-              thirdPlaceSelectionIndex >= 0;
-            const shouldShowThirdPlaceQualifierToggle =
-              usesExplicitThirdPlaceSelection &&
-              isThirdPlacePhase &&
-              isThirdPlaceTeam &&
-              !isReadOnly &&
-              !isActiveGroupScoreApplied;
-            const shouldShowThirdPlaceScenarioProbability =
-              usesExplicitThirdPlaceSelection &&
-              isThirdPlacePhase &&
-              isThirdPlaceTeam &&
-              !shouldMuteUntouchedGroup;
-            const shouldShowSelectionProbability =
-              !shouldMuteUntouchedGroup && (isTopTwo || isThirdPlaceQualified || shouldShowThirdPlaceScenarioProbability);
-            const isQualifyingRow = !shouldMuteUntouchedGroup && (isTopTwo || isThirdPlaceQualified);
-            const isGroupDemotedTeam = !isQualifyingRow;
-            const highlightClass = isQualifyingRow ? "bg-accent-light/40" : "bg-white";
-            const rowBorderClass = isQualifyingRow ? "border-accent-light" : "border-gray-200";
-            const rowOutlineClass = dragOverTeamId === team.id ? "ring-1 ring-accent ring-inset" : "";
-            const teamOrder = activeGroupName ? groupRankingsByGroup.get(activeGroupName) ?? [] : [];
-            const canMoveUp = !isReadOnly && !isActiveGroupScoreApplied && index > 0;
-            const canMoveDown = !isReadOnly && !isActiveGroupScoreApplied && index < activeGroupTeams.length - 1;
+              : null;
+            const isDragOverSlot = dragOverTeamId === slotId;
             return (
-              <Fragment key={team.id}>
-                <div
-                  data-group-team-id={team.id}
-                  data-disable-group-swipe="true"
-                  ref={(node) => {
-                    if (node) {
-                      groupRowRefs.current.set(team.id, node);
-                  } else {
+              <div
+                key={slotId}
+                data-group-slot-id={String(slotIndex)}
+                data-group-team-id={team?.id}
+                data-disable-group-swipe="true"
+                ref={(node) => {
+                  if (node && team) {
+                    groupRowRefs.current.set(team.id, node);
+                  } else if (team) {
                     groupRowRefs.current.delete(team.id);
                     previousGroupRowTopsRef.current.delete(team.id);
                   }
                 }}
-                draggable={!isReadOnly && !isActiveGroupScoreApplied && supportsNativeRowDrag}
-                onPointerDown={(event) =>
-                  beginCustomTouchDrag(event, "group", team.id, isReadOnly || isActiveGroupScoreApplied)
-                }
+                draggable={Boolean(team) && !isReadOnly && !isActiveGroupScoreApplied && supportsNativeRowDrag}
+                onPointerDown={(event) => {
+                  if (team) {
+                    beginCustomTouchDrag(event, "group", team.id, isReadOnly || isActiveGroupScoreApplied);
+                  }
+                }}
                 onPointerMove={handleCustomTouchDragMove}
                 onPointerUp={handleCustomTouchDragEnd}
                 onPointerCancel={() => clearCustomTouchDragState()}
                 onDragStart={(event) => {
-                  if (isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag) {
+                  if (!team || isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag) {
                     return;
                   }
                   event.dataTransfer.effectAllowed = "move";
@@ -2969,127 +3252,142 @@ export function BracketBuilderClient({
                   }
                   event.preventDefault();
                   event.dataTransfer.dropEffect = "move";
-                  setDragOverTeamId(team.id);
+                  setDragOverTeamId(slotId);
                 }}
                 onDragLeave={() => {
-                  if (dragOverTeamId === team.id) {
+                  if (dragOverTeamId === slotId) {
                     setDragOverTeamId(null);
                   }
                 }}
                 onDrop={(event) => {
                   event.preventDefault();
-                  handleDropReorder(team.id, getDragTransferTeamId(event));
+                  handleDropReorder(slotId, getDragTransferTeamId(event));
                 }}
-                onClick={(event) => {
-                  if (!activeGroupName || !isActivationClickTarget(event.target)) {
-                    return;
-                  }
-
-                  acceptCurrentGroupRanking(activeGroupName);
-                }}
-                className={`grid grid-cols-[1.55rem_2.2rem_minmax(0,1fr)_7.65rem_2rem] items-center gap-x-0.5 border-b px-1.5 py-1 last:border-b-0 transition-shadow select-none [-webkit-touch-callout:none] sm:grid-cols-[1.55rem_2.2rem_minmax(0,1fr)_8.8rem_2rem] sm:gap-x-1 sm:px-2 ${!supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "[touch-action:none]" : "[touch-action:manipulation]"} ${rowBorderClass} ${highlightClass} ${rowOutlineClass} ${draggedTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag ? "" : "cursor-grab active:cursor-grabbing"}`}
+                role="group"
+                aria-label={t(language, "bracket.topTwoSlotAria", { place: placeLabel })}
+                className={`grid min-h-[3.15rem] grid-cols-[2.1rem_minmax(0,1fr)_auto] items-center gap-2 border-b px-2 py-1.5 transition select-none last:border-b-0 sm:grid-cols-[2.3rem_minmax(0,1fr)_auto] sm:px-3 ${
+                  team
+                    ? "border-accent-light bg-accent-light/35 text-gray-950"
+                    : "border-gray-100 bg-white text-gray-400"
+                } ${isDragOverSlot ? "ring-2 ring-accent ring-inset" : ""} ${draggedTeamId && team?.id === draggedTeamId ? "opacity-45" : ""} ${
+                  team && !supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied
+                    ? "[touch-action:none]"
+                    : "[touch-action:manipulation]"
+                } ${team && supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "cursor-grab active:cursor-grabbing" : ""}`}
               >
-                <div className="flex justify-start pl-1">
-                  <span
-                    className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-black ${
-                      isQualifyingRow ? "bg-accent text-accent-text" : "bg-gray-100 text-gray-400"
-                    }`}
-                  >
-                    {index + 1}
+                <div className="flex justify-center">
+                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent text-[12px] font-black text-accent-text">
+                    {slotIndex + 1}
                   </span>
                 </div>
-                <div className="flex items-center justify-center px-1.5">
-                  <span aria-hidden className={`text-[1.6rem] leading-none transition ${isGroupDemotedTeam ? "opacity-35 grayscale" : ""}`}>{team.flagEmoji}</span>
-                </div>
-                <div className="min-w-0">
-                  {canAcceptCurrentQualifyingOrder && activeGroupName ? (
+                {team ? (
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span aria-hidden className="text-[1.55rem] leading-none">{team.flagEmoji}</span>
+                    <span className="min-w-0 truncate text-[12px] font-black text-gray-950 sm:text-[13px]">
+                      {team.name}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="min-w-0 truncate text-center text-[11px] font-semibold text-gray-300">
+                    {t(language, slotIndex === 0 ? "bracket.topTwoPickFirst" : "bracket.topTwoPickSecond")}
+                  </div>
+                )}
+                <div className="flex items-center justify-end gap-1.5">
+                  {pickProbability ? (
+                    <SelectionProbabilityBadge probability={pickProbability.probability} language={language} />
+                  ) : null}
+                  {team && !isReadOnly && !isActiveGroupScoreApplied ? (
                     <button
                       type="button"
-                      onClick={() => acceptCurrentGroupRanking(activeGroupName)}
+                      draggable={false}
                       data-no-row-drag="true"
-                      className={`block w-full truncate text-left text-[11px] font-black ${isGroupDemotedTeam ? "text-gray-400" : "text-gray-950"}`}
-                      aria-label={`Accept ${team.name} in ${index + 1}${index === 0 ? "st" : "nd"} place`}
+                      onClick={() => removeGroupTeamFromTopTwo(team.id)}
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-400 transition hover:border-accent-light hover:text-accent-dark"
+                      aria-label={t(language, "bracket.topTwoRemoveTeamAria", {
+                        teamName: team.name,
+                        place: placeLabel
+                      })}
+                      title={t(language, "bracket.topTwoRemoveTeamAria", {
+                        teamName: team.name,
+                        place: placeLabel
+                      })}
                     >
-                      {team.name}
+                      <X className="h-3.5 w-3.5" />
                     </button>
-                  ) : (
-                    <span className={`block truncate text-[11px] font-black ${isGroupDemotedTeam ? "text-gray-400" : "text-gray-950"}`}>{team.name}</span>
-                  )}
-                </div>
-                  <div className="flex items-center justify-end gap-1 sm:gap-2">
-                    {shouldShowThirdPlaceQualifierToggle ? (
-                      <button
-                        type="button"
-                        draggable={false}
-                        data-no-row-drag="true"
-                        onClick={() => toggleExplicitThirdPlaceQualifier(team.id)}
-	                        className={`group-stage-probability-ring mr-2 inline-flex shrink-0 items-center justify-center rounded-full border text-[12px] font-black leading-none transition sm:mr-3 sm:text-[13px] ${
-	                          isThirdPlaceQualified
-	                            ? "border-accent bg-transparent text-accent-dark"
-	                            : "border-gray-200 bg-white text-gray-500"
-	                        }`}
-                        title={t(
-                          language,
-                          isThirdPlaceQualified
-                            ? "bracket.thirdPlaceRemoveAdvAria"
-                            : "bracket.thirdPlaceAddAdvAria",
-                          { teamName: team.name }
-                        )}
-                        aria-label={t(
-                          language,
-                          isThirdPlaceQualified
-                            ? "bracket.thirdPlaceRemoveAdvAria"
-                            : "bracket.thirdPlaceAddAdvAria",
-                          { teamName: team.name }
-                        )}
-                      >
-                        {isThirdPlaceQualified ? "-" : "+"}
-                      </button>
-                    ) : null}
-                    {shouldShowSelectionProbability ? (
-                      <SelectionProbabilityBadge
-                        probability={rowPickProbability?.probability}
-                        language={language}
-                      />
-                    ) : null}
-                    <div className="grid shrink-0 grid-cols-2 overflow-hidden rounded-[0.9rem] border border-gray-200 bg-white">
-                      <button
-                        type="button"
-                        draggable={false}
-                      data-no-row-drag="true"
-                      aria-label={t(language, "bracket.moveTeamUp", { teamName: team.name })}
-                      disabled={!canMoveUp}
-                      onClick={() => activeGroupName && updateGroupRanking(activeGroupName, moveItem(teamOrder, index, -1))}
-                        className="inline-flex h-7 w-7 items-center justify-center border-r border-gray-200 text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
-                      >
-                        <ChevronUp className="h-4.5 w-4.5" />
-                      </button>
-                      <button
-                        type="button"
-                        draggable={false}
-                        data-no-row-drag="true"
-                      aria-label={t(language, "bracket.moveTeamDown", { teamName: team.name })}
-                      disabled={!canMoveDown}
-                      onClick={() => activeGroupName && updateGroupRanking(activeGroupName, moveItem(teamOrder, index, 1))}
-                        className="inline-flex h-7 w-7 items-center justify-center text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
-                      >
-                        <ChevronDown className="h-4.5 w-4.5" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex justify-center">
-                    <span
-                      aria-hidden
-                      data-row-drag-handle="true"
-                      className={`inline-flex h-7 w-7 items-center justify-center text-gray-400 ${isReadOnly ? "opacity-60" : ""}`}
-                    >
-                      <GripVertical className="h-4 w-4" />
-                    </span>
+                  ) : null}
                 </div>
               </div>
-              </Fragment>
             );
           })}
+          <div
+            data-group-pool-dropzone="true"
+            className={`px-2 pb-2 pt-2 sm:px-3 ${dragOverTeamId === GROUP_AVAILABLE_POOL_DROP_ID ? "bg-accent-light/20" : "bg-white"}`}
+            onDragOver={handleGroupPoolDragOver}
+            onDragLeave={() => {
+              if (dragOverTeamId === GROUP_AVAILABLE_POOL_DROP_ID) {
+                setDragOverTeamId(null);
+              }
+            }}
+            onDrop={handleGroupPoolDrop}
+          >
+            <p className="mb-1 hidden text-center text-[8px] font-black uppercase tracking-[0.16em] text-gray-400 sm:block">
+              {t(language, "bracket.availableTeams")}
+            </p>
+            <div
+              className="mx-auto grid w-full gap-1.5 pb-1 sm:gap-2 sm:pb-0"
+              style={{
+                gridTemplateColumns: `repeat(${availableGroupTeamColumnCount}, minmax(0, 1fr))`,
+                maxWidth: `${availableGroupTeamPoolMaxWidthRem}rem`
+              }}
+            >
+              {availableGroupTeams.map((team) => (
+                <button
+                  key={team.id}
+                  type="button"
+                  data-group-team-id={team.id}
+                  data-disable-group-swipe="true"
+                  draggable={!isReadOnly && !isActiveGroupScoreApplied && supportsNativeRowDrag}
+                  onClick={() => selectGroupTeamIntoNextOpenSlot(team.id)}
+                  onPointerDown={(event) =>
+                    beginCustomTouchDrag(event, "group", team.id, isReadOnly || isActiveGroupScoreApplied, "select-next")
+                  }
+                  onPointerMove={handleCustomTouchDragMove}
+                  onPointerUp={handleCustomTouchDragEnd}
+                  onPointerCancel={() => clearCustomTouchDragState()}
+                  onDragStart={(event) => {
+                    if (isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag) {
+                      return;
+                    }
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("application/x-pickit-team-id", team.id);
+                    event.dataTransfer.setData("text/plain", team.id);
+                    draggedTeamIdRef.current = team.id;
+                    setDraggedTeamId(team.id);
+                  }}
+                  onDragEnd={() => {
+                    draggedTeamIdRef.current = null;
+                    setDraggedTeamId(null);
+                    setDragOverTeamId(null);
+                  }}
+                  onDragOver={handleGroupPoolDragOver}
+                  onDrop={handleGroupPoolDrop}
+                  className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-[0.85rem] border border-gray-100 bg-white px-1.5 py-2 text-center shadow-[0_1px_5px_rgba(15,23,42,0.04)] transition hover:border-accent-light hover:bg-accent-light/10 focus:outline-none focus:ring-2 focus:ring-accent-light sm:px-2 ${
+                    draggedTeamId === team.id ? "opacity-45" : ""
+                  } ${
+                    !supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied
+                      ? "[touch-action:none]"
+                      : "[touch-action:manipulation]"
+                  } ${supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "cursor-grab active:cursor-grabbing" : ""}`}
+                  aria-label={t(language, "bracket.topTwoAvailableTeamAria", { teamName: team.name })}
+                >
+                  <span aria-hidden className="text-[1.2rem] leading-none sm:text-[1.35rem]">{team.flagEmoji}</span>
+                  <span className="w-full max-w-full truncate text-[9px] font-black text-gray-800 sm:text-[10px]">
+                    {team.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {shouldShowThirdPlaceCard ? (
@@ -3313,7 +3611,30 @@ export function BracketBuilderClient({
                             {t(language, "bracket.cutoff")}
                           </div>
                         ) : null}
-                        <div className={`grid grid-cols-[1.7rem_minmax(0,1fr)_5.45rem_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] sm:grid-cols-[1.7rem_minmax(0,1fr)_6.35rem_2.1rem] sm:gap-1.5 sm:px-2.5 ${!supportsNativeRowDrag && canDragThirdPlaceRow ? "[touch-action:none]" : "[touch-action:manipulation]"} ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : "border-gray-200 bg-white"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${supportsNativeRowDrag && canDragThirdPlaceRow ? "cursor-grab active:cursor-grabbing" : ""}`}>
+                        <div
+                          onDragOver={(event) => {
+                            const sourceTeamId = draggedThirdPlaceTeamIdRef.current ?? draggedThirdPlaceTeamId;
+                            if (
+                              isReadOnly ||
+                              !sourceTeamId ||
+                              (usesExplicitThirdPlaceSelection &&
+                                !committedThirdPlaceRankingIds.includes(sourceTeamId) &&
+                                openThirdPlaceQualifierSlots <= 0)
+                            ) {
+                              return;
+                            }
+                            event.preventDefault();
+                            event.stopPropagation();
+                            event.dataTransfer.dropEffect = "move";
+                            setDragOverThirdPlaceTeamId(team.id);
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handleDropThirdPlaceReorder(team.id, getDragTransferTeamId(event));
+                          }}
+                          className={`grid grid-cols-[1.7rem_minmax(0,1fr)_5.45rem_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] sm:grid-cols-[1.7rem_minmax(0,1fr)_6.35rem_2.1rem] sm:gap-1.5 sm:px-2.5 [touch-action:manipulation] ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : "border-gray-200 bg-white"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${supportsNativeRowDrag && canDragThirdPlaceRow ? "cursor-grab active:cursor-grabbing" : ""}`}
+                        >
                           <div className="flex justify-start">
                             <span
                               className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-black ${
@@ -3343,7 +3664,7 @@ export function BracketBuilderClient({
                                 data-no-row-drag="true"
                                 disabled={isReadOnly || index === 0 || (usesExplicitThirdPlaceSelection && !isSelectedThirdPlaceQualifier)}
                                 onClick={() => moveThirdPlaceTeam(index, -1)}
-                                className="inline-flex h-7 w-7 items-center justify-center border-r border-gray-200 text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
+                                className="inline-flex h-7 w-7 items-center justify-center border-r border-gray-200 text-accent-dark disabled:pointer-events-none disabled:cursor-not-allowed disabled:text-gray-300"
                                 aria-label={t(language, "bracket.moveTeamUp", { teamName: team.name })}
                               >
                                 <ChevronUp className="h-4.5 w-4.5" />
@@ -3354,7 +3675,7 @@ export function BracketBuilderClient({
                                 data-no-row-drag="true"
                                 disabled={isReadOnly || index === normalizedThirdPlaceRankings.length - 1 || (usesExplicitThirdPlaceSelection && !isSelectedThirdPlaceQualifier)}
                                 onClick={() => moveThirdPlaceTeam(index, 1)}
-                                className="inline-flex h-7 w-7 items-center justify-center text-accent-dark disabled:cursor-not-allowed disabled:text-gray-300"
+                                className="inline-flex h-7 w-7 items-center justify-center text-accent-dark disabled:pointer-events-none disabled:cursor-not-allowed disabled:text-gray-300"
                                 aria-label={t(language, "bracket.moveTeamDown", { teamName: team.name })}
                               >
                                 <ChevronDown className="h-4.5 w-4.5" />
@@ -3365,7 +3686,7 @@ export function BracketBuilderClient({
                             <span
                               aria-hidden
                               data-row-drag-handle="true"
-                              className={`inline-flex h-8 w-8 items-center justify-center text-gray-400 ${isReadOnly ? "opacity-60" : ""}`}
+                              className={`inline-flex h-8 w-8 items-center justify-center text-gray-400 [touch-action:none] ${isReadOnly ? "opacity-60" : ""}`}
                             >
                               <GripVertical className="h-4 w-4" />
                             </span>
