@@ -29,6 +29,7 @@ import {
   getScenarioSlotId
 } from "@/lib/group-stage-scenario-impact";
 import {
+  getAdvanceViaThirdProbabilityResult,
   getPickProbabilityForTeam,
   type PickProbabilityResult
 } from "@/lib/group-pick-probability";
@@ -2004,10 +2005,24 @@ export function BracketBuilderClient({
         ? selectedIndex
         : Math.max(0, sortThirdPlaceSelectionByProbability([...committedThirdPlaceRankingIds, teamId]).indexOf(teamId));
 
-    return getGroupStagePickProbability({
+    return getThirdPlaceViaThirdProbabilityResult({
       team,
-      predictedPlace: 3,
-      thirdPlaceRankingIndex: rankingIndex
+      rankingIndex
+    });
+  }
+
+  function getThirdPlaceViaThirdProbabilityResult({
+    team,
+    rankingIndex
+  }: {
+    team: RankedTeam;
+    rankingIndex?: number | null;
+  }) {
+    return getAdvanceViaThirdProbabilityResult({
+      team,
+      thirdPlacePool: derivedThirdPlacePool,
+      thirdPlaceRankingIndex: rankingIndex,
+      predictedPlace: 3
     });
   }
 
@@ -3473,10 +3488,9 @@ export function BracketBuilderClient({
                         ? index + openThirdPlaceQualifierSlots + 1
                         : index + 1;
                     const probabilityIndex = selectedThirdPlaceIndex >= 0 ? selectedThirdPlaceIndex : index;
-                    const thirdPlacePickProbability = getGroupStagePickProbability({
+                    const thirdPlacePickProbability = getThirdPlaceViaThirdProbabilityResult({
                       team,
-                      predictedPlace: 3,
-                      thirdPlaceRankingIndex: probabilityIndex
+                      rankingIndex: probabilityIndex
                     });
                     return (
                       <div
