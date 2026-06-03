@@ -305,7 +305,7 @@ function getAdvanceViaThirdCandidateProbability({
         ? thirdPlaceRankingIndex
         : selectedIndex >= 0
           ? selectedIndex
-          : getStrengthRank(team, thirdPlacePool) ?? thirdPlacePool.length;
+          : Math.max(0, (getStrengthRank(team, thirdPlacePool) ?? thirdPlacePool.length + 1) - 1);
     return getAdvanceViaThirdProbability(team, rankingIndex, thirdPlacePool);
   }
 
