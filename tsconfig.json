@@ -21,5 +21,14 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", ".next/types/**/* 2.ts"]
+  "exclude": [
+    "node_modules",
+    "ios",
+    "android",
+    "native-shell",
+    ".ignored-next-backups",
+    ".next.bak-*",
+    ".next.prebuild-*",
+    ".next/types/**/* 2.ts"
+  ]
 }
