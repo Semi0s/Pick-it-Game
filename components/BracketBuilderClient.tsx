@@ -37,7 +37,6 @@ import type { KnockoutBracketEditorView } from "@/lib/bracket-predictions";
 import type { MatchWithTeams, Team } from "@/lib/types";
 import { getLocalGroupMatches } from "@/lib/group-matches";
 import { t } from "@/lib/strings";
-import { getTeamRating } from "@/lib/team-strength";
 import {
   GROUP_STAGE_UNSAVED_DRAFT_STORAGE_KEY,
   type UnsavedGroupStageDraft
@@ -648,6 +647,7 @@ export function BracketBuilderClient({
   const [customDragGhost, setCustomDragGhost] = useState<CustomDragGhost | null>(null);
   const [topTwoAnnouncement, setTopTwoAnnouncement] = useState("");
   const [thirdPlaceReplacementCandidateId, setThirdPlaceReplacementCandidateId] = useState<string | null>(null);
+  const [activeThirdPlaceOpenSlotIndex, setActiveThirdPlaceOpenSlotIndex] = useState<number | null>(null);
   const [highlightedScenarioSlotIds, setHighlightedScenarioSlotIds] = useState<Set<string>>(() => new Set());
   const [openBracketChangeSlotId, setOpenBracketChangeSlotId] = useState<string | null>(null);
   const [groupSwipeOffsetX, setGroupSwipeOffsetX] = useState(0);
@@ -1396,7 +1396,7 @@ export function BracketBuilderClient({
 
     const draft: UnsavedGroupStageDraft = {
       groupRankings: saveableTouchedRankingsInput,
-      thirdPlaceRankings: usesExplicitThirdPlaceSelection ? explicitThirdPlaceSelectionIds : normalizedThirdPlaceRankings,
+      thirdPlaceRankings: usesExplicitThirdPlaceSelection ? thirdPlaceRankings : normalizedThirdPlaceRankings,
       touchedGroupNames: Array.from(touchedGroups),
       hasTouchedThirdPlaceRanking,
       changedSinceAt: changedSinceAt ?? new Date().toISOString()
@@ -1409,13 +1409,13 @@ export function BracketBuilderClient({
     }
   }, [
     changedSinceAt,
-    explicitThirdPlaceSelectionIds,
     hasInteracted,
     hasUnsavedGroupStageChanges,
     hasTouchedThirdPlaceRanking,
     isReadOnly,
     normalizedThirdPlaceRankings,
     saveableTouchedRankingsInput,
+    thirdPlaceRankings,
     touchedGroups,
     usesExplicitThirdPlaceSelection
   ]);
@@ -1477,13 +1477,12 @@ export function BracketBuilderClient({
   }, [hasUnsavedGroupStageChanges, isReadOnly, language]);
 
   useEffect(() => {
-    if (!usesExplicitThirdPlaceSelection || thirdPlaceRankings.length === explicitThirdPlaceSelectionIds.length) {
+    if (activeThirdPlaceOpenSlotIndex === null || activeThirdPlaceOpenSlotIndex < openThirdPlaceQualifierSlots) {
       return;
     }
 
-    thirdPlaceRankingsRef.current = explicitThirdPlaceSelectionIds;
-    setThirdPlaceRankings(explicitThirdPlaceSelectionIds);
-  }, [explicitThirdPlaceSelectionIds, thirdPlaceRankings.length, usesExplicitThirdPlaceSelection]);
+    setActiveThirdPlaceOpenSlotIndex(null);
+  }, [activeThirdPlaceOpenSlotIndex, openThirdPlaceQualifierSlots]);
 
   useEffect(() => {
     if (!thirdPlaceReplacementCandidateId || derivedThirdPlacePoolIds.has(thirdPlaceReplacementCandidateId)) {
@@ -1867,7 +1866,7 @@ export function BracketBuilderClient({
     if (kind === "group") {
       handleDropReorder(targetId);
     } else if (targetId.startsWith(THIRD_PLACE_OPEN_SLOT_DROP_ID_PREFIX)) {
-      handleDropThirdPlaceOpenSlot();
+      handleDropThirdPlaceOpenSlot(null, targetId);
     } else {
       handleDropThirdPlaceReorder(targetId);
     }
@@ -1902,9 +1901,6 @@ export function BracketBuilderClient({
   }
 
   function updateGroupRanking(groupName: string, nextRankedTeamIds: string[]) {
-    if (groupProjectionSources[groupName] === "score_applied") {
-      return;
-    }
     markBracketChanged();
     setHasInteracted(true);
     setGroupProjectionSources((current) => ({
@@ -1980,7 +1976,7 @@ export function BracketBuilderClient({
   }
 
   function applyTopTwoSlots(groupName: string, firstTeamId: string | null, secondTeamId: string | null) {
-    if (isReadOnly || groupProjectionSources[groupName] === "score_applied") {
+    if (isReadOnly) {
       return;
     }
 
@@ -2013,7 +2009,7 @@ export function BracketBuilderClient({
   }
 
   function selectGroupTeamIntoNextOpenSlot(teamId: string) {
-    if (!activeGroupName || isReadOnly || isActiveGroupScoreApplied) {
+    if (!activeGroupName || isReadOnly) {
       return;
     }
 
@@ -2045,7 +2041,7 @@ export function BracketBuilderClient({
   }
 
   function moveGroupTeamToTopTwoSlot(teamId: string, slotIndex: 0 | 1) {
-    if (!activeGroupName || isReadOnly || isActiveGroupScoreApplied) {
+    if (!activeGroupName || isReadOnly) {
       return;
     }
 
@@ -2080,7 +2076,7 @@ export function BracketBuilderClient({
   }
 
   function removeGroupTeamFromTopTwo(teamId: string) {
-    if (!activeGroupName || isReadOnly || isActiveGroupScoreApplied) {
+    if (!activeGroupName || isReadOnly) {
       return;
     }
 
@@ -2123,19 +2119,6 @@ export function BracketBuilderClient({
     setHasInteracted(true);
     hasTouchedThirdPlaceRankingRef.current = true;
     setHasTouchedThirdPlaceRanking(true);
-  }
-
-  function sortThirdPlaceSelectionByProbability(teamIds: string[]) {
-    return Array.from(new Set(teamIds.filter((teamId) => derivedThirdPlacePoolIds.has(teamId)))).sort((left, right) => {
-      const leftTeam = teamsById.get(left);
-      const rightTeam = teamsById.get(right);
-      if (!leftTeam || !rightTeam) {
-        return left.localeCompare(right);
-      }
-
-      const ratingDiff = getTeamRating(rightTeam) - getTeamRating(leftTeam);
-      return ratingDiff || leftTeam.name.localeCompare(rightTeam.name);
-    });
   }
 
   function getProbabilityRowsForGroup(groupName: string) {
@@ -2192,7 +2175,7 @@ export function BracketBuilderClient({
     const rankingIndex =
       selectedIndex >= 0
         ? selectedIndex
-        : Math.max(0, sortThirdPlaceSelectionByProbability([...committedThirdPlaceRankingIds, teamId]).indexOf(teamId));
+        : Math.max(0, normalizedThirdPlaceRankings.indexOf(teamId));
 
     return getThirdPlaceViaThirdProbabilityResult({
       team,
@@ -2241,17 +2224,74 @@ export function BracketBuilderClient({
     });
   }
 
-  function addExplicitThirdPlaceQualifier(teamId: string, replacedTeamId?: string) {
+  function getThirdPlaceOpenSlotInsertIndex(slotIndex?: number | null) {
+    const resolvedSlotIndex = slotIndex ?? activeThirdPlaceOpenSlotIndex;
+    if (resolvedSlotIndex === null || resolvedSlotIndex === undefined) {
+      return committedThirdPlaceRankingIds.length;
+    }
+
+    return clampNumber(
+      committedThirdPlaceRankingIds.length + resolvedSlotIndex,
+      0,
+      Math.max(0, requiredThirdPlaceQualifierCount - 1)
+    );
+  }
+
+  function getThirdPlaceOpenSlotIndexFromTarget(targetId?: string | null) {
+    if (!targetId?.startsWith(THIRD_PLACE_OPEN_SLOT_DROP_ID_PREFIX)) {
+      return null;
+    }
+
+    const parsedSlotIndex = Number.parseInt(targetId.slice(THIRD_PLACE_OPEN_SLOT_DROP_ID_PREFIX.length), 10);
+    return Number.isFinite(parsedSlotIndex) ? Math.max(0, parsedSlotIndex) : null;
+  }
+
+  function addExplicitThirdPlaceQualifier(teamId: string, replacedTeamId?: string, insertIndex?: number | null) {
     if (isReadOnly || !usesExplicitThirdPlaceSelection || !derivedThirdPlacePoolIds.has(teamId)) {
       return;
     }
 
     markThirdPlaceSelectionChanged();
-    const currentSelection = Array.from(
+    const existingSelection = Array.from(
       new Set(thirdPlaceRankingsRef.current.filter((candidateId) => derivedThirdPlacePoolIds.has(candidateId)))
-    ).filter((candidateId) => candidateId !== teamId && candidateId !== replacedTeamId);
-    updateThirdPlaceRankings(sortThirdPlaceSelectionByProbability([...currentSelection, teamId]));
+    );
+    const replacedIndex = replacedTeamId ? existingSelection.indexOf(replacedTeamId) : -1;
+    const currentSelection = existingSelection.filter((candidateId) => candidateId !== teamId && candidateId !== replacedTeamId);
+    const resolvedInsertIndex = replacedIndex >= 0
+      ? replacedIndex
+      : insertIndex ?? currentSelection.length;
+    const nextSelection = [...currentSelection];
+    nextSelection.splice(clampNumber(resolvedInsertIndex, 0, currentSelection.length), 0, teamId);
+    updateThirdPlaceRankings(nextSelection.slice(0, requiredThirdPlaceQualifierCount));
+    setActiveThirdPlaceOpenSlotIndex(null);
     setThirdPlaceReplacementCandidateId(null);
+  }
+
+  function selectExplicitThirdPlaceCandidate(teamId: string, insertIndex?: number | null) {
+    if (isReadOnly || !usesExplicitThirdPlaceSelection || !derivedThirdPlacePoolIds.has(teamId)) {
+      return;
+    }
+
+    if (committedThirdPlaceRankingIds.includes(teamId)) {
+      setActiveThirdPlaceOpenSlotIndex(null);
+      return;
+    }
+
+    if (openThirdPlaceQualifierSlots <= 0) {
+      setThirdPlaceReplacementCandidateId(teamId);
+      return;
+    }
+
+    addExplicitThirdPlaceQualifier(teamId, undefined, insertIndex);
+  }
+
+  function handleThirdPlaceOpenSlotClick(slotIndex: number) {
+    if (isReadOnly || !usesExplicitThirdPlaceSelection || openThirdPlaceQualifierSlots <= 0) {
+      return;
+    }
+
+    setActiveThirdPlaceOpenSlotIndex(slotIndex);
+    showAppToast({ tone: "tip", text: t(language, "bracket.thirdPlaceRulePickBelow") });
   }
 
   function moveThirdPlaceTeam(index: number, direction: -1 | 1) {
@@ -2310,11 +2350,10 @@ export function BracketBuilderClient({
           return;
         }
 
-        const insertIndex = targetSelectedIndex >= 0 ? targetSelectedIndex : committedThirdPlaceRankingIds.length;
-        const nextSelection = [...committedThirdPlaceRankingIds];
-        nextSelection.splice(insertIndex, 0, sourceTeamId);
-        markThirdPlaceSelectionChanged();
-        updateThirdPlaceRankings(nextSelection.slice(0, requiredThirdPlaceQualifierCount));
+        const insertIndex = targetSelectedIndex >= 0
+          ? targetSelectedIndex
+          : clampNumber(toIndex, 0, Math.max(0, requiredThirdPlaceQualifierCount - 1));
+        addExplicitThirdPlaceQualifier(sourceTeamId, undefined, insertIndex);
         draggedThirdPlaceTeamIdRef.current = null;
         setDraggedThirdPlaceTeamId(null);
         setDragOverThirdPlaceTeamId(null);
@@ -2324,7 +2363,7 @@ export function BracketBuilderClient({
       const selectedFromIndex = committedThirdPlaceRankingIds.indexOf(sourceTeamId);
       const selectedToIndex = targetSelectedIndex >= 0
         ? targetSelectedIndex
-        : committedThirdPlaceRankingIds.length - 1;
+        : clampNumber(toIndex, 0, Math.max(0, committedThirdPlaceRankingIds.length - 1));
 
       markThirdPlaceSelectionChanged();
       updateThirdPlaceRankings(reorderItems(committedThirdPlaceRankingIds, selectedFromIndex, selectedToIndex));
@@ -2344,8 +2383,9 @@ export function BracketBuilderClient({
     setDragOverThirdPlaceTeamId(null);
   }
 
-  function handleDropThirdPlaceOpenSlot(sourceTeamIdOverride?: string | null) {
+  function handleDropThirdPlaceOpenSlot(sourceTeamIdOverride?: string | null, targetOpenSlotId?: string | null) {
     const sourceTeamId = sourceTeamIdOverride ?? draggedThirdPlaceTeamIdRef.current ?? draggedThirdPlaceTeamId;
+    const targetOpenSlotIndex = getThirdPlaceOpenSlotIndexFromTarget(targetOpenSlotId);
 
     if (
       isReadOnly ||
@@ -2361,8 +2401,7 @@ export function BracketBuilderClient({
       return;
     }
 
-    markThirdPlaceSelectionChanged();
-    updateThirdPlaceRankings([...committedThirdPlaceRankingIds, sourceTeamId].slice(0, requiredThirdPlaceQualifierCount));
+    addExplicitThirdPlaceQualifier(sourceTeamId, undefined, getThirdPlaceOpenSlotInsertIndex(targetOpenSlotIndex));
     draggedThirdPlaceTeamIdRef.current = null;
     setDraggedThirdPlaceTeamId(null);
     setDragOverThirdPlaceTeamId(null);
@@ -2371,7 +2410,7 @@ export function BracketBuilderClient({
   function handleDropReorder(targetTeamId: string, sourceTeamIdOverride?: string | null) {
     const sourceTeamId = sourceTeamIdOverride ?? draggedTeamIdRef.current ?? draggedTeamId;
 
-    if (isReadOnly || !activeGroupName || isActiveGroupScoreApplied || !sourceTeamId) {
+    if (isReadOnly || !activeGroupName || !sourceTeamId) {
       draggedTeamIdRef.current = null;
       setDraggedTeamId(null);
       setDragOverTeamId(null);
@@ -2422,7 +2461,7 @@ export function BracketBuilderClient({
 
   function handleGroupPoolDragOver(event: DragEvent<HTMLElement>) {
     const sourceTeamId = draggedTeamIdRef.current ?? draggedTeamId;
-    if (isReadOnly || isActiveGroupScoreApplied || !sourceTeamId) {
+    if (isReadOnly || !sourceTeamId) {
       return;
     }
 
@@ -2879,6 +2918,7 @@ export function BracketBuilderClient({
         rank: index + 1
       }))
     });
+    updateThirdPlaceRankings(latestCommittedThirdPlaceRankingIds);
     committedSnapshotIsFinalRef.current = false;
     setHasInteracted(false);
     setChangedSinceAt(null);
@@ -2928,6 +2968,7 @@ export function BracketBuilderClient({
         rank: index + 1
       }))
     });
+    updateThirdPlaceRankings(latestCommittedThirdPlaceRankingIds);
     committedSnapshotIsFinalRef.current = true;
     setHasInteracted(false);
     topTwoSlotDraftsByGroupRef.current = {};
@@ -3228,9 +3269,9 @@ export function BracketBuilderClient({
           style={{
             left: customDragGhost.x - customDragGhost.offsetX,
             top: customDragGhost.y - customDragGhost.offsetY,
-            width: customDragGhost.width,
-            minHeight: customDragGhost.height,
-            transform: "scale(1.025)",
+            width: customDragGhost.kind === "third" ? Math.min(customDragGhost.width, 260) : customDragGhost.width,
+            minHeight: customDragGhost.kind === "third" ? Math.min(customDragGhost.height, 44) : customDragGhost.height,
+            transform: customDragGhost.kind === "third" ? "scale(0.98)" : "scale(1.025)",
             transformOrigin: `${customDragGhost.offsetX}px ${customDragGhost.offsetY}px`
           }}
         >
@@ -3566,17 +3607,17 @@ export function BracketBuilderClient({
                     previousGroupRowTopsRef.current.delete(team.id);
                   }
                 }}
-                draggable={Boolean(team) && !isReadOnly && !isActiveGroupScoreApplied && supportsNativeRowDrag}
+                draggable={Boolean(team) && !isReadOnly && supportsNativeRowDrag}
                 onPointerDown={(event) => {
                   if (team) {
-                    beginCustomTouchDrag(event, "group", team.id, isReadOnly || isActiveGroupScoreApplied);
+                    beginCustomTouchDrag(event, "group", team.id, isReadOnly);
                   }
                 }}
                 onPointerMove={handleCustomTouchDragMove}
                 onPointerUp={handleCustomTouchDragEnd}
                 onPointerCancel={() => clearCustomTouchDragState()}
                 onDragStart={(event) => {
-                  if (!team || isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag) {
+                  if (!team || isReadOnly || !supportsNativeRowDrag) {
                     return;
                   }
                   event.dataTransfer.effectAllowed = "move";
@@ -3592,7 +3633,7 @@ export function BracketBuilderClient({
                 }}
                 onDragOver={(event) => {
                   const sourceTeamId = draggedTeamIdRef.current ?? draggedTeamId;
-                  if (isReadOnly || isActiveGroupScoreApplied || !sourceTeamId) {
+                  if (isReadOnly || !sourceTeamId) {
                     return;
                   }
                   event.preventDefault();
@@ -3614,7 +3655,7 @@ export function BracketBuilderClient({
                   team
                     ? "border-accent-light bg-accent-light/35 text-gray-950"
                     : "border-gray-100 bg-white text-gray-400"
-                } ${isDragOverSlot ? "ring-2 ring-accent ring-inset" : ""} ${draggedTeamId && team?.id === draggedTeamId ? "opacity-45" : ""} ${team && supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "cursor-grab active:cursor-grabbing" : ""}`}
+                } ${isDragOverSlot ? "ring-2 ring-accent ring-inset" : ""} ${draggedTeamId && team?.id === draggedTeamId ? "opacity-45" : ""} ${team && supportsNativeRowDrag && !isReadOnly ? "cursor-grab active:cursor-grabbing" : ""}`}
               >
                 <div className="flex justify-center">
                   <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent text-[12px] font-black text-accent-text">
@@ -3637,7 +3678,7 @@ export function BracketBuilderClient({
                   {pickProbability ? (
                     <SelectionProbabilityBadge probability={pickProbability.probability} language={language} />
                   ) : null}
-                  {team && !isReadOnly && !isActiveGroupScoreApplied ? (
+                  {team && !isReadOnly ? (
                     <button
                       type="button"
                       draggable={false}
@@ -3686,16 +3727,16 @@ export function BracketBuilderClient({
                   key={team.id}
                   type="button"
                   data-group-team-id={team.id}
-                  draggable={!isReadOnly && !isActiveGroupScoreApplied && supportsNativeRowDrag}
+                  draggable={!isReadOnly && supportsNativeRowDrag}
                   onClick={() => selectGroupTeamIntoNextOpenSlot(team.id)}
                   onPointerDown={(event) =>
-                    beginCustomTouchDrag(event, "group", team.id, isReadOnly || isActiveGroupScoreApplied, "select-next")
+                    beginCustomTouchDrag(event, "group", team.id, isReadOnly, "select-next")
                   }
                   onPointerMove={handleCustomTouchDragMove}
                   onPointerUp={handleCustomTouchDragEnd}
                   onPointerCancel={() => clearCustomTouchDragState()}
                   onDragStart={(event) => {
-                    if (isReadOnly || isActiveGroupScoreApplied || !supportsNativeRowDrag) {
+                    if (isReadOnly || !supportsNativeRowDrag) {
                       return;
                     }
                     event.dataTransfer.effectAllowed = "move";
@@ -3713,7 +3754,7 @@ export function BracketBuilderClient({
                   onDrop={handleGroupPoolDrop}
                   className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-[0.85rem] border border-gray-100 bg-white px-1.5 py-2 text-center shadow-[0_1px_5px_rgba(15,23,42,0.04)] transition hover:border-accent-light hover:bg-accent-light/10 focus:outline-none focus:ring-2 focus:ring-accent-light sm:px-2 [touch-action:pan-y] ${
                     draggedTeamId === team.id ? "opacity-45" : ""
-                  } ${supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "cursor-grab active:cursor-grabbing" : ""}`}
+                  } ${supportsNativeRowDrag && !isReadOnly ? "cursor-grab active:cursor-grabbing" : ""}`}
                   aria-label={t(language, "bracket.topTwoAvailableTeamAria", { teamName: team.name })}
                 >
                   <span aria-hidden className="text-[1.2rem] leading-none sm:text-[1.35rem]">{team.flagEmoji}</span>
@@ -3817,6 +3858,15 @@ export function BracketBuilderClient({
                       team,
                       rankingIndex: probabilityIndex
                     });
+                    const canSelectThirdPlaceCandidate =
+                      usesExplicitThirdPlaceSelection &&
+                      !isReadOnly &&
+                      !isSelectedThirdPlaceQualifier &&
+                      derivedThirdPlacePoolIds.has(team.id);
+                    const thirdPlaceCandidateInsertIndex =
+                      activeThirdPlaceOpenSlotIndex !== null
+                        ? getThirdPlaceOpenSlotInsertIndex(activeThirdPlaceOpenSlotIndex)
+                        : clampNumber(index, 0, Math.max(0, requiredThirdPlaceQualifierCount - 1));
                     return (
                       <div
                         data-third-team-id={team.id}
@@ -3875,8 +3925,28 @@ export function BracketBuilderClient({
                           event.preventDefault();
                           handleDropThirdPlaceReorder(team.id, getDragTransferTeamId(event));
                         }}
+                        role={canSelectThirdPlaceCandidate ? "button" : undefined}
+                        tabIndex={canSelectThirdPlaceCandidate ? 0 : undefined}
+                        aria-label={
+                          canSelectThirdPlaceCandidate
+                            ? t(language, "bracket.thirdPlaceAddAdvAria", { teamName: team.name })
+                            : undefined
+                        }
+                        onKeyDown={(event) => {
+                          if (!canSelectThirdPlaceCandidate || (event.key !== "Enter" && event.key !== " ")) {
+                            return;
+                          }
+
+                          event.preventDefault();
+                          selectExplicitThirdPlaceCandidate(team.id, thirdPlaceCandidateInsertIndex);
+                        }}
                         onClick={(event) => {
                           if (!isActivationClickTarget(event.target)) {
+                            return;
+                          }
+
+                          if (canSelectThirdPlaceCandidate) {
+                            selectExplicitThirdPlaceCandidate(team.id, thirdPlaceCandidateInsertIndex);
                             return;
                           }
 
@@ -3889,12 +3959,20 @@ export function BracketBuilderClient({
                               const openSlotId = `${THIRD_PLACE_OPEN_SLOT_DROP_ID_PREFIX}${slotIndex}`;
                               const slotNumber = committedThirdPlaceRankingIds.length + slotIndex + 1;
                               const isDragOverOpenSlot = dragOverThirdPlaceTeamId === openSlotId;
+                              const isActiveOpenSlot = activeThirdPlaceOpenSlotIndex === slotIndex;
 
                               return (
-                                <div
+                                <button
+                                  type="button"
                                   key={openSlotId}
                                   data-third-open-slot-id={openSlotId}
+                                  data-no-row-drag="true"
                                   data-disable-group-swipe="true"
+                                  disabled={isReadOnly}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleThirdPlaceOpenSlotClick(slotIndex);
+                                  }}
                                   onDragOver={(event) => {
                                     const sourceTeamId = draggedThirdPlaceTeamIdRef.current ?? draggedThirdPlaceTeamId;
                                     if (
@@ -3908,6 +3986,7 @@ export function BracketBuilderClient({
                                     }
 
                                     event.preventDefault();
+                                    event.stopPropagation();
                                     event.dataTransfer.dropEffect = "move";
                                     setDragOverThirdPlaceTeamId(openSlotId);
                                   }}
@@ -3918,10 +3997,11 @@ export function BracketBuilderClient({
                                   }}
                                   onDrop={(event) => {
                                     event.preventDefault();
-                                    handleDropThirdPlaceOpenSlot(getDragTransferTeamId(event));
+                                    event.stopPropagation();
+                                    handleDropThirdPlaceOpenSlot(getDragTransferTeamId(event), openSlotId);
                                   }}
-                                  className={`grid grid-cols-[1.7rem_minmax(0,1fr)_2.1rem] items-center gap-1 rounded-[1rem] border border-dashed px-2 py-1.5 text-gray-400 transition-shadow select-none [-webkit-touch-callout:none] ${
-                                    isDragOverOpenSlot
+                                  className={`grid w-full grid-cols-[1.7rem_minmax(0,1fr)_2.1rem] items-center gap-1 rounded-[1rem] border border-dashed px-2 py-1.5 text-left text-gray-400 transition-shadow select-none [-webkit-touch-callout:none] disabled:cursor-not-allowed ${
+                                    isDragOverOpenSlot || isActiveOpenSlot
                                       ? "border-accent bg-accent-light/20 ring-1 ring-accent ring-inset"
                                       : "border-gray-200 bg-gray-50/90"
                                   }`}
@@ -3936,11 +4016,13 @@ export function BracketBuilderClient({
                                   </span>
                                   <span
                                     aria-hidden
-                                    className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 text-xs font-semibold text-gray-400"
+                                    className={`inline-flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${
+                                      isActiveOpenSlot ? "border-accent text-accent-dark" : "border-gray-300 text-gray-400"
+                                    }`}
                                   >
                                     +
                                   </span>
-                                </div>
+                                </button>
                               );
                             })}
                           </div>
@@ -3972,7 +4054,7 @@ export function BracketBuilderClient({
                             event.stopPropagation();
                             handleDropThirdPlaceReorder(team.id, getDragTransferTeamId(event));
                           }}
-                          className={`grid grid-cols-[1.7rem_minmax(0,1fr)_5.45rem_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] sm:grid-cols-[1.7rem_minmax(0,1fr)_6.35rem_2.1rem] sm:gap-1.5 sm:px-2.5 [touch-action:manipulation] ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : "border-gray-200 bg-white"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${supportsNativeRowDrag && canDragThirdPlaceRow ? "cursor-grab active:cursor-grabbing" : ""}`}
+                          className={`grid grid-cols-[1.7rem_minmax(0,1fr)_5.45rem_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] sm:grid-cols-[1.7rem_minmax(0,1fr)_6.35rem_2.1rem] sm:gap-1.5 sm:px-2.5 [touch-action:manipulation] ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : canSelectThirdPlaceCandidate && activeThirdPlaceOpenSlotIndex !== null ? "border-accent-light bg-accent-light/10" : "border-gray-200 bg-white"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${supportsNativeRowDrag && canDragThirdPlaceRow ? "cursor-grab active:cursor-grabbing" : canSelectThirdPlaceCandidate ? "cursor-pointer" : ""}`}
                         >
                           <div className="flex justify-start">
                             <span
