@@ -3192,36 +3192,43 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
           <h3 className="text-xl font-black">{tg("invitedGroups")}</h3>
           <div className="space-y-2">
             {invitedSummaryGroups.map((group) => (
-              <div
+              <ManagementCard
                 key={`invited-${group.id}`}
-                className="ui-card px-3 py-3"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex items-center gap-3">
-                    <Avatar name={group.name} avatarUrl={group.avatarUrl} size="sm" />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-black leading-tight text-gray-950">{group.name}</p>
-                      <p className="mt-0.5 text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">
+                title={
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar name={group.name} avatarUrl={group.avatarUrl} size="sm" />
+                        <div className="min-w-0 truncate text-base font-black leading-tight text-gray-950">
+                          {group.name}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-gray-700">
                         {tg("membersCount", { count: group.memberCount ?? 0 })}
-                      </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex min-w-0 flex-wrap gap-2">
+                      <ManagementBadge label={t(groupsLanguage, "leaderboard.invited")} tone="neutral" />
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Link
-                      href={getGroupLeaderboardHref(group)}
-                      className="inline-flex rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
-                    >
-                      {tg("leaderboard")}
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={() => setLeaveGroupConfirmId(group.id)}
-                      disabled={leaveGroupPendingId === group.id}
-                      className="inline-flex rounded-[0.85rem] border border-red-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {t(groupsLanguage, "leaderboard.leaveGroup")}
-                    </button>
-                  </div>
+                }
+                className="bg-gray-50 !pb-2.5"
+              >
+                <div className="mt-1 grid gap-2 sm:flex sm:justify-end">
+                  <Link
+                    href={getGroupLeaderboardHref(group)}
+                    className="inline-flex w-full justify-center rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark sm:w-auto"
+                  >
+                    {tg("leaderboard")}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => setLeaveGroupConfirmId(group.id)}
+                    disabled={leaveGroupPendingId === group.id}
+                    className="inline-flex w-full justify-center rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                  >
+                    {t(groupsLanguage, "leaderboard.leaveGroup")}
+                  </button>
                 </div>
                 {leaveGroupConfirmId === group.id ? (
                   <div className="mt-3 rounded-[1rem] border border-red-100 bg-red-50/80 px-3 py-3 text-center">
@@ -3253,7 +3260,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     </div>
                   </div>
                 ) : null}
-              </div>
+              </ManagementCard>
             ))}
           </div>
         </section>

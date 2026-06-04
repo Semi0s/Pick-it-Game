@@ -64,6 +64,11 @@ type TeamRow = {
   flag_emoji?: string | null;
 };
 
+type RankedThirdPlaceSlotInput = {
+  teamId: string;
+  rank: number;
+};
+
 export type SavePredictionResult =
   | {
       ok: true;
@@ -80,6 +85,10 @@ export type SaveLightSeedBuilderInput = {
     rankedTeamIds: string[];
   }>;
   rankedThirdPlaceTeamIds: string[];
+  rankedThirdPlaceSlots?: Array<{
+    teamId: string;
+    rank: number;
+  }>;
   commitThirdPlaceRankings?: boolean;
   finalizeTournamentEntry?: boolean;
 };
@@ -93,6 +102,23 @@ export type SaveLightSeedBuilderResult =
       ok: false;
       message: string;
     };
+
+function normalizeThirdPlaceSlotInputs(input: SaveLightSeedBuilderInput): RankedThirdPlaceSlotInput[] {
+  const sourceRows =
+    input.rankedThirdPlaceSlots && input.rankedThirdPlaceSlots.length > 0
+      ? input.rankedThirdPlaceSlots
+      : input.rankedThirdPlaceTeamIds.map((teamId, index) => ({
+          teamId,
+          rank: index + 1
+        }));
+
+  return sourceRows
+    .map((row) => ({
+      teamId: row.teamId.trim(),
+      rank: Math.trunc(row.rank)
+    }))
+    .filter((row) => row.teamId.length > 0 && Number.isFinite(row.rank));
+}
 
 export async function saveGroupPredictionAction(input: SavePredictionInput): Promise<SavePredictionResult> {
   const userResult = await getCurrentUserId();
@@ -313,7 +339,7 @@ export async function saveLightSeedBuilderAction(
         awayTeamId: null
       }))
     );
-    let requestedThirdPlaceIds: string[] = [];
+    let requestedThirdPlaceRows: RankedThirdPlaceSlotInput[] = [];
     let availableThirdPlaceTeamIds = new Set<string>();
     let completeRowsByGroup = new Map<string, ProjectedGroupStandings["rows"]>();
 
@@ -326,22 +352,36 @@ export async function saveLightSeedBuilderAction(
       );
       const availableThirdPlacePool = buildQualifiedTeamSeeds(completeRowsByGroup, completeRowsByGroup.size).rankedThirdPlaceTeams;
       availableThirdPlaceTeamIds = new Set(availableThirdPlacePool.map((team) => team.teamId));
-      const baseThirdPlaceIds = input.commitThirdPlaceRankings
-        ? input.rankedThirdPlaceTeamIds
-        : existingSnapshot.thirdPlaceRankings
-            .slice()
-            .sort((left, right) => left.rank - right.rank)
-            .map((row) => row.teamId);
-      requestedThirdPlaceIds = Array.from(
-        new Set(baseThirdPlaceIds.filter((teamId) => availableThirdPlaceTeamIds.has(teamId)))
-      );
+      const baseThirdPlaceRows = input.commitThirdPlaceRankings
+        ? normalizeThirdPlaceSlotInputs(input)
+        : existingSnapshot.thirdPlaceRankings.map((row) => ({
+            teamId: row.teamId,
+            rank: row.rank
+          }));
+      requestedThirdPlaceRows = baseThirdPlaceRows
+        .filter((row) => row.rank >= 1 && row.rank <= requiredThirdPlaceCount)
+        .filter((row) => availableThirdPlaceTeamIds.has(row.teamId))
+        .sort((left, right) => left.rank - right.rank);
     }
 
-    if (input.commitThirdPlaceRankings && requestedThirdPlaceIds.length !== input.rankedThirdPlaceTeamIds.length) {
+    const requestedThirdPlaceIds = requestedThirdPlaceRows.map((row) => row.teamId);
+    const inputThirdPlaceRows = normalizeThirdPlaceSlotInputs(input);
+    const inputThirdPlaceTeamIds = inputThirdPlaceRows.map((row) => row.teamId);
+    const inputThirdPlaceRanks = inputThirdPlaceRows.map((row) => row.rank);
+
+    if (
+      input.commitThirdPlaceRankings &&
+      (new Set(inputThirdPlaceTeamIds).size !== inputThirdPlaceTeamIds.length ||
+        new Set(inputThirdPlaceRanks).size !== inputThirdPlaceRanks.length)
+    ) {
       return { ok: false, message: "Each third-place qualifier can only be ranked once." };
     }
 
-    if (input.commitThirdPlaceRankings && requestedThirdPlaceIds.some((teamId) => !availableThirdPlaceTeamIds.has(teamId))) {
+    if (
+      input.commitThirdPlaceRankings &&
+      (requestedThirdPlaceRows.length !== inputThirdPlaceRows.length ||
+        inputThirdPlaceRows.some((row) => row.rank < 1 || row.rank > requiredThirdPlaceCount))
+    ) {
       return { ok: false, message: "Only teams ranked 3rd in their group can be selected as third-place qualifiers." };
     }
 
@@ -390,10 +430,10 @@ export async function saveLightSeedBuilderAction(
           : [];
       })
     );
-    const thirdPlaceRows = requestedThirdPlaceIds.map((teamId, index) => ({
+    const thirdPlaceRows = requestedThirdPlaceRows.map((row) => ({
       user_id: userResult.userId,
-      team_id: teamId,
-      rank_position: index + 1,
+      team_id: row.teamId,
+      rank_position: row.rank,
       updated_at: new Date().toISOString()
     }));
 
@@ -590,12 +630,17 @@ export async function applyGroupBracketFromScoresAction(input: {
     const requiredThirdPlaceCount = getRequiredThirdPlaceQualifierCount(roundOf32Placeholders);
     const availableThirdPlacePool = buildQualifiedTeamSeeds(completeRowsByGroup, completeRowsByGroup.size).rankedThirdPlaceTeams;
     const availableThirdPlaceTeamIds = new Set(availableThirdPlacePool.map((team) => team.teamId));
-    const previousThirdPlaceIds = existingSnapshot.thirdPlaceRankings
+    const previousThirdPlaceRows = existingSnapshot.thirdPlaceRankings
       .slice()
       .sort((left, right) => left.rank - right.rank)
-      .map((row) => row.teamId);
-    const preservedThirdPlaceIds = previousThirdPlaceIds.filter((teamId) => availableThirdPlaceTeamIds.has(teamId));
-    const invalidatedThirdPlaceCount = previousThirdPlaceIds.length - preservedThirdPlaceIds.length;
+      .map((row) => ({
+        teamId: row.teamId,
+        rank: row.rank
+      }))
+      .filter((row) => row.rank >= 1 && row.rank <= requiredThirdPlaceCount);
+    const preservedThirdPlaceRows = previousThirdPlaceRows.filter((row) => availableThirdPlaceTeamIds.has(row.teamId));
+    const preservedThirdPlaceIds = preservedThirdPlaceRows.map((row) => row.teamId);
+    const invalidatedThirdPlaceCount = previousThirdPlaceRows.length - preservedThirdPlaceRows.length;
 
     if (preservedThirdPlaceIds.length >= requiredThirdPlaceCount) {
       const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeedsFromManualThirdPlaceRanking(
@@ -625,10 +670,10 @@ export async function applyGroupBracketFromScoresAction(input: {
           : [];
       })
     );
-    const thirdPlaceRows = preservedThirdPlaceIds.slice(0, requiredThirdPlaceCount).map((teamId, index) => ({
+    const thirdPlaceRows = preservedThirdPlaceRows.slice(0, requiredThirdPlaceCount).map((row) => ({
       user_id: userResult.userId,
-      team_id: teamId,
-      rank_position: index + 1,
+      team_id: row.teamId,
+      rank_position: row.rank,
       updated_at: new Date().toISOString()
     }));
 
