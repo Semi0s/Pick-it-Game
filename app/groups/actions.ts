@@ -277,9 +277,13 @@ export async function saveLightSeedBuilderAction(
     for (const ranking of incomingRankings) {
       mergedRankingsByGroup.set(ranking.groupName, ranking.rankedTeamIds);
     }
-    const rankings: GroupSeedRankingInput[] = Array.from(mergedRankingsByGroup.entries())
-      .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
-      .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
+    const defaultRankedTeamIdsByGroup = buildDefaultRankedTeamIdsByGroup(teams);
+    const rankings: GroupSeedRankingInput[] = completeTopTwoRankingsForProjection(
+      Array.from(mergedRankingsByGroup.entries())
+        .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
+        .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds })),
+      defaultRankedTeamIdsByGroup
+    );
     const topTwoCompletionStatus = getGroupTopTwoCompletionStatus({
       groupNames: expectedGroupNames,
       rankings,
@@ -289,6 +293,13 @@ export async function saveLightSeedBuilderAction(
       return {
         ok: false,
         message: "Choose first and second place for every group before ranking third-place qualifiers."
+      };
+    }
+
+    if (input.finalizeTournamentEntry && !topTwoCompletionStatus.isComplete) {
+      return {
+        ok: false,
+        message: "Choose first and second place for every group before finishing your bracket."
       };
     }
     const requiredThirdPlaceCount = getRequiredThirdPlaceQualifierCount(
@@ -418,6 +429,13 @@ export async function saveLightSeedBuilderAction(
     }
 
     const existingTournamentSettings = await fetchTournamentEntrySettings(adminSupabase, userResult.userId).catch(() => null);
+    if (input.finalizeTournamentEntry && requestedThirdPlaceIds.length !== requiredThirdPlaceCount) {
+      return {
+        ok: false,
+        message: `Choose ${requiredThirdPlaceCount} third-place qualifiers before finishing your bracket.`
+      };
+    }
+
     if (input.finalizeTournamentEntry) {
       if (!canActivateTournamentEntry()) {
         return { ok: false, message: "Tournament entries are locked. You can still preview this mode, but it will not count." };
@@ -545,9 +563,13 @@ export async function applyGroupBracketFromScoresAction(input: {
       targetGroup.rows.slice().sort((left, right) => left.rank - right.rank).map((row) => row.teamId)
     );
 
-    const rankings: GroupSeedRankingInput[] = Array.from(mergedRankingsByGroup.entries())
-      .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
-      .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
+    const defaultRankedTeamIdsByGroup = buildDefaultRankedTeamIdsByGroup(teams);
+    const rankings: GroupSeedRankingInput[] = completeTopTwoRankingsForProjection(
+      Array.from(mergedRankingsByGroup.entries())
+        .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
+        .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds })),
+      defaultRankedTeamIdsByGroup
+    );
     const roundOf32Placeholders = ((matchRows ?? []) as MatchRow[])
       .filter((match) => match.stage === "r32" || match.stage === "round_of_32")
       .map((match) => ({
@@ -692,6 +714,66 @@ export async function getCurrentUserId(): Promise<{ ok: true; userId: string } |
   }
 
   return { ok: true, userId: user.id };
+}
+
+function buildDefaultRankedTeamIdsByGroup(
+  teams: Array<{
+    id: string;
+    name: string;
+    groupName: string;
+    fifaRank?: number | null;
+  }>
+) {
+  const teamsByGroup = new Map<string, typeof teams>();
+
+  for (const team of teams) {
+    const groupName = normalizeGroupKey(team.groupName) ?? team.groupName;
+    const current = teamsByGroup.get(groupName) ?? [];
+    current.push(team);
+    teamsByGroup.set(groupName, current);
+  }
+
+  return new Map(
+    Array.from(teamsByGroup.entries()).map(([groupName, groupTeams]) => [
+      groupName,
+      groupTeams
+        .slice()
+        .sort((left, right) => {
+          const rankDelta = (left.fifaRank ?? Number.MAX_SAFE_INTEGER) - (right.fifaRank ?? Number.MAX_SAFE_INTEGER);
+          return rankDelta || left.name.localeCompare(right.name);
+        })
+        .map((team) => team.id)
+    ])
+  );
+}
+
+function completeTopTwoRankingsForProjection(
+  rankings: GroupSeedRankingInput[],
+  defaultRankedTeamIdsByGroup: ReadonlyMap<string, readonly string[]>
+) {
+  return rankings.map((ranking) => {
+    const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
+    const defaultTeamIds = defaultRankedTeamIdsByGroup.get(groupName) ?? [];
+    const validTeamIds = new Set(defaultTeamIds);
+    const rankedTeamIds = Array.from(
+      new Set(ranking.rankedTeamIds.map((teamId) => teamId?.trim()).filter((teamId): teamId is string => Boolean(teamId)))
+    ).filter((teamId) => validTeamIds.size === 0 || validTeamIds.has(teamId));
+
+    if (!rankedTeamIds[0] || !rankedTeamIds[1] || rankedTeamIds[0] === rankedTeamIds[1]) {
+      return {
+        groupName,
+        rankedTeamIds
+      };
+    }
+
+    return {
+      groupName,
+      rankedTeamIds: [
+        ...rankedTeamIds,
+        ...defaultTeamIds.filter((teamId) => !rankedTeamIds.includes(teamId))
+      ]
+    };
+  });
 }
 
 function deriveOutcome(

@@ -40,7 +40,7 @@ export function parseUnsavedGroupStageDraft(rawValue: string | null | undefined)
     return {
       groupRankings,
       thirdPlaceRankings: Array.isArray(draft.thirdPlaceRankings)
-        ? draft.thirdPlaceRankings.filter((teamId): teamId is string => typeof teamId === "string" && teamId.length > 0)
+        ? draft.thirdPlaceRankings.filter((teamId): teamId is string => typeof teamId === "string")
         : [],
       touchedGroupNames: Array.isArray(draft.touchedGroupNames)
         ? draft.touchedGroupNames.filter((groupName): groupName is string => typeof groupName === "string" && groupName.length > 0)
