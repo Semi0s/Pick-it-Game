@@ -450,29 +450,69 @@ select {
   }
 
   .triptych-scoring-chart {
-    width: calc(100% + 0.9rem);
-    margin-inline: -0.45rem;
+    --triptych-chart-bleed: 1.4rem;
+    width: calc(100% + var(--triptych-chart-bleed));
+    margin-inline: calc(var(--triptych-chart-bleed) / -2);
+    padding-inline: clamp(0.55rem, 1.8vw, 0.95rem);
     height: clamp(104px, 34dvh, 174px);
     max-height: 174px;
     min-height: 104px;
   }
 
   .triptych-scoring-preview-chart {
-    width: calc(100% + 0.9rem);
-    margin-inline: -0.45rem;
+    --triptych-chart-bleed: 1.4rem;
+    width: calc(100% + var(--triptych-chart-bleed));
+    margin-inline: calc(var(--triptych-chart-bleed) / -2);
+    padding-inline: clamp(0.55rem, 1.8vw, 0.95rem);
     height: clamp(122px, 36dvh, 176px);
     max-height: 176px;
     min-height: 122px;
   }
 
+  @media (min-width: 640px) {
+    .triptych-scoring-chart,
+    .triptych-scoring-preview-chart {
+      --triptych-chart-bleed: 2.4rem;
+      padding-inline: 1rem;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .triptych-scoring-chart,
+    .triptych-scoring-preview-chart {
+      --triptych-chart-bleed: 3.4rem;
+      padding-inline: 1.15rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .triptych-scoring-chart,
+    .triptych-scoring-preview-chart {
+      --triptych-chart-bleed: 4.4rem;
+      padding-inline: 1.35rem;
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .triptych-scoring-chart,
+    .triptych-scoring-preview-chart {
+      --triptych-chart-bleed: 5.2rem;
+      padding-inline: 1.55rem;
+    }
+  }
+
   @media (orientation: landscape) and (max-height: 520px) and (max-width: 950px) {
     .triptych-scoring-chart {
+      --triptych-chart-bleed: 0.9rem;
+      padding-inline: 0.45rem;
       height: clamp(70px, 24dvh, 104px);
       max-height: 104px;
       min-height: 70px;
     }
 
     .triptych-scoring-preview-chart {
+      --triptych-chart-bleed: 0.9rem;
+      padding-inline: 0.45rem;
       height: clamp(74px, 24dvh, 108px);
       max-height: 108px;
       min-height: 74px;

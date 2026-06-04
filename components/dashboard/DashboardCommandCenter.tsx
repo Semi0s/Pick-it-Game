@@ -63,6 +63,14 @@ const DASHBOARD_TRIPTYCH_THEME_STORAGE_KEY = "pickit:dashboard-triptych-theme";
 const FALLBACK_TRIPTYCH_DARK_ACCENT_STYLE = getTriptychDarkAccentStyle({ r: 159, g: 229, b: 143 });
 const SCENARIO_IMPACT_SWIPE_THRESHOLD_PX = 36;
 const DEFAULT_THIRD_PLACE_QUALIFIER_COUNT = 8;
+const TRIPTYCH_SCORING_PREVIEW_POINTS = [
+  { label: "Lock", saved: 0, actual: 0 },
+  { label: "Groups", saved: 18, actual: 12 },
+  { label: "R16", saved: 39, actual: 34 },
+  { label: "QF", saved: 58, actual: 64 },
+  { label: "SF", saved: 76, actual: 70 },
+  { label: "Final", saved: 94, actual: 104 }
+];
 
 type TriptychLeftPanelViewState = {
   isScoringLensOpen: boolean;
@@ -475,7 +483,7 @@ function TriptychScoringOutlookContent({
 
     return (
       <div
-        className="flex h-full min-w-0 translate-y-1 flex-col items-center justify-center px-1 pb-1 text-center"
+        className="flex h-full w-full min-w-0 translate-y-1 flex-col items-center justify-center px-1 pb-1 text-center"
         aria-label={ariaLabel}
       >
         <ScoringLensTitle label={t(language, "dashboard.scoringTrack")} theme={theme} />
@@ -503,7 +511,7 @@ function TriptychScoringOutlookContent({
 
   return (
     <div
-      className="flex h-full min-w-0 translate-y-1 flex-col items-center justify-center px-0 pb-0 pt-0 text-center"
+      className="flex h-full w-full min-w-0 translate-y-1 flex-col items-center justify-center px-0 pb-0 pt-0 text-center"
       aria-label={t(language, "dashboard.scoringOutlookAria", {
         label: outlookLabel ?? t(language, "dashboard.scoringWaitingToStart")
       })}
@@ -595,19 +603,20 @@ function TriptychScoringSparkline({
         {t(language, "dashboard.scoringAxisPoints")}
       </span>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
+        <LineChart data={chartData} margin={{ top: 8, right: 6, bottom: 0, left: -2 }}>
           <CartesianGrid stroke={gridStroke} strokeWidth={0.7} strokeDasharray="1 5" />
           <XAxis
             dataKey="label"
             height={12}
             interval="preserveStartEnd"
             minTickGap={10}
+            padding={{ left: 12, right: 12 }}
             axisLine={false}
             tickLine={false}
             tick={{ fill: tickFill, fontSize: 6, fontWeight: 600 }}
           />
           <YAxis
-            width={20}
+            width={14}
             domain={yDomain}
             tickCount={3}
             axisLine={false}
@@ -618,7 +627,7 @@ function TriptychScoringSparkline({
             type="monotone"
             dataKey="projected"
             stroke={savedStroke}
-            strokeWidth={2}
+            strokeWidth={1.45}
             dot={false}
             activeDot={false}
             isAnimationActive={false}
@@ -627,7 +636,7 @@ function TriptychScoringSparkline({
             type="monotone"
             dataKey="actual"
             stroke={actualStroke}
-            strokeWidth={2}
+            strokeWidth={1.45}
             dot={false}
             activeDot={false}
             isAnimationActive={false}
@@ -645,78 +654,70 @@ function TriptychScoringPreviewChart({
   language?: string | null;
   theme: TriptychTheme;
 }) {
-  const axisStroke = theme === "dark" ? "rgba(226, 232, 240, 0.38)" : "rgba(100, 116, 139, 0.34)";
-  const tickStroke = theme === "dark" ? "rgba(226, 232, 240, 0.32)" : "rgba(100, 116, 139, 0.26)";
-  const gridStroke = theme === "dark" ? "rgba(226, 232, 240, 0.28)" : "rgba(100, 116, 139, 0.26)";
-  const labelFill = theme === "dark" ? "rgba(226, 232, 240, 0.72)" : "rgba(71, 85, 105, 0.68)";
-  const valueFill = theme === "dark" ? "rgba(226, 232, 240, 0.58)" : "rgba(71, 85, 105, 0.58)";
-  const waitingFill = theme === "dark" ? "#fca5a5" : "#b91c1c";
-  const yGuides = [
-    { y: 12, label: "100" },
-    { y: 69, label: "50" },
-    { y: 126, label: "0" }
-  ];
-  const xGuides = [42, 66, 90, 116];
-
+  const savedStroke = theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)";
+  const actualStroke = theme === "dark" ? "#fbbf24" : "#d97706";
+  const axisStroke = theme === "dark" ? "rgba(226, 232, 240, 0.28)" : "rgba(100, 116, 139, 0.26)";
+  const gridStroke = theme === "dark" ? "rgba(226, 232, 240, 0.24)" : "rgba(100, 116, 139, 0.24)";
+  const tickFill = theme === "dark" ? "rgba(226, 232, 240, 0.58)" : "rgba(71, 85, 105, 0.58)";
+  const waitingClasses = theme === "dark" ? "text-red-200" : "text-red-700";
   return (
     <div
-      className="triptych-scoring-preview-chart mt-1"
+      className="triptych-scoring-preview-chart relative mt-1"
       aria-label={t(language, "dashboard.scoringPreviewAria")}
     >
-      <svg viewBox="0 0 120 150" role="img" className="h-full w-full overflow-visible">
-        {yGuides.map(({ y }) => (
-          <line key={`grid-y-${y}`} x1="20" y1={y} x2="116" y2={y} stroke={gridStroke} strokeWidth="0.95" strokeDasharray="1 4" />
-        ))}
-        {xGuides.map((x) => (
-          <line key={`grid-x-${x}`} x1={x} y1="12" x2={x} y2="126" stroke={gridStroke} strokeWidth="0.95" strokeDasharray="1 4" />
-        ))}
-        <line x1="20" y1="12" x2="20" y2="126" stroke={axisStroke} strokeWidth="1.2" strokeLinecap="round" />
-        <line x1="20" y1="126" x2="116" y2="126" stroke={axisStroke} strokeWidth="1.2" strokeLinecap="round" />
-        {yGuides.map(({ y, label }) => (
-          <g key={`y-${label}`}>
-            <line x1="16" y1={y} x2="20" y2={y} stroke={tickStroke} strokeWidth="1.4" strokeLinecap="round" />
-            <text x="13" y={y + 2.5} fill={valueFill} fontSize="6.5" fontWeight="600" textAnchor="end">
-              {label}
-            </text>
-          </g>
-        ))}
-        {xGuides.slice(0, -1).map((x) => (
-          <line key={`x-${x}`} x1={x} y1="126" x2={x} y2="130" stroke={tickStroke} strokeWidth="1.4" strokeLinecap="round" />
-        ))}
-        <text
-          x="20"
-          y="8"
-          fill={labelFill}
-          fontSize="6"
-          fontWeight="600"
-          letterSpacing="0.08em"
-          textAnchor="start"
-        >
-          {t(language, "dashboard.scoringAxisPoints")}
-        </text>
-        <text
-          x="68"
-          y="72"
-          fill={waitingFill}
-          fontSize="8.2"
-          fontWeight="800"
-          letterSpacing="0.11em"
-          textAnchor="middle"
-        >
+      <span
+        aria-hidden
+        className={`pointer-events-none absolute left-0 top-0 z-10 text-[6px] font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}
+      >
+        {t(language, "dashboard.scoringAxisPoints")}
+      </span>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={TRIPTYCH_SCORING_PREVIEW_POINTS} margin={{ top: 10, right: 6, bottom: 0, left: -2 }}>
+          <CartesianGrid stroke={gridStroke} strokeWidth={0.75} strokeDasharray="1 5" />
+          <XAxis
+            dataKey="label"
+            height={12}
+            interval="preserveStartEnd"
+            minTickGap={8}
+            padding={{ left: 12, right: 12 }}
+            axisLine={{ stroke: axisStroke, strokeWidth: 0.75 }}
+            tickLine={false}
+            tick={{ fill: tickFill, fontSize: 6, fontWeight: 600 }}
+          />
+          <YAxis
+            width={14}
+            domain={[0, 110]}
+            ticks={[0, 50, 100]}
+            axisLine={{ stroke: axisStroke, strokeWidth: 0.75 }}
+            tickLine={false}
+            tick={{ fill: tickFill, fontSize: 6, fontWeight: 600 }}
+          />
+          <Line
+            type="monotone"
+            dataKey="saved"
+            stroke={savedStroke}
+            strokeWidth={1.45}
+            dot={false}
+            activeDot={false}
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="actual"
+            stroke={actualStroke}
+            strokeWidth={1.45}
+            dot={false}
+            activeDot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+      <span
+        aria-hidden
+        className={`pointer-events-none absolute inset-x-0 top-1/2 z-20 -translate-y-1/2 text-center text-[9px] font-black uppercase leading-none tracking-[0.12em] ${waitingClasses}`}
+      >
           {t(language, "dashboard.scoringWaitingToStart")}
-        </text>
-        <text
-          x="116"
-          y="146"
-          fill={labelFill}
-          fontSize="6"
-          fontWeight="600"
-          letterSpacing="0.08em"
-          textAnchor="end"
-        >
-          {t(language, "dashboard.scoringAxisTime")}
-        </text>
-      </svg>
+      </span>
     </div>
   );
 }
@@ -814,7 +815,7 @@ function PerformancePanel({
 
   return (
     <PanelShell accentTone="neutral" theme={theme} className="triptych-compact-type">
-      <div className={`relative flex h-full w-full flex-col justify-center divide-y px-1 pb-4 sm:px-10 lg:px-12 ${getDividerClasses(theme)}`}>
+      <div className={`relative flex h-full w-full flex-col justify-center divide-y px-1 pb-4 sm:px-4 md:px-5 lg:px-6 xl:px-7 ${getDividerClasses(theme)}`}>
         <MetricRow label={t(language, "leaderboard.points")} value={formatPoints(performance.globalPoints, language)} theme={theme} />
         <MetricRow label={t(language, "leaderboard.rank")} value={formatRank(performance.globalRank, language)} theme={theme} />
         <GroupsSummaryRows

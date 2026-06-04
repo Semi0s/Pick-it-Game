@@ -73,6 +73,7 @@ type BracketBuilderClientProps = {
 
 type CustomDragGhost = {
   kind: "group" | "third";
+  variant: "group-slot" | "group-chip" | "third-row";
   teamId: string;
   x: number;
   y: number;
@@ -314,11 +315,40 @@ function cloneLightSeedBuilderSnapshot(snapshot: LightSeedBuilderSnapshot): Ligh
   };
 }
 
-function getRankedThirdPlaceTeamIds(snapshot: LightSeedBuilderSnapshot) {
-  return snapshot.thirdPlaceRankings
-    .slice()
-    .sort((left, right) => left.rank - right.rank)
-    .map((ranking) => ranking.teamId);
+function getRankedThirdPlaceSlotIds(snapshot: LightSeedBuilderSnapshot, requiredThirdPlaceQualifierCount: number) {
+  if (snapshot.thirdPlaceRankings.length === 0) {
+    return [];
+  }
+
+  const slotCount = Math.max(
+    requiredThirdPlaceQualifierCount,
+    ...snapshot.thirdPlaceRankings.map((ranking) => ranking.rank).filter((rank) => Number.isFinite(rank)),
+    0
+  );
+  const slots = Array.from({ length: slotCount }, () => "");
+
+  for (const ranking of snapshot.thirdPlaceRankings) {
+    if (!ranking.teamId || ranking.rank < 1 || ranking.rank > slotCount) {
+      continue;
+    }
+
+    slots[ranking.rank - 1] = ranking.teamId;
+  }
+
+  return slots;
+}
+
+function getThirdPlaceRankingRowsFromSlots(slotIds: string[]) {
+  return slotIds.flatMap((teamId, index) =>
+    teamId
+      ? [
+          {
+            teamId,
+            rank: index + 1
+          }
+        ]
+      : []
+  );
 }
 
 function haveSameOrderedIds(left: string[], right: string[]) {
@@ -419,10 +449,12 @@ function filterCompleteGroupRankingsForProjection(
 function hasLightSeedBuilderSnapshotChanges({
   currentGroupRankings,
   currentThirdPlaceTeamIds,
+  requiredThirdPlaceQualifierCount,
   savedSnapshot
 }: {
   currentGroupRankings: GroupSeedRankingInput[];
   currentThirdPlaceTeamIds: string[];
+  requiredThirdPlaceQualifierCount: number;
   savedSnapshot: LightSeedBuilderSnapshot | null;
 }) {
   if (!savedSnapshot) {
@@ -433,7 +465,10 @@ function hasLightSeedBuilderSnapshotChanges({
 
   return (
     !haveSameGroupRankings(mergedGroupRankings, savedSnapshot.groupRankings) ||
-    !haveSameOrderedIds(currentThirdPlaceTeamIds, getRankedThirdPlaceTeamIds(savedSnapshot))
+    !haveSameOrderedIds(
+      currentThirdPlaceTeamIds,
+      getRankedThirdPlaceSlotIds(savedSnapshot, requiredThirdPlaceQualifierCount)
+    )
   );
 }
 
@@ -474,6 +509,16 @@ function getBracketLayout(matchCount: number) {
   const teamGap = 0;
   const setGap = 18;
   const matchBlockHeight = rowHeight * 2 + teamGap + setGap;
+  if (matchCount <= 0) {
+    return {
+      rowHeight,
+      pairGap: teamGap,
+      matchBlockHeight,
+      totalHeight: 0,
+      rounds: []
+    };
+  }
+
   const positions = Array.from({ length: matchCount }, (_, index) => index * matchBlockHeight);
   const rounds: number[][] = [];
   let current = positions.map((position) => position + rowHeight / 2 + 2);
@@ -482,7 +527,9 @@ function getBracketLayout(matchCount: number) {
     rounds.push(current);
     const nextRound: number[] = [];
     for (let index = 0; index < current.length; index += 2) {
-      nextRound.push((current[index] + current[index + 1]) / 2);
+      const leftPosition = current[index] ?? current[index - 1] ?? 0;
+      const rightPosition = current[index + 1] ?? leftPosition;
+      nextRound.push((leftPosition + rightPosition) / 2);
     }
     current = nextRound;
   }
@@ -544,6 +591,8 @@ export function BracketBuilderClient({
     height: number;
     startedAt: number;
     pointerType: string;
+    forceCustomDrag: boolean;
+    ghostVariant: CustomDragGhost["variant"];
     isHandleDrag: boolean;
     isDragging: boolean;
     isGroupSwipe: boolean;
@@ -576,6 +625,7 @@ export function BracketBuilderClient({
   const groupSwipeWheelResetTimeoutRef = useRef<number | null>(null);
   const groupSwipeWheelCooldownTimeoutRef = useRef<number | null>(null);
   const groupSwipeWheelIsCoolingDownRef = useRef(false);
+  const allowUnsavedNavigationRef = useRef(false);
   const hasAppliedGroupStageViewRestoreRef = useRef(false);
   const hasAppliedThirdPlaceListDefaultRef = useRef(false);
   const matches = initialMatches ?? getLocalGroupMatches();
@@ -624,11 +674,9 @@ export function BracketBuilderClient({
   const initialThirdPlaceRankingIds = useMemo(
     () =>
       initialSnapshot?.thirdPlaceRankings?.length
-        ? [...initialSnapshot.thirdPlaceRankings]
-            .sort((left, right) => left.rank - right.rank)
-            .map((row) => row.teamId)
+        ? getRankedThirdPlaceSlotIds(initialSnapshot, requiredThirdPlaceQualifierCount)
         : [],
-    [initialSnapshot]
+    [initialSnapshot, requiredThirdPlaceQualifierCount]
   );
   const [groupRankings, setGroupRankings] = useState<LightSeedBuilderSnapshot["groupRankings"]>(
     initialDisplayGroupRankings
@@ -684,6 +732,8 @@ export function BracketBuilderClient({
   const [isFinalizingBracket, setIsFinalizingBracket] = useState(false);
   const [isRestoringBracket, setIsRestoringBracket] = useState(false);
   const [isSavingProgress, setIsSavingProgress] = useState(false);
+  const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
+  const [isSavingAndLeaving, setIsSavingAndLeaving] = useState(false);
   const [finalBracketSavedAt, setFinalBracketSavedAt] = useState<string | null>(
     shouldHydrateUnsavedServerState ? null : initialFinalBracketSavedAt
   );
@@ -1139,9 +1189,10 @@ export function BracketBuilderClient({
       hasLightSeedBuilderSnapshotChanges({
         currentGroupRankings: saveableTouchedRankingsInput,
         currentThirdPlaceTeamIds: thirdPlaceChangeComparisonIds,
+        requiredThirdPlaceQualifierCount,
         savedSnapshot: committedSnapshot
       }),
-    [committedSnapshot, saveableTouchedRankingsInput, thirdPlaceChangeComparisonIds]
+    [committedSnapshot, requiredThirdPlaceQualifierCount, saveableTouchedRankingsInput, thirdPlaceChangeComparisonIds]
   );
   const hasSaveableProgressChanges = Boolean(
     hasRestorableBracketChanges ||
@@ -1187,8 +1238,9 @@ export function BracketBuilderClient({
       teams
     ]
   );
-  const savedProjectedBracket = (() => {
-    const committedSnapshot = committedSnapshotRef.current;
+  const committedSnapshotForProjection = committedSnapshotRef.current;
+  const savedProjectedBracket = useMemo(() => {
+    const committedSnapshot = committedSnapshotForProjection;
     if (!committedSnapshot) {
       return null;
     }
@@ -1212,7 +1264,7 @@ export function BracketBuilderClient({
       standingsByGroupOverride: savedStandings,
       rankedThirdPlaceTeamIdsOverride: savedThirdPlaceTeamIds.length > 0 ? savedThirdPlaceTeamIds : null
     });
-  })();
+  }, [committedSnapshotForProjection, roundOf32Placeholders, teamIdsByGroup, teams]);
   const hasCompletedBracketOnce = Boolean(committedBracketSavedAt || finalBracketSavedAt || committedSnapshotRef.current);
   const scenarioImpact = useMemo(
     () =>
@@ -1232,7 +1284,26 @@ export function BracketBuilderClient({
       usesExplicitThirdPlaceSelection
     ]
   );
+  const bracketScenarioImpact = useMemo(
+    () =>
+      calculateScenarioImpactFromProjectedMatches({
+        savedMatches: savedProjectedBracket?.matches ?? null,
+        scenarioMatches: projectedBracket.matches,
+        activeGroupName: null,
+        teamsById,
+        openThirdPlaceSlots: usesExplicitThirdPlaceSelection ? openThirdPlaceQualifierSlots : 0
+      }),
+    [
+      openThirdPlaceQualifierSlots,
+      projectedBracket.matches,
+      savedProjectedBracket,
+      teamsById,
+      usesExplicitThirdPlaceSelection
+    ]
+  );
   const hasScenarioChanges = scenarioImpact.affectedPickCount > 0 || scenarioImpact.openThirdPlaceSlots > 0;
+  const hasBracketScenarioChanges =
+    bracketScenarioImpact.affectedPickCount > 0 || bracketScenarioImpact.openThirdPlaceSlots > 0;
   const shouldShowScenarioImpact =
     hasCompletedBracketOnce &&
     Boolean(savedProjectedBracket) &&
@@ -1240,10 +1311,17 @@ export function BracketBuilderClient({
     hasUnsavedGroupStageChanges &&
     hasSaveableProgressChanges &&
     hasScenarioChanges;
-  const showBracketImpactOverlay = shouldShowScenarioImpact;
+  const showBracketImpactOverlay =
+    hasCompletedBracketOnce &&
+    Boolean(savedProjectedBracket) &&
+    usesExplicitThirdPlaceSelection &&
+    hasUnsavedGroupStageChanges &&
+    hasSaveableProgressChanges &&
+    hasBracketScenarioChanges;
+  const showProjectedBracketEditHint = showBracketImpactOverlay && bracketScenarioImpact.affectedSlots.length > 0;
   const scenarioAffectedSlotById = useMemo(
-    () => new Map(scenarioImpact.affectedSlots.map((slot) => [slot.slotId, slot])),
-    [scenarioImpact.affectedSlots]
+    () => new Map(bracketScenarioImpact.affectedSlots.map((slot) => [slot.slotId, slot])),
+    [bracketScenarioImpact.affectedSlots]
   );
   const scenarioImpactPicksLabel = t(
     language,
@@ -1276,7 +1354,7 @@ export function BracketBuilderClient({
     [knockoutProjectedPreview]
   );
   const bracketPreviewMatches = useMemo<BracketPreviewMatch[]>(() => {
-    if (initialKnockoutSeeded && projectedComparisonRound?.length) {
+    if (!showBracketImpactOverlay && initialKnockoutSeeded && projectedComparisonRound?.length) {
       return projectedComparisonRound.map((match) => ({
         matchId: match.matchId,
         stage: match.stage,
@@ -1331,7 +1409,7 @@ export function BracketBuilderClient({
         }
       };
     });
-  }, [initialKnockoutSeeded, projectedBracket.matches, projectedComparisonRound, teamsById]);
+  }, [initialKnockoutSeeded, projectedBracket.matches, projectedComparisonRound, showBracketImpactOverlay, teamsById]);
 
   const nearDeadlineMessage = useMemo(() => {
     if (!groupStageDueAt || isReadOnly || isComplete) {
@@ -1413,6 +1491,7 @@ export function BracketBuilderClient({
         hasLightSeedBuilderSnapshotChanges({
           currentGroupRankings: draftGroupRankings,
           currentThirdPlaceTeamIds: draftThirdPlaceRankings,
+          requiredThirdPlaceQualifierCount,
           savedSnapshot: committedSnapshotRef.current
         });
 
@@ -1455,7 +1534,7 @@ export function BracketBuilderClient({
     } catch {
       clearUnsavedGroupStageDraft();
     }
-  }, [defaultSnapshot.groupRankings, initialCommittedProgressAt, isReadOnly, language]);
+  }, [defaultSnapshot.groupRankings, initialCommittedProgressAt, isReadOnly, language, requiredThirdPlaceQualifierCount]);
 
   useEffect(() => {
     if (typeof window === "undefined" || isReadOnly || !hasInteracted) {
@@ -1504,12 +1583,24 @@ export function BracketBuilderClient({
   }, [hasInteracted, hasUnsavedGroupStageChanges, isReadOnly]);
 
   useEffect(() => {
+    if (hasUnsavedGroupStageChanges) {
+      return;
+    }
+
+    setPendingLeaveHref(null);
+    setIsSavingAndLeaving(false);
+  }, [hasUnsavedGroupStageChanges]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !hasUnsavedGroupStageChanges || isReadOnly) {
       return;
     }
 
-    const unsavedChangesPrompt = t(language, "bracket.unsavedChangesPrompt");
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (allowUnsavedNavigationRef.current) {
+        return;
+      }
+
       event.preventDefault();
       event.returnValue = "";
     };
@@ -1535,10 +1626,9 @@ export function BracketBuilderClient({
         return;
       }
 
-      if (!window.confirm(unsavedChangesPrompt)) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
+      event.preventDefault();
+      event.stopPropagation();
+      setPendingLeaveHref(nextUrl.href);
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
@@ -1751,6 +1841,7 @@ export function BracketBuilderClient({
 
     setCustomDragGhost({
       kind: state.kind,
+      variant: state.ghostVariant,
       teamId: state.teamId,
       x: state.currentX,
       y: state.currentY,
@@ -1780,6 +1871,12 @@ export function BracketBuilderClient({
     }
 
     const isHandleDrag = Boolean(target?.closest("[data-row-drag-handle='true']"));
+    const ghostVariant: CustomDragGhost["variant"] =
+      kind === "third"
+        ? "third-row"
+        : event.currentTarget.dataset.groupSlotId !== undefined
+          ? "group-slot"
+          : "group-chip";
     if (!shouldForceCustomDrag || event.pointerType !== "mouse") {
       event.preventDefault();
     }
@@ -1800,6 +1897,8 @@ export function BracketBuilderClient({
       height: rect.height,
       startedAt: window.performance.now(),
       pointerType: event.pointerType,
+      forceCustomDrag: shouldForceCustomDrag,
+      ghostVariant,
       isHandleDrag,
       isDragging: false,
       isGroupSwipe: false,
@@ -1854,7 +1953,13 @@ export function BracketBuilderClient({
         : shouldUseQuickPointerDrag
           ? 10
         : CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX;
-      if (state.kind === "group" && state.pointerType !== "mouse" && deltaX > 10 && deltaX > deltaY * 1.15) {
+      if (
+        !state.forceCustomDrag &&
+        state.kind === "group" &&
+        state.pointerType !== "mouse" &&
+        deltaX > 10 &&
+        deltaX > deltaY * 1.15
+      ) {
         if (customDragHoldTimeoutRef.current !== null) {
           window.clearTimeout(customDragHoldTimeoutRef.current);
           customDragHoldTimeoutRef.current = null;
@@ -2302,10 +2407,6 @@ export function BracketBuilderClient({
   }
 
   function getThirdPlaceAdvanceProbabilityResult(teamId: string) {
-    if (!hasCompletedBracketOnce) {
-      return null;
-    }
-
     const team = teamsById.get(teamId);
     if (!team || !derivedThirdPlacePoolIds.has(teamId)) {
       return null;
@@ -2830,6 +2931,62 @@ export function BracketBuilderClient({
     finishGroupSurfaceSwipe(gestureDeltaX);
   }
 
+  function navigateToLeaveHref(href: string) {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const nextUrl = new URL(href, window.location.href);
+      if (nextUrl.origin === window.location.origin) {
+        router.push(`${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+        return;
+      }
+
+      allowUnsavedNavigationRef.current = true;
+      window.location.assign(nextUrl.href);
+    } catch {
+      allowUnsavedNavigationRef.current = true;
+      window.location.assign(href);
+    }
+  }
+
+  function handleStayOnGroupStage() {
+    if (isSavingAndLeaving) {
+      return;
+    }
+
+    setPendingLeaveHref(null);
+  }
+
+  function handleLeaveWithoutSaving() {
+    const href = pendingLeaveHref;
+    if (!href || isSavingAndLeaving) {
+      return;
+    }
+
+    setPendingLeaveHref(null);
+    navigateToLeaveHref(href);
+  }
+
+  async function handleSaveAndLeave() {
+    const href = pendingLeaveHref;
+    if (!href || isSavingAndLeaving || !canSaveProgress) {
+      return;
+    }
+
+    setIsSavingAndLeaving(true);
+    const didSave = await handleSaveProgress();
+    setIsSavingAndLeaving(false);
+
+    if (!didSave) {
+      return;
+    }
+
+    setPendingLeaveHref(null);
+    navigateToLeaveHref(href);
+  }
+
   function handleGoToFullScoring() {
     storeGroupsEntryIntent({
       source: "dashboard",
@@ -2856,7 +3013,7 @@ export function BracketBuilderClient({
       return;
     }
 
-    const affectedSlotIds = new Set(scenarioImpact.affectedSlots.map((slot) => slot.slotId));
+    const affectedSlotIds = new Set(bracketScenarioImpact.affectedSlots.map((slot) => slot.slotId));
     setHighlightedScenarioSlotIds(affectedSlotIds);
 
     if (bracketImpactHighlightTimeoutRef.current !== null) {
@@ -2905,10 +3062,10 @@ export function BracketBuilderClient({
     const sourceLabel = side.sourceLabel ? formatProjectedSeedLabel(side.sourceLabel) : null;
     const affectsLabel = t(
       language,
-      scenarioImpact.affectedPickCount === 1
+      bracketScenarioImpact.affectedPickCount === 1
         ? "bracket.scenarioPickAffected"
         : "bracket.scenarioPicksAffected",
-      { count: scenarioImpact.affectedPickCount }
+      { count: bracketScenarioImpact.affectedPickCount }
     );
     const rows = [
       { label: t(language, "bracket.bracketChangeNow"), value: currentLabel },
@@ -3000,18 +3157,26 @@ export function BracketBuilderClient({
       .filter((team): team is RankedTeam => Boolean(team));
   }
 
-  function getLatestCommittedThirdPlaceRankingIds() {
+  function getLatestCommittedThirdPlaceSlotIds() {
     const latestThirdPlacePool = getLatestDerivedThirdPlacePool();
     const latestThirdPlacePoolIds = new Set(latestThirdPlacePool.map((team) => team.id));
     const latestIsThirdPlacePhase =
       latestThirdPlacePool.length >= sortedGroupNames.length &&
       sortedGroupNames.length > 0 &&
       requiredThirdPlaceQualifierCount > 0;
+    const latestExplicitThirdPlaceSlotIds = Array.from(
+      { length: requiredThirdPlaceQualifierCount },
+      (_, index) => {
+        const teamId = thirdPlaceRankingsRef.current[index] ?? "";
+        return teamId && latestThirdPlacePoolIds.has(teamId) ? teamId : "";
+      }
+    );
     const latestHasCommittedThirdPlaceSelection =
       latestIsThirdPlacePhase &&
       requiredThirdPlaceQualifierCount > 0 &&
       ((initialSnapshot?.thirdPlaceRankings?.length ?? 0) >= requiredThirdPlaceQualifierCount ||
-        hasTouchedThirdPlaceRankingRef.current);
+        hasTouchedThirdPlaceRankingRef.current ||
+        latestExplicitThirdPlaceSlotIds.some((teamId) => teamId.length > 0));
 
     if (!latestHasCommittedThirdPlaceSelection) {
       return [];
@@ -3019,24 +3184,23 @@ export function BracketBuilderClient({
 
     if (usesExplicitThirdPlaceSelection) {
       const seenTeamIds = new Set<string>();
-      const latestExplicitThirdPlaceSelectionIds = Array.from(
-        { length: requiredThirdPlaceQualifierCount },
-        (_, index) => {
-          const teamId = thirdPlaceRankingsRef.current[index] ?? "";
-          if (!teamId || !latestThirdPlacePoolIds.has(teamId) || seenTeamIds.has(teamId)) {
-            return "";
-          }
-
-          seenTeamIds.add(teamId);
-          return teamId;
+      return latestExplicitThirdPlaceSlotIds.map((teamId) => {
+        if (!teamId || seenTeamIds.has(teamId)) {
+          return "";
         }
-      ).filter((teamId) => teamId.length > 0);
-      return latestExplicitThirdPlaceSelectionIds.slice(0, requiredThirdPlaceQualifierCount);
+
+        seenTeamIds.add(teamId);
+        return teamId;
+      });
     }
 
     const preserved = thirdPlaceRankingsRef.current.filter((teamId) => latestThirdPlacePoolIds.has(teamId));
     const missing = latestThirdPlacePool.map((team) => team.id).filter((teamId) => !preserved.includes(teamId));
     return [...missing, ...preserved].slice(0, requiredThirdPlaceQualifierCount);
+  }
+
+  function getLatestCommittedThirdPlaceRankingIds() {
+    return getLatestCommittedThirdPlaceSlotIds().filter((teamId) => teamId.length > 0);
   }
 
   function buildCommittedSnapshotGroupRankings(savedRankingPatch: GroupSeedRankingInput[]) {
@@ -3064,7 +3228,7 @@ export function BracketBuilderClient({
       isRestoringBracket ||
       !canSaveProgress
     ) {
-      return;
+      return false;
     }
 
     setIsSavingProgress(true);
@@ -3072,13 +3236,27 @@ export function BracketBuilderClient({
     setSaveMessage(t(language, "common.saving"));
 
     const latestSaveableRankingsInput = getLatestSaveableTouchedRankingsInput();
+    const latestCommittedThirdPlaceSlotIds = getLatestCommittedThirdPlaceSlotIds();
     const latestCommittedThirdPlaceRankingIds = getLatestCommittedThirdPlaceRankingIds();
     const latestHasTouchedThirdPlaceRanking = hasTouchedThirdPlaceRankingRef.current;
-    const result = await saveLightSeedBuilderAction({
-      groupRankings: latestSaveableRankingsInput,
-      rankedThirdPlaceTeamIds: latestCommittedThirdPlaceRankingIds,
-      commitThirdPlaceRankings: isThirdPlacePhase && latestHasTouchedThirdPlaceRanking
-    });
+    let result: Awaited<ReturnType<typeof saveLightSeedBuilderAction>>;
+    try {
+      result = await saveLightSeedBuilderAction({
+        groupRankings: latestSaveableRankingsInput,
+        rankedThirdPlaceTeamIds: latestCommittedThirdPlaceRankingIds,
+        rankedThirdPlaceSlots: getThirdPlaceRankingRowsFromSlots(latestCommittedThirdPlaceSlotIds),
+        commitThirdPlaceRankings: isThirdPlacePhase && latestHasTouchedThirdPlaceRanking
+      });
+    } catch (error) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : t(language, "bracket.couldNotSavePick");
+      setIsSavingProgress(false);
+      setSaveState("error");
+      setSaveMessage(message);
+      showAppToast({ tone: "error", text: message });
+      return false;
+    }
 
     setIsSavingProgress(false);
 
@@ -3086,20 +3264,17 @@ export function BracketBuilderClient({
       setSaveState("error");
       setSaveMessage(result.message);
       showAppToast({ tone: "error", text: result.message });
-      return;
+      return false;
     }
 
     const savedAt = new Date().toISOString();
     setCommittedBracketSavedAt(savedAt);
     committedSnapshotRef.current = cloneLightSeedBuilderSnapshot({
       groupRankings: buildCommittedSnapshotGroupRankings(latestSaveableRankingsInput),
-      thirdPlaceRankings: latestCommittedThirdPlaceRankingIds.map((teamId, index) => ({
-        teamId,
-        rank: index + 1
-      }))
+      thirdPlaceRankings: getThirdPlaceRankingRowsFromSlots(latestCommittedThirdPlaceSlotIds)
     });
     updateThirdPlaceRankings(
-      usesExplicitThirdPlaceSelection ? explicitThirdPlaceQualifierSlotIds : latestCommittedThirdPlaceRankingIds,
+      usesExplicitThirdPlaceSelection ? latestCommittedThirdPlaceSlotIds : latestCommittedThirdPlaceRankingIds,
       buildThirdPlaceDisplayOrder(latestCommittedThirdPlaceRankingIds)
     );
     committedSnapshotIsFinalRef.current = false;
@@ -3109,6 +3284,7 @@ export function BracketBuilderClient({
     setSaveState("saved");
     setSaveMessage(t(language, "bracket.progressSaved"));
     showAppToast({ tone: "tip", text: t(language, "bracket.progressSaved") });
+    return true;
   }
 
   async function handleFinalizeBracket() {
@@ -3121,13 +3297,27 @@ export function BracketBuilderClient({
     setSaveMessage(t(language, "common.saving"));
 
     const latestSaveableRankingsInput = getLatestSaveableTouchedRankingsInput();
+    const latestCommittedThirdPlaceSlotIds = getLatestCommittedThirdPlaceSlotIds();
     const latestCommittedThirdPlaceRankingIds = getLatestCommittedThirdPlaceRankingIds();
-    const result = await saveLightSeedBuilderAction({
-      groupRankings: latestSaveableRankingsInput,
-      rankedThirdPlaceTeamIds: latestCommittedThirdPlaceRankingIds,
-      commitThirdPlaceRankings: true,
-      finalizeTournamentEntry: true
-    });
+    let result: Awaited<ReturnType<typeof saveLightSeedBuilderAction>>;
+    try {
+      result = await saveLightSeedBuilderAction({
+        groupRankings: latestSaveableRankingsInput,
+        rankedThirdPlaceTeamIds: latestCommittedThirdPlaceRankingIds,
+        rankedThirdPlaceSlots: getThirdPlaceRankingRowsFromSlots(latestCommittedThirdPlaceSlotIds),
+        commitThirdPlaceRankings: true,
+        finalizeTournamentEntry: true
+      });
+    } catch (error) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : t(language, "bracket.couldNotFinishBracket");
+      setIsFinalizingBracket(false);
+      setSaveState("error");
+      setSaveMessage(message);
+      showAppToast({ tone: "error", text: message });
+      return;
+    }
 
     setIsFinalizingBracket(false);
 
@@ -3146,13 +3336,10 @@ export function BracketBuilderClient({
     setChangedSinceAt(null);
     committedSnapshotRef.current = cloneLightSeedBuilderSnapshot({
       groupRankings: buildCommittedSnapshotGroupRankings(latestSaveableRankingsInput),
-      thirdPlaceRankings: latestCommittedThirdPlaceRankingIds.map((teamId, index) => ({
-        teamId,
-        rank: index + 1
-      }))
+      thirdPlaceRankings: getThirdPlaceRankingRowsFromSlots(latestCommittedThirdPlaceSlotIds)
     });
     updateThirdPlaceRankings(
-      usesExplicitThirdPlaceSelection ? explicitThirdPlaceQualifierSlotIds : latestCommittedThirdPlaceRankingIds,
+      usesExplicitThirdPlaceSelection ? latestCommittedThirdPlaceSlotIds : latestCommittedThirdPlaceRankingIds,
       buildThirdPlaceDisplayOrder(latestCommittedThirdPlaceRankingIds)
     );
     committedSnapshotIsFinalRef.current = true;
@@ -3186,13 +3373,27 @@ export function BracketBuilderClient({
     setSaveMessage(t(language, "common.saving"));
 
     const shouldRestoreFinalizedEntry = committedSnapshotIsFinalRef.current;
-    const restoredThirdPlaceIds = getRankedThirdPlaceTeamIds(committedSnapshot);
-    const result = await saveLightSeedBuilderAction({
-      groupRankings: committedSnapshot.groupRankings,
-      rankedThirdPlaceTeamIds: restoredThirdPlaceIds,
-      commitThirdPlaceRankings: restoredThirdPlaceIds.length > 0,
-      finalizeTournamentEntry: shouldRestoreFinalizedEntry
-    });
+    const restoredThirdPlaceSlotIds = getRankedThirdPlaceSlotIds(committedSnapshot, requiredThirdPlaceQualifierCount);
+    const restoredThirdPlaceIds = restoredThirdPlaceSlotIds.filter((teamId) => teamId.length > 0);
+    let result: Awaited<ReturnType<typeof saveLightSeedBuilderAction>>;
+    try {
+      result = await saveLightSeedBuilderAction({
+        groupRankings: committedSnapshot.groupRankings,
+        rankedThirdPlaceTeamIds: restoredThirdPlaceIds,
+        rankedThirdPlaceSlots: getThirdPlaceRankingRowsFromSlots(restoredThirdPlaceSlotIds),
+        commitThirdPlaceRankings: restoredThirdPlaceIds.length > 0,
+        finalizeTournamentEntry: shouldRestoreFinalizedEntry
+      });
+    } catch (error) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : t(language, "bracket.couldNotSavePick");
+      setIsRestoringBracket(false);
+      setSaveState("error");
+      setSaveMessage(message);
+      showAppToast({ tone: "error", text: message });
+      return;
+    }
 
     setIsRestoringBracket(false);
 
@@ -3223,7 +3424,7 @@ export function BracketBuilderClient({
       restoredThirdPlaceIds.length >= requiredThirdPlaceQualifierCount && requiredThirdPlaceQualifierCount > 0;
     groupRankingsRef.current = nextGroupRankings;
     setGroupRankings(nextGroupRankings);
-    updateThirdPlaceRankings(restoredThirdPlaceIds, restoredThirdPlaceIds);
+    updateThirdPlaceRankings(restoredThirdPlaceSlotIds, buildThirdPlaceDisplayOrder(restoredThirdPlaceIds));
     topTwoSlotDraftsByGroupRef.current = {};
     setTopTwoSlotDraftsByGroup({});
     touchedGroupsRef.current = nextTouchedGroups;
@@ -3382,6 +3583,28 @@ export function BracketBuilderClient({
   })}. ${thirdPlacePoolStateLabel}`;
   const shouldHighlightTopTwoCard = !isReadOnly && !isThirdPlacePhase;
   const shouldHighlightThirdPlaceCard = !isReadOnly && isThirdPlacePhase;
+  const getGroupDragRankLabel = (teamId: string) => {
+    if (teamId === selectedFirstTeamId) {
+      return "1";
+    }
+
+    if (teamId === selectedSecondTeamId) {
+      return "2";
+    }
+
+    const activeRankingIndex = activeGroupRankingTeamIds.indexOf(teamId);
+    if (activeRankingIndex >= 0) {
+      return String(activeRankingIndex + 1);
+    }
+
+    const activeTeamIndex = activeGroupTeams.findIndex((team) => team.id === teamId);
+    return activeTeamIndex >= 0 ? String(activeTeamIndex + 1) : "";
+  };
+  const customDragGhostRankLabel = customDragGhost
+    ? customDragGhost.kind === "group"
+      ? getGroupDragRankLabel(customDragGhost.teamId)
+      : String(normalizedThirdPlaceRankings.indexOf(customDragGhost.teamId) + 1 || "")
+    : "";
 
   useLayoutEffect(() => {
     const nextTops = new Map<string, number>();
@@ -3469,26 +3692,97 @@ export function BracketBuilderClient({
 
   return (
     <div className="space-y-1.5 pb-4">
+      {pendingLeaveHref ? (
+        <div
+          className="fixed inset-0 z-[110] flex items-end justify-center bg-black/30 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:items-center sm:pb-0"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t(language, "bracket.unsavedChangesPrompt")}
+        >
+          <div className="w-full max-w-sm rounded-[1.4rem] border border-gray-200 bg-white p-3 text-gray-950 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-light text-accent-dark">
+                <TriangleAlert aria-hidden className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-black text-gray-950">
+                  {t(language, "bracket.unsavedChangesPrompt")}
+                </p>
+                {!canSaveProgress ? (
+                  <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">
+                    {t(language, "bracket.resolveBeforeSaveAndLeave")}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <div className="mt-4 grid gap-2">
+              <button
+                type="button"
+                className="w-full rounded-full border border-accent bg-accent px-4 py-2.5 text-[11px] font-black uppercase tracking-[0.16em] text-accent-text transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
+                disabled={
+                  !canSaveProgress ||
+                  isSavingAndLeaving ||
+                  isSavingProgress ||
+                  isFinalizingBracket ||
+                  isRestoringBracket
+                }
+                onClick={handleSaveAndLeave}
+              >
+                {isSavingAndLeaving ? t(language, "common.saving") : t(language, "bracket.saveAndLeave")}
+              </button>
+              <button
+                type="button"
+                className="w-full rounded-full border border-gray-200 bg-white px-4 py-2.5 text-[11px] font-black uppercase tracking-[0.16em] text-gray-700 transition hover:border-accent-light hover:text-accent-dark disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSavingAndLeaving}
+                onClick={handleLeaveWithoutSaving}
+              >
+                {t(language, "bracket.leaveWithoutSaving")}
+              </button>
+              <button
+                type="button"
+                className="w-full rounded-full border border-transparent px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-gray-500 transition hover:text-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSavingAndLeaving}
+                onClick={handleStayOnGroupStage}
+              >
+                {t(language, "bracket.stayHere")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {customDragGhost && customDragGhostTeam ? (
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed z-[100] grid grid-cols-[1.55rem_2.2rem_minmax(0,1fr)] items-center gap-x-1 rounded-[1rem] border border-accent/30 bg-white/95 px-2 py-1.5 text-gray-950 shadow-2xl shadow-black/20 ring-1 ring-white/70 backdrop-blur-sm"
+          className={`pointer-events-none fixed z-[100] border border-accent/30 bg-white/95 text-gray-950 shadow-2xl shadow-black/20 ring-1 ring-white/70 backdrop-blur-sm ${
+            customDragGhost.variant === "group-chip"
+              ? "flex flex-col items-center justify-center gap-1 rounded-[0.85rem] px-1.5 py-2 text-center"
+              : "grid grid-cols-[2.1rem_2.2rem_minmax(0,1fr)] items-center gap-x-1 rounded-[1rem] px-2 py-1.5"
+          }`}
           style={{
             left: customDragGhost.x - customDragGhost.offsetX,
             top: customDragGhost.y - customDragGhost.offsetY,
             width: customDragGhost.kind === "third" ? Math.min(customDragGhost.width, 260) : customDragGhost.width,
-            minHeight: customDragGhost.kind === "third" ? Math.min(customDragGhost.height, 44) : customDragGhost.height,
-            transform: customDragGhost.kind === "third" ? "scale(0.98)" : "scale(1.025)",
-            transformOrigin: `${customDragGhost.offsetX}px ${customDragGhost.offsetY}px`
+            height: customDragGhost.kind === "third" ? Math.min(customDragGhost.height, 44) : customDragGhost.height,
+            boxSizing: "border-box"
           }}
         >
-          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-text">
-            {customDragGhost.kind === "group"
-              ? (activeGroupTeams.findIndex((team) => team.id === customDragGhost.teamId) + 1 || "")
-              : normalizedThirdPlaceRankings.indexOf(customDragGhost.teamId) + 1}
-          </span>
-          <span className="flex items-center justify-center text-[1.6rem] leading-none">{customDragGhostTeam.flagEmoji}</span>
-          <span className="block truncate text-[11px] font-black">{customDragGhostTeam.name}</span>
+          {customDragGhost.variant === "group-chip" ? (
+            <>
+              <span className="absolute left-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-text">
+                {customDragGhostRankLabel}
+              </span>
+              <span className="flex items-center justify-center text-[1.3rem] leading-none">{customDragGhostTeam.flagEmoji}</span>
+              <span className="block w-full truncate text-[9px] font-black">{customDragGhostTeam.name}</span>
+            </>
+          ) : (
+            <>
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent text-[12px] font-black text-accent-text">
+                {customDragGhostRankLabel}
+              </span>
+              <span className="flex items-center justify-center text-[1.6rem] leading-none">{customDragGhostTeam.flagEmoji}</span>
+              <span className="block truncate text-[11px] font-black">{customDragGhostTeam.name}</span>
+            </>
+          )}
         </div>
       ) : null}
       {replacementCandidateTeam ? (
@@ -3532,9 +3826,7 @@ export function BracketBuilderClient({
                     <span className="block min-w-0 truncate text-xs font-black text-gray-950">
                       {replacementCandidateTeam.name}
                     </span>
-                    {hasCompletedBracketOnce ? (
-                      <ThirdPlaceAdvanceProbabilityBadge pickProbability={incomingProbability} language={language} />
-                    ) : null}
+                    <ThirdPlaceAdvanceProbabilityBadge pickProbability={incomingProbability} language={language} />
                   </div>
                 </div>
               );
@@ -3559,9 +3851,7 @@ export function BracketBuilderClient({
                     <span className="block min-w-0 truncate text-xs font-black text-gray-950">
                       {selectedTeam.name}
                     </span>
-                    {hasCompletedBracketOnce ? (
-                      <ThirdPlaceAdvanceProbabilityBadge pickProbability={probability} language={language} />
-                    ) : null}
+                    <ThirdPlaceAdvanceProbabilityBadge pickProbability={probability} language={language} />
                   </button>
                 );
               })}
@@ -3627,9 +3917,7 @@ export function BracketBuilderClient({
                     <span className="block min-w-0 truncate text-xs font-black text-gray-950">
                       {team.name}
                     </span>
-                    {hasCompletedBracketOnce ? (
-                      <ThirdPlaceAdvanceProbabilityBadge pickProbability={probability} language={language} />
-                    ) : null}
+                    <ThirdPlaceAdvanceProbabilityBadge pickProbability={probability} language={language} />
                   </button>
                 );
               })}
@@ -3865,7 +4153,7 @@ export function BracketBuilderClient({
             const slotId = `${GROUP_TOP_SLOT_DROP_ID_PREFIX}${slotIndex}`;
             const team = slotIndex === 0 ? selectedFirstTeam : selectedSecondTeam;
             const placeLabel = getTopTwoSlotPlaceLabel(slotIndex);
-            const pickProbability = team && hasCompletedBracketOnce
+            const pickProbability = team
               ? getGroupStagePickProbability({
                   team,
                   predictedPlace: slotIndex === 0 ? 1 : 2
@@ -3875,6 +4163,7 @@ export function BracketBuilderClient({
             return (
               <div
                 key={slotId}
+                data-disable-group-swipe={team ? "true" : undefined}
                 data-group-slot-id={String(slotIndex)}
                 data-group-team-id={team?.id}
                 ref={(node) => {
@@ -3929,11 +4218,11 @@ export function BracketBuilderClient({
                 }}
                 role="group"
                 aria-label={t(language, "bracket.topTwoSlotAria", { place: placeLabel })}
-                className={`grid min-h-[3.15rem] grid-cols-[2.1rem_minmax(0,1fr)_auto] items-center gap-2 border-b px-2 py-1.5 transition select-none last:border-b-0 sm:grid-cols-[2.3rem_minmax(0,1fr)_auto] sm:px-3 [touch-action:pan-y] ${
+                className={`grid min-h-[3.15rem] grid-cols-[2.1rem_minmax(0,1fr)_auto] items-center gap-2 border-b px-2 py-1.5 transition select-none last:border-b-0 sm:grid-cols-[2.3rem_minmax(0,1fr)_auto] sm:px-3 ${
                   team
                     ? "border-accent-light bg-accent-light/35 text-gray-950"
                     : "border-gray-100 bg-white text-gray-400"
-                } ${isDragOverSlot ? "ring-2 ring-accent ring-inset" : ""} ${draggedTeamId && team?.id === draggedTeamId ? "opacity-45" : ""} ${team && supportsNativeRowDrag && !isReadOnly ? "cursor-grab active:cursor-grabbing" : ""}`}
+                } ${team ? "[touch-action:none]" : "[touch-action:pan-y]"} ${isDragOverSlot ? "ring-2 ring-accent ring-inset" : ""} ${draggedTeamId && team?.id === draggedTeamId ? "opacity-45" : ""} ${team && supportsNativeRowDrag && !isReadOnly ? "cursor-grab active:cursor-grabbing" : ""}`}
               >
                 <div className="flex justify-center">
                   <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent text-[12px] font-black text-accent-text">
@@ -4004,6 +4293,7 @@ export function BracketBuilderClient({
                 <button
                   key={team.id}
                   type="button"
+                  data-disable-group-swipe="true"
                   data-group-team-id={team.id}
                   draggable={false}
                   onClick={(event) => {
@@ -4039,7 +4329,7 @@ export function BracketBuilderClient({
                   }}
                   onDragOver={handleGroupPoolDragOver}
                   onDrop={handleGroupPoolDrop}
-                  className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-[0.85rem] border border-gray-100 bg-white px-1.5 py-2 text-center shadow-[0_1px_5px_rgba(15,23,42,0.04)] transition hover:border-accent-light hover:bg-accent-light/10 focus:outline-none focus:ring-2 focus:ring-accent-light sm:px-2 [touch-action:pan-y] ${
+                  className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-[0.85rem] border border-gray-100 bg-white px-1.5 py-2 text-center shadow-[0_1px_5px_rgba(15,23,42,0.04)] transition hover:border-accent-light hover:bg-accent-light/10 focus:outline-none focus:ring-2 focus:ring-accent-light sm:px-2 [touch-action:none] ${
                     draggedTeamId === team.id ? "opacity-45" : ""
                   } ${supportsNativeRowDrag && !isReadOnly ? "cursor-grab active:cursor-grabbing" : ""}`}
                   aria-label={t(language, "bracket.topTwoAvailableTeamAria", { teamName: team.name })}
@@ -4451,42 +4741,57 @@ export function BracketBuilderClient({
         <div className="mb-1 flex items-center justify-between gap-3">
           <p
             id="group-stage-projected-bracket-title"
-            className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500"
+            className="inline-flex flex-wrap items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500"
           >
             <GitFork aria-hidden className="h-3.5 w-3.5 text-accent-dark" />
             {t(language, "bracket.projectedBracket")}
+            {showProjectedBracketEditHint ? (
+              <>
+                <span aria-hidden className="text-gray-400">-</span>
+                <span>{t(language, "bracket.projectedBracketEditHintPrefix")}</span>
+                <span
+                  aria-hidden
+                  className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-accent bg-white text-accent"
+                >
+                  <ExternalLink className="h-2.5 w-2.5" strokeWidth={2} />
+                </span>
+                <span>{t(language, "bracket.projectedBracketEditHintSuffix")}</span>
+              </>
+            ) : null}
           </p>
         </div>
 
         <div className="mt-2 px-0 py-2">
           <div className="mx-auto grid max-w-[22rem] grid-cols-[minmax(0,1fr)_0.5rem_minmax(0,1fr)] gap-0">
             <div className="relative" style={{ height: `${leftBracketLayout.totalHeight}px` }}>
-              <svg
-                aria-hidden
-                className="pointer-events-none absolute inset-0 h-full w-full"
-                viewBox={`0 0 160 ${leftBracketLayout.totalHeight}`}
-                preserveAspectRatio="none"
-              >
-                {leftBracketLayout.rounds.map((round, roundIndex) => {
-                  if (roundIndex === leftBracketLayout.rounds.length - 1) {
-                    return null;
-                  }
-                  const xStart = 78 + roundIndex * 22;
-                  const xJoin = xStart + 18;
-                  const nextRound = leftBracketLayout.rounds[roundIndex + 1];
-                  return round.flatMap((y, index) => {
-                    const pairIndex = Math.floor(index / 2);
-                    const targetY = nextRound[pairIndex];
-                    return [
-                      <g key={`left-${roundIndex}-${index}`} className="stroke-gray-200">
-                        <line x1={xStart} y1={y} x2={xJoin} y2={y} strokeWidth="1.25" />
-                        <line x1={xJoin} y1={Math.min(y, targetY)} x2={xJoin} y2={Math.max(y, targetY)} strokeWidth="1.25" />
-                        <line x1={xJoin} y1={targetY} x2={xJoin + 12} y2={targetY} strokeWidth="1.25" />
-                      </g>
-                    ];
-                  });
-                })}
-              </svg>
+              {leftBracketLayout.totalHeight > 0 ? (
+                <svg
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 h-full w-full"
+                  viewBox={`0 0 160 ${leftBracketLayout.totalHeight}`}
+                  preserveAspectRatio="none"
+                >
+                  {leftBracketLayout.rounds.map((round, roundIndex) => {
+                    if (roundIndex === leftBracketLayout.rounds.length - 1) {
+                      return null;
+                    }
+                    const xStart = 78 + roundIndex * 22;
+                    const xJoin = xStart + 18;
+                    const nextRound = leftBracketLayout.rounds[roundIndex + 1] ?? [];
+                    return round.flatMap((y, index) => {
+                      const pairIndex = Math.floor(index / 2);
+                      const targetY = nextRound[pairIndex] ?? y;
+                      return [
+                        <g key={`left-${roundIndex}-${index}`} className="stroke-gray-200">
+                          <line x1={xStart} y1={y} x2={xJoin} y2={y} strokeWidth="1.25" />
+                          <line x1={xJoin} y1={Math.min(y, targetY)} x2={xJoin} y2={Math.max(y, targetY)} strokeWidth="1.25" />
+                          <line x1={xJoin} y1={targetY} x2={xJoin + 12} y2={targetY} strokeWidth="1.25" />
+                        </g>
+                      ];
+                    });
+                  })}
+                </svg>
+              ) : null}
               {leftBracketMatches.map((match, index) => {
                 const content = (
                   <>
@@ -4512,7 +4817,7 @@ export function BracketBuilderClient({
                                 type="button"
                                 data-bracket-change-popover="true"
                                 onClick={(event) => handleBracketChangeMarkerClick(event, slotId)}
-                                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-accent-light/25 hover:text-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-accent bg-white text-accent transition hover:bg-accent-light/25 hover:text-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                                 title={t(language, "bracket.viewBracketChange")}
                                 aria-label={bracketChangeDetails.ariaLabel}
                               >
@@ -4558,32 +4863,34 @@ export function BracketBuilderClient({
             <div aria-hidden />
 
             <div className="relative" style={{ height: `${rightBracketLayout.totalHeight}px` }}>
-              <svg
-                aria-hidden
-                className="pointer-events-none absolute inset-0 h-full w-full"
-                viewBox={`0 0 160 ${rightBracketLayout.totalHeight}`}
-                preserveAspectRatio="none"
-              >
-                {rightBracketLayout.rounds.map((round, roundIndex) => {
-                  if (roundIndex === rightBracketLayout.rounds.length - 1) {
-                    return null;
-                  }
-                  const xStart = 82 - roundIndex * 22;
-                  const xJoin = xStart - 18;
-                  const nextRound = rightBracketLayout.rounds[roundIndex + 1];
-                  return round.flatMap((y, index) => {
-                    const pairIndex = Math.floor(index / 2);
-                    const targetY = nextRound[pairIndex];
-                    return [
-                      <g key={`right-${roundIndex}-${index}`} className="stroke-gray-200">
-                        <line x1={xStart} y1={y} x2={xJoin} y2={y} strokeWidth="1.25" />
-                        <line x1={xJoin} y1={Math.min(y, targetY)} x2={xJoin} y2={Math.max(y, targetY)} strokeWidth="1.25" />
-                        <line x1={xJoin} y1={targetY} x2={xJoin - 12} y2={targetY} strokeWidth="1.25" />
-                      </g>
-                    ];
-                  });
-                })}
-              </svg>
+              {rightBracketLayout.totalHeight > 0 ? (
+                <svg
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 h-full w-full"
+                  viewBox={`0 0 160 ${rightBracketLayout.totalHeight}`}
+                  preserveAspectRatio="none"
+                >
+                  {rightBracketLayout.rounds.map((round, roundIndex) => {
+                    if (roundIndex === rightBracketLayout.rounds.length - 1) {
+                      return null;
+                    }
+                    const xStart = 82 - roundIndex * 22;
+                    const xJoin = xStart - 18;
+                    const nextRound = rightBracketLayout.rounds[roundIndex + 1] ?? [];
+                    return round.flatMap((y, index) => {
+                      const pairIndex = Math.floor(index / 2);
+                      const targetY = nextRound[pairIndex] ?? y;
+                      return [
+                        <g key={`right-${roundIndex}-${index}`} className="stroke-gray-200">
+                          <line x1={xStart} y1={y} x2={xJoin} y2={y} strokeWidth="1.25" />
+                          <line x1={xJoin} y1={Math.min(y, targetY)} x2={xJoin} y2={Math.max(y, targetY)} strokeWidth="1.25" />
+                          <line x1={xJoin} y1={targetY} x2={xJoin - 12} y2={targetY} strokeWidth="1.25" />
+                        </g>
+                      ];
+                    });
+                  })}
+                </svg>
+              ) : null}
               {rightBracketMatches.map((match, index) => {
                 const content = (
                   <>
@@ -4605,7 +4912,7 @@ export function BracketBuilderClient({
                                 type="button"
                                 data-bracket-change-popover="true"
                                 onClick={(event) => handleBracketChangeMarkerClick(event, slotId)}
-                                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-accent-light/25 hover:text-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-accent bg-white text-accent transition hover:bg-accent-light/25 hover:text-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                                 title={t(language, "bracket.viewBracketChange")}
                                 aria-label={bracketChangeDetails.ariaLabel}
                               >
