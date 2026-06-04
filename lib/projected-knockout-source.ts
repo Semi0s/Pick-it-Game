@@ -9,10 +9,13 @@ import {
   type KnockoutPlaceholderMatch
 } from "@/lib/knockout-seeding";
 import { fetchUserLightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
+import {
+  chooseProjectedKnockoutSource,
+  hasScorePredictionInputs,
+  type ProjectedKnockoutSource
+} from "@/lib/projected-knockout-source-utils";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Team } from "@/lib/types";
-
-export type ProjectedKnockoutSource = "seed_builder" | "score_predictions";
 
 type AdminSupabaseClient = ReturnType<typeof createAdminClient>;
 
@@ -108,13 +111,24 @@ export async function loadProjectedRoundOf32FromPreferredSource(
   adminSupabase: AdminSupabaseClient,
   userId: string
 ) {
-  const inputs = await loadProjectedRoundOf32Inputs(adminSupabase, userId);
+  const [preferredSource, inputs] = await Promise.all([
+    fetchUserProjectedKnockoutSource(adminSupabase, userId),
+    loadProjectedRoundOf32Inputs(adminSupabase, userId)
+  ]);
+  const seedBuilderProjected = buildSeedBuilderProjectedRoundOf32(inputs);
+  const scoreProjected = buildScorePredictionProjectedRoundOf32(inputs);
+  const source = chooseProjectedKnockoutSource({
+    preferredSource,
+    seedResolvedSideCount: seedBuilderProjected.resolvedSideCount,
+    scoreResolvedSideCount: scoreProjected.resolvedSideCount
+  });
+  const projectedSeeds = source === "score_predictions" ? scoreProjected : seedBuilderProjected;
 
   return {
-    source: "seed_builder" as const,
+    source,
     inputs,
     projectedSeeds: mapProjectedRoundOf32ToStoredMatchIds(
-      buildSeedBuilderProjectedRoundOf32(inputs),
+      projectedSeeds,
       inputs.roundOf32Placeholders
     )
   };
@@ -128,13 +142,7 @@ export async function fetchProjectedKnockoutConflictStatus(
     fetchUserProjectedKnockoutSource(adminSupabase, userId),
     loadProjectedRoundOf32Inputs(adminSupabase, userId)
   ]);
-  const hasScorePredictions = inputs.predictions.some(
-    (prediction) =>
-      prediction.predictedHomeScore !== null &&
-      prediction.predictedHomeScore !== undefined &&
-      prediction.predictedAwayScore !== null &&
-      prediction.predictedAwayScore !== undefined
-  );
+  const hasScorePredictions = hasScorePredictionInputs(inputs.predictions);
 
   if (!inputs.hasSavedSnapshot || !hasScorePredictions) {
     return {

@@ -382,14 +382,33 @@ export function buildProjectedGroupStandingsFromSeedRankings(
     }
 
     const teamIdsInGroup = new Set(groupTeams.map((team) => team.id));
-    if (uniqueRankedTeamIds.length !== teamIdsInGroup.size) {
-      throw new Error(`Rank every team in ${groupName} before saving.`);
-    }
-
     for (const teamId of uniqueRankedTeamIds) {
       if (!teamIdsInGroup.has(teamId)) {
         throw new Error(`${teamId} does not belong to ${groupName}.`);
       }
+    }
+
+    if (uniqueRankedTeamIds.length !== teamIdsInGroup.size) {
+      const rows = groupTeams
+        .map((team) => ({
+          ...createMiniGroupStandingsRow(team),
+          rank: 0
+        }))
+        .sort((left, right) => left.teamName.localeCompare(right.teamName));
+
+      standingsByGroup.set(groupName, {
+        groupId: groupName,
+        rows,
+        matchSourceCounts: {
+          actual: 0,
+          prediction: 0,
+          missing: groupTeams.length > 0 ? 1 : 0
+        },
+        isComplete: false,
+        isFullyActual: false,
+        isHybrid: false
+      });
+      continue;
     }
 
     const rows = uniqueRankedTeamIds.map((teamId, index) => {

@@ -357,6 +357,66 @@ function haveSameGroupRankings(
   return true;
 }
 
+function mergeGroupRankingPatchWithSnapshot(
+  rankingPatch: GroupSeedRankingInput[],
+  savedSnapshot: LightSeedBuilderSnapshot
+) {
+  const mergedByGroup = new Map(
+    savedSnapshot.groupRankings.map((ranking) => [
+      normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+      ranking.rankedTeamIds
+    ])
+  );
+
+  for (const ranking of rankingPatch) {
+    const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
+    mergedByGroup.set(groupName, ranking.rankedTeamIds);
+  }
+
+  return Array.from(mergedByGroup.entries())
+    .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
+    .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
+}
+
+function normalizeRankingSlotsForPersistence(rankedTeamIds: Array<string | null | undefined>) {
+  const normalized = rankedTeamIds.map((teamId) => teamId?.trim() || "");
+  let lastRankedIndex = -1;
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    if (normalized[index]) {
+      lastRankedIndex = index;
+      break;
+    }
+  }
+
+  return lastRankedIndex >= 0 ? normalized.slice(0, lastRankedIndex + 1) : [];
+}
+
+function getTopTwoDraftRankedTeamIds(draft: TopTwoSlotDraft) {
+  return normalizeRankingSlotsForPersistence([draft.firstTeamId, draft.secondTeamId]);
+}
+
+function filterCompleteGroupRankingsForProjection(
+  rankings: GroupSeedRankingInput[],
+  teamIdsByGroup: ReadonlyMap<string, ReadonlySet<string>>
+) {
+  return rankings.filter((ranking) => {
+    const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
+    const validTeamIds = teamIdsByGroup.get(groupName);
+    const rankedTeamIds = ranking.rankedTeamIds.map((teamId) => teamId?.trim()).filter((teamId): teamId is string => Boolean(teamId));
+    const uniqueTeamIds = new Set(rankedTeamIds);
+
+    if (uniqueTeamIds.size !== rankedTeamIds.length) {
+      return false;
+    }
+
+    if (!validTeamIds) {
+      return rankedTeamIds.length >= 4;
+    }
+
+    return rankedTeamIds.length === validTeamIds.size && rankedTeamIds.every((teamId) => validTeamIds.has(teamId));
+  });
+}
+
 function hasLightSeedBuilderSnapshotChanges({
   currentGroupRankings,
   currentThirdPlaceTeamIds,
@@ -370,8 +430,10 @@ function hasLightSeedBuilderSnapshotChanges({
     return false;
   }
 
+  const mergedGroupRankings = mergeGroupRankingPatchWithSnapshot(currentGroupRankings, savedSnapshot);
+
   return (
-    !haveSameGroupRankings(currentGroupRankings, savedSnapshot.groupRankings) ||
+    !haveSameGroupRankings(mergedGroupRankings, savedSnapshot.groupRankings) ||
     !haveSameOrderedIds(currentThirdPlaceTeamIds, getRankedThirdPlaceTeamIds(savedSnapshot))
   );
 }
@@ -486,8 +548,11 @@ export function BracketBuilderClient({
     targetId: string;
     tapAction?: "select-next";
   } | null>(null);
+  const shouldHydrateUnsavedServerState = Boolean(initialFinalBracketSavedAt && initialGroupStageNeedsSave);
+  const initialCommittedProgressAt =
+    initialFinalBracketSavedAt ?? (hasSavedSnapshot ? initialGroupStageChangedAt : null);
   const committedSnapshotRef = useRef<LightSeedBuilderSnapshot | null>(
-    initialSnapshot && hasSavedSnapshot && !initialGroupStageNeedsSave
+    initialSnapshot && hasSavedSnapshot && !shouldHydrateUnsavedServerState
       ? cloneLightSeedBuilderSnapshot(initialSnapshot)
       : null
   );
@@ -552,17 +617,26 @@ export function BracketBuilderClient({
         : ranking;
     });
   }, [defaultSnapshot.groupRankings, initialSnapshot]);
+  const initialThirdPlaceRankingIds = useMemo(
+    () =>
+      initialSnapshot?.thirdPlaceRankings?.length
+        ? [...initialSnapshot.thirdPlaceRankings]
+            .sort((left, right) => left.rank - right.rank)
+            .map((row) => row.teamId)
+        : [],
+    [initialSnapshot]
+  );
   const [groupRankings, setGroupRankings] = useState<LightSeedBuilderSnapshot["groupRankings"]>(
     initialDisplayGroupRankings
   );
   const [topTwoSlotDraftsByGroup, setTopTwoSlotDraftsByGroup] = useState<Record<string, TopTwoSlotDraft>>({});
-  const [thirdPlaceRankings, setThirdPlaceRankings] = useState<string[]>(
-    initialSnapshot?.thirdPlaceRankings?.length
-      ? [...initialSnapshot.thirdPlaceRankings].sort((left, right) => left.rank - right.rank).map((row) => row.teamId)
-      : []
-  );
+  const [thirdPlaceRankings, setThirdPlaceRankings] = useState<string[]>(initialThirdPlaceRankingIds);
   const [activeGroupIndex, setActiveGroupIndex] = useState(0);
   const [touchedGroups, setTouchedGroups] = useState<Set<string>>(persistedGroupKeys);
+  const groupRankingsRef = useRef(initialDisplayGroupRankings);
+  const topTwoSlotDraftsByGroupRef = useRef<Record<string, TopTwoSlotDraft>>({});
+  const thirdPlaceRankingsRef = useRef(initialThirdPlaceRankingIds);
+  const touchedGroupsRef = useRef(new Set(persistedGroupKeys));
   const [hasInteracted, setHasInteracted] = useState(false);
   const [, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [, setSaveMessage] = useState("");
@@ -603,16 +677,17 @@ export function BracketBuilderClient({
   const [isRestoringBracket, setIsRestoringBracket] = useState(false);
   const [isSavingProgress, setIsSavingProgress] = useState(false);
   const [finalBracketSavedAt, setFinalBracketSavedAt] = useState<string | null>(
-    initialGroupStageNeedsSave ? null : initialFinalBracketSavedAt
+    shouldHydrateUnsavedServerState ? null : initialFinalBracketSavedAt
   );
-  const [committedBracketSavedAt, setCommittedBracketSavedAt] = useState<string | null>(initialFinalBracketSavedAt);
+  const [committedBracketSavedAt, setCommittedBracketSavedAt] = useState<string | null>(initialCommittedProgressAt);
   const [changedSinceAt, setChangedSinceAt] = useState<string | null>(
-    initialGroupStageNeedsSave ? initialGroupStageChangedAt : null
+    shouldHydrateUnsavedServerState ? initialGroupStageChangedAt : null
   );
-  const [hasTouchedThirdPlaceRanking, setHasTouchedThirdPlaceRanking] = useState(
+  const initialHasTouchedThirdPlaceRanking =
     (initialSnapshot?.thirdPlaceRankings?.length ?? 0) >= requiredThirdPlaceQualifierCount &&
-      requiredThirdPlaceQualifierCount > 0
-  );
+    requiredThirdPlaceQualifierCount > 0;
+  const [hasTouchedThirdPlaceRanking, setHasTouchedThirdPlaceRanking] = useState(initialHasTouchedThirdPlaceRanking);
+  const hasTouchedThirdPlaceRankingRef = useRef(initialHasTouchedThirdPlaceRanking);
   const [hasSeenCompletionThisSession, setHasSeenCompletionThisSession] = useState(Boolean(initialFinalBracketSavedAt));
   const onboardingQuery = searchParams.get("onboarding") === "1" ? "&onboarding=1" : "";
 
@@ -664,6 +739,29 @@ export function BracketBuilderClient({
       ),
     [groupRankings]
   );
+  const defaultGroupTeamIdsByGroup = useMemo(
+    () =>
+      new Map(
+        defaultSnapshot.groupRankings.map((ranking) => [
+          normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+          ranking.rankedTeamIds
+        ])
+      ),
+    [defaultSnapshot.groupRankings]
+  );
+  const meaningfulTopTwoDraftEntries = useMemo(
+    () =>
+      Object.entries(topTwoSlotDraftsByGroup).filter(([groupName, draft]) => {
+        const normalizedGroupName = normalizeGroupKey(groupName) ?? groupName;
+        if (draft.firstTeamId || draft.secondTeamId) {
+          return true;
+        }
+
+        const storedRanking = groupRankingsByGroup.get(normalizedGroupName) ?? [];
+        return touchedGroups.has(normalizedGroupName) && Boolean(storedRanking[0] || storedRanking[1]);
+      }),
+    [groupRankingsByGroup, topTwoSlotDraftsByGroup, touchedGroups]
+  );
 
   const topTwoCompletionRankings = useMemo(
     () =>
@@ -680,17 +778,16 @@ export function BracketBuilderClient({
     [groupRankings, topTwoSlotDraftsByGroup]
   );
   const topTwoCompletionTouchedGroups = useMemo(() => {
-    const draftGroupNames = Object.keys(topTwoSlotDraftsByGroup);
-    if (draftGroupNames.length === 0) {
+    if (meaningfulTopTwoDraftEntries.length === 0) {
       return touchedGroups;
     }
 
     const next = new Set(touchedGroups);
-    for (const groupName of draftGroupNames) {
-      next.add(groupName);
+    for (const [groupName] of meaningfulTopTwoDraftEntries) {
+      next.add(normalizeGroupKey(groupName) ?? groupName);
     }
     return next;
-  }, [topTwoSlotDraftsByGroup, touchedGroups]);
+  }, [meaningfulTopTwoDraftEntries, touchedGroups]);
   const topTwoCompletionStatus = useMemo(
     () =>
       getGroupTopTwoCompletionStatus({
@@ -703,21 +800,11 @@ export function BracketBuilderClient({
   );
   const hasIncompleteTopTwoDraft = useMemo(
     () =>
-      Object.values(topTwoSlotDraftsByGroup).some(
-        (draft) => !draft.firstTeamId || !draft.secondTeamId
+      meaningfulTopTwoDraftEntries.some(
+        ([, draft]) => !draft.firstTeamId || !draft.secondTeamId
       ),
-    [topTwoSlotDraftsByGroup]
+    [meaningfulTopTwoDraftEntries]
   );
-  const incompleteTopTwoDraftGroupNames = useMemo(
-    () =>
-      new Set(
-        Object.entries(topTwoSlotDraftsByGroup)
-          .filter(([, draft]) => !draft.firstTeamId || !draft.secondTeamId)
-          .map(([groupName]) => groupName)
-      ),
-    [topTwoSlotDraftsByGroup]
-  );
-
   const derivedThirdPlacePool = useMemo(
     () =>
       sortedGroupNames
@@ -825,6 +912,10 @@ export function BracketBuilderClient({
   const activeGroupName = sortedGroupNames[activeGroupIndex] ?? null;
   const isActiveGroupScoreApplied = activeGroupName ? groupProjectionSources[activeGroupName] === "score_applied" : false;
   const activeGroupTeamIds = useMemo(
+    () => (activeGroupName ? defaultGroupTeamIdsByGroup.get(activeGroupName) ?? [] : []),
+    [activeGroupName, defaultGroupTeamIdsByGroup]
+  );
+  const activeGroupRankingTeamIds = useMemo(
     () => (activeGroupName ? groupRankingsByGroup.get(activeGroupName) ?? [] : []),
     [activeGroupName, groupRankingsByGroup]
   );
@@ -842,12 +933,12 @@ export function BracketBuilderClient({
   const selectedFirstTeamId = activeTopTwoDraft
     ? activeTopTwoDraft.firstTeamId
     : shouldUseStoredActiveTopTwo
-      ? activeGroupTeamIds[0] ?? null
+      ? activeGroupRankingTeamIds[0] ?? null
       : null;
   const selectedSecondTeamId = activeTopTwoDraft
     ? activeTopTwoDraft.secondTeamId
     : shouldUseStoredActiveTopTwo
-      ? activeGroupTeamIds[1] ?? null
+      ? activeGroupRankingTeamIds[1] ?? null
       : null;
   const selectedFirstTeam = selectedFirstTeamId ? teamsById.get(selectedFirstTeamId) ?? null : null;
   const selectedSecondTeam = selectedSecondTeamId ? teamsById.get(selectedSecondTeamId) ?? null : null;
@@ -948,14 +1039,28 @@ export function BracketBuilderClient({
     [currentRankingsInput, touchedGroups]
   );
   const saveableTouchedRankingsInput = useMemo<GroupSeedRankingInput[]>(
-    () =>
-      hasIncompleteTopTwoDraft
-        ? touchedRankingsInput.filter(
-            (ranking) =>
-              !incompleteTopTwoDraftGroupNames.has(normalizeGroupKey(ranking.groupName) ?? ranking.groupName)
-          )
-        : touchedRankingsInput,
-    [hasIncompleteTopTwoDraft, incompleteTopTwoDraftGroupNames, touchedRankingsInput]
+    () => {
+      const rankingsByGroup = new Map(
+        touchedRankingsInput.map((ranking) => [
+          normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+          normalizeRankingSlotsForPersistence(ranking.rankedTeamIds)
+        ])
+      );
+
+      for (const [groupName, draft] of meaningfulTopTwoDraftEntries) {
+        rankingsByGroup.set(normalizeGroupKey(groupName) ?? groupName, getTopTwoDraftRankedTeamIds(draft));
+      }
+
+      return Array.from(rankingsByGroup.entries())
+        .filter(([, rankedTeamIds]) => rankedTeamIds.some(Boolean))
+        .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
+        .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
+    },
+    [meaningfulTopTwoDraftEntries, touchedRankingsInput]
+  );
+  const projectableTouchedRankingsInput = useMemo(
+    () => filterCompleteGroupRankingsForProjection(saveableTouchedRankingsInput, teamIdsByGroup),
+    [saveableTouchedRankingsInput, teamIdsByGroup]
   );
   const committedSnapshot = committedSnapshotRef.current;
   const hasRestorableBracketChanges = useMemo(
@@ -971,11 +1076,18 @@ export function BracketBuilderClient({
     hasRestorableBracketChanges ||
       (!committedSnapshot && saveableTouchedRankingsInput.length > 0)
   );
-  const canRestoreLastSavedBracket = Boolean(committedSnapshot) && (hasRestorableBracketChanges || hasIncompleteTopTwoDraft);
-  const hasUncommittedFinalChanges = isComplete && hasRestorableBracketChanges;
+  const hasUnsavedGroupStageChanges = Boolean(
+    hasInteracted && hasSaveableProgressChanges
+  );
+  const canSaveProgress = hasUnsavedGroupStageChanges && hasSaveableProgressChanges;
+  const canRestoreLastSavedBracket =
+    hasUnsavedGroupStageChanges &&
+    Boolean(committedSnapshot) &&
+    hasRestorableBracketChanges;
+  const hasUncommittedFinalChanges = isComplete && canSaveProgress && hasRestorableBracketChanges;
   const previewRankingsInput = useMemo<GroupSeedRankingInput[]>(
-    () => (hasSavedSnapshot || hasInteracted ? saveableTouchedRankingsInput : []),
-    [hasInteracted, hasSavedSnapshot, saveableTouchedRankingsInput]
+    () => (hasSavedSnapshot || hasInteracted ? projectableTouchedRankingsInput : []),
+    [hasInteracted, hasSavedSnapshot, projectableTouchedRankingsInput]
   );
 
   const projectedStandings = useMemo(
@@ -1014,11 +1126,12 @@ export function BracketBuilderClient({
       groupName: normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
       rankedTeamIds: ranking.rankedTeamIds
     }));
+    const savedProjectableRankingsInput = filterCompleteGroupRankingsForProjection(savedRankingsInput, teamIdsByGroup);
     const savedThirdPlaceTeamIds = committedSnapshot.thirdPlaceRankings
       .slice()
       .sort((left, right) => left.rank - right.rank)
       .map((ranking) => ranking.teamId);
-    const savedStandings = buildProjectedGroupStandingsFromSeedRankings(teams, savedRankingsInput);
+    const savedStandings = buildProjectedGroupStandingsFromSeedRankings(teams, savedProjectableRankingsInput);
 
     return buildUserProjectedRoundOf32({
       groupMatches: [],
@@ -1053,7 +1166,8 @@ export function BracketBuilderClient({
     hasCompletedBracketOnce &&
     Boolean(savedProjectedBracket) &&
     usesExplicitThirdPlaceSelection &&
-    hasInteracted &&
+    hasUnsavedGroupStageChanges &&
+    hasSaveableProgressChanges &&
     hasScenarioChanges;
   const showBracketImpactOverlay = shouldShowScenarioImpact;
   const scenarioAffectedSlotById = useMemo(
@@ -1197,9 +1311,9 @@ export function BracketBuilderClient({
 
       const changedSinceAt = typeof draft.changedSinceAt === "string" ? draft.changedSinceAt : new Date().toISOString();
       if (
-        initialFinalBracketSavedAt &&
+        initialCommittedProgressAt &&
         Number.isFinite(new Date(changedSinceAt).getTime()) &&
-        new Date(changedSinceAt).getTime() <= new Date(initialFinalBracketSavedAt).getTime()
+        new Date(changedSinceAt).getTime() <= new Date(initialCommittedProgressAt).getTime()
       ) {
         clearUnsavedGroupStageDraft();
         return;
@@ -1216,31 +1330,51 @@ export function BracketBuilderClient({
           ])
       );
 
-      setGroupRankings(
-        defaultSnapshot.groupRankings.map((ranking) => {
-          const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
-          const draftRankedTeamIds = draftRankingsByGroup.get(groupName);
-          return draftRankedTeamIds?.length
-            ? { ...ranking, rankedTeamIds: draftRankedTeamIds }
-            : ranking;
-        })
-      );
-      setThirdPlaceRankings(
-        Array.isArray(draft.thirdPlaceRankings)
-          ? draft.thirdPlaceRankings.filter((teamId): teamId is string => typeof teamId === "string" && teamId.length > 0)
-          : []
-      );
+      const draftGroupRankings = Array.from(draftRankingsByGroup.entries()).map(([groupName, rankedTeamIds]) => ({
+        groupName,
+        rankedTeamIds
+      }));
+      const draftThirdPlaceRankings = Array.isArray(draft.thirdPlaceRankings)
+        ? draft.thirdPlaceRankings.filter((teamId): teamId is string => typeof teamId === "string" && teamId.length > 0)
+        : [];
+      const restoredHasSnapshotChanges =
+        !committedSnapshotRef.current ||
+        hasLightSeedBuilderSnapshotChanges({
+          currentGroupRankings: draftGroupRankings,
+          currentThirdPlaceTeamIds: draftThirdPlaceRankings,
+          savedSnapshot: committedSnapshotRef.current
+        });
+
+      if (!restoredHasSnapshotChanges) {
+        clearUnsavedGroupStageDraft();
+        return;
+      }
+
+      const nextGroupRankings = defaultSnapshot.groupRankings.map((ranking) => {
+        const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
+        const draftRankedTeamIds = draftRankingsByGroup.get(groupName);
+        return draftRankedTeamIds?.length
+          ? { ...ranking, rankedTeamIds: draftRankedTeamIds }
+          : ranking;
+      });
+
+      setGroupRankings(nextGroupRankings);
+      groupRankingsRef.current = nextGroupRankings;
+      setThirdPlaceRankings(draftThirdPlaceRankings);
+      thirdPlaceRankingsRef.current = draftThirdPlaceRankings;
+      topTwoSlotDraftsByGroupRef.current = {};
       setTopTwoSlotDraftsByGroup({});
-      setTouchedGroups(
-        new Set(
-          Array.isArray(draft.touchedGroupNames)
-            ? draft.touchedGroupNames
-                .filter((groupName): groupName is string => typeof groupName === "string" && groupName.length > 0)
-                .map((groupName) => normalizeGroupKey(groupName) ?? groupName)
-            : Array.from(draftRankingsByGroup.keys())
-        )
+      const nextTouchedGroups = new Set(
+        Array.isArray(draft.touchedGroupNames)
+          ? draft.touchedGroupNames
+              .filter((groupName): groupName is string => typeof groupName === "string" && groupName.length > 0)
+              .map((groupName) => normalizeGroupKey(groupName) ?? groupName)
+          : Array.from(draftRankingsByGroup.keys())
       );
-      setHasTouchedThirdPlaceRanking(Boolean(draft.hasTouchedThirdPlaceRanking));
+      touchedGroupsRef.current = nextTouchedGroups;
+      setTouchedGroups(nextTouchedGroups);
+      hasTouchedThirdPlaceRankingRef.current = Boolean(draft.hasTouchedThirdPlaceRanking);
+      setHasTouchedThirdPlaceRanking(hasTouchedThirdPlaceRankingRef.current);
       setHasInteracted(true);
       setFinalBracketSavedAt(null);
       setChangedSinceAt(changedSinceAt);
@@ -1248,15 +1382,20 @@ export function BracketBuilderClient({
     } catch {
       clearUnsavedGroupStageDraft();
     }
-  }, [defaultSnapshot.groupRankings, initialFinalBracketSavedAt, isReadOnly, language]);
+  }, [defaultSnapshot.groupRankings, initialCommittedProgressAt, isReadOnly, language]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || isReadOnly || !hasInteracted || hasIncompleteTopTwoDraft) {
+    if (typeof window === "undefined" || isReadOnly || !hasInteracted) {
+      return;
+    }
+
+    if (!hasUnsavedGroupStageChanges) {
+      clearUnsavedGroupStageDraft();
       return;
     }
 
     const draft: UnsavedGroupStageDraft = {
-      groupRankings: currentRankingsInput,
+      groupRankings: saveableTouchedRankingsInput,
       thirdPlaceRankings: usesExplicitThirdPlaceSelection ? explicitThirdPlaceSelectionIds : normalizedThirdPlaceRankings,
       touchedGroupNames: Array.from(touchedGroups),
       hasTouchedThirdPlaceRanking,
@@ -1270,19 +1409,29 @@ export function BracketBuilderClient({
     }
   }, [
     changedSinceAt,
-    currentRankingsInput,
     explicitThirdPlaceSelectionIds,
     hasInteracted,
-    hasIncompleteTopTwoDraft,
+    hasUnsavedGroupStageChanges,
     hasTouchedThirdPlaceRanking,
     isReadOnly,
     normalizedThirdPlaceRankings,
+    saveableTouchedRankingsInput,
     touchedGroups,
     usesExplicitThirdPlaceSelection
   ]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !hasInteracted || isReadOnly) {
+    if (!hasInteracted || hasUnsavedGroupStageChanges || isReadOnly) {
+      return;
+    }
+
+    setHasInteracted(false);
+    setChangedSinceAt(null);
+    clearUnsavedGroupStageDraft();
+  }, [hasInteracted, hasUnsavedGroupStageChanges, isReadOnly]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !hasUnsavedGroupStageChanges || isReadOnly) {
       return;
     }
 
@@ -1325,13 +1474,14 @@ export function BracketBuilderClient({
       window.removeEventListener("beforeunload", handleBeforeUnload);
       document.removeEventListener("click", handleDocumentClick, true);
     };
-  }, [hasInteracted, isReadOnly, language]);
+  }, [hasUnsavedGroupStageChanges, isReadOnly, language]);
 
   useEffect(() => {
     if (!usesExplicitThirdPlaceSelection || thirdPlaceRankings.length === explicitThirdPlaceSelectionIds.length) {
       return;
     }
 
+    thirdPlaceRankingsRef.current = explicitThirdPlaceSelectionIds;
     setThirdPlaceRankings(explicitThirdPlaceSelectionIds);
   }, [explicitThirdPlaceSelectionIds, thirdPlaceRankings.length, usesExplicitThirdPlaceSelection]);
 
@@ -1443,12 +1593,42 @@ export function BracketBuilderClient({
     }
   }
 
+  function cancelPendingCustomDragForGroupSwipe() {
+    const pendingDragState = customDragStateRef.current;
+    if (!pendingDragState || pendingDragState.isDragging) {
+      return;
+    }
+
+    if (customDragHoldTimeoutRef.current !== null) {
+      window.clearTimeout(customDragHoldTimeoutRef.current);
+      customDragHoldTimeoutRef.current = null;
+    }
+
+    customDragStateRef.current = null;
+    draggedTeamIdRef.current = null;
+    draggedThirdPlaceTeamIdRef.current = null;
+    setDraggedTeamId(null);
+    setDragOverTeamId(null);
+    setDraggedThirdPlaceTeamId(null);
+    setDragOverThirdPlaceTeamId(null);
+    setCustomDragGhost(null);
+  }
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
 
     const clearStaleDragState = () => {
+      if (
+        !customDragStateRef.current &&
+        !draggedTeamIdRef.current &&
+        !draggedThirdPlaceTeamIdRef.current &&
+        customDragHoldTimeoutRef.current === null
+      ) {
+        return;
+      }
+
       clearCustomTouchDragState();
     };
     const handleVisibilityChange = () => {
@@ -1731,22 +1911,18 @@ export function BracketBuilderClient({
       ...current,
       [groupName]: "builder_manual"
     }));
-    setTouchedGroups((current) => {
-      if (current.has(groupName)) {
-        return current;
-      }
+    const nextTouchedGroups = new Set(touchedGroupsRef.current);
+    nextTouchedGroups.add(groupName);
+    touchedGroupsRef.current = nextTouchedGroups;
+    setTouchedGroups(nextTouchedGroups);
 
-      const next = new Set(current);
-      next.add(groupName);
-      return next;
-    });
-    setGroupRankings((current) =>
-      current.map((ranking) =>
+    const nextGroupRankings = groupRankingsRef.current.map((ranking) =>
         (normalizeGroupKey(ranking.groupName) ?? ranking.groupName) === groupName
           ? { ...ranking, rankedTeamIds: nextRankedTeamIds }
           : ranking
-      )
     );
+    groupRankingsRef.current = nextGroupRankings;
+    setGroupRankings(nextGroupRankings);
   }
 
   function getTopTwoSlotsForGroup(groupName: string): TopTwoSlotDraft {
@@ -1766,23 +1942,27 @@ export function BracketBuilderClient({
 
   function buildTopTwoRanking(groupName: string, firstTeamId: string, secondTeamId: string) {
     const currentOrder = groupRankingsByGroup.get(groupName) ?? [];
+    const defaultOrder = defaultGroupTeamIdsByGroup.get(groupName) ?? currentOrder;
+    const orderedTeamIds = Array.from(
+      new Set([...currentOrder, ...defaultOrder].map((teamId) => teamId?.trim()).filter((teamId): teamId is string => Boolean(teamId)))
+    );
+
     return [
       firstTeamId,
       secondTeamId,
-      ...currentOrder.filter((teamId) => teamId !== firstTeamId && teamId !== secondTeamId)
+      ...orderedTeamIds.filter((teamId) => teamId !== firstTeamId && teamId !== secondTeamId)
     ];
   }
 
   function clearTopTwoDraft(groupName: string) {
-    setTopTwoSlotDraftsByGroup((current) => {
-      if (!current[groupName]) {
-        return current;
-      }
+    if (!topTwoSlotDraftsByGroupRef.current[groupName]) {
+      return;
+    }
 
-      const next = { ...current };
-      delete next[groupName];
-      return next;
-    });
+    const next = { ...topTwoSlotDraftsByGroupRef.current };
+    delete next[groupName];
+    topTwoSlotDraftsByGroupRef.current = next;
+    setTopTwoSlotDraftsByGroup(next);
   }
 
   function markTopTwoSlotDraftChanged(groupName: string) {
@@ -1792,6 +1972,11 @@ export function BracketBuilderClient({
       ...current,
       [groupName]: "builder_manual"
     }));
+  }
+
+  function updateThirdPlaceRankings(nextRankings: string[]) {
+    thirdPlaceRankingsRef.current = nextRankings;
+    setThirdPlaceRankings(nextRankings);
   }
 
   function applyTopTwoSlots(groupName: string, firstTeamId: string | null, secondTeamId: string | null) {
@@ -1812,13 +1997,15 @@ export function BracketBuilderClient({
     }
 
     markTopTwoSlotDraftChanged(groupName);
-    setTopTwoSlotDraftsByGroup((current) => ({
-      ...current,
+    const nextDrafts = {
+      ...topTwoSlotDraftsByGroupRef.current,
       [groupName]: {
         firstTeamId: normalizedFirstTeamId,
         secondTeamId: normalizedSecondTeamId
       }
-    }));
+    };
+    topTwoSlotDraftsByGroupRef.current = nextDrafts;
+    setTopTwoSlotDraftsByGroup(nextDrafts);
   }
 
   function getTopTwoSlotPlaceLabel(slotIndex: 0 | 1) {
@@ -1923,6 +2110,7 @@ export function BracketBuilderClient({
 
     markBracketChanged();
     setHasInteracted(true);
+    hasTouchedThirdPlaceRankingRef.current = true;
     setHasTouchedThirdPlaceRanking(true);
   }
 
@@ -1933,6 +2121,7 @@ export function BracketBuilderClient({
   function markThirdPlaceSelectionChanged() {
     markBracketChanged();
     setHasInteracted(true);
+    hasTouchedThirdPlaceRankingRef.current = true;
     setHasTouchedThirdPlaceRanking(true);
   }
 
@@ -2058,12 +2247,10 @@ export function BracketBuilderClient({
     }
 
     markThirdPlaceSelectionChanged();
-    setThirdPlaceRankings((current) => {
-      const currentSelection = Array.from(
-        new Set(current.filter((candidateId) => derivedThirdPlacePoolIds.has(candidateId)))
-      ).filter((candidateId) => candidateId !== teamId && candidateId !== replacedTeamId);
-      return sortThirdPlaceSelectionByProbability([...currentSelection, teamId]);
-    });
+    const currentSelection = Array.from(
+      new Set(thirdPlaceRankingsRef.current.filter((candidateId) => derivedThirdPlacePoolIds.has(candidateId)))
+    ).filter((candidateId) => candidateId !== teamId && candidateId !== replacedTeamId);
+    updateThirdPlaceRankings(sortThirdPlaceSelectionByProbability([...currentSelection, teamId]));
     setThirdPlaceReplacementCandidateId(null);
   }
 
@@ -2081,14 +2268,15 @@ export function BracketBuilderClient({
       }
 
       markThirdPlaceSelectionChanged();
-      setThirdPlaceRankings(moveItem(committedThirdPlaceRankingIds, selectedIndex, direction));
+      updateThirdPlaceRankings(moveItem(committedThirdPlaceRankingIds, selectedIndex, direction));
       return;
     }
 
     markBracketChanged();
     setHasInteracted(true);
+    hasTouchedThirdPlaceRankingRef.current = true;
     setHasTouchedThirdPlaceRanking(true);
-    setThirdPlaceRankings(moveItem(normalizedThirdPlaceRankings, index, direction));
+    updateThirdPlaceRankings(moveItem(normalizedThirdPlaceRankings, index, direction));
   }
 
   function handleDropThirdPlaceReorder(targetTeamId: string, sourceTeamIdOverride?: string | null) {
@@ -2126,7 +2314,7 @@ export function BracketBuilderClient({
         const nextSelection = [...committedThirdPlaceRankingIds];
         nextSelection.splice(insertIndex, 0, sourceTeamId);
         markThirdPlaceSelectionChanged();
-        setThirdPlaceRankings(nextSelection.slice(0, requiredThirdPlaceQualifierCount));
+        updateThirdPlaceRankings(nextSelection.slice(0, requiredThirdPlaceQualifierCount));
         draggedThirdPlaceTeamIdRef.current = null;
         setDraggedThirdPlaceTeamId(null);
         setDragOverThirdPlaceTeamId(null);
@@ -2139,7 +2327,7 @@ export function BracketBuilderClient({
         : committedThirdPlaceRankingIds.length - 1;
 
       markThirdPlaceSelectionChanged();
-      setThirdPlaceRankings(reorderItems(committedThirdPlaceRankingIds, selectedFromIndex, selectedToIndex));
+      updateThirdPlaceRankings(reorderItems(committedThirdPlaceRankingIds, selectedFromIndex, selectedToIndex));
       draggedThirdPlaceTeamIdRef.current = null;
       setDraggedThirdPlaceTeamId(null);
       setDragOverThirdPlaceTeamId(null);
@@ -2148,8 +2336,9 @@ export function BracketBuilderClient({
 
     markBracketChanged();
     setHasInteracted(true);
+    hasTouchedThirdPlaceRankingRef.current = true;
     setHasTouchedThirdPlaceRanking(true);
-    setThirdPlaceRankings(reorderItems(normalizedThirdPlaceRankings, fromIndex, toIndex));
+    updateThirdPlaceRankings(reorderItems(normalizedThirdPlaceRankings, fromIndex, toIndex));
     draggedThirdPlaceTeamIdRef.current = null;
     setDraggedThirdPlaceTeamId(null);
     setDragOverThirdPlaceTeamId(null);
@@ -2173,7 +2362,7 @@ export function BracketBuilderClient({
     }
 
     markThirdPlaceSelectionChanged();
-    setThirdPlaceRankings([...committedThirdPlaceRankingIds, sourceTeamId].slice(0, requiredThirdPlaceQualifierCount));
+    updateThirdPlaceRankings([...committedThirdPlaceRankingIds, sourceTeamId].slice(0, requiredThirdPlaceQualifierCount));
     draggedThirdPlaceTeamIdRef.current = null;
     setDraggedThirdPlaceTeamId(null);
     setDragOverThirdPlaceTeamId(null);
@@ -2349,6 +2538,7 @@ export function BracketBuilderClient({
       }
 
       groupSwipeTouchRef.current.isSwiping = true;
+      cancelPendingCustomDragForGroupSwipe();
     }
 
     event.preventDefault();
@@ -2378,6 +2568,12 @@ export function BracketBuilderClient({
     }
 
     finishGroupSurfaceSwipe(deltaX);
+  }
+
+  function handleGroupSwipeTouchCancel() {
+    groupSwipeTouchRef.current = { startX: null, startY: null, enabled: true, isSwiping: false };
+    setIsGroupSurfaceSwiping(false);
+    setGroupSwipeOffsetX(0);
   }
 
   function handleGroupSwipeWheel(event: WheelEvent<HTMLElement>) {
@@ -2524,6 +2720,112 @@ export function BracketBuilderClient({
     };
   }
 
+  function getLatestCurrentRankingsInput() {
+    return groupRankingsRef.current.map((ranking) => ({
+      groupName: normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+      rankedTeamIds: ranking.rankedTeamIds
+    }));
+  }
+
+  function getLatestGroupRankingsByGroup() {
+    return new Map(
+      groupRankingsRef.current.map((ranking) => [
+        normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+        ranking.rankedTeamIds
+      ])
+    );
+  }
+
+  function getLatestMeaningfulTopTwoDraftEntries() {
+    const latestRankingsByGroup = getLatestGroupRankingsByGroup();
+    return Object.entries(topTwoSlotDraftsByGroupRef.current).filter(([groupName, draft]) => {
+      const normalizedGroupName = normalizeGroupKey(groupName) ?? groupName;
+      if (draft.firstTeamId || draft.secondTeamId) {
+        return true;
+      }
+
+      const storedRanking = latestRankingsByGroup.get(normalizedGroupName) ?? [];
+      return touchedGroupsRef.current.has(normalizedGroupName) && Boolean(storedRanking[0] || storedRanking[1]);
+    });
+  }
+
+  function getLatestSaveableTouchedRankingsInput() {
+    const rankingsByGroup = new Map(
+      getLatestCurrentRankingsInput()
+        .filter((ranking) => touchedGroupsRef.current.has(normalizeGroupKey(ranking.groupName) ?? ranking.groupName))
+        .map((ranking) => [
+          normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
+          normalizeRankingSlotsForPersistence(ranking.rankedTeamIds)
+        ])
+    );
+
+    for (const [groupName, draft] of getLatestMeaningfulTopTwoDraftEntries()) {
+      rankingsByGroup.set(normalizeGroupKey(groupName) ?? groupName, getTopTwoDraftRankedTeamIds(draft));
+    }
+
+    return Array.from(rankingsByGroup.entries())
+      .filter(([, rankedTeamIds]) => rankedTeamIds.some(Boolean))
+      .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
+      .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
+  }
+
+  function getLatestDerivedThirdPlacePool() {
+    const latestRankingsByGroup = getLatestGroupRankingsByGroup();
+    const latestCompletionStatus = getGroupTopTwoCompletionStatus({
+      groupNames: sortedGroupNames,
+      rankings: getLatestCurrentRankingsInput(),
+      teamIdsByGroup,
+      touchedGroupNames: touchedGroupsRef.current
+    });
+
+    return sortedGroupNames
+      .map((groupName) => {
+        if (!latestCompletionStatus.completeGroupNames.has(groupName)) {
+          return null;
+        }
+
+        const rankedTeamIds = latestRankingsByGroup.get(groupName) ?? [];
+        const thirdPlaceTeamId = rankedTeamIds[2] ?? null;
+        return thirdPlaceTeamId ? teamsById.get(thirdPlaceTeamId) ?? null : null;
+      })
+      .filter((team): team is RankedTeam => Boolean(team));
+  }
+
+  function getLatestCommittedThirdPlaceRankingIds() {
+    const latestThirdPlacePool = getLatestDerivedThirdPlacePool();
+    const latestThirdPlacePoolIds = new Set(latestThirdPlacePool.map((team) => team.id));
+    const latestIsThirdPlacePhase =
+      latestThirdPlacePool.length >= sortedGroupNames.length &&
+      sortedGroupNames.length > 0 &&
+      requiredThirdPlaceQualifierCount > 0;
+    const latestHasCommittedThirdPlaceSelection =
+      latestIsThirdPlacePhase &&
+      requiredThirdPlaceQualifierCount > 0 &&
+      ((initialSnapshot?.thirdPlaceRankings?.length ?? 0) >= requiredThirdPlaceQualifierCount ||
+        hasTouchedThirdPlaceRankingRef.current);
+
+    if (!latestHasCommittedThirdPlaceSelection) {
+      return [];
+    }
+
+    const latestExplicitThirdPlaceSelectionIds = Array.from(
+      new Set(thirdPlaceRankingsRef.current.filter((teamId) => latestThirdPlacePoolIds.has(teamId)))
+    );
+    if (usesExplicitThirdPlaceSelection) {
+      return latestExplicitThirdPlaceSelectionIds.slice(0, requiredThirdPlaceQualifierCount);
+    }
+
+    const preserved = thirdPlaceRankingsRef.current.filter((teamId) => latestThirdPlacePoolIds.has(teamId));
+    const missing = latestThirdPlacePool.map((team) => team.id).filter((teamId) => !preserved.includes(teamId));
+    return [...missing, ...preserved].slice(0, requiredThirdPlaceQualifierCount);
+  }
+
+  function buildCommittedSnapshotGroupRankings(savedRankingPatch: GroupSeedRankingInput[]) {
+    return committedSnapshotRef.current
+      ? mergeGroupRankingPatchWithSnapshot(savedRankingPatch, committedSnapshotRef.current)
+      : savedRankingPatch;
+  }
+
   function primeKnockoutProjectedCompareView() {
     try {
       window.sessionStorage.setItem(
@@ -2541,24 +2843,22 @@ export function BracketBuilderClient({
       isSavingProgress ||
       isFinalizingBracket ||
       isRestoringBracket ||
-      !hasSaveableProgressChanges
+      !canSaveProgress
     ) {
       return;
     }
-
-    const remainingTopTwoDrafts = Object.fromEntries(
-      Object.entries(topTwoSlotDraftsByGroup).filter(([, draft]) => !draft.firstTeamId || !draft.secondTeamId)
-    );
-    const hasRemainingTopTwoDrafts = Object.keys(remainingTopTwoDrafts).length > 0;
 
     setIsSavingProgress(true);
     setSaveState("saving");
     setSaveMessage(t(language, "common.saving"));
 
+    const latestSaveableRankingsInput = getLatestSaveableTouchedRankingsInput();
+    const latestCommittedThirdPlaceRankingIds = getLatestCommittedThirdPlaceRankingIds();
+    const latestHasTouchedThirdPlaceRanking = hasTouchedThirdPlaceRankingRef.current;
     const result = await saveLightSeedBuilderAction({
-      groupRankings: saveableTouchedRankingsInput,
-      rankedThirdPlaceTeamIds: committedThirdPlaceRankingIds,
-      commitThirdPlaceRankings: isThirdPlacePhase && hasTouchedThirdPlaceRanking
+      groupRankings: latestSaveableRankingsInput,
+      rankedThirdPlaceTeamIds: latestCommittedThirdPlaceRankingIds,
+      commitThirdPlaceRankings: isThirdPlacePhase && latestHasTouchedThirdPlaceRanking
     });
 
     setIsSavingProgress(false);
@@ -2573,19 +2873,16 @@ export function BracketBuilderClient({
     const savedAt = new Date().toISOString();
     setCommittedBracketSavedAt(savedAt);
     committedSnapshotRef.current = cloneLightSeedBuilderSnapshot({
-      groupRankings: saveableTouchedRankingsInput,
-      thirdPlaceRankings: committedThirdPlaceRankingIds.map((teamId, index) => ({
+      groupRankings: buildCommittedSnapshotGroupRankings(latestSaveableRankingsInput),
+      thirdPlaceRankings: latestCommittedThirdPlaceRankingIds.map((teamId, index) => ({
         teamId,
         rank: index + 1
       }))
     });
     committedSnapshotIsFinalRef.current = false;
-    setTopTwoSlotDraftsByGroup(remainingTopTwoDrafts);
-    setHasInteracted(hasRemainingTopTwoDrafts);
-    setChangedSinceAt(hasRemainingTopTwoDrafts ? changedSinceAt ?? new Date().toISOString() : null);
-    if (!hasRemainingTopTwoDrafts) {
-      clearUnsavedGroupStageDraft();
-    }
+    setHasInteracted(false);
+    setChangedSinceAt(null);
+    clearUnsavedGroupStageDraft();
     setSaveState("saved");
     setSaveMessage(t(language, "bracket.progressSaved"));
     showAppToast({ tone: "tip", text: t(language, "bracket.progressSaved") });
@@ -2600,9 +2897,11 @@ export function BracketBuilderClient({
     setSaveState("saving");
     setSaveMessage(t(language, "common.saving"));
 
+    const latestSaveableRankingsInput = getLatestSaveableTouchedRankingsInput();
+    const latestCommittedThirdPlaceRankingIds = getLatestCommittedThirdPlaceRankingIds();
     const result = await saveLightSeedBuilderAction({
-      groupRankings: saveableTouchedRankingsInput,
-      rankedThirdPlaceTeamIds: committedThirdPlaceRankingIds,
+      groupRankings: latestSaveableRankingsInput,
+      rankedThirdPlaceTeamIds: latestCommittedThirdPlaceRankingIds,
       commitThirdPlaceRankings: true,
       finalizeTournamentEntry: true
     });
@@ -2623,14 +2922,15 @@ export function BracketBuilderClient({
     setCommittedBracketSavedAt(savedAt);
     setChangedSinceAt(null);
     committedSnapshotRef.current = cloneLightSeedBuilderSnapshot({
-      groupRankings: saveableTouchedRankingsInput,
-      thirdPlaceRankings: committedThirdPlaceRankingIds.map((teamId, index) => ({
+      groupRankings: buildCommittedSnapshotGroupRankings(latestSaveableRankingsInput),
+      thirdPlaceRankings: latestCommittedThirdPlaceRankingIds.map((teamId, index) => ({
         teamId,
         rank: index + 1
       }))
     });
     committedSnapshotIsFinalRef.current = true;
     setHasInteracted(false);
+    topTwoSlotDraftsByGroupRef.current = {};
     setTopTwoSlotDraftsByGroup({});
     clearUnsavedGroupStageDraft();
 
@@ -2682,19 +2982,27 @@ export function BracketBuilderClient({
         ranking.rankedTeamIds
       ])
     );
-    setGroupRankings(
-      defaultSnapshot.groupRankings.map((ranking) => {
+    const nextGroupRankings = defaultSnapshot.groupRankings.map((ranking) => {
         const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
         const restoredRankedTeamIds = restoredRankingsByGroup.get(groupName);
         return restoredRankedTeamIds?.length
           ? { ...ranking, rankedTeamIds: [...restoredRankedTeamIds] }
           : ranking;
-      })
+      });
+    const nextTouchedGroups = new Set(
+      committedSnapshot.groupRankings.map((ranking) => normalizeGroupKey(ranking.groupName) ?? ranking.groupName)
     );
-    setThirdPlaceRankings(restoredThirdPlaceIds);
+    const nextHasTouchedThirdPlaceRanking =
+      restoredThirdPlaceIds.length >= requiredThirdPlaceQualifierCount && requiredThirdPlaceQualifierCount > 0;
+    groupRankingsRef.current = nextGroupRankings;
+    setGroupRankings(nextGroupRankings);
+    updateThirdPlaceRankings(restoredThirdPlaceIds);
+    topTwoSlotDraftsByGroupRef.current = {};
     setTopTwoSlotDraftsByGroup({});
-    setTouchedGroups(new Set(committedSnapshot.groupRankings.map((ranking) => normalizeGroupKey(ranking.groupName) ?? ranking.groupName)));
-    setHasTouchedThirdPlaceRanking(restoredThirdPlaceIds.length >= requiredThirdPlaceQualifierCount && requiredThirdPlaceQualifierCount > 0);
+    touchedGroupsRef.current = nextTouchedGroups;
+    setTouchedGroups(nextTouchedGroups);
+    hasTouchedThirdPlaceRankingRef.current = nextHasTouchedThirdPlaceRanking;
+    setHasTouchedThirdPlaceRanking(nextHasTouchedThirdPlaceRanking);
     setHasInteracted(false);
     const restoredAt = new Date().toISOString();
     setFinalBracketSavedAt(shouldRestoreFinalizedEntry ? restoredAt : null);
@@ -2717,13 +3025,13 @@ export function BracketBuilderClient({
         <div className={`group-stage-save-restore-grid grid gap-2 ${canRestoreLastSavedBracket ? "grid-cols-2" : "grid-cols-1"}`}>
           <ActionButton
             fullWidth
-            tone={hasSaveableProgressChanges ? "accent" : "neutral"}
+            tone={canSaveProgress ? "accent" : "neutral"}
             disabled={
               isReadOnly ||
               isSavingProgress ||
             isFinalizingBracket ||
             isRestoringBracket ||
-            !hasSaveableProgressChanges
+            !canSaveProgress
           }
           onClick={handleSaveProgress}
         >
@@ -2824,6 +3132,8 @@ export function BracketBuilderClient({
     selected: committedThirdPlaceRankingIds.length,
     required: requiredThirdPlaceQualifierCount
   })}. ${thirdPlacePoolStateLabel}`;
+  const shouldHighlightTopTwoCard = !isReadOnly && !isThirdPlacePhase;
+  const shouldHighlightThirdPlaceCard = !isReadOnly && isThirdPlacePhase;
 
   useLayoutEffect(() => {
     const nextTops = new Map<string, number>();
@@ -3073,6 +3383,7 @@ export function BracketBuilderClient({
             onTouchStart={handleGroupSwipeTouchStart}
             onTouchMove={handleGroupSwipeTouchMove}
             onTouchEnd={handleGroupSwipeTouchEnd}
+            onTouchCancel={handleGroupSwipeTouchCancel}
             onWheel={handleGroupSwipeWheel}
           >
 	            {shouldShowScenarioImpact ? (
@@ -3111,13 +3422,14 @@ export function BracketBuilderClient({
             )}
           </div>
           <div
-            className={`relative flex min-h-9 items-center justify-center gap-2 select-none [touch-action:pan-y] ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
+            className={`relative flex min-h-9 items-center justify-center gap-2 select-none [touch-action:pan-y] [will-change:transform] ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
             style={{
               transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
             }}
             onTouchStart={handleGroupSwipeTouchStart}
             onTouchMove={handleGroupSwipeTouchMove}
             onTouchEnd={handleGroupSwipeTouchEnd}
+            onTouchCancel={handleGroupSwipeTouchCancel}
             onWheel={handleGroupSwipeWheel}
           >
             <button
@@ -3159,6 +3471,7 @@ export function BracketBuilderClient({
             onTouchStart={handleGroupSwipeTouchStart}
             onTouchMove={handleGroupSwipeTouchMove}
             onTouchEnd={handleGroupSwipeTouchEnd}
+            onTouchCancel={handleGroupSwipeTouchCancel}
             onWheel={handleGroupSwipeWheel}
           >
             <div
@@ -3193,7 +3506,17 @@ export function BracketBuilderClient({
               })}
             </div>
           </div>
-          <div className="px-1 text-center">
+          <div
+            className={`px-1 text-center select-none [touch-action:pan-y] [will-change:transform] ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
+            style={{
+              transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
+            }}
+            onTouchStart={handleGroupSwipeTouchStart}
+            onTouchMove={handleGroupSwipeTouchMove}
+            onTouchEnd={handleGroupSwipeTouchEnd}
+            onTouchCancel={handleGroupSwipeTouchCancel}
+            onWheel={handleGroupSwipeWheel}
+          >
             <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-accent-dark">
               {isActiveTopTwoComplete
                 ? t(language, "bracket.topTwoGroupCompletePrompt")
@@ -3203,11 +3526,19 @@ export function BracketBuilderClient({
         </div>
 
         <div
-          className={`overflow-hidden rounded-[1.15rem] border border-gray-200 bg-white shadow-sm ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
+          className={`overflow-hidden rounded-[1.15rem] border bg-white shadow-sm select-none [touch-action:pan-y] [will-change:transform] ${
+            shouldHighlightTopTwoCard
+              ? "border-accent-dark ring-1 ring-accent-dark/35"
+              : "border-gray-200"
+          } ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
           style={{
             transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
           }}
-          data-disable-group-swipe="true"
+          onTouchStart={handleGroupSwipeTouchStart}
+          onTouchMove={handleGroupSwipeTouchMove}
+          onTouchEnd={handleGroupSwipeTouchEnd}
+          onTouchCancel={handleGroupSwipeTouchCancel}
+          onWheel={handleGroupSwipeWheel}
         >
           <span aria-live="polite" className="sr-only">{topTwoAnnouncement}</span>
           {[0, 1].map((slotIndexValue) => {
@@ -3227,7 +3558,6 @@ export function BracketBuilderClient({
                 key={slotId}
                 data-group-slot-id={String(slotIndex)}
                 data-group-team-id={team?.id}
-                data-disable-group-swipe="true"
                 ref={(node) => {
                   if (node && team) {
                     groupRowRefs.current.set(team.id, node);
@@ -3280,15 +3610,11 @@ export function BracketBuilderClient({
                 }}
                 role="group"
                 aria-label={t(language, "bracket.topTwoSlotAria", { place: placeLabel })}
-                className={`grid min-h-[3.15rem] grid-cols-[2.1rem_minmax(0,1fr)_auto] items-center gap-2 border-b px-2 py-1.5 transition select-none last:border-b-0 sm:grid-cols-[2.3rem_minmax(0,1fr)_auto] sm:px-3 ${
+                className={`grid min-h-[3.15rem] grid-cols-[2.1rem_minmax(0,1fr)_auto] items-center gap-2 border-b px-2 py-1.5 transition select-none last:border-b-0 sm:grid-cols-[2.3rem_minmax(0,1fr)_auto] sm:px-3 [touch-action:pan-y] ${
                   team
                     ? "border-accent-light bg-accent-light/35 text-gray-950"
                     : "border-gray-100 bg-white text-gray-400"
-                } ${isDragOverSlot ? "ring-2 ring-accent ring-inset" : ""} ${draggedTeamId && team?.id === draggedTeamId ? "opacity-45" : ""} ${
-                  team && !supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied
-                    ? "[touch-action:none]"
-                    : "[touch-action:manipulation]"
-                } ${team && supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "cursor-grab active:cursor-grabbing" : ""}`}
+                } ${isDragOverSlot ? "ring-2 ring-accent ring-inset" : ""} ${draggedTeamId && team?.id === draggedTeamId ? "opacity-45" : ""} ${team && supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "cursor-grab active:cursor-grabbing" : ""}`}
               >
                 <div className="flex justify-center">
                   <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent text-[12px] font-black text-accent-text">
@@ -3360,7 +3686,6 @@ export function BracketBuilderClient({
                   key={team.id}
                   type="button"
                   data-group-team-id={team.id}
-                  data-disable-group-swipe="true"
                   draggable={!isReadOnly && !isActiveGroupScoreApplied && supportsNativeRowDrag}
                   onClick={() => selectGroupTeamIntoNextOpenSlot(team.id)}
                   onPointerDown={(event) =>
@@ -3386,12 +3711,8 @@ export function BracketBuilderClient({
                   }}
                   onDragOver={handleGroupPoolDragOver}
                   onDrop={handleGroupPoolDrop}
-                  className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-[0.85rem] border border-gray-100 bg-white px-1.5 py-2 text-center shadow-[0_1px_5px_rgba(15,23,42,0.04)] transition hover:border-accent-light hover:bg-accent-light/10 focus:outline-none focus:ring-2 focus:ring-accent-light sm:px-2 ${
+                  className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-[0.85rem] border border-gray-100 bg-white px-1.5 py-2 text-center shadow-[0_1px_5px_rgba(15,23,42,0.04)] transition hover:border-accent-light hover:bg-accent-light/10 focus:outline-none focus:ring-2 focus:ring-accent-light sm:px-2 [touch-action:pan-y] ${
                     draggedTeamId === team.id ? "opacity-45" : ""
-                  } ${
-                    !supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied
-                      ? "[touch-action:none]"
-                      : "[touch-action:manipulation]"
                   } ${supportsNativeRowDrag && !isReadOnly && !isActiveGroupScoreApplied ? "cursor-grab active:cursor-grabbing" : ""}`}
                   aria-label={t(language, "bracket.topTwoAvailableTeamAria", { teamName: team.name })}
                 >
@@ -3409,7 +3730,11 @@ export function BracketBuilderClient({
 	          <div
 	            ref={thirdPlaceSectionRef}
 	            tabIndex={-1}
-	            className="scroll-mt-[calc(var(--app-header-height)+0.75rem)] rounded-[1.15rem] border border-gray-200 bg-white px-3 py-3 shadow-sm focus:outline-none"
+	            className={`scroll-mt-[calc(var(--app-header-height)+0.75rem)] rounded-[1.15rem] border bg-white px-3 py-3 shadow-sm focus:outline-none ${
+                shouldHighlightThirdPlaceCard
+                  ? "border-accent-dark ring-1 ring-accent-dark/35"
+                  : "border-gray-200"
+              }`}
 	            aria-label={t(language, "bracket.thirdPlaceQualifiers")}
 	          >
 	            <div className="px-0 py-1 pt-2">

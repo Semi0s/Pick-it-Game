@@ -364,13 +364,20 @@ export async function saveLightSeedBuilderAction(
     await adminSupabase.from("user_best_third_rankings").delete().eq("user_id", userResult.userId);
 
     const rankingRows = rankings.flatMap((ranking) =>
-      ranking.rankedTeamIds.map((teamId, index) => ({
-        user_id: userResult.userId,
-        group_name: ranking.groupName,
-        team_id: teamId,
-        rank_position: index + 1,
-        updated_at: new Date().toISOString()
-      }))
+      ranking.rankedTeamIds.flatMap((teamId, index) => {
+        const normalizedTeamId = teamId?.trim();
+        return normalizedTeamId
+          ? [
+              {
+                user_id: userResult.userId,
+                group_name: ranking.groupName,
+                team_id: normalizedTeamId,
+                rank_position: index + 1,
+                updated_at: new Date().toISOString()
+              }
+            ]
+          : [];
+      })
     );
     const thirdPlaceRows = requestedThirdPlaceIds.map((teamId, index) => ({
       user_id: userResult.userId,
@@ -581,13 +588,20 @@ export async function applyGroupBracketFromScoresAction(input: {
     await adminSupabase.from("user_best_third_rankings").delete().eq("user_id", userResult.userId);
 
     const rankingRows = rankings.flatMap((ranking) =>
-      ranking.rankedTeamIds.map((teamId, index) => ({
-        user_id: userResult.userId,
-        group_name: ranking.groupName,
-        team_id: teamId,
-        rank_position: index + 1,
-        updated_at: new Date().toISOString()
-      }))
+      ranking.rankedTeamIds.flatMap((teamId, index) => {
+        const normalizedTeamId = teamId?.trim();
+        return normalizedTeamId
+          ? [
+              {
+                user_id: userResult.userId,
+                group_name: ranking.groupName,
+                team_id: normalizedTeamId,
+                rank_position: index + 1,
+                updated_at: new Date().toISOString()
+              }
+            ]
+          : [];
+      })
     );
     const thirdPlaceRows = preservedThirdPlaceIds.slice(0, requiredThirdPlaceCount).map((teamId, index) => ({
       user_id: userResult.userId,

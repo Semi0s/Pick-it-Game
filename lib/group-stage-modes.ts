@@ -154,9 +154,9 @@ export async function fetchUserLightSeedBuilderSnapshot(
       .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
       .map(([groupName, rankedTeamIds]) => ({
         groupName,
-        rankedTeamIds: compactContiguousRankings(rankedTeamIds)
+        rankedTeamIds: normalizePersistedRankings(rankedTeamIds)
       }))
-      .filter((ranking) => ranking.rankedTeamIds.length >= 4),
+      .filter((ranking) => ranking.rankedTeamIds.some(Boolean)),
     thirdPlaceRankings: ((thirdPlaceRows ?? []) as ThirdPlaceRankingRecord[]).map((row) => ({
       teamId: row.team_id,
       rank: row.rank_position
@@ -164,16 +164,20 @@ export async function fetchUserLightSeedBuilderSnapshot(
   };
 }
 
-function compactContiguousRankings(rankedTeamIds: string[]) {
-  const compacted: string[] = [];
-  for (let index = 0; index < rankedTeamIds.length; index += 1) {
-    const teamId = rankedTeamIds[index]?.trim();
-    if (!teamId) {
+function normalizePersistedRankings(rankedTeamIds: string[]) {
+  let lastRankedIndex = -1;
+  for (let index = rankedTeamIds.length - 1; index >= 0; index -= 1) {
+    if (rankedTeamIds[index]?.trim()) {
+      lastRankedIndex = index;
       break;
     }
-    compacted.push(teamId);
   }
-  return compacted;
+
+  if (lastRankedIndex < 0) {
+    return [];
+  }
+
+  return Array.from({ length: lastRankedIndex + 1 }, (_, index) => rankedTeamIds[index]?.trim() || "");
 }
 
 export async function fetchUserGroupProjectionSourceMap(
