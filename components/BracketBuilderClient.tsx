@@ -831,8 +831,7 @@ export function BracketBuilderClient({
     () => new Set(derivedThirdPlacePool.map((team) => team.id)),
     [derivedThirdPlacePool]
   );
-  const usesExplicitThirdPlaceSelection =
-    Boolean(initialFinalBracketSavedAt) || (initialSnapshot?.thirdPlaceRankings?.length ?? 0) > 0;
+  const usesExplicitThirdPlaceSelection = requiredThirdPlaceQualifierCount > 0;
   const explicitThirdPlaceQualifierSlotIds = useMemo(() => {
     if (!usesExplicitThirdPlaceSelection) {
       return [];
@@ -930,22 +929,22 @@ export function BracketBuilderClient({
   );
   const openThirdPlaceQualifierSlotIndexes = useMemo(
     () =>
-      usesExplicitThirdPlaceSelection && hasCommittedThirdPlaceSelection
+      usesExplicitThirdPlaceSelection
         ? explicitThirdPlaceQualifierSlotIds
             .map((teamId, index) => (teamId ? null : index))
             .filter((index): index is number => index !== null)
         : [],
-    [explicitThirdPlaceQualifierSlotIds, hasCommittedThirdPlaceSelection, usesExplicitThirdPlaceSelection]
+    [explicitThirdPlaceQualifierSlotIds, usesExplicitThirdPlaceSelection]
   );
   const openThirdPlaceQualifierSlots = Math.max(
     0,
-    usesExplicitThirdPlaceSelection && hasCommittedThirdPlaceSelection
+    usesExplicitThirdPlaceSelection
       ? openThirdPlaceQualifierSlotIndexes.length
       : requiredThirdPlaceQualifierCount - committedThirdPlaceRankingIds.length
   );
   const isComplete =
     isThirdPlacePhase &&
-    (usesExplicitThirdPlaceSelection && hasCommittedThirdPlaceSelection
+    (usesExplicitThirdPlaceSelection
       ? explicitThirdPlaceQualifierSlotIds.length >= requiredThirdPlaceQualifierCount &&
         explicitThirdPlaceQualifierSlotIds.every((teamId) => teamId.length > 0)
       : committedThirdPlaceRankingIds.length >= requiredThirdPlaceQualifierCount);
