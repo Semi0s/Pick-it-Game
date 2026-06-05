@@ -12,6 +12,10 @@ import {
   type LightSeedBuilderSnapshot,
   type UserGroupProjectionSource
 } from "@/lib/group-stage-modes";
+import {
+  completeRankingSlotsForProjection,
+  normalizeRankingSlotsForPersistence
+} from "@/lib/group-stage-ranking-slots";
 import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
 import {
   buildProjectedGroupStandings,
@@ -301,9 +305,10 @@ export async function saveLightSeedBuilderAction(
       ])
     );
     for (const ranking of incomingRankings) {
-      const rankedTeamIds = ranking.rankedTeamIds
-        .map((teamId) => teamId?.trim())
-        .filter((teamId): teamId is string => Boolean(teamId));
+      const rankedTeamIds = normalizeRankingSlotsForPersistence(
+        ranking.rankedTeamIds,
+        teamIdsByGroup.get(ranking.groupName)
+      );
       if (rankedTeamIds.length > 0) {
         mergedRankingsByGroup.set(ranking.groupName, rankedTeamIds);
       } else {
@@ -806,24 +811,10 @@ function completeTopTwoRankingsForProjection(
   return rankings.map((ranking) => {
     const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
     const defaultTeamIds = defaultRankedTeamIdsByGroup.get(groupName) ?? [];
-    const validTeamIds = new Set(defaultTeamIds);
-    const rankedTeamIds = Array.from(
-      new Set(ranking.rankedTeamIds.map((teamId) => teamId?.trim()).filter((teamId): teamId is string => Boolean(teamId)))
-    ).filter((teamId) => validTeamIds.size === 0 || validTeamIds.has(teamId));
-
-    if (!rankedTeamIds[0] || !rankedTeamIds[1] || rankedTeamIds[0] === rankedTeamIds[1]) {
-      return {
-        groupName,
-        rankedTeamIds
-      };
-    }
 
     return {
       groupName,
-      rankedTeamIds: [
-        ...rankedTeamIds,
-        ...defaultTeamIds.filter((teamId) => !rankedTeamIds.includes(teamId))
-      ]
+      rankedTeamIds: completeRankingSlotsForProjection(ranking.rankedTeamIds, defaultTeamIds)
     };
   });
 }

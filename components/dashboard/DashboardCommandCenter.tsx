@@ -153,12 +153,12 @@ export function DashboardCommandCenter({ summary, initialLightSeedSnapshot, user
   useEffect(() => {
     const syncUnsavedDraftState = () => {
       const rawDraft = window.sessionStorage.getItem(GROUP_STAGE_UNSAVED_DRAFT_STORAGE_KEY);
-      const draft = parseUnsavedGroupStageDraft(rawDraft);
-      setHasUnsavedGroupStageDraft(
-        hasCurrentUnsavedGroupStageDraft(rawDraft, {
-          lastCommittedAt: summary.progress.lastCommittedAt
-        })
-      );
+      const savedThroughAt = summary.progress.lastChangedAt ?? summary.progress.lastCommittedAt;
+      const hasCurrentDraft = hasCurrentUnsavedGroupStageDraft(rawDraft, {
+        lastCommittedAt: savedThroughAt
+      });
+      const draft = hasCurrentDraft ? parseUnsavedGroupStageDraft(rawDraft) : null;
+      setHasUnsavedGroupStageDraft(hasCurrentDraft);
       setScenarioImpact(
         calculateScenarioImpactFromSeedDraft({
           savedSnapshot: initialLightSeedSnapshot,
@@ -177,7 +177,7 @@ export function DashboardCommandCenter({ summary, initialLightSeedSnapshot, user
       window.removeEventListener("pageshow", syncUnsavedDraftState);
       window.removeEventListener("storage", syncUnsavedDraftState);
     };
-  }, [initialLightSeedSnapshot, summary.progress.lastCommittedAt]);
+  }, [initialLightSeedSnapshot, summary.progress.lastChangedAt, summary.progress.lastCommittedAt]);
 
   useEffect(() => {
     try {

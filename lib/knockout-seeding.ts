@@ -332,6 +332,36 @@ export function buildQualifiedTeamSeedsFromManualThirdPlaceRanking(
   };
 }
 
+function buildQualifiedTeamSeedsFromManualThirdPlaceRankingForPreview(
+  standingsByGroup: Map<string, GroupStandingsRow[]>,
+  rankedThirdPlaceTeamIds: string[],
+  requiredThirdPlaceCount: number
+) {
+  const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(
+    standingsByGroup,
+    standingsByGroup.size
+  );
+  const thirdPlaceByTeamId = new Map(rankedThirdPlaceTeams.map((seed) => [seed.teamId, seed]));
+  const uniqueValidTeamIds = Array.from(new Set(rankedThirdPlaceTeamIds)).filter((teamId) =>
+    thirdPlaceByTeamId.has(teamId)
+  );
+
+  if (uniqueValidTeamIds.length < requiredThirdPlaceCount) {
+    return {
+      automaticQualifiers,
+      rankedThirdPlaceTeams: []
+    };
+  }
+
+  return {
+    automaticQualifiers,
+    rankedThirdPlaceTeams: uniqueValidTeamIds.slice(0, requiredThirdPlaceCount).map((teamId, index) => ({
+      ...thirdPlaceByTeamId.get(teamId)!,
+      thirdPlaceRank: index + 1
+    }))
+  };
+}
+
 export function buildProjectedGroupStandingsFromSeedRankings(
   teams: Team[],
   rankings: GroupSeedRankingInput[]
@@ -503,7 +533,7 @@ export function buildUserProjectedRoundOf32({
   const { automaticQualifiers, rankedThirdPlaceTeams } =
     rankedThirdPlaceTeamIdsOverride && rankedThirdPlaceTeamIdsOverride.length > 0
       ? rankedThirdPlaceTeamIdsOverride.length >= requiredThirdPlaceQualifierCount
-        ? buildQualifiedTeamSeedsFromManualThirdPlaceRanking(
+        ? buildQualifiedTeamSeedsFromManualThirdPlaceRankingForPreview(
             completeRowsByGroup,
             rankedThirdPlaceTeamIdsOverride,
             requiredThirdPlaceQualifierCount

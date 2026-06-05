@@ -11,7 +11,7 @@ test("group-stage unsaved draft parser ignores missing and invalid drafts", () =
   assert.equal(parseUnsavedGroupStageDraft(JSON.stringify({ groupRankings: [] })), null);
 });
 
-test("group-stage unsaved draft parser keeps valid rankings and filters empty values", () => {
+test("group-stage unsaved draft parser keeps valid rankings and preserves slot positions", () => {
   const parsed = parseUnsavedGroupStageDraft(
     JSON.stringify({
       groupRankings: [
@@ -26,12 +26,30 @@ test("group-stage unsaved draft parser keeps valid rankings and filters empty va
   );
 
   assert.deepEqual(parsed?.groupRankings, [
-    { groupName: "A", rankedTeamIds: ["team-1", "team-2"] }
+    { groupName: "A", rankedTeamIds: ["team-1", "", "team-2"] }
   ]);
   assert.deepEqual(parsed?.thirdPlaceRankings, ["team-2", "team-9"]);
   assert.deepEqual(parsed?.touchedGroupNames, ["A"]);
   assert.equal(parsed?.hasTouchedThirdPlaceRanking, true);
   assert.equal(parsed?.changedSinceAt, "2026-05-30T12:00:00.000Z");
+});
+
+test("group-stage unsaved draft parser does not promote a second-place-only slot", () => {
+  const parsed = parseUnsavedGroupStageDraft(
+    JSON.stringify({
+      groupRankings: [
+        { groupName: "A", rankedTeamIds: ["", "team-2"] }
+      ],
+      thirdPlaceRankings: [],
+      touchedGroupNames: ["A"],
+      hasTouchedThirdPlaceRanking: false,
+      changedSinceAt: "2026-05-30T12:00:00.000Z"
+    })
+  );
+
+  assert.deepEqual(parsed?.groupRankings, [
+    { groupName: "A", rankedTeamIds: ["", "team-2"] }
+  ]);
 });
 
 test("group-stage unsaved draft parser preserves cleared touched groups", () => {

@@ -127,22 +127,28 @@ body.capacitor-android .leaderboard-player-localization-background {
   transform: translateZ(0);
 }
 
-body.capacitor-android .leaderboard-player-localization-background::before {
-  content: "";
-  position: absolute;
-  inset: -8%;
-  background: var(--leaderboard-card-android-background);
-  opacity: 0.2;
-  transform: translateZ(0);
-}
-
-body.capacitor-android .leaderboard-player-localization-svg {
-  backface-visibility: hidden;
+body.capacitor-android .leaderboard-player-localization-background {
   display: none !important;
 }
 
-body.capacitor-android .leaderboard-player-localization-background {
-  opacity: 1;
+.leaderboard-score-android-home-flag {
+  display: none;
+}
+
+body.capacitor-android .leaderboard-score-chip {
+  gap: 0.35rem;
+}
+
+body.capacitor-android .leaderboard-score-android-home-flag {
+  display: inline-flex;
+  height: 1rem;
+  width: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 0.2rem;
+  font-size: 1.05rem;
+  line-height: 1;
 }
 
 body.capacitor-android .native-flag-emoji {

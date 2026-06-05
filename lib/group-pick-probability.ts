@@ -41,17 +41,11 @@ export type PickProbabilityGroupRanking = {
 
 export function shouldShowMiniTablePickProbability({
   predictedPlace,
-  isSelectedThirdPlaceQualifier,
-  hasCompletedBracketOnce
+  isSelectedThirdPlaceQualifier
 }: {
   predictedPlace?: PickProbabilityPlace | null;
   isSelectedThirdPlaceQualifier?: boolean;
-  hasCompletedBracketOnce: boolean;
 }) {
-  if (!hasCompletedBracketOnce) {
-    return false;
-  }
-
   return (
     predictedPlace === 1 ||
     predictedPlace === 2 ||
