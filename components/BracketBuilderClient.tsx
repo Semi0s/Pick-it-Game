@@ -1957,19 +1957,6 @@ export function BracketBuilderClient({
       const deltaY = Math.abs(event.clientY - state.startY);
       const shouldUseQuickPointerDrag =
         (state.kind === "third" || state.kind === "group") && state.pointerType === "mouse";
-      const isLikelyThirdPlaceScroll =
-        state.kind === "third" &&
-        state.pointerType !== "mouse" &&
-        !state.isHandleDrag &&
-        deltaY > 12 &&
-        deltaY > deltaX * 1.2;
-
-      if (isLikelyThirdPlaceScroll) {
-        event.currentTarget.releasePointerCapture?.(event.pointerId);
-        clearCustomTouchDragState();
-        return;
-      }
-
       const dragMoveThreshold = state.isHandleDrag
         ? CUSTOM_TOUCH_DRAG_HANDLE_MOVE_THRESHOLD_PX
         : shouldUseQuickPointerDrag
@@ -3799,8 +3786,8 @@ export function BracketBuilderClient({
           style={{
             left: customDragGhost.x - customDragGhost.offsetX,
             top: customDragGhost.y - customDragGhost.offsetY,
-            width: customDragGhost.kind === "third" ? Math.min(customDragGhost.width, 260) : customDragGhost.width,
-            height: customDragGhost.kind === "third" ? Math.min(customDragGhost.height, 44) : customDragGhost.height,
+            width: customDragGhost.width,
+            height: customDragGhost.height,
             boxSizing: "border-box"
           }}
         >
@@ -4704,7 +4691,7 @@ export function BracketBuilderClient({
                             event.stopPropagation();
                             handleDropThirdPlaceReorder(team.id, getDragTransferTeamId(event));
                           }}
-                          className={`grid grid-cols-[1.7rem_minmax(0,1fr)_auto_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] sm:gap-1.5 sm:px-2.5 [touch-action:pan-y] ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : canSelectThirdPlaceCandidate && activeThirdPlaceOpenSlotIndex !== null ? "border-accent-light bg-accent-light/10" : "border-gray-200 bg-white"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${canDragThirdPlaceRow ? "cursor-grab active:cursor-grabbing" : canSelectThirdPlaceCandidate ? "cursor-pointer" : ""}`}
+                          className={`grid grid-cols-[1.7rem_minmax(0,1fr)_auto_2.1rem] items-center gap-1 rounded-[1rem] border px-2 py-1 transition-shadow select-none [-webkit-touch-callout:none] sm:gap-1.5 sm:px-2.5 ${canDragThirdPlaceRow ? "[touch-action:none]" : "[touch-action:pan-y]"} ${isAboveCutoff ? "border-accent-light bg-accent-light/40" : canSelectThirdPlaceCandidate && activeThirdPlaceOpenSlotIndex !== null ? "border-accent-light bg-accent-light/10" : "border-gray-200 bg-white"} ${dragOverThirdPlaceTeamId === team.id ? "ring-1 ring-accent ring-inset" : ""} ${draggedThirdPlaceTeamId === team.id ? "z-10 shadow-md opacity-40" : ""} ${canDragThirdPlaceRow ? "cursor-grab active:cursor-grabbing" : canSelectThirdPlaceCandidate ? "cursor-pointer" : ""}`}
                         >
                           <div className="flex justify-start">
                             <span
