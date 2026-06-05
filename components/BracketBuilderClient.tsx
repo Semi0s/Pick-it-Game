@@ -399,7 +399,11 @@ function mergeGroupRankingPatchWithSnapshot(
 
   for (const ranking of rankingPatch) {
     const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
-    mergedByGroup.set(groupName, ranking.rankedTeamIds);
+    if (ranking.rankedTeamIds.some((teamId) => teamId?.trim())) {
+      mergedByGroup.set(groupName, ranking.rankedTeamIds);
+    } else {
+      mergedByGroup.delete(groupName);
+    }
   }
 
   return Array.from(mergedByGroup.entries())
@@ -422,6 +426,10 @@ function normalizeRankingSlotsForPersistence(rankedTeamIds: Array<string | null 
 
 function getTopTwoDraftRankedTeamIds(draft: TopTwoSlotDraft) {
   return normalizeRankingSlotsForPersistence([draft.firstTeamId, draft.secondTeamId]);
+}
+
+function filterPersistedGroupRankings(rankings: GroupSeedRankingInput[]) {
+  return rankings.filter((ranking) => ranking.rankedTeamIds.some((teamId) => teamId?.trim()));
 }
 
 function filterCompleteGroupRankingsForProjection(
@@ -501,6 +509,18 @@ function reorderItems<T>(items: T[], fromIndex: number, toIndex: number) {
   const nextItems = [...items];
   const [movedItem] = nextItems.splice(fromIndex, 1);
   nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
+
+function swapItems<T>(items: T[], fromIndex: number, toIndex: number) {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= items.length || toIndex >= items.length) {
+    return items;
+  }
+
+  const nextItems = [...items];
+  const fromItem = nextItems[fromIndex];
+  nextItems[fromIndex] = nextItems[toIndex];
+  nextItems[toIndex] = fromItem;
   return nextItems;
 }
 
@@ -1169,7 +1189,6 @@ export function BracketBuilderClient({
       }
 
       return Array.from(rankingsByGroup.entries())
-        .filter(([, rankedTeamIds]) => rankedTeamIds.some(Boolean))
         .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
         .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
     },
@@ -1503,8 +1522,8 @@ export function BracketBuilderClient({
       const nextGroupRankings = defaultSnapshot.groupRankings.map((ranking) => {
         const groupName = normalizeGroupKey(ranking.groupName) ?? ranking.groupName;
         const draftRankedTeamIds = draftRankingsByGroup.get(groupName);
-        return draftRankedTeamIds?.length
-          ? { ...ranking, rankedTeamIds: draftRankedTeamIds }
+        return draftRankingsByGroup.has(groupName)
+          ? { ...ranking, rankedTeamIds: draftRankedTeamIds ?? [] }
           : ranking;
       });
 
@@ -2211,6 +2230,22 @@ export function BracketBuilderClient({
     ];
   }
 
+  function buildThirdPlaceSwappedDisplayOrder(sourceTeamId: string, targetTeamId: string) {
+    const currentDisplayOrder = Array.from(
+      new Set([
+        ...normalizedThirdPlaceRankings,
+        ...thirdPlaceDisplayOrderIdsRef.current,
+        ...thirdPlaceRankingsRef.current,
+        ...derivedThirdPlacePool.map((team) => team.id)
+      ])
+    ).filter((teamId) => derivedThirdPlacePoolIds.has(teamId));
+    const sourceIndex = currentDisplayOrder.indexOf(sourceTeamId);
+    const targetIndex = currentDisplayOrder.indexOf(targetTeamId);
+    return sourceIndex >= 0 && targetIndex >= 0
+      ? swapItems(currentDisplayOrder, sourceIndex, targetIndex)
+      : currentDisplayOrder;
+  }
+
   function updateThirdPlaceRankings(nextRankings: string[], nextDisplayOrder?: string[]) {
     thirdPlaceRankingsRef.current = nextRankings;
     setThirdPlaceRankings(nextRankings);
@@ -2589,56 +2624,38 @@ export function BracketBuilderClient({
 
     if (usesExplicitThirdPlaceSelection) {
       const sourceSelectedSlotIndex = explicitThirdPlaceQualifierSlotIds.indexOf(sourceTeamId);
-      const sourceIsSelected = sourceSelectedSlotIndex >= 0;
       const targetSelectedSlotIndex = explicitThirdPlaceQualifierSlotIds.indexOf(targetTeamId);
-
-      if (!sourceIsSelected) {
-        if (!derivedThirdPlacePoolIds.has(sourceTeamId)) {
-          draggedThirdPlaceTeamIdRef.current = null;
-          setDraggedThirdPlaceTeamId(null);
-          setDragOverThirdPlaceTeamId(null);
-          return;
-        }
-
-        if (targetSelectedSlotIndex >= 0) {
-          addExplicitThirdPlaceQualifier(sourceTeamId, targetTeamId, targetSelectedSlotIndex);
-          draggedThirdPlaceTeamIdRef.current = null;
-          setDraggedThirdPlaceTeamId(null);
-          setDragOverThirdPlaceTeamId(null);
-          return;
-        }
-
-        if (openThirdPlaceQualifierSlots <= 0) {
-          draggedThirdPlaceTeamIdRef.current = null;
-          setDraggedThirdPlaceTeamId(null);
-          setDragOverThirdPlaceTeamId(null);
-          return;
-        }
-
-        const insertIndex = targetSelectedSlotIndex >= 0
-          ? targetSelectedSlotIndex
-          : clampNumber(toIndex, 0, Math.max(0, requiredThirdPlaceQualifierCount - 1));
-        addExplicitThirdPlaceQualifier(sourceTeamId, undefined, insertIndex);
+      const sourceIsSelected = sourceSelectedSlotIndex >= 0;
+      const targetIsSelected = targetSelectedSlotIndex >= 0;
+      if (!derivedThirdPlacePoolIds.has(sourceTeamId) || !derivedThirdPlacePoolIds.has(targetTeamId)) {
         draggedThirdPlaceTeamIdRef.current = null;
         setDraggedThirdPlaceTeamId(null);
         setDragOverThirdPlaceTeamId(null);
         return;
       }
 
-      if (targetSelectedSlotIndex < 0) {
-        draggedThirdPlaceTeamIdRef.current = null;
-        setDraggedThirdPlaceTeamId(null);
-        setDragOverThirdPlaceTeamId(null);
-        return;
-      }
-
-      markThirdPlaceSelectionChanged();
       const nextSlots = [...explicitThirdPlaceQualifierSlotIds];
-      const targetTeamIdAtSlot = nextSlots[targetSelectedSlotIndex] ?? "";
-      nextSlots[targetSelectedSlotIndex] = sourceTeamId;
-      nextSlots[sourceSelectedSlotIndex] = targetTeamIdAtSlot;
-      const nextSelection = nextSlots.filter((candidateId) => candidateId.length > 0);
-      updateThirdPlaceRankings(nextSlots, buildThirdPlaceDisplayOrder(nextSelection));
+      if (sourceIsSelected && targetIsSelected) {
+        nextSlots[sourceSelectedSlotIndex] = targetTeamId;
+        nextSlots[targetSelectedSlotIndex] = sourceTeamId;
+      } else if (sourceIsSelected) {
+        nextSlots[sourceSelectedSlotIndex] = targetTeamId;
+      } else if (targetIsSelected) {
+        nextSlots[targetSelectedSlotIndex] = sourceTeamId;
+      }
+
+      if (sourceIsSelected || targetIsSelected) {
+        markThirdPlaceSelectionChanged();
+      }
+
+      updateThirdPlaceRankings(
+        nextSlots,
+        sourceIsSelected || targetIsSelected
+          ? buildThirdPlaceSwappedDisplayOrder(sourceTeamId, targetTeamId)
+          : swapItems(normalizedThirdPlaceRankings, fromIndex, toIndex).filter((teamId) =>
+              derivedThirdPlacePoolIds.has(teamId)
+            )
+      );
       draggedThirdPlaceTeamIdRef.current = null;
       setDraggedThirdPlaceTeamId(null);
       setDragOverThirdPlaceTeamId(null);
@@ -2649,7 +2666,7 @@ export function BracketBuilderClient({
     setHasInteracted(true);
     hasTouchedThirdPlaceRankingRef.current = true;
     setHasTouchedThirdPlaceRanking(true);
-    updateThirdPlaceRankings(reorderItems(normalizedThirdPlaceRankings, fromIndex, toIndex));
+    updateThirdPlaceRankings(swapItems(normalizedThirdPlaceRankings, fromIndex, toIndex));
     draggedThirdPlaceTeamIdRef.current = null;
     setDraggedThirdPlaceTeamId(null);
     setDragOverThirdPlaceTeamId(null);
@@ -3130,7 +3147,6 @@ export function BracketBuilderClient({
     }
 
     return Array.from(rankingsByGroup.entries())
-      .filter(([, rankedTeamIds]) => rankedTeamIds.some(Boolean))
       .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
       .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
   }
@@ -3206,7 +3222,7 @@ export function BracketBuilderClient({
   function buildCommittedSnapshotGroupRankings(savedRankingPatch: GroupSeedRankingInput[]) {
     return committedSnapshotRef.current
       ? mergeGroupRankingPatchWithSnapshot(savedRankingPatch, committedSnapshotRef.current)
-      : savedRankingPatch;
+      : filterPersistedGroupRankings(savedRankingPatch);
   }
 
   function primeKnockoutProjectedCompareView() {

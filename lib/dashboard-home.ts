@@ -179,10 +179,14 @@ export function getGroupStageSaveStatus(input: {
   const totalGroups = Math.max(input.totalGroups, 0);
   const completedGroups = Math.min(Math.max(input.completedGroups, 0), totalGroups);
   const requiresThirdPlace = input.requiredThirdPlaceCount > 0;
+  const selectedThirdPlaceCount = Math.min(
+    Math.max(input.selectedThirdPlaceCount, 0),
+    Math.max(input.requiredThirdPlaceCount, 0)
+  );
   const thirdPlaceComplete =
-    !requiresThirdPlace || input.selectedThirdPlaceCount >= input.requiredThirdPlaceCount;
-  const totalUnits = totalGroups + (requiresThirdPlace ? 1 : 0);
-  const completedUnits = completedGroups + (thirdPlaceComplete && requiresThirdPlace ? 1 : 0);
+    !requiresThirdPlace || selectedThirdPlaceCount >= input.requiredThirdPlaceCount;
+  const totalUnits = totalGroups + (requiresThirdPlace ? input.requiredThirdPlaceCount : 0);
+  const completedUnits = completedGroups + (requiresThirdPlace ? selectedThirdPlaceCount : 0);
   const isComplete = totalUnits > 0 && completedUnits >= totalUnits;
   const hasCommittedEntry = Boolean(input.committedAt);
   const hasMeaningfulChangesAfterCommit = hasMeaningfulGroupStageChangesAfterCommit({
@@ -375,14 +379,21 @@ export function getPredictionProgress(
     const totalGroups = Math.max(input.totalGroups, 0);
     const completedGroups = Math.min(Math.max(input.completedGroups, 0), totalGroups);
     const requiresThirdPlace = input.requiredThirdPlaceCount > 0;
+    const selectedThirdPlaceCount = Math.min(
+      Math.max(input.selectedThirdPlaceCount, 0),
+      Math.max(input.requiredThirdPlaceCount, 0)
+    );
     const thirdPlaceComplete =
-      !requiresThirdPlace || input.selectedThirdPlaceCount >= input.requiredThirdPlaceCount;
-    const totalUnits = totalGroups + (requiresThirdPlace ? 1 : 0);
-    const completedUnits = completedGroups + (thirdPlaceComplete && requiresThirdPlace ? 1 : 0);
+      !requiresThirdPlace || selectedThirdPlaceCount >= input.requiredThirdPlaceCount;
+    const totalUnits = totalGroups + (requiresThirdPlace ? input.requiredThirdPlaceCount : 0);
+    const completedUnits = completedGroups + (requiresThirdPlace ? selectedThirdPlaceCount : 0);
     const remainingGroups = Math.max(totalGroups - completedGroups, 0);
-    const thirdPlaceRemaining = Math.max(input.requiredThirdPlaceCount - input.selectedThirdPlaceCount, 0);
+    const thirdPlaceRemaining = Math.max(input.requiredThirdPlaceCount - selectedThirdPlaceCount, 0);
     const isComplete = totalUnits > 0 && completedUnits >= totalUnits;
-    const detail = `${completedGroups} of ${totalGroups} groups complete`;
+    const detail =
+      requiresThirdPlace && remainingGroups === 0
+        ? `${selectedThirdPlaceCount} of ${input.requiredThirdPlaceCount} third-place qualifiers selected`
+        : `${completedGroups} of ${totalGroups} groups complete`;
 
     let headline = "Keep ranking the groups.";
     if (isComplete) {

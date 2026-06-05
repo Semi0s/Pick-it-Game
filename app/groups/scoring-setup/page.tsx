@@ -35,8 +35,8 @@ export default async function GroupScoringSetupPage({
     <AppShell>
       <ManagementIntro
         eyebrow="Required Setup"
-        title="Lock scoring settings for your legacy groups"
-        description="Choose the scoring format and lock each legacy group before returning to the rest of the app."
+        title="Lock standard scoring for your legacy groups"
+        description="Review the standard group scoring contract and lock each legacy group before returning to the rest of the app."
         secondaryNote="This affects group leaderboard scoring only. Global leaderboard points remain unchanged."
         statusChip={`${legacyGroups.length} group${legacyGroups.length === 1 ? "" : "s"} left`}
       />

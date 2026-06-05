@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronUp, Globe } from "lucide-react";
 import { fetchGroupInvitePreviewAction } from "@/app/group-invite-preview/actions";
+import { showAppToast } from "@/lib/app-toast";
 import { authenticateWithEmail, isUsingDemoAuthFallback, sendCurrentUserPasswordReset } from "@/lib/auth-client";
 import { clearPendingConfirmationEmail, storePendingConfirmationEmail } from "@/lib/auth-confirmation";
 import { normalizeLanguage } from "@/lib/i18n";
@@ -223,6 +224,10 @@ export function LoginForm({
     }
 
     clearPendingConfirmationEmail();
+
+    if (result.message) {
+      showAppToast({ tone: "success", text: result.message });
+    }
 
     if (result.user?.needsLegalAcceptance) {
       router.replace(`/legal/accept${nextPath?.startsWith("/") ? `?next=${encodeURIComponent(nextPath)}` : ""}`);

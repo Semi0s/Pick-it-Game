@@ -36,9 +36,6 @@ import {
 import {
   fetchActiveGroupRulesets,
   fetchSidePickPackageOptions,
-  normalizeFullMatchScoringVariant,
-  normalizeGroupBonusMode,
-  normalizeGroupStagePredictionDepth,
   normalizeManagedGroupRulesetStatus,
   rebuildGroupCustomBonusScores,
   resolveManagedGroupRulesetPreset,
@@ -46,6 +43,10 @@ import {
   type ManagedGroupRulesetSummary,
   type SidePickPackageOption
 } from "@/lib/scoped-scoring";
+import {
+  GROUP_BONUS_MODE_PRESETS,
+  MANAGER_COMPATIBLE_GROUP_SCORING_DEFAULTS
+} from "@/lib/group-scoring-defaults";
 import { normalizeGroupBaseMode, type GroupBaseMode } from "@/lib/play-mode";
 import {
   getGroupAvatarExtension,
@@ -58,12 +59,14 @@ import {
   MAX_GROUP_NAME_LENGTH,
   normalizeCaptainsPassStatus,
   normalizeGroupAccessMode,
+  normalizeGroupInviteIntent,
   normalizeGroupInviteSource,
   normalizeGroupJoinSource,
   normalizeGroupKind,
   parseAllowedEmailInput,
   type CaptainsPassStatus,
   type GroupAccessMode,
+  type GroupInviteIntent,
   type GroupInviteSource,
   type GroupJoinSource,
   type GroupKind
@@ -85,33 +88,6 @@ const MAX_MANAGED_GROUP_INVITE_CODE_ATTEMPTS = 5;
 const MANAGED_GROUP_INVITE_CODE_PATTERN = /^[A-Z0-9-]{4,24}$/;
 const BASIC_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_GROUP_DESCRIPTION_LENGTH = 250;
-
-const GROUP_BONUS_MODE_PRESETS = {
-  classic: {
-    earlyGroupStageCompletionBonus: 0,
-    knockoutCompletionBonus: 0,
-    finalMatchupBonus: 0,
-    exactFinalScoreBonus: 0
-  },
-  early_bird: {
-    earlyGroupStageCompletionBonus: 10,
-    knockoutCompletionBonus: 10,
-    finalMatchupBonus: 5,
-    exactFinalScoreBonus: 5
-  },
-  high_stakes: {
-    earlyGroupStageCompletionBonus: 3,
-    knockoutCompletionBonus: 5,
-    finalMatchupBonus: 12,
-    exactFinalScoreBonus: 10
-  },
-  all_in: {
-    earlyGroupStageCompletionBonus: 0,
-    knockoutCompletionBonus: 0,
-    finalMatchupBonus: 10,
-    exactFinalScoreBonus: 20
-  }
-} as const;
 
 type GroupStatus = "active" | "archived";
 type GroupMemberRole = "manager" | "member";
@@ -232,6 +208,8 @@ type GroupInviteRow = {
   last_error?: string | null;
   invite_source?: GroupInviteSource | null;
   captains_pass_id?: string | null;
+  invite_intent?: GroupInviteIntent | null;
+  captain_invite_allowance?: number | null;
 };
 
 type GroupInviteRecord = {
@@ -261,6 +239,8 @@ type GroupInviteRecord = {
   last_error?: string | null;
   invite_source?: GroupInviteSource | null;
   captains_pass_id?: string | null;
+  invite_intent?: GroupInviteIntent | null;
+  captain_invite_allowance?: number | null;
   created_at: string;
   invited_by?: { name?: string | null; email?: string | null } | Array<{ name?: string | null; email?: string | null }> | null;
 };
@@ -422,6 +402,15 @@ export type CreateCaptainManagedGroupInviteInput = {
   email: string;
 };
 
+export type CreateCaptainOnboardingInviteInput = {
+  groupId: string;
+  email: string;
+  inviteAllowance?: number;
+  expiresInDays?: number;
+  language?: string;
+  helperLanguage?: string;
+};
+
 export type AcceptGroupInviteResult =
   | {
       ok: true;
@@ -533,6 +522,8 @@ export type ManagedGroupInvite = {
   sendAttempts: number;
   lastError?: string | null;
   inviteSource: GroupInviteSource;
+  inviteIntent: GroupInviteIntent;
+  captainInviteAllowance?: number | null;
   createdAt: string;
 };
 
@@ -784,6 +775,26 @@ export type AddAllGroupFocusTeamsResult = ResendGroupInviteResult;
 export type RemoveGroupFocusTeamResult = ResendGroupInviteResult;
 export type AssignCaptainsPassResult = ResendGroupInviteResult;
 export type CreateCaptainManagedGroupInviteResult = CreateGroupInviteResult;
+export type CreateCaptainOnboardingInviteResult =
+  | {
+      ok: true;
+      invite: {
+        id: string;
+        groupId: string;
+        email: string;
+        existingAccount: boolean;
+        status: GroupInviteStatus;
+        expiresAt: string | null;
+        inviteAllowance: number;
+      };
+      claimUrl: string;
+      deliveryStatus: "queued" | "already_queued" | "sent_inline" | "queue_failed";
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
 export type CreateManagedGroupTrophyInput = {
   groupId?: string | null;
   name: string;
@@ -1443,6 +1454,9 @@ export async function createManagedGroupInviteCodeAction(input: {
         max_uses: null,
         expires_at: null,
         group_id: managedGroup.id,
+        code_type: "standard",
+        grants_plan_tier: "player",
+        grants_group_membership: true,
         default_role: "player",
         default_language: normalizeLanguage(currentUser.preferredLanguage),
         created_by: currentUser.userId
@@ -1561,7 +1575,7 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
   const tokenHash = hashInviteToken(token);
   const { data: invite, error: inviteError } = await adminSupabase
     .from("group_invites")
-    .select("id,group_id,email,normalized_email,status,expires_at,accepted_at,accepted_by_user_id,invite_source,captains_pass_id")
+    .select("id,group_id,email,normalized_email,status,expires_at,accepted_at,accepted_by_user_id,invite_source,captains_pass_id,invite_intent,captain_invite_allowance,invited_by_user_id")
     .eq("token_hash", tokenHash)
     .maybeSingle();
 
@@ -1574,6 +1588,9 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
   }
 
   const inviteRow = invite as GroupInviteRow;
+  const inviteIntent = normalizeGroupInviteIntent(inviteRow.invite_intent);
+  const isCaptainOnboardingInvite = inviteIntent === "captain_pass";
+  const captainInviteAllowance = normalizeCaptainInviteAllowance(inviteRow.captain_invite_allowance);
   if (inviteRow.status !== "pending") {
     return { ok: false, message: "That invite is no longer pending." };
   }
@@ -1602,8 +1619,12 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
     return { ok: false, message: existingMembershipError.message };
   }
 
-  if (existingMembership) {
+  if (existingMembership && !isCaptainOnboardingInvite) {
     return { ok: false, message: "You are already a member of this group." };
+  }
+
+  if (existingMembership && existingMembership.role !== "member" && isCaptainOnboardingInvite) {
+    return { ok: false, message: "Only a player member can receive a Captain’s Pass for this group." };
   }
 
   const { data: group, error: groupError } = await adminSupabase
@@ -1625,32 +1646,67 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
     return accessCheck;
   }
 
-  const seatCheck = await ensureGroupHasOpenSeat(adminSupabase, group as GroupRow, currentUser);
-  if (!seatCheck.ok) {
-    return seatCheck;
+  if (isCaptainOnboardingInvite) {
+    const requiredOpenSeats = (existingMembership ? 0 : 1) + captainInviteAllowance;
+    const capacityCheck = await ensureGroupHasCaptainInviteCapacity(adminSupabase, group as GroupRow, requiredOpenSeats, inviteRow.id);
+    if (!capacityCheck.ok) {
+      return capacityCheck;
+    }
+  } else {
+    const seatCheck = await ensureGroupHasOpenSeat(adminSupabase, group as GroupRow, currentUser);
+    if (!seatCheck.ok) {
+      return seatCheck;
+    }
   }
 
-  const joinLimitResult = await ensureUserCanJoinAnotherGroup(adminSupabase, currentUser.userId);
-  if (!joinLimitResult.ok) {
-    return joinLimitResult;
+  if (!existingMembership) {
+    const joinLimitResult = await ensureUserCanJoinAnotherGroup(adminSupabase, currentUser.userId);
+    if (!joinLimitResult.ok) {
+      return joinLimitResult;
+    }
+
+    const { error: membershipInsertError } = await adminSupabase
+      .from("group_members")
+      .insert({
+        group_id: inviteRow.group_id,
+        user_id: currentUser.userId,
+        role: "member",
+        join_source:
+          isCaptainOnboardingInvite || normalizeGroupInviteSource(inviteRow.invite_source) === "captain_pass"
+            ? "captain_pass"
+            : normalizeGroupInviteSource(inviteRow.invite_source) === "captain_private_invite"
+              ? "captain_private_invite"
+              : "manager_invite"
+      });
+
+    if (membershipInsertError) {
+      return { ok: false, message: membershipInsertError.message };
+    }
   }
 
-  const { error: membershipInsertError } = await adminSupabase
-    .from("group_members")
-    .insert({
-      group_id: inviteRow.group_id,
-      user_id: currentUser.userId,
-      role: "member",
-      join_source:
-        normalizeGroupInviteSource(inviteRow.invite_source) === "captain_pass"
-          ? "captain_pass"
-          : normalizeGroupInviteSource(inviteRow.invite_source) === "captain_private_invite"
-            ? "captain_private_invite"
-            : "manager_invite"
+  let captainMessage: string | null = null;
+  if (isCaptainOnboardingInvite) {
+    const issueResult = await issueCaptainsPassForMember({
+      adminSupabase,
+      managedGroup: group as GroupRow,
+      issuerUserId: inviteRow.invited_by_user_id ?? currentUser.userId,
+      captainUserId: currentUser.userId,
+      inviteAllowance: captainInviteAllowance,
+      validateAllowanceCapacity: false,
+      ignoreInviteId: inviteRow.id
     });
 
-  if (membershipInsertError) {
-    return { ok: false, message: membershipInsertError.message };
+    if (!issueResult.ok) {
+      console.warn("[captain-onboarding-invite:accept-failed]", {
+        inviteId: inviteRow.id,
+        groupId: inviteRow.group_id,
+        userId: currentUser.userId,
+        message: issueResult.message
+      });
+      return issueResult;
+    }
+
+    captainMessage = issueResult.message;
   }
 
   const { error: inviteUpdateError } = await adminSupabase
@@ -1696,6 +1752,14 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
   revalidatePath("/my-groups");
   revalidatePath("/dashboard");
 
+  console.info("[group-invite:accepted]", {
+    inviteId: inviteRow.id,
+    groupId: inviteRow.group_id,
+    userId: currentUser.userId,
+    inviteIntent,
+    inviteSource: normalizeGroupInviteSource(inviteRow.invite_source)
+  });
+
   return {
     ok: true,
     membership: {
@@ -1703,7 +1767,7 @@ export async function acceptGroupInviteAction(input: AcceptGroupInviteInput): Pr
       userId: currentUser.userId,
       role: "member"
     },
-    message: "You joined the group."
+    message: captainMessage ?? "You joined the group."
   };
 }
 
@@ -3257,6 +3321,166 @@ export async function assignCaptainsPassAction(
   }
 }
 
+async function issueCaptainsPassForMember(input: {
+  adminSupabase: ReturnType<typeof createAdminClient>;
+  managedGroup: GroupRow;
+  issuerUserId: string;
+  captainUserId: string;
+  inviteAllowance: number;
+  validateAllowanceCapacity?: boolean;
+  ignoreInviteId?: string;
+}): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
+  const { adminSupabase, managedGroup, issuerUserId, captainUserId } = input;
+  const inviteAllowance = normalizeCaptainInviteAllowance(input.inviteAllowance);
+
+  if (normalizeGroupKind(managedGroup.group_kind) !== "standard") {
+    return { ok: false, message: "Captain’s Pass is only available on standard managed groups." };
+  }
+
+  const [{ data: existingPass, error: existingPassError }, { data: captainMembership, error: captainMembershipError }] =
+    await Promise.all([
+      adminSupabase
+        .from("captains_passes")
+        .select("id,status,captain_user_id,captain_private_group_id")
+        .eq("manager_group_id", managedGroup.id)
+        .maybeSingle(),
+      adminSupabase
+        .from("group_members")
+        .select("id,role,user:users!group_members_user_id_fkey(id,name,email)")
+        .eq("group_id", managedGroup.id)
+        .eq("user_id", captainUserId)
+        .maybeSingle()
+    ]);
+
+  if (existingPassError) {
+    return { ok: false, message: existingPassError.message };
+  }
+
+  if (captainMembershipError) {
+    return { ok: false, message: captainMembershipError.message };
+  }
+
+  const captainUser = Array.isArray(captainMembership?.user) ? captainMembership?.user[0] : captainMembership?.user;
+  if (!captainMembership || !captainUser) {
+    return { ok: false, message: "Choose a current member of this group to receive the Captain’s Pass." };
+  }
+
+  if (captainMembership.role !== "member") {
+    return { ok: false, message: "Only a trusted player member can receive the Captain’s Pass." };
+  }
+
+  const existingPassStatus = normalizeCaptainsPassStatus(existingPass?.status);
+  if (
+    existingPass &&
+    existingPassStatus !== "available" &&
+    existingPassStatus !== "cancelled_by_admin" &&
+    existingPassStatus !== "expired"
+  ) {
+    if (existingPass.captain_user_id === captainUserId && (existingPassStatus === "claimed" || existingPassStatus === "exhausted")) {
+      return {
+        ok: true,
+        message: `${captainUser.name} already has this group’s Captain’s Pass.`
+      };
+    }
+
+    return { ok: false, message: "This group already has an active Captain’s Pass." };
+  }
+
+  const [existingCaptainGroupResult, existingCaptainAssignmentResult] = await Promise.all([
+    adminSupabase
+      .from("groups")
+      .select("id")
+      .eq("owner_user_id", captainUserId)
+      .eq("group_kind", "captain_private")
+      .eq("status", "active")
+      .maybeSingle(),
+    adminSupabase
+      .from("captains_passes")
+      .select("id")
+      .eq("captain_user_id", captainUserId)
+      .in("status", ["claimed", "exhausted"])
+      .maybeSingle()
+  ]);
+
+  if (existingCaptainGroupResult.error || existingCaptainAssignmentResult.error) {
+    return {
+      ok: false,
+      message:
+        existingCaptainGroupResult.error?.message ??
+        existingCaptainAssignmentResult.error?.message ??
+        "Could not prepare that Captain’s Pass."
+    };
+  }
+
+  if (existingCaptainGroupResult.data || existingCaptainAssignmentResult.data) {
+    return { ok: false, message: "That player already has a Captain Group or an active Captain’s Pass." };
+  }
+
+  if (input.validateAllowanceCapacity ?? true) {
+    const capacityCheck = await ensureGroupHasCaptainInviteCapacity(
+      adminSupabase,
+      managedGroup,
+      inviteAllowance,
+      input.ignoreInviteId
+    );
+    if (!capacityCheck.ok) {
+      return capacityCheck;
+    }
+  }
+
+  const captainGroupName = buildCaptainPrivateGroupName(captainUser.name);
+  const { data: createdCaptainGroup, error: createdCaptainGroupError } = await adminSupabase
+    .from("groups")
+    .insert({
+      name: captainGroupName,
+      description: `Private Captain Group linked to ${managedGroup.name}.`,
+      base_prediction_mode: "my_picks",
+      home_team_advantage_enabled: false,
+      access_mode: "open_by_code",
+      group_kind: "captain_private",
+      parent_group_id: managedGroup.id,
+      owner_user_id: captainUserId,
+      created_by_user_id: issuerUserId,
+      membership_limit: MAX_CAPTAIN_PRIVATE_GROUP_MEMBERS,
+      status: "active"
+    })
+    .select("id")
+    .single();
+
+  if (createdCaptainGroupError || !createdCaptainGroup) {
+    return { ok: false, message: createdCaptainGroupError?.message ?? "Could not create the Captain Group." };
+  }
+
+  const captainsPassPayload = {
+    manager_group_id: managedGroup.id,
+    captain_user_id: captainUserId,
+    captain_email_normalized: normalizeEmail(captainUser.email),
+    issued_by_user_id: issuerUserId,
+    status: "claimed",
+    manager_group_invite_allowance: inviteAllowance,
+    manager_group_invites_used: 0,
+    captain_private_group_id: createdCaptainGroup.id,
+    claimed_at: new Date().toISOString(),
+    expires_at: null
+  };
+
+  const { error: captainsPassError } = existingPass
+    ? await adminSupabase
+        .from("captains_passes")
+        .update(captainsPassPayload)
+        .eq("id", existingPass.id)
+    : await adminSupabase.from("captains_passes").insert(captainsPassPayload);
+
+  if (captainsPassError) {
+    return { ok: false, message: captainsPassError.message };
+  }
+
+  return {
+    ok: true,
+    message: `${captainUser.name} is now this group’s Captain with ${inviteAllowance} invite${inviteAllowance === 1 ? "" : "s"}.`
+  };
+}
+
 export async function createCaptainManagedGroupInviteAction(
   input: CreateCaptainManagedGroupInviteInput
 ): Promise<CreateCaptainManagedGroupInviteResult> {
@@ -3475,6 +3699,223 @@ export async function createCaptainManagedGroupInviteAction(
   }
 }
 
+export async function createCaptainOnboardingInviteAction(
+  input: CreateCaptainOnboardingInviteInput
+): Promise<CreateCaptainOnboardingInviteResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  if (currentUser.role !== "admin") {
+    return { ok: false, message: "Only Super Admins can create Captain invite links." };
+  }
+
+  const groupId = input.groupId.trim();
+  const normalizedEmail = normalizeEmail(input.email);
+  const inviteAllowance = normalizeCaptainInviteAllowance(input.inviteAllowance);
+
+  if (!groupId || !normalizedEmail || !BASIC_EMAIL_PATTERN.test(normalizedEmail)) {
+    return { ok: false, message: "Enter a valid group and email for the Captain invite." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managedGroup = await getManagedGroup(adminSupabase, groupId, currentUser);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    if (normalizeGroupKind(managedGroup.group_kind) !== "standard") {
+      return { ok: false, message: "Captain invite links are only available for standard groups." };
+    }
+
+    if (managedGroup.status !== "active") {
+      return { ok: false, message: "That group is not accepting Captain invites right now." };
+    }
+
+    const accessCheck = await ensureGroupAllowsEmail(adminSupabase, managedGroup, normalizedEmail);
+    if (!accessCheck.ok) {
+      return accessCheck;
+    }
+
+    const existingUserId = await findUserIdByEmail(adminSupabase, normalizedEmail);
+    const [
+      { data: existingMembership, error: existingMembershipError },
+      { data: existingPendingInvite, error: existingPendingInviteError },
+      { data: existingGroupCaptainInvite, error: existingGroupCaptainInviteError },
+      { data: existingPass, error: existingPassError }
+    ] =
+      await Promise.all([
+        existingUserId
+          ? adminSupabase
+              .from("group_members")
+              .select("id,role")
+              .eq("group_id", managedGroup.id)
+              .eq("user_id", existingUserId)
+              .maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+        adminSupabase
+          .from("group_invites")
+          .select("id")
+          .eq("group_id", managedGroup.id)
+          .eq("normalized_email", normalizedEmail)
+          .eq("status", "pending")
+          .maybeSingle(),
+        adminSupabase
+          .from("group_invites")
+          .select("id,email")
+          .eq("group_id", managedGroup.id)
+          .eq("invite_intent", "captain_pass")
+          .eq("status", "pending")
+          .maybeSingle(),
+        adminSupabase
+          .from("captains_passes")
+          .select("id,status")
+          .eq("manager_group_id", managedGroup.id)
+          .maybeSingle()
+      ]);
+
+    if (existingMembershipError || existingPendingInviteError || existingGroupCaptainInviteError || existingPassError) {
+      return {
+        ok: false,
+        message:
+          existingMembershipError?.message ??
+          existingPendingInviteError?.message ??
+          existingGroupCaptainInviteError?.message ??
+          existingPassError?.message ??
+          "Could not prepare that Captain invite."
+      };
+    }
+
+    const existingPassStatus = normalizeCaptainsPassStatus(existingPass?.status);
+    if (
+      existingPass &&
+      existingPassStatus !== "available" &&
+      existingPassStatus !== "cancelled_by_admin" &&
+      existingPassStatus !== "expired"
+    ) {
+      return { ok: false, message: "This group already has an active Captain’s Pass." };
+    }
+
+    if (existingMembership && existingMembership.role !== "member") {
+      return { ok: false, message: "Only a player member can receive a Captain’s Pass for this group." };
+    }
+
+    if (existingGroupCaptainInvite && existingGroupCaptainInvite.email !== normalizedEmail) {
+      return {
+        ok: false,
+        message: `A pending Captain invite already exists for ${existingGroupCaptainInvite.email}.`
+      };
+    }
+
+    if (existingPendingInvite) {
+      return { ok: false, message: "A pending invite already exists for that email in this group." };
+    }
+
+    if (existingUserId && !existingMembership) {
+      const joinLimitResult = await ensureUserCanJoinAnotherGroup(adminSupabase, existingUserId);
+      if (!joinLimitResult.ok) {
+        return joinLimitResult;
+      }
+    }
+
+    const requiredOpenSeats = (existingMembership ? 0 : 1) + inviteAllowance;
+    const capacityCheck = await ensureGroupHasCaptainInviteCapacity(adminSupabase, managedGroup, requiredOpenSeats);
+    if (!capacityCheck.ok) {
+      return capacityCheck;
+    }
+
+    const token = randomBytes(24).toString("hex");
+    const tokenHash = hashInviteToken(token);
+    const inviteLanguage = normalizeLanguage(input.language ?? currentUser.preferredLanguage);
+    const helperLanguage = normalizeExplainerLanguage(input.helperLanguage ?? inviteLanguage);
+    const claimUrl = buildGroupInviteClaimUrl(token, inviteLanguage, helperLanguage, existingUserId ? "login" : "signup");
+    const expiresAt = new Date(Date.now() + normalizeExpiryDays(input.expiresInDays) * 24 * 60 * 60 * 1000).toISOString();
+    const inviterProfile = await getUserLabel(adminSupabase, currentUser.userId);
+
+    const { data: inviteData, error: inviteError } = await adminSupabase
+      .from("group_invites")
+      .insert({
+        group_id: managedGroup.id,
+        email: normalizedEmail,
+        normalized_email: normalizedEmail,
+        invited_by_user_id: currentUser.userId,
+        suggested_display_name: null,
+        custom_message: "Captain invite",
+        language: inviteLanguage,
+        helper_language: helperLanguage,
+        status: "pending",
+        claim_token: token,
+        token_hash: tokenHash,
+        email_status: "pending",
+        expires_at: expiresAt,
+        invite_source: "manager_invite",
+        invite_intent: "captain_pass",
+        captain_invite_allowance: inviteAllowance
+      })
+      .select("id,group_id,email,status,expires_at")
+      .single();
+
+    if (inviteError) {
+      return { ok: false, message: inviteError.message };
+    }
+
+    const enqueueResult = await enqueueGroupInviteEmail(adminSupabase, {
+      email: normalizedEmail,
+      groupInviteId: inviteData.id,
+      groupId: managedGroup.id,
+      groupName: managedGroup.name ?? "Group",
+      invitedByUserId: currentUser.userId,
+      inviterName: inviterProfile.name,
+      inviterEmail: inviterProfile.email,
+      suggestedDisplayName: null,
+      customMessage: "This invite lets you join as Captain.",
+      language: inviteLanguage,
+      helperLanguage,
+      existingAccount: Boolean(existingUserId),
+      claimUrl
+    });
+
+    let deliveryStatus: "queued" | "already_queued" | "sent_inline" | "queue_failed" = "queued";
+    if (!enqueueResult.ok) {
+      await markGroupInviteEmailFailure(adminSupabase, inviteData.id, enqueueResult.message);
+      deliveryStatus = "queue_failed";
+    } else {
+      deliveryStatus = enqueueResult.deliveryMethod === "sent_inline" ? "sent_inline" : "queued";
+      if (enqueueResult.deliveryMethod === "queued") {
+        await triggerEmailWorkerNow();
+      }
+    }
+
+    revalidatePath("/my-groups");
+
+    return {
+      ok: true,
+      invite: {
+        id: inviteData.id,
+        groupId: inviteData.group_id,
+        email: inviteData.email,
+        existingAccount: Boolean(existingUserId),
+        status: inviteData.status,
+        expiresAt: inviteData.expires_at ?? null,
+        inviteAllowance
+      },
+      claimUrl,
+      deliveryStatus,
+      message:
+        deliveryStatus === "queue_failed"
+          ? "Captain invite link created, but the email could not be queued."
+          : "Captain invite created."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not create that Captain invite link."
+    };
+  }
+}
+
 export async function saveManagedGroupRulesetAction(
   input: SaveManagedGroupRulesetInput
 ): Promise<SaveManagedGroupRulesetResult> {
@@ -3483,8 +3924,11 @@ export async function saveManagedGroupRulesetAction(
     return currentUser;
   }
 
-  if (!hasDirectorAccess(currentUser.accessLevel)) {
-    return { ok: false, message: "Only League Directors, Branded Leagues, and Super Admins can apply League rulesets." };
+  if (!canManageLeagueCustomScoring(currentUser)) {
+    return {
+      ok: false,
+      message: "League custom scoring is not available in the current product offer. Groups use standard Manager scoring."
+    };
   }
 
   const trimmedGroupId = input.groupId.trim();
@@ -3634,9 +4078,8 @@ export async function saveLegacyGroupScoringSetupAction(
     return { ok: false, message: "Group id is required." };
   }
 
-  const groupStagePredictionDepth = normalizeScoringSetupGroupStagePredictionDepth(input.groupStagePredictionDepth);
-  const fullMatchVariant = normalizeScoringSetupFullMatchVariant(input.fullMatchScoringVariant);
-  const groupBonusMode = normalizeScoringSetupGroupBonusMode(input.groupBonusMode);
+  const groupStagePredictionDepth = MANAGER_COMPATIBLE_GROUP_SCORING_DEFAULTS.groupStagePredictionDepth;
+  const groupBonusMode = MANAGER_COMPATIBLE_GROUP_SCORING_DEFAULTS.groupBonusMode;
   const groupBonusPreset = GROUP_BONUS_MODE_PRESETS[groupBonusMode];
 
   const parsedGroupStageDueAt = parseMidnightGmtDateKey(input.groupStagePicksDueAt);
@@ -3672,7 +4115,7 @@ export async function saveLegacyGroupScoringSetupAction(
 
     const { data: existingRulesets, error: existingRulesetsError } = await adminSupabase
       .from("group_rulesets")
-      .select("id,version,status,group_stage_mode,scoring_settings_locked_at")
+      .select("id,version,status,scoring_settings_locked_at")
       .eq("group_id", trimmedGroupId)
       .order("version", { ascending: false });
 
@@ -3684,7 +4127,6 @@ export async function saveLegacyGroupScoringSetupAction(
       id: string;
       version: number;
       status: string;
-      group_stage_mode?: string | null;
       scoring_settings_locked_at?: string | null;
     }>)[0] ?? null);
 
@@ -3692,7 +4134,7 @@ export async function saveLegacyGroupScoringSetupAction(
       return { ok: false, message: "This group’s scoring settings are already locked." };
     }
 
-    const groupStageMode = normalizeGroupStageMode(latestRuleset?.group_stage_mode);
+    const groupStageMode = MANAGER_COMPATIBLE_GROUP_SCORING_DEFAULTS.groupStageMode;
     const nextVersion = (latestRuleset?.version ?? 0) + 1;
     const lockedAt = new Date().toISOString();
 
@@ -3717,8 +4159,7 @@ export async function saveLegacyGroupScoringSetupAction(
         status: "locked",
         group_stage_mode: groupStageMode,
         group_stage_prediction_depth: groupStagePredictionDepth,
-        full_match_scoring_variant:
-          groupStagePredictionDepth === "full_match_scores" ? fullMatchVariant : null,
+        full_match_scoring_variant: null,
         group_bonus_mode: groupBonusMode,
         group_stage_picks_due_at: parsedGroupStageDueAt.toISOString(),
         knockout_picks_due_at: parsedKnockoutDueAt.toISOString(),
@@ -3863,8 +4304,11 @@ export async function scoreManagedGroupSidePickAction(
     return currentUser;
   }
 
-  if (!hasDirectorAccess(currentUser.accessLevel)) {
-    return { ok: false, message: "Only League Directors, Branded Leagues, and Super Admins can score side picks." };
+  if (!canManageLeagueCustomScoring(currentUser)) {
+    return {
+      ok: false,
+      message: "League custom side-pick scoring is not available in the current product offer."
+    };
   }
 
   const groupId = input.groupId.trim();
@@ -4478,7 +4922,7 @@ async function fetchManagedGroupDetailRows(
     manageableGroupIds.length > 0
       ? adminSupabase
           .from("group_invites")
-          .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,language,helper_language,status,claim_token,expires_at,accepted_by_user_id,accepted_at,email_status,email_sent_at,email_provider_message_id,email_error,email_attempt_count,last_email_attempt_at,last_resent_by_user_id,last_sent_at,send_attempts,last_error,invite_source,captains_pass_id,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
+          .select("id,group_id,email,normalized_email,invited_by_user_id,suggested_display_name,custom_message,language,helper_language,status,claim_token,expires_at,accepted_by_user_id,accepted_at,email_status,email_sent_at,email_provider_message_id,email_error,email_attempt_count,last_email_attempt_at,last_resent_by_user_id,last_sent_at,send_attempts,last_error,invite_source,captains_pass_id,invite_intent,captain_invite_allowance,created_at,invited_by:users!group_invites_invited_by_user_id_fkey(name,email)")
           .in("group_id", manageableGroupIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
@@ -4527,6 +4971,7 @@ async function fetchManagedGroupDetailRows(
           .from("access_codes")
           .select("id,code,active,max_uses,used_count,expires_at,group_id,default_language,created_at,updated_at")
           .in("group_id", manageableGroupIds)
+          .eq("code_type", "standard")
           .order("updated_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
     fetchActiveGroupRulesets(adminSupabase, manageableGroupIds),
@@ -4620,6 +5065,8 @@ async function fetchManagedGroupDetailRows(
       sendAttempts: row.send_attempts ?? 0,
       lastError: row.last_error ?? null,
       inviteSource: normalizeGroupInviteSource(row.invite_source),
+      inviteIntent: normalizeGroupInviteIntent(row.invite_intent),
+      captainInviteAllowance: row.captain_invite_allowance ?? null,
       createdAt: row.created_at
     });
     invitesByGroup.set(row.group_id, list);
@@ -4841,8 +5288,8 @@ async function fetchManagedGroupDetailRows(
       captainPass: captainPassByGroup.get(group.id) ?? null,
       activeRuleset: group.canManage ? activeRulesetsByGroup.get(group.id) ?? null : null,
       sidePickPackages: group.canManage ? groupCustomPackages : [],
-      canManageRuleset: group.canManage && hasDirectorAccess(currentUser.accessLevel),
-      canManageSidePicks: group.canManage && hasDirectorAccess(currentUser.accessLevel),
+      canManageRuleset: group.canManage && canManageLeagueCustomScoring(currentUser),
+      canManageSidePicks: group.canManage && canManageLeagueCustomScoring(currentUser),
       scoringPreview: {
         standardScoringLabel: "Standard scoring applies to global rank and average group comparison.",
         groupScoringLabel: "Applies to this group only. Affects the group leaderboard only."
@@ -4865,6 +5312,7 @@ async function fetchPrimaryManagedGroupInviteCode(
     .from("access_codes")
     .select("id,code,active,max_uses,used_count,expires_at,group_id,created_at,updated_at")
     .eq("group_id", groupId)
+    .eq("code_type", "standard")
     .order("updated_at", { ascending: false });
 
   if (error) {
@@ -5002,6 +5450,7 @@ async function deactivateActiveManagedGroupInviteCodes(
       updated_at: new Date().toISOString()
     })
     .eq("group_id", groupId)
+    .eq("code_type", "standard")
     .eq("active", true);
 
   if (error) {
@@ -5295,6 +5744,10 @@ async function getManagedGroup(
   return canManageGroup(currentUser, relation) ? (data as GroupRow) : null;
 }
 
+function canManageLeagueCustomScoring(currentUser: Extract<CurrentUserContext, { ok: true }>) {
+  return currentUser.role === "admin";
+}
+
 function canManageInvitesForGroup(
   currentUser: Extract<CurrentUserContext, { ok: true }>,
   group: Pick<GroupRow, "owner_user_id" | "group_kind">
@@ -5399,6 +5852,50 @@ async function ensureGroupHasInviteCapacity(
   const usedSeats = (memberCountResult.count ?? 0) + (pendingInviteCountResult.count ?? 0);
   if (usedSeats >= effectiveMembershipLimit) {
     return { ok: false, message: "This group is at its member limit." };
+  }
+
+  return { ok: true };
+}
+
+async function ensureGroupHasCaptainInviteCapacity(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  group: Pick<GroupRow, "id" | "membership_limit" | "owner_user_id">,
+  requiredOpenSeats: number,
+  ignoreInviteId?: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const effectiveMembershipLimit = await getEffectiveGroupSeatLimit(adminSupabase, group);
+  const pendingInviteQuery = adminSupabase
+    .from("group_invites")
+    .select("id", { count: "exact", head: true })
+    .eq("group_id", group.id)
+    .eq("status", "pending");
+
+  if (ignoreInviteId) {
+    pendingInviteQuery.neq("id", ignoreInviteId);
+  }
+
+  const [memberCountResult, pendingInviteCountResult] = await Promise.all([
+    adminSupabase.from("group_members").select("id", { count: "exact", head: true }).eq("group_id", group.id),
+    pendingInviteQuery
+  ]);
+
+  if (memberCountResult.error || pendingInviteCountResult.error) {
+    return {
+      ok: false,
+      message: memberCountResult.error?.message ?? pendingInviteCountResult.error?.message ?? "Could not check Captain invite capacity."
+    };
+  }
+
+  const usedSeats = (memberCountResult.count ?? 0) + (pendingInviteCountResult.count ?? 0);
+  const openSeats = effectiveMembershipLimit - usedSeats;
+  if (openSeats < requiredOpenSeats) {
+    return {
+      ok: false,
+      message:
+        requiredOpenSeats <= 1
+          ? "This group does not have enough open seats for that Captain invite."
+          : `This group needs ${requiredOpenSeats} open seats for that Captain invite and allowance.`
+    };
   }
 
   return { ok: true };
@@ -5780,18 +6277,6 @@ function normalizeRequestedMembershipLimit(value?: number) {
   return Math.max(1, Math.floor(value));
 }
 
-function normalizeScoringSetupGroupBonusMode(value?: string | null) {
-  return normalizeGroupBonusMode(value);
-}
-
-function normalizeScoringSetupGroupStagePredictionDepth(value?: string | null) {
-  return normalizeGroupStagePredictionDepth(value);
-}
-
-function normalizeScoringSetupFullMatchVariant(value?: string | null) {
-  return normalizeFullMatchScoringVariant(value);
-}
-
 function parseMidnightGmtDateKey(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return null;
@@ -5986,6 +6471,14 @@ function normalizeExpiryDays(value?: number) {
   }
 
   return Math.max(1, Math.floor(value));
+}
+
+function normalizeCaptainInviteAllowance(value?: number | null) {
+  if (!value || Number.isNaN(value)) {
+    return 1;
+  }
+
+  return Math.max(1, Math.min(MAX_CAPTAINS_PASS_ALLOWANCE, Math.floor(value)));
 }
 
 function normalizeEmail(value?: string | null) {

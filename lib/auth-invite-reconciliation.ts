@@ -3,6 +3,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getEffectiveGroupSeatLimit } from "@/lib/group-tier-limits";
 import { ensureUserCanJoinAnotherGroup } from "@/lib/group-membership-limits";
+import { normalizeGroupInviteIntent, type GroupInviteIntent } from "@/lib/group-management";
 
 type AuthUserForReconciliation = {
   id: string;
@@ -27,6 +28,7 @@ type GroupInviteRow = {
   expires_at?: string | null;
   accepted_at?: string | null;
   accepted_by_user_id?: string | null;
+  invite_intent?: GroupInviteIntent | null;
 };
 
 type UserRow = {
@@ -90,7 +92,7 @@ export async function reconcileInvitesForAuthUser(user: AuthUserForReconciliatio
         .maybeSingle(),
       adminSupabase
         .from("group_invites")
-        .select("id,group_id,normalized_email,suggested_display_name,status,expires_at,accepted_at,accepted_by_user_id")
+        .select("id,group_id,normalized_email,suggested_display_name,status,expires_at,accepted_at,accepted_by_user_id,invite_intent")
         .eq("normalized_email", normalizedEmail)
         .eq("status", "pending")
     ]);
@@ -159,6 +161,11 @@ export async function reconcileInvitesForAuthUser(user: AuthUserForReconciliatio
 
   let groupInvitesAccepted = 0;
   for (const invite of ((groupInvites ?? []) as GroupInviteRow[])) {
+    if (normalizeGroupInviteIntent(invite.invite_intent) === "captain_pass") {
+      notes.push(`Left Captain invite ${invite.id} pending for the dedicated Captain acceptance flow.`);
+      continue;
+    }
+
     if (invite.expires_at && new Date(invite.expires_at).getTime() < Date.now()) {
       const { error: expireInviteError } = await adminSupabase
         .from("group_invites")

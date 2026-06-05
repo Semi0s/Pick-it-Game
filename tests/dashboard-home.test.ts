@@ -109,7 +109,7 @@ test("group-stage prediction progress handles empty, partial, and complete state
     now: BASE_NOW
   });
   assert.equal(empty.completedUnits, 0);
-  assert.equal(empty.totalUnits, 13);
+  assert.equal(empty.totalUnits, 20);
   assert.equal(empty.isComplete, false);
 
   const partial = getPredictionProgress({
@@ -124,6 +124,20 @@ test("group-stage prediction progress handles empty, partial, and complete state
   assert.equal(partial.detail, "8 of 12 groups complete");
   assert.equal(partial.headline, "4 groups left");
 
+  const partialThirdPlaceLadder = getPredictionProgress({
+    phase: "group_stage",
+    completedGroups: 12,
+    totalGroups: 12,
+    selectedThirdPlaceCount: 3,
+    requiredThirdPlaceCount: 8,
+    deadlineAt: new Date(BASE_NOW + 5 * 24 * 60 * 60 * 1000).toISOString(),
+    now: BASE_NOW
+  });
+  assert.equal(partialThirdPlaceLadder.completedUnits, 15);
+  assert.equal(partialThirdPlaceLadder.totalUnits, 20);
+  assert.equal(partialThirdPlaceLadder.isComplete, false);
+  assert.equal(partialThirdPlaceLadder.detail, "3 of 8 third-place qualifiers selected");
+
   const complete = getPredictionProgress({
     phase: "group_stage",
     completedGroups: 12,
@@ -133,7 +147,7 @@ test("group-stage prediction progress handles empty, partial, and complete state
     deadlineAt: new Date(BASE_NOW + 5 * 24 * 60 * 60 * 1000).toISOString(),
     now: BASE_NOW
   });
-  assert.equal(complete.completedUnits, 13);
+  assert.equal(complete.completedUnits, 20);
   assert.equal(complete.isComplete, true);
   assert.equal(complete.headline, "All group picks saved.");
 });

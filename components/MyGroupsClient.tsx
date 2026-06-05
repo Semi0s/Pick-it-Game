@@ -11,6 +11,7 @@ import {
   awardManagedGroupTrophyAction,
   cancelGroupInviteAction,
   createCaptainManagedGroupInviteAction,
+  createCaptainOnboardingInviteAction,
   createGroupAction,
   createGroupInviteAction,
   createManagedGroupInviteCodeAction,
@@ -64,6 +65,7 @@ import {
   ManagementEmptyState,
   ManagementGrid,
   ManagementIntro,
+  useSessionJsonState,
   useSessionDisclosureState
 } from "@/components/player-management/Shared";
 import {
@@ -86,10 +88,11 @@ type MyGroupsClientProps = {
 type ToastState = { tone: "success" | "error" | "tip"; text: string } | null;
 const GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-expanded-groups";
 const GROUP_INVITE_CODE_SECTION_STORAGE_KEY = "my-groups-expanded-group-invite-code-sections";
-const GROUP_LIMIT_SECTION_STORAGE_KEY = "my-groups-expanded-group-limit-sections";
 const GROUP_PEOPLE_SECTION_STORAGE_KEY = "my-groups-expanded-group-people-sections";
 const GROUP_TROPHY_SECTION_STORAGE_KEY = "my-groups-expanded-group-trophy-sections";
 const GROUP_INFO_SECTION_STORAGE_KEY = "my-groups-expanded-group-info-sections";
+const GROUP_APPROVED_EMAILS_SECTION_STORAGE_KEY = "my-groups-expanded-group-approved-email-sections";
+const GROUP_CAPTAIN_PASS_SECTION_STORAGE_KEY = "my-groups-expanded-group-captain-pass-sections";
 const CREATE_GROUP_DISCLOSURE_STORAGE_KEY = "my-groups-create-group";
 const TROPHY_PROMPTS = [
   { name: "Office Oracle", icon: "🧠", description: "Sees the result before the rest of the room does." },
@@ -143,6 +146,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [groupAvatarDrafts, setGroupAvatarDrafts] = useState<Record<string, GroupAvatarDraft>>({});
   const [allowedEmailsDrafts, setAllowedEmailsDrafts] = useState<Record<string, string>>({});
   const [captainPassSelections, setCaptainPassSelections] = useState<Record<string, { userId: string; allowance: string }>>({});
+  const [captainOnboardingDrafts, setCaptainOnboardingDrafts] = useState<Record<string, { email: string; allowance: string }>>({});
+  const [captainOnboardingLinksByGroup, setCaptainOnboardingLinksByGroup] = useState<Record<string, { url: string; email: string; allowance: number; note: string }>>({});
   const [captainInviteEmailsByGroup, setCaptainInviteEmailsByGroup] = useState<Record<string, string>>({});
   const [editingInviteNames, setEditingInviteNames] = useState<Record<string, string>>({});
   const [newInviteEmailsByGroup, setNewInviteEmailsByGroup] = useState<Record<string, string>>({});
@@ -190,10 +195,17 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   >({});
   const [expandedInviteEditorIds, setExpandedInviteEditorIds] = useState<string[]>([]);
   const [expandedInviteCodeIds, setExpandedInviteCodeIds] = useState<string[]>([]);
-  const [expandedGroupLimitIds, setExpandedGroupLimitIds] = useState<string[]>([]);
   const [expandedPeopleInviteIds, setExpandedPeopleInviteIds] = useState<string[]>([]);
   const [expandedTrophyIds, setExpandedTrophyIds] = useState<string[]>([]);
   const [expandedGroupInfoIds, setExpandedGroupInfoIds] = useState<string[]>([]);
+  const [expandedApprovedEmailIds, setExpandedApprovedEmailIds] = useSessionJsonState<string[]>(
+    GROUP_APPROVED_EMAILS_SECTION_STORAGE_KEY,
+    []
+  );
+  const [expandedCaptainPassIds, setExpandedCaptainPassIds] = useSessionJsonState<string[]>(
+    GROUP_CAPTAIN_PASS_SECTION_STORAGE_KEY,
+    []
+  );
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useSessionDisclosureState(CREATE_GROUP_DISCLOSURE_STORAGE_KEY, false);
 
   useEffect(() => {
@@ -203,7 +215,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   }, [forceCreateGroupOpen, setIsCreateGroupOpen]);
   const confirmationRef = useRef<HTMLDivElement | null>(null);
   const [hasRestoredGroupDisclosureState, setHasRestoredGroupDisclosureState] = useState(false);
-  const [hasRestoredGroupLimitState, setHasRestoredGroupLimitState] = useState(false);
   const [hasRestoredInviteCodeState, setHasRestoredInviteCodeState] = useState(false);
   const [hasRestoredPeopleInviteState, setHasRestoredPeopleInviteState] = useState(false);
   const [hasRestoredTrophyState, setHasRestoredTrophyState] = useState(false);
@@ -450,36 +461,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
       console.warn("Could not save invite code disclosure state.", error);
     }
   }, [expandedInviteCodeIds, hasRestoredInviteCodeState]);
-
-  useEffect(() => {
-    try {
-      const stored = window.sessionStorage.getItem(GROUP_LIMIT_SECTION_STORAGE_KEY);
-      if (!stored) {
-        return;
-      }
-
-      const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed)) {
-        setExpandedGroupLimitIds(parsed.filter((value): value is string => typeof value === "string"));
-      }
-    } catch (error) {
-      console.warn("Could not restore saved group limit disclosure state.", error);
-    } finally {
-      setHasRestoredGroupLimitState(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!hasRestoredGroupLimitState) {
-      return;
-    }
-
-    try {
-      window.sessionStorage.setItem(GROUP_LIMIT_SECTION_STORAGE_KEY, JSON.stringify(expandedGroupLimitIds));
-    } catch (error) {
-      console.warn("Could not save group limit disclosure state.", error);
-    }
-  }, [expandedGroupLimitIds, hasRestoredGroupLimitState]);
 
   useEffect(() => {
     try {
@@ -1154,6 +1135,67 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     });
   }
 
+  async function handleCreateCaptainOnboardingInvite(group: MyManagedGroup) {
+    const draft = captainOnboardingDrafts[group.id] ?? { email: "", allowance: "1" };
+    const email = draft.email.trim();
+    if (!email) {
+      setMessage({ tone: "error", text: "Enter an email address first." });
+      return;
+    }
+
+    await withAction(`create-captain-onboarding-invite-${group.id}`, async () => {
+      const result = await createCaptainOnboardingInviteAction({
+        groupId: group.id,
+        email,
+        inviteAllowance: Number(draft.allowance || "1")
+      });
+
+      if (!result.ok) {
+        setMessage({ tone: "error", text: result.message });
+        return;
+      }
+
+      let copiedToClipboard = false;
+      try {
+        await navigator.clipboard.writeText(result.claimUrl);
+        copiedToClipboard = true;
+      } catch (clipboardError) {
+        console.warn("Could not copy Captain invite link.", clipboardError);
+      }
+
+      const note =
+        result.deliveryStatus === "queue_failed"
+          ? "Captain invite created, but email could not be queued. Copy this link and share it manually."
+          : copiedToClipboard
+            ? `This link lets ${result.invite.email} join ${group.name} as a Captain.`
+            : "Captain invite created. Copy this link manually.";
+
+      setCaptainOnboardingLinksByGroup((current) => ({
+        ...current,
+        [group.id]: {
+          url: result.claimUrl,
+          email: result.invite.email,
+          allowance: result.invite.inviteAllowance,
+          note
+        }
+      }));
+      setCaptainOnboardingDrafts((current) => ({
+        ...current,
+        [group.id]: { email: "", allowance: draft.allowance || "1" }
+      }));
+      setMessage({
+        tone: result.deliveryStatus === "queue_failed" || !copiedToClipboard ? "tip" : "success",
+        text:
+          result.deliveryStatus === "queue_failed"
+            ? "Captain invite link created, but the email could not be queued. Copy the link below."
+            : copiedToClipboard
+              ? "Captain invite created and copied."
+              : "Captain invite created. Copy the link below."
+      });
+      await loadGroupDetail(group.id, true);
+    });
+  }
+
   async function handleAcceptInvite() {
     if (!inviteToken) {
       return;
@@ -1811,10 +1853,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const isExpanded = usesDisclosure ? expandedGroupIds.includes(group.id) : true;
             const compactMemberCount = resolvedMemberCount ?? 0;
             const isInviteCodeExpanded = expandedInviteCodeIds.includes(group.id);
-            const isGroupLimitExpanded = expandedGroupLimitIds.includes(group.id);
             const isPeopleInvitesExpanded = expandedPeopleInviteIds.includes(group.id);
             const isTrophyExpanded = expandedTrophyIds.includes(group.id);
             const isGroupInfoExpanded = expandedGroupInfoIds.includes(group.id);
+            const isApprovedEmailsExpanded = expandedApprovedEmailIds.includes(group.id);
+            const isCaptainPassExpanded = expandedCaptainPassIds.includes(group.id);
             const managerTrophies = groupTrophies.filter(
               (trophy) => trophy.awardSource === "manager" && trophy.scope === "group"
             );
@@ -1840,8 +1883,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const avatarPreviewUrl = avatarDraft.previewUrl ?? (avatarDraft.removeCurrent ? undefined : group.avatarUrl ?? undefined);
             const isGroupProfileSaveReady = isGroupProfileDirty(group, groupProfileDraft, avatarDraft);
             const captainPassSelection = captainPassSelections[group.id] ?? { userId: "", allowance: "1" };
+            const captainOnboardingDraft = captainOnboardingDrafts[group.id] ?? { email: "", allowance: "1" };
+            const captainOnboardingLink = captainOnboardingLinksByGroup[group.id] ?? null;
             const availableCaptainCandidates = activeMembers.filter((member) => member.userId !== currentUserId);
             const captainPass = detailedGroup?.captainPass ?? null;
+            const isCurrentUserCaptainForGroup = Boolean(captainPass?.canCurrentUserUseInvites);
             const isCaptainInviteHelperVisible = Boolean(captainPass?.canCurrentUserUseInvites && !group.canManage);
             const inviteAccessChipLabel =
               group.accessMode === "restricted_by_email" ? tg("accessEmail") : group.accessMode === "closed" ? tg("accessClosed") : tg("accessCode");
@@ -1865,6 +1911,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     <div className="mt-3 flex items-center justify-between gap-3">
                       <div className="flex min-w-0 flex-wrap gap-2">
                         <ManagementBadge label={inviteAccessChipLabel} tone="neutral" />
+                        {isCurrentUserCaptainForGroup ? (
+                          <ManagementBadge label="Captain" tone="accent" />
+                        ) : null}
                       </div>
                       {usesDisclosure ? (
                         <InlineDisclosureButton
@@ -1894,9 +1943,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                           <div className="flex items-start justify-between gap-3">
                             <div>
                               <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">{tg("groupProfile")}</h4>
-                              <p className="mt-1 text-xs font-semibold text-gray-500">
-                                {tg("groupProfileHelp")}
-                              </p>
                             </div>
                             <Avatar name={groupProfileDraft.name || group.name} avatarUrl={avatarPreviewUrl} size="md" />
                           </div>
@@ -2007,217 +2053,332 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                           </div>
                         </div>
 
-                        <div className="ui-card p-4">
+                        <div className="ui-card p-3">
                           <div className="flex items-start justify-between gap-3">
                             <div>
                               <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">{tg("restrictedEmailList")}</h4>
-                              <p className="mt-1 text-xs font-semibold text-gray-500">
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <ManagementBadge
+                                label={tg("approvedCount", { count: detailedGroup?.allowedEmails.length ?? 0 })}
+                                tone={group.accessMode === "restricted_by_email" ? "accent" : "neutral"}
+                              />
+                              <InlineDisclosureButton
+                                isOpen={isApprovedEmailsExpanded}
+                                variant="subtle"
+                                onClick={() => toggleExpandedSection(group.id, setExpandedApprovedEmailIds)}
+                              />
+                            </div>
+                          </div>
+                          {isApprovedEmailsExpanded ? (
+                            <div className="mt-3 space-y-3">
+                              <p className="text-xs font-semibold text-gray-500">
                                 {tg("restrictedEmailListHelp")}
                               </p>
-                            </div>
-                            <ManagementBadge
-                              label={tg("approvedCount", { count: detailedGroup?.allowedEmails.length ?? 0 })}
-                              tone={group.accessMode === "restricted_by_email" ? "accent" : "neutral"}
-                            />
-                          </div>
-                          <div className="mt-3 space-y-3">
-                            <label className="block">
-                              <span className="text-sm font-bold text-gray-800">{tg("addApprovedEmails")}</span>
-                              <textarea
-                                value={allowedEmailsDrafts[group.id] ?? ""}
-                                onChange={(event) =>
-                                  setAllowedEmailsDrafts((current) => ({
-                                    ...current,
-                                    [group.id]: event.target.value
-                                  }))
-                                }
-                                rows={4}
-                                placeholder="player@example.com&#10;captain@example.com"
-                                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                              />
-                            </label>
-                            <label className="block">
-                              <span className="text-xs font-bold uppercase tracking-wide text-gray-500">{tg("uploadCsv")}</span>
-                              <input
-                                type="file"
-                                accept=".csv,text/csv"
-                                onChange={(event) => {
-                                  const file = event.target.files?.[0];
-                                  if (!file) {
-                                    return;
-                                  }
-
-                                  void file.text().then((text) => {
+                              <label className="block">
+                                <span className="text-sm font-bold text-gray-800">{tg("addApprovedEmails")}</span>
+                                <textarea
+                                  value={allowedEmailsDrafts[group.id] ?? ""}
+                                  onChange={(event) =>
                                     setAllowedEmailsDrafts((current) => ({
                                       ...current,
-                                      [group.id]: text
-                                    }));
-                                  });
-                                }}
-                                className="mt-2 block w-full text-xs font-semibold text-gray-600"
-                              />
-                            </label>
-                            <p className="text-xs font-semibold text-gray-500">
-                              {tg("csvSupportHelp")}
-                            </p>
-                            <ActionButton
-                              type="button"
-                              disabled={actionKey === `save-allowed-emails-${group.id}`}
-                              onClick={() => void handleSaveAllowedEmails(group)}
-                              fullWidth
-                            >
-                              {actionKey === `save-allowed-emails-${group.id}` ? tg("saving") : tg("saveApprovedEmails")}
-                            </ActionButton>
-                            <div className="space-y-2">
-                              {(detailedGroup?.allowedEmails ?? []).length > 0 ? (
-                                detailedGroup?.allowedEmails.map((entry) => (
-                                  <div key={entry.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-black text-gray-950">{entry.email}</p>
-                                      <p className="mt-1 text-xs font-semibold text-gray-500">
-                                        {entry.status === "joined" ? tg("joinedAsPlayer", { name: entry.joinedUserName ?? "player" }) : tg("allowed")}
-                                      </p>
+                                      [group.id]: event.target.value
+                                    }))
+                                  }
+                                  rows={4}
+                                  placeholder="player@example.com&#10;captain@example.com"
+                                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="text-xs font-bold uppercase tracking-wide text-gray-500">{tg("uploadCsv")}</span>
+                                <input
+                                  type="file"
+                                  accept=".csv,text/csv"
+                                  onChange={(event) => {
+                                    const file = event.target.files?.[0];
+                                    if (!file) {
+                                      return;
+                                    }
+
+                                    void file.text().then((text) => {
+                                      setAllowedEmailsDrafts((current) => ({
+                                        ...current,
+                                        [group.id]: text
+                                      }));
+                                    });
+                                  }}
+                                  className="mt-2 block w-full text-xs font-semibold text-gray-600"
+                                />
+                              </label>
+                              <ActionButton
+                                type="button"
+                                disabled={actionKey === `save-allowed-emails-${group.id}`}
+                                onClick={() => void handleSaveAllowedEmails(group)}
+                                fullWidth
+                              >
+                                {actionKey === `save-allowed-emails-${group.id}` ? tg("saving") : tg("saveApprovedEmails")}
+                              </ActionButton>
+                              <div className="space-y-2">
+                                {(detailedGroup?.allowedEmails ?? []).length > 0 ? (
+                                  detailedGroup?.allowedEmails.map((entry) => (
+                                    <div key={entry.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                                      <div className="min-w-0">
+                                        <p className="truncate text-sm font-black text-gray-950">{entry.email}</p>
+                                        <p className="mt-1 text-xs font-semibold text-gray-500">
+                                          {entry.status === "joined" ? tg("joinedAsPlayer", { name: entry.joinedUserName ?? "player" }) : tg("allowed")}
+                                        </p>
+                                      </div>
+                                      <ActionButton
+                                        type="button"
+                                        tone="danger"
+                                        disabled={actionKey === `remove-allowed-email-${entry.id}`}
+                                        onClick={() => void handleRemoveAllowedEmail(group, entry.id)}
+                                      >
+                                        {tg("remove")}
+                                      </ActionButton>
                                     </div>
-                                    <ActionButton
-                                      type="button"
-                                      tone="danger"
-                                      disabled={actionKey === `remove-allowed-email-${entry.id}`}
-                                      onClick={() => void handleRemoveAllowedEmail(group, entry.id)}
-                                    >
-                                      {tg("remove")}
-                                    </ActionButton>
-                                  </div>
-                                ))
-                              ) : (
-                                <p className="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
-                                  {tg("noApprovedEmails")}
-                                </p>
-                              )}
+                                  ))
+                                ) : (
+                                  <p className="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                                    {tg("noApprovedEmails")}
+                                  </p>
+                                )}
+                              </div>
                             </div>
-                          </div>
+                          ) : null}
                         </div>
 
                         {group.groupKind === "standard" ? (
-                          <div className="ui-card p-4">
+                          <div className="ui-card p-3">
                             <div className="flex items-start justify-between gap-3">
                               <div>
                                 <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Captain’s Pass</h4>
-                                <p className="mt-1 text-xs font-semibold text-gray-500">
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                                {captainPass ? (
+                                  <ManagementBadge label={captainPass.statusLabel} tone={captainPass.status === "claimed" ? "accent" : "neutral"} />
+                                ) : null}
+                                <InlineDisclosureButton
+                                  isOpen={isCaptainPassExpanded}
+                                  variant="subtle"
+                                  onClick={() => toggleExpandedSection(group.id, setExpandedCaptainPassIds)}
+                                />
+                              </div>
+                            </div>
+                            {isCaptainPassExpanded ? (
+                              <div className="mt-3 space-y-3">
+                                <p className="text-xs font-semibold text-gray-500">
                                   Give one trusted player limited invite power for this group. They also get one small private Captain Group of their own.
                                 </p>
-                              </div>
-                              {captainPass ? (
-                                <ManagementBadge label={captainPass.statusLabel} tone={captainPass.status === "claimed" ? "accent" : "neutral"} />
-                              ) : null}
-                            </div>
-                            <div className="mt-3 space-y-3">
-                              {captainPass ? (
-                                <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
-                                  <p className="text-sm font-black text-gray-950">
-                                    {captainPass.captainName ?? "Captain"} · {captainPass.invitesRemaining} invite{captainPass.invitesRemaining === 1 ? "" : "s"} remaining
-                                  </p>
-                                  <p className="mt-1 text-xs font-semibold text-gray-500">
-                                    Private group: {captainPass.captainPrivateGroupName ?? "Created"}
-                                  </p>
-                                </div>
-                              ) : (
-                                <>
-                                  <label className="block">
-                                    <span className="text-sm font-bold text-gray-800">Trusted player</span>
-                                    <select
-                                      value={captainPassSelection.userId}
-                                      onChange={(event) =>
-                                        setCaptainPassSelections((current) => ({
-                                          ...current,
-                                          [group.id]: {
-                                            ...captainPassSelection,
-                                            userId: event.target.value
-                                          }
-                                        }))
-                                      }
-                                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                {captainPass ? (
+                                  <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3">
+                                    <p className="text-sm font-black text-gray-950">
+                                      {captainPass.captainName ?? "Captain"} · {captainPass.invitesRemaining} invite{captainPass.invitesRemaining === 1 ? "" : "s"} remaining
+                                    </p>
+                                    <p className="mt-1 text-xs font-semibold text-gray-500">
+                                      Private group: {captainPass.captainPrivateGroupName ?? "Created"}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <label className="block">
+                                      <span className="text-sm font-bold text-gray-800">Trusted player</span>
+                                      <select
+                                        value={captainPassSelection.userId}
+                                        onChange={(event) =>
+                                          setCaptainPassSelections((current) => ({
+                                            ...current,
+                                            [group.id]: {
+                                              ...captainPassSelection,
+                                              userId: event.target.value
+                                            }
+                                          }))
+                                        }
+                                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                      >
+                                        <option value="">Choose a player</option>
+                                        {availableCaptainCandidates.map((member) => (
+                                          <option key={member.userId} value={member.userId}>
+                                            {member.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label className="block">
+                                      <span className="text-sm font-bold text-gray-800">Invite allowance</span>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={6}
+                                        value={captainPassSelection.allowance}
+                                        onChange={(event) =>
+                                          setCaptainPassSelections((current) => ({
+                                            ...current,
+                                            [group.id]: {
+                                              ...captainPassSelection,
+                                              allowance: event.target.value
+                                            }
+                                          }))
+                                        }
+                                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                      />
+                                    </label>
+                                    <p className="text-xs font-semibold text-gray-500">
+                                      Choose how many people this Captain can invite into your group. This cannot exceed your remaining group capacity.
+                                    </p>
+                                    <ActionButton
+                                      type="button"
+                                      disabled={actionKey === `assign-captains-pass-${group.id}`}
+                                      onClick={() => void handleAssignCaptainsPass(group)}
+                                      fullWidth
                                     >
-                                      <option value="">Choose a player</option>
-                                      {availableCaptainCandidates.map((member) => (
-                                        <option key={member.userId} value={member.userId}>
-                                          {member.name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
-                                  <label className="block">
-                                    <span className="text-sm font-bold text-gray-800">Invite allowance</span>
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={6}
-                                      value={captainPassSelection.allowance}
-                                      onChange={(event) =>
-                                        setCaptainPassSelections((current) => ({
-                                          ...current,
-                                          [group.id]: {
-                                            ...captainPassSelection,
-                                            allowance: event.target.value
+                                      {actionKey === `assign-captains-pass-${group.id}` ? "Saving..." : "Issue Captain’s Pass"}
+                                    </ActionButton>
+                                  </>
+                                )}
+                                {isSuperAdmin && !captainPass ? (
+                                  <div className="rounded-md border border-dashed border-gray-300 bg-white px-3 py-3">
+                                    <div>
+                                      <p className="text-sm font-black text-gray-900">Captain invite link</p>
+                                      <p className="mt-1 text-xs font-semibold text-gray-500">
+                                        Email-bound link that joins the player to this group and issues Captain status automatically.
+                                      </p>
+                                    </div>
+                                    <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem_auto] sm:items-end">
+                                      <label className="block">
+                                        <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Email</span>
+                                        <input
+                                          type="email"
+                                          value={captainOnboardingDraft.email}
+                                          onChange={(event) =>
+                                            setCaptainOnboardingDrafts((current) => ({
+                                              ...current,
+                                              [group.id]: {
+                                                ...captainOnboardingDraft,
+                                                email: event.target.value
+                                              }
+                                            }))
                                           }
-                                        }))
-                                      }
-                                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                                    />
-                                  </label>
-                                  <p className="text-xs font-semibold text-gray-500">
-                                    Choose how many people this Captain can invite into your group. This cannot exceed your remaining group capacity.
-                                  </p>
-                                  <ActionButton
-                                    type="button"
-                                    disabled={actionKey === `assign-captains-pass-${group.id}`}
-                                    onClick={() => void handleAssignCaptainsPass(group)}
-                                    fullWidth
-                                  >
-                                    {actionKey === `assign-captains-pass-${group.id}` ? "Saving..." : "Issue Captain’s Pass"}
-                                  </ActionButton>
-                                </>
-                              )}
-                            </div>
+                                          disabled={actionKey === `create-captain-onboarding-invite-${group.id}`}
+                                          placeholder="captain@example.com"
+                                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                        />
+                                      </label>
+                                      <label className="block">
+                                        <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Allowance</span>
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={6}
+                                          value={captainOnboardingDraft.allowance}
+                                          onChange={(event) =>
+                                            setCaptainOnboardingDrafts((current) => ({
+                                              ...current,
+                                              [group.id]: {
+                                                ...captainOnboardingDraft,
+                                                allowance: event.target.value
+                                              }
+                                            }))
+                                          }
+                                          disabled={actionKey === `create-captain-onboarding-invite-${group.id}`}
+                                          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                        />
+                                      </label>
+                                      <ActionButton
+                                        type="button"
+                                        disabled={actionKey === `create-captain-onboarding-invite-${group.id}`}
+                                        onClick={() => void handleCreateCaptainOnboardingInvite(group)}
+                                      >
+                                        {actionKey === `create-captain-onboarding-invite-${group.id}` ? "Creating..." : "Create Link"}
+                                      </ActionButton>
+                                    </div>
+                                    {captainOnboardingLink ? (
+                                      <div className="mt-3 rounded-md border border-accent/30 bg-accent-light/40 px-3 py-3">
+                                        <p className="text-xs font-bold uppercase tracking-wide text-accent-dark">
+                                          Captain invite created
+                                        </p>
+                                        <p className="mt-1 text-xs font-semibold text-gray-700">
+                                          {captainOnboardingLink.note} Allowance: {captainOnboardingLink.allowance}.
+                                        </p>
+                                        <div className="mt-2 rounded-md border border-accent/20 bg-white px-3 py-2">
+                                          <p className="break-all text-xs font-semibold text-gray-700">
+                                            {captainOnboardingLink.url}
+                                          </p>
+                                        </div>
+                                        <div className="mt-2 flex justify-end">
+                                          <ActionButton
+                                            type="button"
+                                            onClick={() => {
+                                              void navigator.clipboard
+                                                .writeText(captainOnboardingLink.url)
+                                                .then(() => setMessage({ tone: "success", text: "Captain invite link copied." }))
+                                                .catch((clipboardError) => {
+                                                  console.warn("Could not copy Captain invite link.", clipboardError);
+                                                  setMessage({ tone: "tip", text: "Copy failed. Copy the link from the field above." });
+                                                });
+                                            }}
+                                          >
+                                            Copy Link
+                                          </ActionButton>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
 
                       </div>
                     ) : null}
                     {isCaptainInviteHelperVisible ? (
-                      <div className="ui-card mt-4 p-4">
+                      <div className="ui-card mt-4 p-3">
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Captain’s Pass</h4>
-                            <p className="mt-1 text-xs font-semibold text-gray-500">
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <ManagementBadge label={`${captainPass?.invitesRemaining ?? 0} left`} tone="accent" />
+                            <InlineDisclosureButton
+                              isOpen={isCaptainPassExpanded}
+                              variant="subtle"
+                              onClick={() => toggleExpandedSection(group.id, setExpandedCaptainPassIds)}
+                            />
+                          </div>
+                        </div>
+                        {isCaptainPassExpanded ? (
+                          <>
+                            <p className="mt-3 text-xs font-semibold text-gray-500">
                               Invite helpers for this manager group. {captainPass?.isRestrictedByEmail ? "This group is restricted by email. Captain invites only work for approved emails." : "Your remaining invites stop working if the group fills up."}
                             </p>
-                          </div>
-                          <ManagementBadge label={`${captainPass?.invitesRemaining ?? 0} left`} tone="accent" />
-                        </div>
-                        <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-                          <label className="min-w-0 flex-1">
-                            <span className="sr-only">Captain invite email</span>
-                            <input
-                              type="email"
-                              value={captainInviteEmailsByGroup[group.id] ?? ""}
-                              onChange={(event) =>
-                                setCaptainInviteEmailsByGroup((current) => ({
-                                  ...current,
-                                  [group.id]: event.target.value
-                                }))
-                              }
-                              placeholder="player@example.com"
-                              className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                            />
-                          </label>
-                          <ActionButton
-                            type="button"
-                            disabled={actionKey === `create-captain-invite-${group.id}` || (captainPass?.invitesRemaining ?? 0) <= 0}
-                            onClick={() => void handleCreateCaptainInvite(group)}
-                          >
-                            {actionKey === `create-captain-invite-${group.id}` ? "Creating..." : "Create Captain Invite"}
-                          </ActionButton>
-                        </div>
+                            <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                              <label className="min-w-0 flex-1">
+                                <span className="sr-only">Captain invite email</span>
+                                <input
+                                  type="email"
+                                  value={captainInviteEmailsByGroup[group.id] ?? ""}
+                                  onChange={(event) =>
+                                    setCaptainInviteEmailsByGroup((current) => ({
+                                      ...current,
+                                      [group.id]: event.target.value
+                                    }))
+                                  }
+                                  placeholder="player@example.com"
+                                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                />
+                              </label>
+                              <ActionButton
+                                type="button"
+                                disabled={actionKey === `create-captain-invite-${group.id}` || (captainPass?.invitesRemaining ?? 0) <= 0}
+                                onClick={() => void handleCreateCaptainInvite(group)}
+                              >
+                                {actionKey === `create-captain-invite-${group.id}` ? "Creating..." : "Create Captain Invite"}
+                              </ActionButton>
+                            </div>
+                          </>
+                        ) : null}
                       </div>
                     ) : null}
                     {group.canManage ? (
@@ -2414,6 +2575,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                         <div className="min-w-0">
                                           <p className="truncate text-sm font-black text-gray-950">{invite.email}</p>
                                           <p className="mt-1 text-xs font-semibold text-gray-500">
+                                            {invite.inviteIntent === "captain_pass"
+                                              ? `Captain invite · ${invite.captainInviteAllowance ?? 1} invite${(invite.captainInviteAllowance ?? 1) === 1 ? "" : "s"}. `
+                                              : ""}
                                             {invite.existingAccount
                                               ? "Existing user — they can log in and join from the invite link."
                                               : "Pending signup."}
@@ -3067,115 +3231,114 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       <div className="ui-card mt-4 p-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Group Limits</h4>
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Advanced</h4>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
-                              {group.groupKind === "captain_private"
-                                ? `Captain Groups are fixed at ${MAX_CAPTAIN_PRIVATE_GROUP_MEMBERS} members.`
-                                : isSuperAdmin
-                                  ? "Adjust this group directly with unlimited super admin access."
-                                  : `Your current tier allows up to ${summary?.ok ? summary.tierAccess.limits.maxMembersPerGroup : group.membershipLimit} members per group.`}
+                              Adjust group limits or delete this group.
                             </p>
                           </div>
                           <InlineDisclosureButton
-                            isOpen={isGroupLimitExpanded}
+                            isOpen={isGroupInfoExpanded}
                             variant="subtle"
-                            onClick={() => toggleExpandedSection(group.id, setExpandedGroupLimitIds)}
+                            onClick={() => toggleExpandedSection(group.id, setExpandedGroupInfoIds)}
                           />
                         </div>
 
-                        {isGroupLimitExpanded ? (
-                          <form
-                            className="mt-3 space-y-3"
-                            onSubmit={(event) => {
-                              event.preventDefault();
-                              void withAction(`update-group-limit-${group.id}`, async () => {
-                                const result = await updateManagedGroupLimitAction(group.id, Number(groupLimitFormValue));
-                                setMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                                if (result.ok) {
-                                  await load();
-                                }
-                              });
-                            }}
-                          >
-                            <label className="block">
-                              <span className="text-sm font-bold text-gray-800">Seats for this group</span>
-                              <input
-                                type="number"
-                                min={1}
-                                value={groupLimitFormValue}
-                                disabled={group.groupKind === "captain_private"}
-                                onChange={(event) =>
-                                  setGroupLimitForms((current) => ({
-                                    ...current,
-                                    [group.id]: event.target.value
-                                  }))
-                                }
-                                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                              />
-                            </label>
-                            <ActionButton
-                              type="submit"
-                              disabled={group.groupKind === "captain_private" || actionKey === `update-group-limit-${group.id}`}
-                              fullWidth
+                        {isGroupInfoExpanded ? (
+                          <div className="mt-4 space-y-5">
+                            <form
+                              className="space-y-3"
+                              onSubmit={(event) => {
+                                event.preventDefault();
+                                void withAction(`update-group-limit-${group.id}`, async () => {
+                                  const result = await updateManagedGroupLimitAction(group.id, Number(groupLimitFormValue));
+                                  setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                                  if (result.ok) {
+                                    await load();
+                                  }
+                                });
+                              }}
                             >
-                              {group.groupKind === "captain_private"
-                                ? "Captain Group Limit Locked"
-                                : actionKey === `update-group-limit-${group.id}`
-                                  ? "Saving limit..."
-                                  : "Save Group Limit"}
-                            </ActionButton>
-
-                            <div className="ui-card-soft p-3">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                  <div>
-                                  <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Danger Zone</h4>
-                                  <p className="mt-1 text-xs font-semibold text-gray-500">
-                                    Delete this group only after removing everyone else.
-                                  </p>
-                                </div>
-                                <InlineDisclosureButton
-                                  isOpen={isGroupInfoExpanded}
-                                  variant="subtle"
-                                  onClick={() => toggleExpandedSection(group.id, setExpandedGroupInfoIds)}
-                                />
+                              <div>
+                                <p className="text-xs font-black uppercase tracking-[0.14em] text-gray-600">Group limit</p>
+                                <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">
+                                  {group.groupKind === "captain_private"
+                                    ? `Captain Groups are fixed at ${MAX_CAPTAIN_PRIVATE_GROUP_MEMBERS} members.`
+                                    : isSuperAdmin
+                                      ? "Adjust this group directly with unlimited super admin access."
+                                      : `Your current tier allows up to ${summary?.ok ? summary.tierAccess.limits.maxMembersPerGroup : group.membershipLimit} members per group.`}
+                                </p>
                               </div>
+                              <label className="block">
+                                <span className="text-sm font-bold text-gray-800">Seats for this group</span>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={groupLimitFormValue}
+                                  disabled={group.groupKind === "captain_private"}
+                                  onChange={(event) =>
+                                    setGroupLimitForms((current) => ({
+                                      ...current,
+                                      [group.id]: event.target.value
+                                    }))
+                                  }
+                                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                />
+                              </label>
+                              <ActionButton
+                                type="submit"
+                                disabled={group.groupKind === "captain_private" || actionKey === `update-group-limit-${group.id}`}
+                                fullWidth
+                              >
+                                {group.groupKind === "captain_private"
+                                  ? "Captain Group Limit Locked"
+                                  : actionKey === `update-group-limit-${group.id}`
+                                    ? "Saving limit..."
+                                    : "Save Group Limit"}
+                              </ActionButton>
+                            </form>
 
-                              {isGroupInfoExpanded ? (
-                                <div className="mt-3 space-y-4">
-                                  <ManagementGrid>
-                                  <ManagementDatum
-                                      label="Capacity"
-                                      value={
-                                        resolvedMemberCount !== undefined && resolvedPendingInviteCount !== undefined
-                                          ? `${resolvedMemberCount + resolvedPendingInviteCount} / ${group.membershipLimit} seats used`
-                                          : `Open group details to load seat usage`
-                                      }
-                                    />
-                                    <ManagementDatum label="Description" value={group.description?.trim() || "None"} />
-                                    <ManagementDatum label="Group limit" value={`${group.membershipLimit} members`} />
-                                    <ManagementDatum label="Members" value={resolvedMemberCount ?? "—"} />
-                                    <ManagementDatum label="Pending invites" value={resolvedPendingInviteCount ?? "—"} />
-                                  </ManagementGrid>
-                                  <ActionButton
-                                    tone="danger"
-                                    disabled={actionKey === `delete-group-${group.id}`}
-                                    onClick={() => {
-                                      setConfirmation(null);
-                                      setDeleteConfirmation({
-                                        key: `delete-group-${group.id}`,
-                                        groupId: group.id,
-                                        groupName: group.name
-                                      });
-                                      setDeleteConfirmationValue("");
-                                    }}
-                                    fullWidth
-                                  >
-                                    Delete Group
-                                  </ActionButton>
-                                </div>
-                              ) : null}
+                            <div className="border-t border-gray-200 pt-4">
+                              <ManagementGrid>
+                                <ManagementDatum
+                                  label="Capacity"
+                                  value={
+                                    resolvedMemberCount !== undefined && resolvedPendingInviteCount !== undefined
+                                      ? `${resolvedMemberCount + resolvedPendingInviteCount} / ${group.membershipLimit} seats used`
+                                      : `Open group details to load seat usage`
+                                  }
+                                />
+                                <ManagementDatum label="Description" value={group.description?.trim() || "None"} />
+                                <ManagementDatum label="Group limit" value={`${group.membershipLimit} members`} />
+                                <ManagementDatum label="Members" value={resolvedMemberCount ?? "—"} />
+                                <ManagementDatum label="Pending invites" value={resolvedPendingInviteCount ?? "—"} />
+                              </ManagementGrid>
                             </div>
-                          </form>
+
+                            <div className="border-t border-red-100 pt-4">
+                              <p className="text-xs font-black uppercase tracking-[0.14em] text-red-700">Delete group</p>
+                              <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">
+                                Delete this group only after removing everyone else.
+                              </p>
+                              <div className="mt-3">
+                                <ActionButton
+                                  tone="danger"
+                                  disabled={actionKey === `delete-group-${group.id}`}
+                                  onClick={() => {
+                                    setConfirmation(null);
+                                    setDeleteConfirmation({
+                                      key: `delete-group-${group.id}`,
+                                      groupId: group.id,
+                                      groupName: group.name
+                                    });
+                                    setDeleteConfirmationValue("");
+                                  }}
+                                  fullWidth
+                                >
+                                  Delete Group
+                                </ActionButton>
+                              </div>
+                            </div>
+                          </div>
                         ) : null}
                       </div>
                     ) : null}
