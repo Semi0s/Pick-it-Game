@@ -178,7 +178,7 @@ test("group-stage commit comparison ignores the finalize autosave grace window",
   );
 });
 
-test("group-stage save status mirrors the Group Stage saved timestamp gate", () => {
+test("group-stage save status only marks finalized brackets with later saved changes as needing save", () => {
   const committedAt = new Date(BASE_NOW).toISOString();
 
   assert.equal(
@@ -203,7 +203,7 @@ test("group-stage save status mirrors the Group Stage saved timestamp gate", () 
       committedAt: null,
       latestChangedAt: new Date(BASE_NOW - 60_000).toISOString()
     }).needsSave,
-    true
+    false
   );
   assert.equal(
     getGroupStageSaveStatus({
@@ -499,45 +499,39 @@ test("third-place mini standings use the full candidate pool for canonical advan
 test("mini standings probability only appears for meaningful qualifying picks", () => {
   assert.equal(
     shouldShowMiniTablePickProbability({
-      predictedPlace: 1,
-      hasCompletedBracketOnce: true
+      predictedPlace: 1
     }),
     true
   );
   assert.equal(
     shouldShowMiniTablePickProbability({
-      predictedPlace: 2,
-      hasCompletedBracketOnce: true
-    }),
-    true
-  );
-  assert.equal(
-    shouldShowMiniTablePickProbability({
-      predictedPlace: 3,
-      isSelectedThirdPlaceQualifier: true,
-      hasCompletedBracketOnce: true
+      predictedPlace: 2
     }),
     true
   );
   assert.equal(
     shouldShowMiniTablePickProbability({
       predictedPlace: 3,
-      isSelectedThirdPlaceQualifier: false,
-      hasCompletedBracketOnce: true
+      isSelectedThirdPlaceQualifier: true
+    }),
+    true
+  );
+  assert.equal(
+    shouldShowMiniTablePickProbability({
+      predictedPlace: 3,
+      isSelectedThirdPlaceQualifier: false
     }),
     false
   );
   assert.equal(
     shouldShowMiniTablePickProbability({
-      predictedPlace: 4,
-      hasCompletedBracketOnce: true
+      predictedPlace: 4
     }),
     false
   );
   assert.equal(
     shouldShowMiniTablePickProbability({
-      predictedPlace: 1,
-      hasCompletedBracketOnce: false
+      predictedPlace: null
     }),
     false
   );

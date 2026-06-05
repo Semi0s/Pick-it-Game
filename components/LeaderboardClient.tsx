@@ -31,6 +31,7 @@ import type {
 } from "@/lib/leaderboard-data";
 import type { DailyWinner } from "@/lib/leaderboard-highlights";
 import { getLocalizedCardCssVars, getLocalizedCardThemeForUserSurface } from "@/lib/localized-card-themes";
+import { getTeam } from "@/lib/mock-data";
 import { t } from "@/lib/strings";
 import { hasDirectorAccess } from "@/lib/tier-access";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY, LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY } from "@/lib/ui-storage-keys";
@@ -125,6 +126,7 @@ function LeaderboardPlayerRow({
     visualThemeId: profile.visualThemeId ?? null,
     homeTeamId: profile.homeTeamId ?? null
   });
+  const homeTeam = getTeam(profile.homeTeamId ?? undefined);
   const localizedCardVars = getLocalizedCardCssVars(localizedTheme);
   const rowTone = isCurrentUser
     ? "border-accent/60 bg-white shadow-[0_10px_24px_rgba(16,185,129,0.12)]"
@@ -170,7 +172,18 @@ function LeaderboardPlayerRow({
     >
       <LeaderboardPlayerLocalizationBackground theme={localizedTheme} />
       <div className="pointer-events-none absolute right-3 top-1/2 z-10 -translate-y-1/2">
-        <span className="ui-chip-sm border border-gray-200 bg-white/95 px-1.5 text-[9px] font-black text-gray-950">
+        <span className="leaderboard-score-chip ui-chip-sm border border-gray-200 bg-white/95 px-1.5 text-[9px] font-black text-gray-950">
+          {homeTeam?.flagEmoji ? (
+            <span
+              aria-hidden
+              title={homeTeam.name}
+              className="leaderboard-score-android-home-flag native-flag-emoji"
+            >
+              <span aria-hidden className="block leading-none">
+                {homeTeam.flagEmoji}
+              </span>
+            </span>
+          ) : null}
           {scoreLabel}: {scoreValue}
         </span>
       </div>

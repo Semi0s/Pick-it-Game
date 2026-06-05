@@ -29,6 +29,7 @@ import {
   resolvePreferredStandingsGroupSelection,
   shouldUseOfficialGroupStandingsOrder
 } from "@/lib/group-standings";
+import { orderRowsByPredictionSlots } from "@/lib/group-stage-mini-table-order";
 import {
   getThirdPlaceCandidatePoolFromGroupRankings,
   getPickProbabilityForTeam,
@@ -364,7 +365,6 @@ export function DashboardOverview({
     hello: t(displayLanguage, "dashboard.hello"),
     help: t(displayLanguage, "dashboard.help")
   };
-  const hasCompletedGroupBracketOnce = Boolean(initialCommandCenterSummary.progress.hasCompletedBracketOnce);
   const dashboardHeroCompactSummary = [
     user?.name ?? "Player",
     typeof initialCommandCenterSummary.performance.globalPoints === "number"
@@ -425,7 +425,9 @@ export function DashboardOverview({
     const placements = new Map<string, PickProbabilityPlace>();
     for (const ranking of initialLightSeedSnapshot?.groupRankings ?? []) {
       ranking.rankedTeamIds.slice(0, 4).forEach((teamId, index) => {
-        placements.set(teamId, (index + 1) as PickProbabilityPlace);
+        if (teamId) {
+          placements.set(teamId, (index + 1) as PickProbabilityPlace);
+        }
       });
     }
     return placements;
@@ -478,29 +480,24 @@ export function DashboardOverview({
       .filter((match) => normalizeGroupKey(match.groupName) === resolvedStandingsGroup && match.status !== "final")
       .map((match) => ({ status: match.status }));
     const groupIsFinal = rows.length > 0 && rows.every((row) => row.played >= 3);
-    const shouldUsePredictionOrder =
-      !hasGroupStageStarted && rows.some((row) => predictedPlacementByTeamId.has(row.teamId));
+    const hasPredictionForGroup = rows.some((row) => predictedPlacementByTeamId.has(row.teamId));
+    const shouldUsePredictionOrder = !hasGroupStageStarted && hasPredictionForGroup;
     const displayRows = shouldUsePredictionOrder
-      ? [...rows].sort((left, right) => {
-          const leftPrediction = predictedPlacementByTeamId.get(left.teamId) ?? Number.POSITIVE_INFINITY;
-          const rightPrediction = predictedPlacementByTeamId.get(right.teamId) ?? Number.POSITIVE_INFINITY;
-          if (leftPrediction !== rightPrediction) {
-            return leftPrediction - rightPrediction;
-          }
-          return left.teamName.localeCompare(right.teamName);
-        })
-      : rows;
+      ? orderRowsByPredictionSlots(rows, predictedPlacementByTeamId)
+      : rows.map((row, index) => ({ row, displayRank: row.rank || index + 1 }));
 
-    return displayRows.map((row, index) => {
-      const displayRank = shouldUsePredictionOrder ? index + 1 : row.rank || index + 1;
-      const isQualifier = shouldUsePredictionOrder
-        ? index < 2 || predictedThirdPlaceQualifierTeamIds.has(row.teamId)
-        : index < 2 || (index === 2 && qualifyingThirdPlaceTeamIds.has(row.teamId));
+    return displayRows.map(({ row, displayRank }, index) => {
       const predictedPlace = predictedPlacementByTeamId.get(row.teamId) ?? null;
+      const isPredictedQualifier =
+        predictedPlace === 1 ||
+        predictedPlace === 2 ||
+        predictedThirdPlaceQualifierTeamIds.has(row.teamId);
+      const isQualifier = hasGroupStageStarted
+        ? index < 2 || (index === 2 && qualifyingThirdPlaceTeamIds.has(row.teamId))
+        : isPredictedQualifier;
       const shouldShowPickProbability = shouldShowMiniTablePickProbability({
         predictedPlace,
-        isSelectedThirdPlaceQualifier: predictedThirdPlaceQualifierTeamIds.has(row.teamId),
-        hasCompletedBracketOnce: hasCompletedGroupBracketOnce
+        isSelectedThirdPlaceQualifier: predictedThirdPlaceQualifierTeamIds.has(row.teamId)
       });
       return {
         ...row,
@@ -528,7 +525,6 @@ export function DashboardOverview({
   }, [
     groupMatches,
     allGroupTeamsById,
-    hasCompletedGroupBracketOnce,
     hasGroupStageStarted,
     predictedPlacementByTeamId,
     predictedThirdPlaceQualifierTeamIds,

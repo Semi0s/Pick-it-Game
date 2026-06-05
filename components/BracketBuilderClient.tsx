@@ -15,6 +15,7 @@ import {
   type LightSeedBuilderSnapshot,
   type UserGroupProjectionSource
 } from "@/lib/group-stage-modes";
+import { normalizeRankingSlotsForPersistence } from "@/lib/group-stage-ranking-slots";
 import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
 import { formatGroupName, normalizeGroupKey } from "@/lib/group-standings";
 import {
@@ -421,19 +422,6 @@ function mergeGroupRankingPatchWithSnapshot(
   return Array.from(mergedByGroup.entries())
     .sort((left, right) => left[0].localeCompare(right[0], undefined, { numeric: true }))
     .map(([groupName, rankedTeamIds]) => ({ groupName, rankedTeamIds }));
-}
-
-function normalizeRankingSlotsForPersistence(rankedTeamIds: Array<string | null | undefined>) {
-  const normalized = rankedTeamIds.map((teamId) => teamId?.trim() || "");
-  let lastRankedIndex = -1;
-  for (let index = normalized.length - 1; index >= 0; index -= 1) {
-    if (normalized[index]) {
-      lastRankedIndex = index;
-      break;
-    }
-  }
-
-  return lastRankedIndex >= 0 ? normalized.slice(0, lastRankedIndex + 1) : [];
 }
 
 function getTopTwoDraftRankedTeamIds(draft: TopTwoSlotDraft) {
@@ -1506,7 +1494,7 @@ export function BracketBuilderClient({
           )
           .map((ranking) => [
             normalizeGroupKey(ranking.groupName) ?? ranking.groupName,
-            ranking.rankedTeamIds.filter((teamId): teamId is string => typeof teamId === "string" && teamId.length > 0)
+            normalizeRankingSlotsForPersistence(ranking.rankedTeamIds)
           ])
       );
 
@@ -1708,6 +1696,9 @@ export function BracketBuilderClient({
       return;
     }
 
+    setIsThirdPlaceListOpen(true);
+    hasAppliedThirdPlaceListDefaultRef.current = true;
+
     window.requestAnimationFrame(() => {
       const target = thirdPlaceSectionRef.current;
       if (!target) {
@@ -1721,7 +1712,7 @@ export function BracketBuilderClient({
         behavior: prefersReducedMotion ? "auto" : "smooth"
       });
     });
-  }, [hasInteracted, isThirdPlacePhase]);
+  }, [hasInteracted, isThirdPlacePhase, setIsThirdPlaceListOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -2096,6 +2087,10 @@ export function BracketBuilderClient({
     if (!isDragging) {
       if (kind === "group" && state.tapAction === "select-next") {
         if (state.pointerType !== "mouse") {
+          suppressNextGroupClickRef.current = true;
+          window.setTimeout(() => {
+            suppressNextGroupClickRef.current = false;
+          }, 160);
           selectGroupTeamIntoNextOpenSlot(state.teamId);
         }
         clearCustomTouchDragState();
@@ -2177,14 +2172,19 @@ export function BracketBuilderClient({
   }
 
   function getTopTwoSlotsForGroup(groupName: string): TopTwoSlotDraft {
-    const draft = topTwoSlotDraftsByGroup[groupName];
+    const draft = topTwoSlotDraftsByGroupRef.current[groupName] ?? topTwoSlotDraftsByGroup[groupName];
     if (draft) {
       return draft;
     }
 
     const shouldUseStoredSlots =
       touchedGroups.has(groupName) || groupProjectionSources[groupName] === "score_applied" || isReadOnly;
-    const currentOrder = groupRankingsByGroup.get(groupName) ?? [];
+    const currentOrder =
+      groupRankingsRef.current.find(
+        (ranking) => (normalizeGroupKey(ranking.groupName) ?? ranking.groupName) === groupName
+      )?.rankedTeamIds ??
+      groupRankingsByGroup.get(groupName) ??
+      [];
     return {
       firstTeamId: shouldUseStoredSlots ? currentOrder[0] ?? null : null,
       secondTeamId: shouldUseStoredSlots ? currentOrder[1] ?? null : null

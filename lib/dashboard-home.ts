@@ -183,8 +183,6 @@ export function getGroupStageSaveStatus(input: {
     Math.max(input.selectedThirdPlaceCount, 0),
     Math.max(input.requiredThirdPlaceCount, 0)
   );
-  const thirdPlaceComplete =
-    !requiresThirdPlace || selectedThirdPlaceCount >= input.requiredThirdPlaceCount;
   const totalUnits = totalGroups + (requiresThirdPlace ? input.requiredThirdPlaceCount : 0);
   const completedUnits = completedGroups + (requiresThirdPlace ? selectedThirdPlaceCount : 0);
   const isComplete = totalUnits > 0 && completedUnits >= totalUnits;
@@ -194,13 +192,12 @@ export function getGroupStageSaveStatus(input: {
     committedAt: input.committedAt,
     graceMs: input.graceMs
   });
-  const hasAnyGroupStageState = input.hasSavedProgress || hasCommittedEntry;
 
   return {
     isComplete,
     hasCommittedEntry,
     hasMeaningfulChangesAfterCommit,
-    needsSave: hasAnyGroupStageState && (!hasCommittedEntry || !isComplete || hasMeaningfulChangesAfterCommit)
+    needsSave: hasCommittedEntry && hasMeaningfulChangesAfterCommit
   };
 }
 
@@ -383,8 +380,6 @@ export function getPredictionProgress(
       Math.max(input.selectedThirdPlaceCount, 0),
       Math.max(input.requiredThirdPlaceCount, 0)
     );
-    const thirdPlaceComplete =
-      !requiresThirdPlace || selectedThirdPlaceCount >= input.requiredThirdPlaceCount;
     const totalUnits = totalGroups + (requiresThirdPlace ? input.requiredThirdPlaceCount : 0);
     const completedUnits = completedGroups + (requiresThirdPlace ? selectedThirdPlaceCount : 0);
     const remainingGroups = Math.max(totalGroups - completedGroups, 0);

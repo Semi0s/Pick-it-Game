@@ -1,4 +1,5 @@
 import type { GroupSeedRankingInput } from "@/lib/knockout-seeding";
+import { normalizeRankingSlotsForPersistence } from "./group-stage-ranking-slots.ts";
 
 export const GROUP_STAGE_UNSAVED_DRAFT_STORAGE_KEY = "pickit:group-stage-builder-unsaved-draft:v1";
 
@@ -33,7 +34,7 @@ export function parseUnsavedGroupStageDraft(rawValue: string | null | undefined)
       )
       .map((ranking) => ({
         groupName: ranking.groupName,
-        rankedTeamIds: ranking.rankedTeamIds.filter((teamId): teamId is string => typeof teamId === "string" && teamId.length > 0)
+        rankedTeamIds: normalizeRankingSlotsForPersistence(ranking.rankedTeamIds)
       }))
       .filter((ranking) => ranking.rankedTeamIds.length > 0 || touchedGroupNameSet.has(ranking.groupName));
 
