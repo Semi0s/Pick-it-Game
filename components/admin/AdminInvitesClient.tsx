@@ -230,9 +230,9 @@ export function AdminInvitesSection({
                 : accessLevel === "manager"
                   ? "Manager gets organizer access with the manager tier limits."
                   : accessLevel === "director"
-                    ? "League Director gets League organizer limits, League rules, and local custom scoring without platform-wide admin access."
+                    ? "League Director gets League organizer limits with the same standard scoring setup as Manager."
                     : accessLevel === "managing_director"
-                      ? "Branded League gets larger branded League limits and branding access without platform-wide admin access."
+                      ? "Branded League gets larger League limits and branding access with the same standard scoring setup as Manager."
                       : "Super Admin gives this user unlimited administrative access."}
           </p>
           <p className="text-xs font-semibold text-gray-500">

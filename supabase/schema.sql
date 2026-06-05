@@ -502,6 +502,10 @@ create table public.group_invites (
   invite_source text not null default 'manager_invite'
     check (invite_source in ('manager_invite', 'captain_pass', 'captain_private_invite')),
   captains_pass_id uuid references public.captains_passes(id) on delete set null,
+  invite_intent text not null default 'member'
+    check (invite_intent in ('member', 'captain_pass')),
+  captain_invite_allowance integer
+    check (captain_invite_allowance is null or (captain_invite_allowance >= 1 and captain_invite_allowance <= 6)),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint group_invites_normalized_email_check check (normalized_email = lower(email))
@@ -518,11 +522,16 @@ create table public.access_codes (
   used_count integer not null default 0,
   expires_at timestamptz,
   group_id uuid references public.groups(id) on delete set null,
+  code_type text not null default 'standard',
+  grants_plan_tier text not null default 'player',
+  grants_group_membership boolean not null default true,
   default_role public.user_role not null default 'player',
   default_language text not null default 'en',
   created_by uuid references public.users(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  constraint access_codes_code_type_check check (code_type in ('standard', 'super_link')),
+  constraint access_codes_grants_plan_tier_check check (grants_plan_tier in ('player', 'captain', 'manager', 'director', 'managing_director')),
   constraint access_codes_max_uses_positive check (max_uses is null or max_uses > 0),
   constraint access_codes_used_count_nonnegative check (used_count >= 0),
   constraint access_codes_usage_within_limit check (max_uses is null or used_count <= max_uses)
@@ -534,10 +543,16 @@ create table public.access_code_redemptions (
   user_id uuid not null references public.users(id) on delete cascade,
   email text not null,
   normalized_email text not null,
+  target_group_id uuid references public.groups(id) on delete set null,
+  granted_plan_tier text,
   redeemed_at timestamptz not null default now(),
   status text not null default 'redeemed',
   unique (code_id, user_id),
   unique (code_id, normalized_email),
+  constraint access_code_redemptions_granted_plan_tier_check check (
+    granted_plan_tier is null
+    or granted_plan_tier in ('player', 'captain', 'manager', 'director', 'managing_director')
+  ),
   constraint access_code_redemptions_status_check check (status in ('redeemed'))
 );
 
@@ -873,6 +888,10 @@ create index group_invites_captains_pass_idx
   on public.group_invites (captains_pass_id)
   where captains_pass_id is not null;
 
+create index group_invites_captain_intent_idx
+  on public.group_invites (group_id, normalized_email, status)
+  where invite_intent = 'captain_pass';
+
 create unique index group_invites_active_group_email_idx
   on public.group_invites (group_id, normalized_email)
   where status = 'pending';
@@ -883,9 +902,13 @@ create index access_codes_group_id_idx
 create index access_codes_active_expires_idx
   on public.access_codes (active, expires_at);
 
-create unique index access_codes_one_active_group_code_idx
+create unique index access_codes_one_active_standard_group_code_idx
   on public.access_codes (group_id)
-  where group_id is not null and active = true;
+  where group_id is not null and active = true and code_type = 'standard';
+
+create index access_codes_super_link_idx
+  on public.access_codes (code_type, active, group_id)
+  where code_type = 'super_link';
 
 create index access_code_redemptions_code_id_idx
   on public.access_code_redemptions (code_id, redeemed_at desc);
@@ -1558,6 +1581,21 @@ begin
 end;
 $$;
 
+create or replace function public.commercial_tier_rank(plan_tier text)
+returns integer
+language sql
+immutable
+as $$
+  select case coalesce(nullif(trim(plan_tier), ''), 'player')
+    when 'player' then 0
+    when 'captain' then 1
+    when 'manager' then 2
+    when 'director' then 3
+    when 'managing_director' then 4
+    else 0
+  end;
+$$;
+
 create or replace function public.redeem_access_code_for_new_user(
   auth_email text,
   auth_user_id uuid,
@@ -1603,7 +1641,7 @@ begin
     raise exception 'ACCESS_CODE_FULL';
   end if;
 
-  if v_access_code_row.group_id is not null then
+  if v_access_code_row.group_id is not null and coalesce(v_access_code_row.grants_group_membership, true) then
     select
       groups.id,
       groups.status,
@@ -1735,7 +1773,7 @@ begin
     raise exception 'ACCESS_CODE_EXPIRED';
   end if;
 
-  if v_access_code_row.group_id is not null then
+  if v_access_code_row.group_id is not null and coalesce(v_access_code_row.grants_group_membership, true) then
     select
       groups.id,
       groups.status,
@@ -1785,12 +1823,15 @@ begin
     )
   limit 1;
 
-  if v_existing_redemption_id is null and v_existing_member_id is null then
+  if v_existing_redemption_id is null then
     if v_access_code_row.max_uses is not null and v_access_code_row.used_count >= v_access_code_row.max_uses then
       raise exception 'ACCESS_CODE_FULL';
     end if;
 
-    if v_access_code_row.group_id is not null and v_target_group.member_count >= v_target_group.effective_membership_limit then
+    if v_access_code_row.group_id is not null
+      and coalesce(v_access_code_row.grants_group_membership, true)
+      and v_existing_member_id is null
+      and v_target_group.member_count >= v_target_group.effective_membership_limit then
       raise exception 'ACCESS_CODE_GROUP_FULL';
     end if;
 
@@ -1806,6 +1847,8 @@ begin
         user_id,
         email,
         normalized_email,
+        target_group_id,
+        granted_plan_tier,
         redeemed_at,
         status
       )
@@ -1814,6 +1857,8 @@ begin
         auth_user_id,
         auth_email,
         v_normalized_email,
+        v_access_code_row.group_id,
+        v_access_code_row.grants_plan_tier,
         now(),
         'redeemed'
       );
@@ -1831,7 +1876,9 @@ begin
     end;
   end if;
 
-  if v_access_code_row.group_id is not null and v_existing_member_id is null then
+  if v_access_code_row.group_id is not null
+    and coalesce(v_access_code_row.grants_group_membership, true)
+    and v_existing_member_id is null then
     select groups.group_kind
     into v_target_group_kind
     from public.groups
@@ -1849,6 +1896,12 @@ begin
     )
     on conflict (group_id, user_id) do nothing;
   end if;
+
+  update public.users
+  set plan_tier = v_access_code_row.grants_plan_tier,
+      updated_at = now()
+  where users.id = auth_user_id
+    and public.commercial_tier_rank(users.plan_tier) < public.commercial_tier_rank(v_access_code_row.grants_plan_tier);
 
   return query
   select
@@ -1931,13 +1984,14 @@ begin
   derived_name := split_part(new.email, '@', 1);
 
   debug_step := 'insert_user_access_code';
-  insert into public.users (id, name, email, preferred_language, role, needs_profile_setup)
+  insert into public.users (id, name, email, preferred_language, role, plan_tier, needs_profile_setup)
   values (
     new.id,
     derived_name,
     new.email,
     coalesce(nullif(trim(access_code_row.default_language), ''), 'en'),
     access_code_row.default_role,
+    coalesce(nullif(trim(access_code_row.grants_plan_tier), ''), 'player'),
     true
   )
   on conflict (id) do nothing;
@@ -1948,6 +2002,8 @@ begin
     user_id,
     email,
     normalized_email,
+    target_group_id,
+    granted_plan_tier,
     redeemed_at,
     status
   )
@@ -1956,12 +2012,14 @@ begin
     new.id,
     new.email,
     lower(new.email),
+    access_code_row.group_id,
+    access_code_row.grants_plan_tier,
     now(),
     'redeemed'
   )
   on conflict (code_id, user_id) do nothing;
 
-  if access_code_row.group_id is not null then
+  if access_code_row.group_id is not null and coalesce(access_code_row.grants_group_membership, true) then
     debug_step := 'read_access_code_group_kind';
     select groups.group_kind
     into target_group_kind

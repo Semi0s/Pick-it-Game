@@ -20,9 +20,7 @@ import {
   ORGANIZATION_REVIEW_NOTE_MAX_LENGTH,
   ORGANIZATION_SPONSOR_MESSAGE_MAX_LENGTH,
   ORGANIZATION_WELCOME_HEADLINE_MAX_LENGTH,
-  ORGANIZATION_WELCOME_MESSAGE_MAX_LENGTH,
-  getOrganizationBrandingLabel,
-  getOrganizationBrandingTone
+  ORGANIZATION_WELCOME_MESSAGE_MAX_LENGTH
 } from "@/lib/organization-branding";
 import {
   ActionButton,
@@ -226,21 +224,7 @@ export function OrganizationBrandingPanel() {
   return (
     <ManagementCard
       title={
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-lg font-black leading-tight">Organization Branding</span>
-          <span className="rounded-[0.7rem] border border-accent-border bg-accent-soft px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-accent-dark">
-            Portal
-          </span>
-        </div>
-      }
-      subtitle="Logo, welcome copy, and sponsor messaging for branded League portals."
-      badges={
-        workspace?.organization ? (
-          <ManagementBadge
-            label={getOrganizationBrandingLabel(workspace.organization.status)}
-            tone={getOrganizationBrandingTone(workspace.organization.status)}
-          />
-        ) : undefined
+        <span className="text-lg font-black leading-tight">Organization Branding</span>
       }
       headerActions={
         <InlineDisclosureButton isOpen={isOpen} variant="subtle" onClick={() => setIsOpen((current) => !current)} />
@@ -254,6 +238,9 @@ export function OrganizationBrandingPanel() {
           <ManagementEmptyState message="No organization branding scope is available yet." />
         ) : (
           <div className="space-y-4">
+            <p className="text-sm font-semibold text-gray-600">
+              Add a private logo, background, and welcome copy for your organization.
+            </p>
             {workspace.organizations.length > 1 ? (
               <label className={fieldShellClassName}>
                 <span className={fieldLabelClassName}>Organization</span>
@@ -477,11 +464,7 @@ export function OrganizationBrandingPanel() {
             </div>
           </div>
         )
-      ) : (
-        <p className="text-sm font-semibold text-gray-600">
-          Add a private logo, background, and welcome copy for your organization portal.
-        </p>
-      )}
+      ) : null}
     </ManagementCard>
   );
 }

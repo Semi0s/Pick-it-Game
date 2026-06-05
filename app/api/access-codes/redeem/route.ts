@@ -2,8 +2,15 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { getAccessCodeBlockedMessage, getAccessCodeFailureReasonFromMessage, normalizeAccessCode } from "@/lib/access-codes";
 import { getEffectiveGroupSeatLimit } from "@/lib/group-tier-limits";
+import {
+  getCommercialTierLabel,
+  normalizeAccessCodeType,
+  normalizeSuperLinkGrantTier,
+  shouldApplyCommercialTierGrant
+} from "@/lib/super-link-access";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
+import type { CommercialTier } from "@/lib/tier-access";
 
 type RedeemAccessCodeRow = {
   code_id: string;
@@ -27,6 +34,9 @@ type AccessCodeRow = {
   used_count: number;
   expires_at?: string | null;
   group_id?: string | null;
+  code_type?: string | null;
+  grants_plan_tier?: string | null;
+  grants_group_membership?: boolean | null;
 };
 
 type GroupRow = {
@@ -46,6 +56,14 @@ type AccessCodeRedeemResult =
       ok: false;
       message: string;
     };
+
+type AccessCodeSuccessContext = {
+  codeType: "standard" | "super_link";
+  grantsPlanTier: CommercialTier;
+  groupName?: string | null;
+  userRole?: "player" | "admin" | null;
+  userPlanTier?: CommercialTier | null;
+};
 
 export async function POST(request: Request) {
   try {
@@ -103,12 +121,14 @@ export async function POST(request: Request) {
       }
 
       revalidateAccessCodeSurfaces();
-      return NextResponse.json(buildAccessCodeSuccessPayload(fallbackResult.row));
+      const context = await fetchAccessCodeSuccessContext(adminSupabase, fallbackResult.row.code_id, user.id);
+      return NextResponse.json(buildAccessCodeSuccessPayload(fallbackResult.row, context));
     }
 
     const row = Array.isArray(data) ? (data[0] as RedeemAccessCodeRow | undefined) : (data as RedeemAccessCodeRow | null);
     revalidateAccessCodeSurfaces();
-    return NextResponse.json(buildAccessCodeSuccessPayload(row));
+    const context = row?.code_id ? await fetchAccessCodeSuccessContext(adminSupabase, row.code_id, user.id) : null;
+    return NextResponse.json(buildAccessCodeSuccessPayload(row, context));
   } catch (error) {
     console.error("[access-code:redeem] Existing user redemption crashed.", error);
     return NextResponse.json(
@@ -132,7 +152,7 @@ async function redeemAccessCodeWithAdminFallback(
 
     const { data: accessCode, error: codeLookupError } = await adminSupabase
       .from("access_codes")
-      .select("id,active,max_uses,used_count,expires_at,group_id")
+      .select("id,active,max_uses,used_count,expires_at,group_id,code_type,grants_plan_tier,grants_group_membership")
       .eq("normalized_code", normalizedCode)
       .maybeSingle();
 
@@ -156,8 +176,10 @@ async function redeemAccessCodeWithAdminFallback(
     let alreadyMember = false;
     let memberCount = 0;
     let effectiveSeatLimit = Number.POSITIVE_INFINITY;
+    const grantsGroupMembership = code.grants_group_membership !== false;
+    const grantsPlanTier = normalizeSuperLinkGrantTier(code.grants_plan_tier);
 
-    if (code.group_id) {
+    if (code.group_id && grantsGroupMembership) {
       const { data: group, error: groupLookupError } = await adminSupabase
         .from("groups")
         .select("id,status,access_mode,membership_limit,owner_user_id")
@@ -211,12 +233,12 @@ async function redeemAccessCodeWithAdminFallback(
     const existingRedemption = await findAccessCodeRedemption(adminSupabase, code.id, user.id, normalizedEmail);
     const alreadyRedeemed = Boolean(existingRedemption);
 
-    if (!alreadyRedeemed && !alreadyMember) {
+    if (!alreadyRedeemed) {
       if (code.max_uses !== null && code.max_uses !== undefined && code.used_count >= code.max_uses) {
         return { ok: false, message: getAccessCodeBlockedMessage("full") };
       }
 
-      if (code.group_id && memberCount >= effectiveSeatLimit) {
+      if (code.group_id && grantsGroupMembership && !alreadyMember && memberCount >= effectiveSeatLimit) {
         return { ok: false, message: getAccessCodeBlockedMessage("group_full") };
       }
 
@@ -239,12 +261,17 @@ async function redeemAccessCodeWithAdminFallback(
         return { ok: false, message: "That code is being claimed right now. Please try again." };
       }
 
-      await insertAccessCodeRedemption(adminSupabase, code.id, user, normalizedEmail);
+      await insertAccessCodeRedemption(adminSupabase, code.id, user, normalizedEmail, {
+        targetGroupId: code.group_id ?? null,
+        grantedPlanTier: grantsPlanTier
+      });
     }
 
-    if (code.group_id && !alreadyMember) {
+    if (code.group_id && grantsGroupMembership && !alreadyMember) {
       await insertGroupMembershipFromAccessCode(adminSupabase, code.group_id, user.id);
     }
+
+    await applyAccessCodePlanTierGrant(adminSupabase, user.id, grantsPlanTier);
 
     return {
       ok: true,
@@ -300,18 +327,57 @@ async function insertAccessCodeRedemption(
   adminSupabase: AdminSupabaseClient,
   codeId: string,
   user: AuthUserForAccessCode,
-  normalizedEmail: string
+  normalizedEmail: string,
+  context?: {
+    targetGroupId?: string | null;
+    grantedPlanTier?: CommercialTier | null;
+  }
 ) {
   const { error } = await adminSupabase.from("access_code_redemptions").insert({
     code_id: codeId,
     user_id: user.id,
     email: user.email,
     normalized_email: normalizedEmail,
+    target_group_id: context?.targetGroupId ?? null,
+    granted_plan_tier: context?.grantedPlanTier ?? null,
     status: "redeemed"
   });
 
   if (error && error.code !== "23505") {
     throw new Error(error.message);
+  }
+}
+
+async function applyAccessCodePlanTierGrant(
+  adminSupabase: AdminSupabaseClient,
+  userId: string,
+  grantedPlanTier: CommercialTier
+) {
+  const { data, error } = await adminSupabase
+    .from("users")
+    .select("plan_tier")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const currentPlanTier = normalizeSuperLinkGrantTier((data as { plan_tier?: string | null } | null)?.plan_tier ?? null);
+  if (!shouldApplyCommercialTierGrant(currentPlanTier, grantedPlanTier)) {
+    return;
+  }
+
+  const { error: updateError } = await adminSupabase
+    .from("users")
+    .update({
+      plan_tier: grantedPlanTier,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", userId);
+
+  if (updateError) {
+    throw new Error(updateError.message);
   }
 }
 
@@ -354,18 +420,89 @@ function revalidateAccessCodeSurfaces() {
   revalidatePath("/profile");
 }
 
-function buildAccessCodeSuccessPayload(row?: RedeemAccessCodeRow | null) {
+async function fetchAccessCodeSuccessContext(
+  adminSupabase: AdminSupabaseClient,
+  codeId: string,
+  userId: string
+): Promise<AccessCodeSuccessContext | null> {
+  const [{ data: accessCode, error: accessCodeError }, { data: user, error: userError }] = await Promise.all([
+    adminSupabase
+      .from("access_codes")
+      .select("code_type,grants_plan_tier,group:groups(name)")
+      .eq("id", codeId)
+      .maybeSingle(),
+    adminSupabase
+      .from("users")
+      .select("role,plan_tier")
+      .eq("id", userId)
+      .maybeSingle()
+  ]);
+
+  if (accessCodeError) {
+    throw new Error(accessCodeError.message);
+  }
+
+  if (userError) {
+    throw new Error(userError.message);
+  }
+
+  const accessCodeRow = accessCode as {
+    code_type?: string | null;
+    grants_plan_tier?: string | null;
+    group?: { name?: string | null } | Array<{ name?: string | null }> | null;
+  } | null;
+  const userRow = user as { role?: "player" | "admin" | null; plan_tier?: string | null } | null;
+
+  if (!accessCodeRow) {
+    return null;
+  }
+
+  const group = Array.isArray(accessCodeRow.group) ? accessCodeRow.group[0] ?? null : accessCodeRow.group ?? null;
+  return {
+    codeType: normalizeAccessCodeType(accessCodeRow.code_type),
+    grantsPlanTier: normalizeSuperLinkGrantTier(accessCodeRow.grants_plan_tier),
+    groupName: group?.name ?? null,
+    userRole: userRow?.role ?? null,
+    userPlanTier: normalizeSuperLinkGrantTier(userRow?.plan_tier ?? null)
+  };
+}
+
+function buildAccessCodeSuccessPayload(row?: RedeemAccessCodeRow | null, context?: AccessCodeSuccessContext | null) {
+  const message = buildAccessCodeSuccessMessage(row, context);
+
   return {
     ok: true,
     groupId: row?.group_id ?? null,
     alreadyMember: Boolean(row?.already_member),
     alreadyRedeemed: Boolean(row?.already_redeemed),
-    message: row?.already_member
-      ? "You are already in that group. No new account is needed."
-      : row?.group_id
-        ? "Group joined."
-        : "Invite code applied."
+    message
   };
+}
+
+function buildAccessCodeSuccessMessage(row?: RedeemAccessCodeRow | null, context?: AccessCodeSuccessContext | null) {
+  if (context?.codeType === "super_link") {
+    const groupName = context.groupName ?? "the group";
+    const grantedTierLabel = getCommercialTierLabel(context.grantsPlanTier);
+    const preservedHigherAccess =
+      context.userRole === "admin" ||
+      (context.userPlanTier ? shouldApplyCommercialTierGrant(context.grantsPlanTier, context.userPlanTier) : false);
+
+    if (preservedHigherAccess) {
+      return `You're in! You joined ${groupName}. Your existing access level was preserved.`;
+    }
+
+    return `You're in! You joined ${groupName} as a ${grantedTierLabel}.`;
+  }
+
+  if (row?.already_member) {
+    return "You are already in that group. No new account is needed.";
+  }
+
+  if (row?.group_id) {
+    return "Group joined.";
+  }
+
+  return "Invite code applied.";
 }
 
 async function ensureAccessCodeProfile(adminSupabase: AdminSupabaseClient, user: AuthUserForAccessCode) {

@@ -4,8 +4,14 @@ import { revalidatePath } from "next/cache";
 import { normalizeAccessCode } from "@/lib/access-codes";
 import { validateAccessCodeAvailability } from "@/lib/access-codes-server";
 import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
+import {
+  normalizeAccessCodeType,
+  normalizeSuperLinkGrantTier,
+  type AccessCodeType
+} from "@/lib/super-link-access";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
+import type { CommercialTier } from "@/lib/tier-access";
 import type { UserRole } from "@/lib/types";
 
 export type AdminAccessCode = {
@@ -21,6 +27,9 @@ export type AdminAccessCode = {
   groupName?: string | null;
   ownerName?: string | null;
   ownerEmail?: string | null;
+  codeType: AccessCodeType;
+  grantsPlanTier: CommercialTier;
+  grantsGroupMembership: boolean;
   defaultRole: UserRole;
   defaultLanguage: SupportedLanguage;
   createdAt: string;
@@ -30,6 +39,8 @@ export type AdminAccessCode = {
     email: string;
     redeemedAt: string;
     userId: string;
+    targetGroupId?: string | null;
+    grantedPlanTier?: CommercialTier | null;
   }>;
 };
 
@@ -61,7 +72,7 @@ export async function fetchAdminAccessCodesAction(): Promise<
   const { data, error } = await adminSupabase
     .from("access_codes")
     .select(
-      "id,code,label,notes,active,max_uses,used_count,expires_at,group_id,default_role,default_language,created_at,updated_at,created_by,group:groups(id,name,status),owner:users!access_codes_created_by_fkey(id,name,email),redemptions:access_code_redemptions(id,email,redeemed_at,user_id)"
+      "id,code,label,notes,active,max_uses,used_count,expires_at,group_id,code_type,grants_plan_tier,grants_group_membership,default_role,default_language,created_at,updated_at,created_by,group:groups(id,name,status),owner:users!access_codes_created_by_fkey(id,name,email),redemptions:access_code_redemptions(id,email,redeemed_at,user_id,target_group_id,granted_plan_tier)"
     )
     .order("created_at", { ascending: false });
 
@@ -81,12 +92,22 @@ export async function fetchAdminAccessCodesAction(): Promise<
     group_id?: string | null;
     default_role: UserRole;
     default_language: string;
+    code_type?: string | null;
+    grants_plan_tier?: string | null;
+    grants_group_membership?: boolean | null;
     created_at: string;
     updated_at: string;
     created_by?: string | null;
     group?: { id: string; name: string; status: "active" | "archived" } | Array<{ id: string; name: string; status: "active" | "archived" }> | null;
     owner?: { id: string; name: string; email: string } | Array<{ id: string; name: string; email: string }> | null;
-    redemptions?: Array<{ id: string; email: string; redeemed_at: string; user_id: string }> | null;
+    redemptions?: Array<{
+      id: string;
+      email: string;
+      redeemed_at: string;
+      user_id: string;
+      target_group_id?: string | null;
+      granted_plan_tier?: string | null;
+    }> | null;
   }>).map((row) => {
     const group = unwrapRelation(row.group);
     const owner = unwrapRelation(row.owner);
@@ -103,6 +124,9 @@ export async function fetchAdminAccessCodesAction(): Promise<
       groupName: group?.name ?? null,
       ownerName: owner?.name ?? null,
       ownerEmail: owner?.email ?? null,
+      codeType: normalizeAccessCodeType(row.code_type),
+      grantsPlanTier: normalizeSuperLinkGrantTier(row.grants_plan_tier),
+      grantsGroupMembership: row.grants_group_membership !== false,
       defaultRole: row.default_role,
       defaultLanguage: normalizeLanguage(row.default_language),
       createdAt: row.created_at,
@@ -111,7 +135,9 @@ export async function fetchAdminAccessCodesAction(): Promise<
         id: redemption.id,
         email: redemption.email,
         redeemedAt: redemption.redeemed_at,
-        userId: redemption.user_id
+        userId: redemption.user_id,
+        targetGroupId: redemption.target_group_id ?? null,
+        grantedPlanTier: redemption.granted_plan_tier ? normalizeSuperLinkGrantTier(redemption.granted_plan_tier) : null
       }))
     } satisfies AdminAccessCode;
   });
@@ -161,6 +187,9 @@ export async function createAccessCodeAction(input: {
   maxUses?: number | null;
   expiresAt?: string | null;
   groupId?: string | null;
+  codeType?: AccessCodeType;
+  grantsPlanTier?: CommercialTier;
+  grantsGroupMembership?: boolean;
   defaultLanguage?: SupportedLanguage;
   active?: boolean;
 }): Promise<AccessCodeActionResult> {
@@ -172,6 +201,10 @@ export async function createAccessCodeAction(input: {
   const normalizedCode = normalizeAccessCode(input.code);
   const displayCode = input.code.trim().toUpperCase();
   const label = input.label.trim();
+  const codeType = normalizeAccessCodeType(input.codeType);
+  const grantsPlanTier = codeType === "super_link" ? normalizeSuperLinkGrantTier(input.grantsPlanTier) : "player";
+  const grantsGroupMembership = input.grantsGroupMembership ?? true;
+  const targetGroupId = input.groupId?.trim() ? input.groupId.trim() : null;
 
   if (!ACCESS_CODE_PATTERN.test(displayCode)) {
     return { ok: false, message: "Code must be 4-24 characters and use only letters, numbers, or hyphens." };
@@ -185,6 +218,10 @@ export async function createAccessCodeAction(input: {
     return { ok: false, message: "Max uses must be greater than zero when provided." };
   }
 
+  if (codeType === "super_link" && (!targetGroupId || !grantsGroupMembership)) {
+    return { ok: false, message: "Super Links must target a group and grant group membership." };
+  }
+
   const adminSupabase = createAdminClient();
   const { error } = await adminSupabase.from("access_codes").insert({
     code: displayCode,
@@ -194,7 +231,10 @@ export async function createAccessCodeAction(input: {
     active: input.active ?? true,
     max_uses: input.maxUses ?? null,
     expires_at: input.expiresAt?.trim() ? new Date(input.expiresAt).toISOString() : null,
-    group_id: input.groupId?.trim() ? input.groupId.trim() : null,
+    group_id: targetGroupId,
+    code_type: codeType,
+    grants_plan_tier: grantsPlanTier,
+    grants_group_membership: grantsGroupMembership,
     default_role: "player",
     default_language: normalizeLanguage(input.defaultLanguage),
     created_by: superAdminCheck.userId
@@ -212,7 +252,7 @@ export async function createAccessCodeAction(input: {
   revalidatePath("/admin/invites");
   revalidatePath("/admin/players");
 
-  return { ok: true, message: `Access code ${displayCode} created.` };
+  return { ok: true, message: codeType === "super_link" ? "Super Link created." : `Access code ${displayCode} created.` };
 }
 
 export async function setAccessCodeActiveStateAction(

@@ -240,10 +240,11 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
     ? context.managerLimits?.maxMembersPerGroup ?? definition.maxMembersPerGroup
     : definition.maxMembersPerGroup;
   const hasOrganizerAccess = commercialTier !== "player";
-  const hasDirectorTooling = commercialTier === "director" || commercialTier === "managing_director";
+  const hasLeagueOrganizerTooling = commercialTier === "director" || commercialTier === "managing_director";
+  const hasLeagueCustomScoringTooling = false;
   // TODO(league-feature-toggles): if we add persisted per-group trophy/social toggles later,
   // keep League-level access as the outer gate and layer group-scoped visibility on top.
-  const hasLeagueTrophyTooling = hasDirectorTooling;
+  const hasLeagueTrophyTooling = hasLeagueOrganizerTooling;
 
   return {
     accessLevel,
@@ -266,13 +267,13 @@ export function resolveTierAccess(context: TierAccessContext): ResolvedTierAcces
       canDeactivateInviteCode: hasOrganizerAccess,
       canManageSocialTrophies: hasLeagueTrophyTooling,
       canAwardSocialTrophies: hasLeagueTrophyTooling,
-      canUseDirectorCustomization: hasDirectorTooling,
+      canUseDirectorCustomization: hasLeagueCustomScoringTooling,
       canUseManagingDirectorDelegation: false, // TODO(launch): add scoped org delegation once org boundaries exist.
       canPostAnnouncement: false, // TODO(launch): wire this up only when a lightweight pinned message model exists.
       canAccessSuperAdmin: false,
       canSeeOrganizerControls: hasOrganizerAccess,
       canUseSponsorPrizeMessaging: false, // TODO(launch): display-only sponsor/prize messaging belongs to Director+.
-      canUseSidePickManagement: hasDirectorTooling,
+      canUseSidePickManagement: hasLeagueCustomScoringTooling,
       canChooseGroupDescription: hasOrganizerAccess,
       canManageOrganizationBranding: commercialTier === "managing_director",
       canModerateOrganizationBranding: false

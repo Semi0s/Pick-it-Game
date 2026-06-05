@@ -19,6 +19,9 @@ type AccessCodeRow = {
   used_count: number;
   expires_at?: string | null;
   group_id?: string | null;
+  code_type?: string | null;
+  grants_plan_tier?: string | null;
+  grants_group_membership?: boolean | null;
   default_role: UserRole;
   default_language: string;
   created_by?: string | null;
@@ -44,6 +47,9 @@ export type AccessCodeAvailability =
         label: string;
         notes?: string | null;
         groupId?: string | null;
+        codeType: string;
+        grantsPlanTier: string;
+        grantsGroupMembership: boolean;
         defaultRole: UserRole;
         defaultLanguage: string;
         maxUses?: number | null;
@@ -67,7 +73,7 @@ export async function validateAccessCodeAvailability(rawCode: string, email?: st
   const { data, error } = await adminSupabase
     .from("access_codes")
     .select(
-      "id,code,normalized_code,label,notes,active,max_uses,used_count,expires_at,group_id,default_role,default_language,created_by,created_at,updated_at"
+      "id,code,normalized_code,label,notes,active,max_uses,used_count,expires_at,group_id,code_type,grants_plan_tier,grants_group_membership,default_role,default_language,created_by,created_at,updated_at"
     )
     .eq("normalized_code", normalizedCode)
     .maybeSingle();
@@ -93,7 +99,9 @@ export async function validateAccessCodeAvailability(rawCode: string, email?: st
     return invalidAvailability("full");
   }
 
-  if (code.group_id) {
+  const grantsGroupMembership = code.grants_group_membership !== false;
+
+  if (code.group_id && grantsGroupMembership) {
     const [{ data: group, error: groupError }, { count, error: memberCountError }] = await Promise.all([
       adminSupabase
         .from("groups")
@@ -152,6 +160,9 @@ export async function validateAccessCodeAvailability(rawCode: string, email?: st
       label: code.label,
       notes: code.notes ?? null,
       groupId: code.group_id ?? null,
+      codeType: code.code_type ?? "standard",
+      grantsPlanTier: code.grants_plan_tier ?? "player",
+      grantsGroupMembership,
       defaultRole: code.default_role,
       defaultLanguage: code.default_language,
       maxUses: code.max_uses ?? null,

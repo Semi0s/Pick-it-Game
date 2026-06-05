@@ -12,6 +12,8 @@ import {
 } from "@/app/admin/access-codes/actions";
 import { formatDateTimeWithZone } from "@/lib/date-time";
 import { showAppToast } from "@/lib/app-toast";
+import { COMMERCIAL_TIER_DEFINITIONS, type CommercialTier } from "@/lib/tier-access";
+import { SUPER_LINK_GRANT_TIERS, type AccessCodeType } from "@/lib/super-link-access";
 import {
   ActionButton,
   InlineDisclosureButton,
@@ -36,6 +38,8 @@ export function AdminAccessCodesSection() {
   const [maxUses, setMaxUses] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [groupId, setGroupId] = useState("");
+  const [codeType, setCodeType] = useState<AccessCodeType>("standard");
+  const [grantsPlanTier, setGrantsPlanTier] = useState<CommercialTier>("captain");
   const [language, setLanguage] = useState<"en" | "es">("en");
   const [searchValue, setSearchValue] = useState("");
 
@@ -85,6 +89,9 @@ export function AdminAccessCodesSection() {
       maxUses: maxUses.trim() ? Number(maxUses) : null,
       expiresAt: expiresAt.trim() ? expiresAt : null,
       groupId: groupId || null,
+      codeType,
+      grantsPlanTier,
+      grantsGroupMembership: true,
       defaultLanguage: language
     });
 
@@ -101,6 +108,8 @@ export function AdminAccessCodesSection() {
     setMaxUses("");
     setExpiresAt("");
     setGroupId("");
+    setCodeType("standard");
+    setGrantsPlanTier("captain");
     setLanguage("en");
     await load();
   }
@@ -117,10 +126,11 @@ export function AdminAccessCodesSection() {
     }
   }
 
-  async function handleCopy(rawCode: string) {
+  async function handleCopy(accessCode: AdminAccessCode) {
+    const copyValue = accessCode.codeType === "super_link" ? buildSuperLinkUrl(accessCode.code) : accessCode.code;
     try {
-      await navigator.clipboard.writeText(rawCode);
-      showAppToast({ tone: "success", text: `Copied ${rawCode}.` });
+      await navigator.clipboard.writeText(copyValue);
+      showAppToast({ tone: "success", text: accessCode.codeType === "super_link" ? "Super Link copied." : `Copied ${accessCode.code}.` });
     } catch (error) {
       console.error("Could not copy access code.", error);
       showAppToast({ tone: "error", text: "Could not copy that code right now." });
@@ -146,8 +156,8 @@ export function AdminAccessCodesSection() {
   return (
     <div className="space-y-5">
       <ManagementCard
-        title="Access codes"
-        subtitle="Create reusable invite-only signup codes for faster onboarding."
+        title="Access codes & Super Links"
+        subtitle="Create reusable signup codes and Super Admin promotional links."
         badges={
           <>
             <ManagementBadge label="Invite-only" tone="accent" />
@@ -165,7 +175,7 @@ export function AdminAccessCodesSection() {
                 value={code}
                 onChange={(event) => setCode(event.target.value.toUpperCase())}
                 className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base font-bold uppercase outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                placeholder="TEST2026"
+                placeholder={codeType === "super_link" ? "FIFA2026CAPTAIN" : "TEST2026"}
               />
             </label>
             <label className="block">
@@ -177,6 +187,41 @@ export function AdminAccessCodesSection() {
                 className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                 placeholder="June waitlist batch"
               />
+            </label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <label className="block">
+              <span className="text-sm font-bold text-gray-800">Type</span>
+              <select
+                value={codeType}
+                onChange={(event) => {
+                  const nextType = event.target.value === "super_link" ? "super_link" : "standard";
+                  setCodeType(nextType);
+                  if (nextType === "super_link" && grantsPlanTier === "player") {
+                    setGrantsPlanTier("captain");
+                  }
+                }}
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+              >
+                <option value="standard">Standard access code</option>
+                <option value="super_link">Super Link</option>
+              </select>
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="text-sm font-bold text-gray-800">Grant tier</span>
+              <select
+                value={codeType === "super_link" ? grantsPlanTier : "player"}
+                onChange={(event) => setGrantsPlanTier(event.target.value as CommercialTier)}
+                disabled={codeType !== "super_link"}
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:bg-gray-100 disabled:text-gray-500"
+              >
+                {SUPER_LINK_GRANT_TIERS.map((tier) => (
+                  <option key={tier} value={tier}>
+                    {COMMERCIAL_TIER_DEFINITIONS[tier].label}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
 
@@ -226,13 +271,13 @@ export function AdminAccessCodesSection() {
           </div>
 
           <label className="block">
-            <span className="text-sm font-bold text-gray-800">Assign group</span>
+            <span className="text-sm font-bold text-gray-800">{codeType === "super_link" ? "Target group" : "Assign group"}</span>
             <select
               value={groupId}
               onChange={(event) => setGroupId(event.target.value)}
               className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
             >
-              <option value="">No automatic group assignment</option>
+              <option value="">{codeType === "super_link" ? "Choose a group" : "No automatic group assignment"}</option>
               {groups
                 .filter((group) => group.status === "active")
                 .map((group) => (
@@ -244,11 +289,20 @@ export function AdminAccessCodesSection() {
           </label>
 
           <p className="text-sm font-semibold text-gray-500">
-            New signups stay invite-only. Access codes create players, can join one default group, and stop working when inactive, expired, full, or assigned to a full group.
+            {codeType === "super_link"
+              ? "Anyone with an active Super Link can join the target group at the selected tier. Higher existing access levels are preserved."
+              : "New signups stay invite-only. Access codes create players, can join one default group, and stop working when inactive, expired, full, or assigned to a full group."}
           </p>
 
+          {codeType === "super_link" && code.trim() ? (
+            <div className="rounded-md border border-accent/25 bg-accent-light/40 p-3 text-sm font-semibold text-accent-dark">
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-accent-dark/70">Super Link preview</p>
+              <p className="mt-1 break-all">{buildSuperLinkUrl(code)}</p>
+            </div>
+          ) : null}
+
           <ActionButton type="submit" disabled={isSubmitting} tone="accent" fullWidth>
-            {isSubmitting ? "Creating..." : "Create Access Code"}
+            {isSubmitting ? "Creating..." : codeType === "super_link" ? "Create Super Link" : "Create Access Code"}
           </ActionButton>
         </form>
       </ManagementCard>
@@ -277,7 +331,7 @@ export function AdminAccessCodesSection() {
                 key={accessCode.id}
                 accessCode={accessCode}
                 isPending={activeKey === accessCode.id}
-                onCopy={() => void handleCopy(accessCode.code)}
+                onCopy={() => void handleCopy(accessCode)}
                 onToggle={() => void handleToggle(accessCode.id, !accessCode.active)}
               />
             ))
@@ -299,7 +353,7 @@ export function AdminAccessCodesSection() {
                 key={accessCode.id}
                 accessCode={accessCode}
                 isPending={activeKey === accessCode.id}
-                onCopy={() => void handleCopy(accessCode.code)}
+                onCopy={() => void handleCopy(accessCode)}
                 onToggle={() => void handleToggle(accessCode.id, !accessCode.active)}
               />
             ))
@@ -334,6 +388,10 @@ function AccessCodeSummaryCard({
       subtitle={`${accessCode.groupName ?? "No group"} · ${accessCode.redemptions.length} redeemed`}
       badges={
         <>
+          <ManagementBadge label={accessCode.codeType === "super_link" ? "Super Link" : "Access Code"} tone={accessCode.codeType === "super_link" ? "accent" : "neutral"} />
+          {accessCode.codeType === "super_link" ? (
+            <ManagementBadge label={COMMERCIAL_TIER_DEFINITIONS[accessCode.grantsPlanTier].label} tone="warning" />
+          ) : null}
           <ManagementBadge label={accessCode.active ? "active" : "inactive"} tone={accessCode.active ? "success" : "neutral"} />
           <ManagementBadge
             label={accessCode.maxUses != null ? `${accessCode.usedCount}/${accessCode.maxUses} uses` : `${accessCode.usedCount} uses`}
@@ -352,8 +410,12 @@ function AccessCodeSummaryCard({
     >
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryDatum label="Code" value={maskCode(accessCode.code)} />
+        <SummaryDatum label="Type" value={accessCode.codeType === "super_link" ? "Super Link" : "Standard"} />
         <SummaryDatum label="Group" value={accessCode.groupName ?? "Unassigned"} />
-        <SummaryDatum label="Owner" value={accessCode.ownerName ?? accessCode.ownerEmail ?? "Unknown"} />
+        <SummaryDatum
+          label="Grants"
+          value={accessCode.codeType === "super_link" ? COMMERCIAL_TIER_DEFINITIONS[accessCode.grantsPlanTier].label : "Player"}
+        />
         <SummaryDatum label="Recent activity" value={formatDateTimeWithZone(recentActivity)} />
       </div>
 
@@ -365,7 +427,7 @@ function AccessCodeSummaryCard({
               onClick={onCopy}
               className="inline-flex rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
             >
-              Copy code
+              {accessCode.codeType === "super_link" ? "Copy Super Link" : "Copy code"}
             </button>
             <button
               type="button"
@@ -387,6 +449,9 @@ function AccessCodeSummaryCard({
 
           <div className="mt-3 space-y-1 text-sm font-semibold text-gray-600">
             {accessCode.notes ? <p>{accessCode.notes}</p> : null}
+            {accessCode.codeType === "super_link" ? (
+              <p className="break-all">Super Link: {buildSuperLinkUrl(accessCode.code)}</p>
+            ) : null}
             <p>Owner: {accessCode.ownerName ?? accessCode.ownerEmail ?? "Unknown"}</p>
             <p>Language: {accessCode.defaultLanguage.toUpperCase()}</p>
             <p>Created: {formatDateTimeWithZone(accessCode.createdAt)}</p>
@@ -410,6 +475,12 @@ function AccessCodeSummaryCard({
       ) : null}
     </ManagementCard>
   );
+}
+
+function buildSuperLinkUrl(code: string) {
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const params = new URLSearchParams({ code: code.trim() });
+  return `${origin}/join?${params.toString()}`;
 }
 
 function maskCode(code: string) {

@@ -7,6 +7,9 @@ export type GroupKind = (typeof GROUP_KINDS)[number];
 export const GROUP_INVITE_SOURCES = ["manager_invite", "captain_pass", "captain_private_invite"] as const;
 export type GroupInviteSource = (typeof GROUP_INVITE_SOURCES)[number];
 
+export const GROUP_INVITE_INTENTS = ["member", "captain_pass"] as const;
+export type GroupInviteIntent = (typeof GROUP_INVITE_INTENTS)[number];
+
 export const GROUP_JOIN_SOURCES = [
   "direct",
   "manager_code",
@@ -50,6 +53,10 @@ export function normalizeGroupKind(value: string | null | undefined): GroupKind 
 
 export function normalizeGroupInviteSource(value: string | null | undefined): GroupInviteSource {
   return GROUP_INVITE_SOURCES.includes(value as GroupInviteSource) ? (value as GroupInviteSource) : "manager_invite";
+}
+
+export function normalizeGroupInviteIntent(value: string | null | undefined): GroupInviteIntent {
+  return GROUP_INVITE_INTENTS.includes(value as GroupInviteIntent) ? (value as GroupInviteIntent) : "member";
 }
 
 export function normalizeGroupJoinSource(value: string | null | undefined): GroupJoinSource {

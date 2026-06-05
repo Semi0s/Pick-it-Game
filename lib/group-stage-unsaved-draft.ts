@@ -21,6 +21,10 @@ export function parseUnsavedGroupStageDraft(rawValue: string | null | undefined)
       return null;
     }
 
+    const touchedGroupNames = Array.isArray(draft.touchedGroupNames)
+      ? draft.touchedGroupNames.filter((groupName): groupName is string => typeof groupName === "string" && groupName.length > 0)
+      : [];
+    const touchedGroupNameSet = new Set(touchedGroupNames);
     const groupRankings = draft.groupRankings
       .filter((ranking): ranking is GroupSeedRankingInput =>
         typeof ranking?.groupName === "string" &&
@@ -31,7 +35,7 @@ export function parseUnsavedGroupStageDraft(rawValue: string | null | undefined)
         groupName: ranking.groupName,
         rankedTeamIds: ranking.rankedTeamIds.filter((teamId): teamId is string => typeof teamId === "string" && teamId.length > 0)
       }))
-      .filter((ranking) => ranking.rankedTeamIds.length > 0);
+      .filter((ranking) => ranking.rankedTeamIds.length > 0 || touchedGroupNameSet.has(ranking.groupName));
 
     if (groupRankings.length === 0) {
       return null;
@@ -40,11 +44,9 @@ export function parseUnsavedGroupStageDraft(rawValue: string | null | undefined)
     return {
       groupRankings,
       thirdPlaceRankings: Array.isArray(draft.thirdPlaceRankings)
-        ? draft.thirdPlaceRankings.filter((teamId): teamId is string => typeof teamId === "string")
+        ? draft.thirdPlaceRankings.filter((teamId): teamId is string => typeof teamId === "string" && teamId.length > 0)
         : [],
-      touchedGroupNames: Array.isArray(draft.touchedGroupNames)
-        ? draft.touchedGroupNames.filter((groupName): groupName is string => typeof groupName === "string" && groupName.length > 0)
-        : groupRankings.map((ranking) => ranking.groupName),
+      touchedGroupNames: touchedGroupNames.length > 0 ? touchedGroupNames : groupRankings.map((ranking) => ranking.groupName),
       hasTouchedThirdPlaceRanking: Boolean(draft.hasTouchedThirdPlaceRanking),
       changedSinceAt: typeof draft.changedSinceAt === "string" ? draft.changedSinceAt : new Date().toISOString()
     };

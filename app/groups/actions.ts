@@ -301,7 +301,14 @@ export async function saveLightSeedBuilderAction(
       ])
     );
     for (const ranking of incomingRankings) {
-      mergedRankingsByGroup.set(ranking.groupName, ranking.rankedTeamIds);
+      const rankedTeamIds = ranking.rankedTeamIds
+        .map((teamId) => teamId?.trim())
+        .filter((teamId): teamId is string => Boolean(teamId));
+      if (rankedTeamIds.length > 0) {
+        mergedRankingsByGroup.set(ranking.groupName, rankedTeamIds);
+      } else {
+        mergedRankingsByGroup.delete(ranking.groupName);
+      }
     }
     const defaultRankedTeamIdsByGroup = buildDefaultRankedTeamIdsByGroup(teams);
     const rankings: GroupSeedRankingInput[] = completeTopTwoRankingsForProjection(

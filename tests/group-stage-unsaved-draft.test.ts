@@ -34,6 +34,25 @@ test("group-stage unsaved draft parser keeps valid rankings and filters empty va
   assert.equal(parsed?.changedSinceAt, "2026-05-30T12:00:00.000Z");
 });
 
+test("group-stage unsaved draft parser preserves cleared touched groups", () => {
+  const parsed = parseUnsavedGroupStageDraft(
+    JSON.stringify({
+      groupRankings: [
+        { groupName: "A", rankedTeamIds: [] }
+      ],
+      thirdPlaceRankings: [],
+      touchedGroupNames: ["A"],
+      hasTouchedThirdPlaceRanking: false,
+      changedSinceAt: "2026-05-30T12:00:00.000Z"
+    })
+  );
+
+  assert.deepEqual(parsed?.groupRankings, [
+    { groupName: "A", rankedTeamIds: [] }
+  ]);
+  assert.deepEqual(parsed?.touchedGroupNames, ["A"]);
+});
+
 test("group-stage unsaved draft warning only counts drafts newer than the last commit", () => {
   const draft = JSON.stringify({
     groupRankings: [{ groupName: "A", rankedTeamIds: ["team-1", "team-2"] }],
