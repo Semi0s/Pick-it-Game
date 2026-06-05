@@ -30,6 +30,7 @@ import { parseJsonResponse } from "@/lib/fetch-json";
 import { createClient } from "@/lib/supabase/client";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { useCurrentUser } from "@/lib/use-current-user";
+import { useViewportAwarePopoverPlacement } from "@/lib/use-viewport-aware-popover-placement";
 import type { UserTrophy } from "@/lib/types";
 import type { MutableRefObject } from "react";
 
@@ -173,6 +174,12 @@ export function AppShell({ children }: AppShellProps) {
   const [toasts, setToasts] = useState<Array<{ id: string; tone: AppToastDetail["tone"]; text: string }>>([]);
   const lastTrophySignatureRef = useRef<string>("");
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
+  const languagePopoverPlacement = useViewportAwarePopoverPlacement({
+    isOpen: isLanguageMenuOpen,
+    anchorRef: languageMenuRef,
+    maxHeight: 260,
+    minUsefulHeight: 148
+  });
   const headerRef = useRef<HTMLElement | null>(null);
   const [headerHeight, setHeaderHeight] = useState(72);
   const isOnboardingExperience = shouldHideDockForPath(pathname);
@@ -557,7 +564,10 @@ export function AppShell({ children }: AppShellProps) {
                 <ChevronDown aria-hidden className="h-3 w-3 text-gray-500 max-[399px]:h-2.5 max-[399px]:w-2.5" />
               </button>
               {isLanguageMenuOpen ? (
-                <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-[1rem] border border-gray-200 bg-white p-1 shadow-lg">
+                <div
+                  style={languagePopoverPlacement.style}
+                  className={`absolute right-0 z-20 min-w-40 overflow-y-auto rounded-[1rem] border border-gray-200 bg-white p-1 shadow-lg ${languagePopoverPlacement.className}`}
+                >
                   {(Object.keys(EXPLAINER_LANGUAGE_LABELS) as ExplainerLanguage[]).map((language) => (
                     <button
                       key={language}

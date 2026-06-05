@@ -82,7 +82,7 @@ export default async function LoginPage({
           />
         </div>
 
-        <div className="mb-2 flex justify-center">
+        <div className="mb-2 flex justify-center pb-[15px]">
           <a
             href="https://www.semiosdesign.com/pick-it-game"
             target="_blank"

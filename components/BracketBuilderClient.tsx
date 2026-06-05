@@ -42,6 +42,7 @@ import {
   type UnsavedGroupStageDraft
 } from "@/lib/group-stage-unsaved-draft";
 import { useSessionViewState } from "@/lib/session-view-state";
+import { useViewportAwarePopoverPlacement } from "@/lib/use-viewport-aware-popover-placement";
 
 type RankedTeam = {
   id: string;
@@ -272,8 +273,18 @@ function BracketChangePopover({
   details: BracketChangeDetails;
   align: "left" | "right";
 }) {
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const popoverPlacement = useViewportAwarePopoverPlacement({
+    isOpen: true,
+    anchorRef: popoverRef,
+    maxHeight: 220,
+    minUsefulHeight: 96,
+    viewportPadding: 12
+  });
+
   return (
     <div
+      ref={popoverRef}
       data-bracket-change-popover="true"
       role="dialog"
       aria-label={details.ariaLabel}
@@ -281,7 +292,8 @@ function BracketChangePopover({
         event.preventDefault();
         event.stopPropagation();
       }}
-      className={`absolute top-full z-30 mt-1 w-36 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-left shadow-lg shadow-gray-950/10 ${align === "right" ? "right-0" : "left-0"}`}
+      style={popoverPlacement.style}
+      className={`absolute z-30 w-36 overflow-y-auto rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-left shadow-lg shadow-gray-950/10 ${popoverPlacement.className} ${align === "right" ? "right-0" : "left-0"}`}
     >
       <p className="mb-1 text-[8px] font-black uppercase tracking-[0.12em] text-accent-dark">
         {details.title}
@@ -1973,7 +1985,6 @@ export function BracketBuilderClient({
           ? 10
         : CUSTOM_TOUCH_DRAG_MOVE_THRESHOLD_PX;
       if (
-        !state.forceCustomDrag &&
         state.kind === "group" &&
         state.pointerType !== "mouse" &&
         deltaX > 10 &&
@@ -2456,6 +2467,17 @@ export function BracketBuilderClient({
     return getThirdPlaceViaThirdProbabilityResult({
       team,
       rankingIndex
+    });
+  }
+
+  function getThirdPlaceCandidateSlotProbabilityResult(team: RankedTeam, slotIndex?: number | null) {
+    if (!derivedThirdPlacePoolIds.has(team.id)) {
+      return null;
+    }
+
+    return getThirdPlaceViaThirdProbabilityResult({
+      team,
+      rankingIndex: getThirdPlaceOpenSlotInsertIndex(slotIndex)
     });
   }
 
@@ -3915,7 +3937,10 @@ export function BracketBuilderClient({
             </div>
             <div className="mt-3 space-y-1.5">
               {thirdPlaceCandidatePickerTeams.map((team) => {
-                const probability = getThirdPlaceAdvanceProbabilityResult(team.id);
+                const probability = getThirdPlaceCandidateSlotProbabilityResult(
+                  team,
+                  thirdPlaceCandidatePickerSlotIndex
+                );
 
                 return (
                   <button

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
+import { TeamPickerMenu } from "@/components/TeamPickerMenu";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import { VisualThemeMenu } from "@/components/VisualThemeMenu";
 import {
@@ -588,22 +589,16 @@ export function ProfileSummary({
               {isFollowedTeamsOpen ? (
                 <>
                   <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-                    <label className="min-w-0 flex-1">
-                      <span className="sr-only">{t(uiLanguage, "profile.chooseTeamToFollow")}</span>
-                      <select
+                    <div className="min-w-0 flex-1">
+                      <TeamPickerMenu
                         value={followedTeamSelection}
+                        options={availableFollowedTeamOptions}
+                        placeholder={t(uiLanguage, "profile.addTeam")}
+                        ariaLabel={t(uiLanguage, "profile.chooseTeamToFollow")}
                         disabled={isUpdatingFollowedTeams}
-                        onChange={(event) => setFollowedTeamSelection(event.target.value)}
-                        className="w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
-                      >
-                        <option value="">{t(uiLanguage, "profile.addTeam")}</option>
-                        {availableFollowedTeamOptions.map((team) => (
-                          <option key={team.id} value={team.id}>
-                            {team.groupName} {team.flagEmoji ? `${team.flagEmoji} ` : ""}· {team.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        onChange={setFollowedTeamSelection}
+                      />
+                    </div>
                     <div className="flex gap-2">
                       <button
                         type="button"

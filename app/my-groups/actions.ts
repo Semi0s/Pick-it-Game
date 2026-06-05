@@ -922,6 +922,7 @@ export async function createGroupAction(input: CreateGroupInput): Promise<Create
     .insert({
       name,
       description: description || null,
+      access_mode: "open_by_code",
       base_prediction_mode: basePredictionMode,
       home_team_advantage_enabled: homeTeamAdvantageEnabled,
       owner_user_id: currentUser.userId,
