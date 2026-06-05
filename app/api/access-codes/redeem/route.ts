@@ -178,6 +178,7 @@ async function redeemAccessCodeWithAdminFallback(
     let effectiveSeatLimit = Number.POSITIVE_INFINITY;
     const grantsGroupMembership = code.grants_group_membership !== false;
     const grantsPlanTier = normalizeSuperLinkGrantTier(code.grants_plan_tier);
+    const isSuperLink = normalizeAccessCodeType(code.code_type) === "super_link";
 
     if (code.group_id && grantsGroupMembership) {
       const { data: group, error: groupLookupError } = await adminSupabase
@@ -191,11 +192,11 @@ async function redeemAccessCodeWithAdminFallback(
       }
 
       const resolvedGroup = (group as GroupRow | null) ?? null;
-      if (!resolvedGroup || resolvedGroup.status !== "active" || resolvedGroup.access_mode === "closed") {
+      if (!resolvedGroup || resolvedGroup.status !== "active" || (!isSuperLink && resolvedGroup.access_mode === "closed")) {
         return { ok: false, message: getAccessCodeBlockedMessage("group_unavailable") };
       }
 
-      if (resolvedGroup.access_mode === "restricted_by_email") {
+      if (!isSuperLink && resolvedGroup.access_mode === "restricted_by_email") {
         const { data: allowedEmail, error: allowedEmailError } = await adminSupabase
           .from("group_allowed_emails")
           .select("id")
