@@ -9,6 +9,7 @@ import { authenticateWithEmail, isUsingDemoAuthFallback, sendCurrentUserPassword
 import { clearPendingConfirmationEmail, storePendingConfirmationEmail } from "@/lib/auth-confirmation";
 import { normalizeLanguage } from "@/lib/i18n";
 import { getSupportedLanguageOptions, t } from "@/lib/strings";
+import { useViewportAwarePopoverPlacement } from "@/lib/use-viewport-aware-popover-placement";
 
 type AuthMode = "login" | "signup";
 const ATTENTION_MESSAGE_CLASS =
@@ -64,6 +65,12 @@ export function LoginForm({
   } | null>(null);
   const isDemoFallback = isUsingDemoAuthFallback();
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
+  const languagePopoverPlacement = useViewportAwarePopoverPlacement({
+    isOpen: isLanguageMenuOpen,
+    anchorRef: languageMenuRef,
+    maxHeight: 260,
+    minUsefulHeight: 148
+  });
   const emailBoundInviteFlow = inviteFlow && Boolean(inviteToken);
   const existingAccountInviteFlow = emailBoundInviteFlow && inviteContext?.existingAccount === true;
   const isInvitePreviewLoading = emailBoundInviteFlow && !inviteContext && !invitePreviewError;
@@ -317,7 +324,10 @@ export function LoginForm({
             <ChevronDown aria-hidden className="h-3 w-3 text-gray-500" />
           </button>
           {isLanguageMenuOpen ? (
-            <div className="absolute right-0 top-full z-20 mt-2 min-w-40 rounded-[1rem] border border-gray-200 bg-white p-1 shadow-lg">
+            <div
+              style={languagePopoverPlacement.style}
+              className={`absolute right-0 z-20 min-w-40 overflow-y-auto rounded-[1rem] border border-gray-200 bg-white p-1 shadow-lg ${languagePopoverPlacement.className}`}
+            >
               {getSupportedLanguageOptions(uiLanguage).map((option) => (
                 <button
                   key={option.value}

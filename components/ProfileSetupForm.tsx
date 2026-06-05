@@ -4,8 +4,10 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchGroupInvitePreviewAction } from "@/app/group-invite-preview/actions";
 import { completeProfileSetupAction } from "@/app/profile-setup/actions";
+import { TeamPickerMenu } from "@/components/TeamPickerMenu";
 import { VisualThemeMenu } from "@/components/VisualThemeMenu";
 import { showAppToast } from "@/lib/app-toast";
+import { updateCurrentUserNotificationPreferences } from "@/lib/auth-client";
 import {
   APP_LANGUAGE_COOKIE_KEY,
   APP_LANGUAGE_STORAGE_KEY,
@@ -24,7 +26,7 @@ import {
 
 export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
   const router = useRouter();
-  const { user, isLoading } = useCurrentUser();
+  const { user, isLoading, refresh } = useCurrentUser();
   const [displayName, setDisplayName] = useState("");
   const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage | "">("");
   const [visualThemeSelection, setVisualThemeSelection] = useState("");
@@ -32,6 +34,7 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
   const [followedTeamSelection, setFollowedTeamSelection] = useState("");
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUpdatingNotifications, setIsUpdatingNotifications] = useState(false);
   const [inviteGroupName, setInviteGroupName] = useState<string | null>(null);
 
   const placeholderName = useMemo(() => {
@@ -244,21 +247,13 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
           </div>
 
           <div className="mt-3 flex flex-col gap-2">
-            <label>
-              <span className="sr-only">{t(uiLanguage, "profile.chooseTeamToFollow")}</span>
-              <select
-                value={followedTeamSelection}
-                onChange={(event) => setFollowedTeamSelection(event.target.value)}
-                className="w-full rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-              >
-                <option value="">{t(uiLanguage, "profile.addTeam")}</option>
-                {availableFollowedTeamOptions.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.groupName} {team.flagEmoji ? `${team.flagEmoji} ` : ""}· {team.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <TeamPickerMenu
+              value={followedTeamSelection}
+              options={availableFollowedTeamOptions}
+              placeholder={t(uiLanguage, "profile.addTeam")}
+              ariaLabel={t(uiLanguage, "profile.chooseTeamToFollow")}
+              onChange={setFollowedTeamSelection}
+            />
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -325,6 +320,67 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
             ) : (
               <p className="text-xs font-semibold text-gray-500">{t(uiLanguage, "profile.noTeamsSelected")}</p>
             )}
+          </div>
+        </div>
+
+        <div className="rounded-[1rem] border border-gray-200 bg-gray-50/80 p-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.notifications")}</p>
+                <span
+                  className={`ui-chip-sm border font-bold uppercase tracking-wide ${
+                    user.notificationsEnabled
+                      ? "border-accent-light bg-accent-light text-accent-dark"
+                      : "border-gray-200 bg-white text-gray-500"
+                  }`}
+                >
+                  {user.notificationsEnabled
+                    ? t(uiLanguage, "profile.notificationsOn")
+                    : t(uiLanguage, "profile.notificationsOff")}
+                </span>
+              </div>
+              <p className="mt-1 text-sm font-semibold leading-5 text-gray-500">
+                {t(uiLanguage, "profile.notificationsSetupHelp")}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={isUpdatingNotifications}
+              onClick={async () => {
+                const nextNotificationsEnabled = !user.notificationsEnabled;
+                setIsUpdatingNotifications(true);
+                setMessage(null);
+                try {
+                  const result = await updateCurrentUserNotificationPreferences(nextNotificationsEnabled);
+                  setMessage({
+                    tone: result.ok ? "success" : "error",
+                    text: result.ok
+                      ? t(
+                          uiLanguage,
+                          nextNotificationsEnabled
+                            ? "profile.notificationsUpdatedOn"
+                            : "profile.notificationsUpdatedOff"
+                        )
+                      : result.message ?? t(uiLanguage, "errors.generic")
+                  });
+                  if (result.ok) {
+                    await refresh();
+                  }
+                } catch {
+                  setMessage({ tone: "error", text: t(uiLanguage, "errors.generic") });
+                } finally {
+                  setIsUpdatingNotifications(false);
+                }
+              }}
+              className="inline-flex min-w-0 items-center justify-center rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-center text-xs font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
+            >
+              {isUpdatingNotifications
+                ? t(uiLanguage, "profile.sending")
+                : user.notificationsEnabled
+                  ? t(uiLanguage, "profile.turnOffNotifications")
+                  : t(uiLanguage, "profile.turnOnNotifications")}
+            </button>
           </div>
         </div>
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { VisualThemeSelectOption } from "@/lib/visual-theme-options";
+import { useViewportAwarePopoverPlacement } from "@/lib/use-viewport-aware-popover-placement";
 
 type VisualThemeMenuProps = {
   value: string;
@@ -20,6 +21,12 @@ export function VisualThemeMenu({
 }: VisualThemeMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const popoverPlacement = useViewportAwarePopoverPlacement({
+    isOpen,
+    anchorRef: menuRef,
+    maxHeight: 288,
+    minUsefulHeight: 180
+  });
   const selectedOption = useMemo(() => options.find((option) => option.value === value) ?? null, [options, value]);
 
   useEffect(() => {
@@ -71,7 +78,8 @@ export function VisualThemeMenu({
       {isOpen ? (
         <div
           role="listbox"
-          className="absolute left-0 right-0 z-30 mt-2 max-h-72 overflow-y-auto rounded-[1rem] border border-gray-200 bg-white p-1 shadow-xl shadow-gray-950/10"
+          style={popoverPlacement.style}
+          className={`absolute left-0 right-0 z-30 overflow-y-auto rounded-[1rem] border border-gray-200 bg-white p-1 shadow-xl shadow-gray-950/10 ${popoverPlacement.className}`}
         >
           <button
             type="button"

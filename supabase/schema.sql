@@ -1414,7 +1414,7 @@ as $$
 declare
   v_access_mode text;
 begin
-  select groups.access_mode
+  select coalesce(nullif(trim(groups.access_mode), ''), 'open_by_code')
   into v_access_mode
   from public.groups
   where groups.id = target_group_id;
