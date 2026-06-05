@@ -1661,16 +1661,18 @@ begin
       raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
     end if;
 
-    if v_target_group.access_mode = 'closed' then
-      raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
-    end if;
-
-    if not public.group_allows_email(v_target_group.id, auth_email) then
-      if v_target_group.access_mode = 'restricted_by_email' then
-        raise exception 'ACCESS_CODE_GROUP_RESTRICTED';
+    if coalesce(v_access_code_row.code_type, 'standard') <> 'super_link' then
+      if v_target_group.access_mode = 'closed' then
+        raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
       end if;
 
-      raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
+      if not public.group_allows_email(v_target_group.id, auth_email) then
+        if v_target_group.access_mode = 'restricted_by_email' then
+          raise exception 'ACCESS_CODE_GROUP_RESTRICTED';
+        end if;
+
+        raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
+      end if;
     end if;
 
     if v_target_group.member_count >= v_target_group.effective_membership_limit then
@@ -1793,16 +1795,18 @@ begin
       raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
     end if;
 
-    if v_target_group.access_mode = 'closed' then
-      raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
-    end if;
-
-    if not public.group_allows_email(v_target_group.id, auth_email) then
-      if v_target_group.access_mode = 'restricted_by_email' then
-        raise exception 'ACCESS_CODE_GROUP_RESTRICTED';
+    if coalesce(v_access_code_row.code_type, 'standard') <> 'super_link' then
+      if v_target_group.access_mode = 'closed' then
+        raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
       end if;
 
-      raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
+      if not public.group_allows_email(v_target_group.id, auth_email) then
+        if v_target_group.access_mode = 'restricted_by_email' then
+          raise exception 'ACCESS_CODE_GROUP_RESTRICTED';
+        end if;
+
+        raise exception 'ACCESS_CODE_GROUP_UNAVAILABLE';
+      end if;
     end if;
 
     select group_members.id

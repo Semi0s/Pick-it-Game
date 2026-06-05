@@ -100,6 +100,7 @@ export async function validateAccessCodeAvailability(rawCode: string, email?: st
   }
 
   const grantsGroupMembership = code.grants_group_membership !== false;
+  const isSuperLink = code.code_type === "super_link";
 
   if (code.group_id && grantsGroupMembership) {
     const [{ data: group, error: groupError }, { count, error: memberCountError }] = await Promise.all([
@@ -124,11 +125,11 @@ export async function validateAccessCodeAvailability(rawCode: string, email?: st
       return invalidAvailability("group_unavailable");
     }
 
-    if (resolvedGroup.access_mode === "closed") {
+    if (!isSuperLink && resolvedGroup.access_mode === "closed") {
       return invalidAvailability("group_unavailable");
     }
 
-    if (resolvedGroup.access_mode === "restricted_by_email" && email?.trim()) {
+    if (!isSuperLink && resolvedGroup.access_mode === "restricted_by_email" && email?.trim()) {
       const normalizedEmail = email.trim().toLowerCase();
       const { data: allowedEmail, error: allowedEmailError } = await adminSupabase
         .from("group_allowed_emails")
