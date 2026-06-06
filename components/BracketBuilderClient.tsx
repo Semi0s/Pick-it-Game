@@ -31,6 +31,7 @@ import {
 } from "@/lib/group-stage-scenario-impact";
 import {
   getAdvanceViaThirdProbabilityResult,
+  mergeProbabilityRowTeamIds,
   getPickProbabilityForTeam,
   type PickProbabilityResult
 } from "@/lib/group-pick-probability";
@@ -2399,9 +2400,26 @@ export function BracketBuilderClient({
     setHasTouchedThirdPlaceRanking(true);
   }
 
-  function getProbabilityRowsForGroup(groupName: string) {
+  function getFullProbabilityTeamIdsForGroup(groupName: string) {
     const normalizedGroupName = normalizeGroupKey(groupName) ?? groupName;
-    return (groupRankingsByGroup.get(normalizedGroupName) ?? []).map((teamId, index) => ({
+    const fullGroupTeamIds = teamIdsByGroup.get(normalizedGroupName);
+    if (fullGroupTeamIds && fullGroupTeamIds.size > 0) {
+      return Array.from(fullGroupTeamIds);
+    }
+
+    return groupRankingsByGroup.get(normalizedGroupName) ?? [];
+  }
+
+  function getProbabilityRowTeamIdsForGroup(groupName: string) {
+    const normalizedGroupName = normalizeGroupKey(groupName) ?? groupName;
+    return mergeProbabilityRowTeamIds(
+      groupRankingsByGroup.get(normalizedGroupName) ?? [],
+      getFullProbabilityTeamIdsForGroup(normalizedGroupName)
+    );
+  }
+
+  function getProbabilityRowsForGroup(groupName: string) {
+    return getProbabilityRowTeamIdsForGroup(groupName).map((teamId, index) => ({
       teamId,
       rank: index + 1,
       played: 0,
@@ -2412,8 +2430,7 @@ export function BracketBuilderClient({
   }
 
   function getProbabilityTeamsForGroup(groupName: string) {
-    const normalizedGroupName = normalizeGroupKey(groupName) ?? groupName;
-    return (groupRankingsByGroup.get(normalizedGroupName) ?? [])
+    return getFullProbabilityTeamIdsForGroup(groupName)
       .map((teamId) => teamsById.get(teamId) ?? null)
       .filter((team): team is RankedTeam => Boolean(team));
   }
