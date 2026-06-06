@@ -971,6 +971,7 @@ export const translations = {
     onboarding: {
       next: "Next",
       getStarted: "Get started",
+      skipAndStart: "Skip and start",
       skip: "Skip",
       finish: "Finish",
       welcome: "WELCOME",
@@ -1985,6 +1986,7 @@ export const translations = {
     onboarding: {
       next: "Siguiente",
       getStarted: "Empezar",
+      skipAndStart: "Omitir y empezar",
       skip: "Omitir",
       finish: "Finalizar",
       welcome: "BIENVENIDO",
@@ -2996,6 +2998,7 @@ export const translations = {
     onboarding: {
       next: "Suivant",
       getStarted: "Commencer",
+      skipAndStart: "Passer et commencer",
       skip: "Passer",
       finish: "Terminer",
       welcome: "BIENVENUE",
@@ -4006,6 +4009,7 @@ export const translations = {
     onboarding: {
       next: "Seguinte",
       getStarted: "Começar",
+      skipAndStart: "Ignorar e começar",
       skip: "Ignorar",
       finish: "Terminar",
       welcome: "BEM-VINDO",
@@ -5017,6 +5021,7 @@ export const translations = {
     onboarding: {
       next: "Weiter",
       getStarted: "Loslegen",
+      skipAndStart: "Überspringen und starten",
       skip: "Überspringen",
       finish: "Fertig",
       welcome: "WILLKOMMEN",

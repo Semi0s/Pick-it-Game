@@ -233,12 +233,22 @@ export function StartPlayingChoiceClient({ language = "en" }: { language?: strin
           <div className="mt-4 flex items-center justify-between gap-2">
             <button
               type="button"
-              onClick={() => goToStep(stepIndex - 1)}
-              disabled={isFirstStep}
-              aria-label={t(language, "onboarding.previousStep")}
-              className="inline-flex min-h-10 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={
+                isFirstStep
+                  ? () => {
+                      void handleStartGroupPhase();
+                    }
+                  : () => goToStep(stepIndex - 1)
+              }
+              disabled={isFirstStep && isSavingMode}
+              aria-label={isFirstStep ? t(language, "onboarding.startGroupStage") : t(language, "onboarding.previousStep")}
+              className="inline-flex min-h-10 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {t(language, "common.back")}
+              {isFirstStep
+                ? isSavingMode
+                  ? t(language, "onboarding.opening")
+                  : t(language, "onboarding.skipAndStart")
+                : t(language, "common.back")}
             </button>
             <p className="min-w-[3.5rem] text-center text-xs font-black uppercase tracking-[0.14em] text-gray-400" aria-live="polite">
               {t(language, "onboarding.stepLabel", { current: stepIndex + 1, total: steps.length })}
