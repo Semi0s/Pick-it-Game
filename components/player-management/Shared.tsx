@@ -528,7 +528,7 @@ export function ManagementIntro({
       <LocalizedCardBackground theme={localizedTheme} preserveRightControlZone={shouldShowTopRightChip} />
       <div className="flex items-start justify-between gap-3">
         {resolvedEyebrow ? (
-          <p className="relative text-sm font-bold uppercase tracking-wide text-[color:var(--localized-card-secondary-text)]">
+          <p className="management-intro-copy relative max-w-[68%] text-sm font-bold uppercase tracking-wide text-[color:var(--localized-card-secondary-text)] min-[430px]:max-w-[74%] sm:max-w-none">
             {resolvedEyebrow}
           </p>
         ) : (
@@ -543,7 +543,7 @@ export function ManagementIntro({
           </div>
         ) : null}
       </div>
-      <div className="relative mt-1 min-w-0">
+      <div className="management-intro-copy relative mt-1 min-w-0 max-w-[68%] min-[430px]:max-w-[74%] sm:max-w-none">
         <h2 className="text-xl font-black leading-tight text-[color:var(--localized-card-text)] sm:text-2xl">{resolvedTitle}</h2>
         {resolvedStatusChip && statusChipPlacement === "below-title" ? (
           <div className="mt-3 flex justify-start">
