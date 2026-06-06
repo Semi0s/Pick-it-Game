@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchAdminMatches, type AdminMatch } from "@/lib/admin-data";
 import {
@@ -20,6 +20,7 @@ import {
   resetKnockoutTestingDataAction,
   resetTestingSocialStateAction,
   rescoreKnockoutScoresAction,
+  runAdminScoringAuditAction,
   scoreFinalizedGroupMatch,
   syncMatchesNowAction,
   seedKnockoutFromGroupStageAction,
@@ -36,6 +37,7 @@ import {
   LEADERBOARD_DAILY_WINNER_DISMISS_STORAGE_KEY
 } from "@/lib/ui-storage-keys";
 import type { MatchStage, MatchStatus } from "@/lib/types";
+import type { AdminScoringAuditReport } from "@/lib/admin-scoring-audit";
 import { AdminHeader } from "@/components/admin/AdminInvitesClient";
 import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -61,6 +63,7 @@ const BATCH_FINALIZE_CONFIRMATION_PHRASE = "FINALIZE TEST MATCHES";
 const BATCH_CLEAR_CONFIRMATION_PHRASE = "CLEAR TEST MATCH RESULTS";
 const FULL_TEST_RESET_CONFIRMATION_PHRASE = "FULL PRE-LAUNCH TEST RESET";
 const ADMIN_MATCH_FILTERS_DISCLOSURE_KEY = "admin-matches-filters-open";
+const ADMIN_MATCH_OPERATIONS_DISCLOSURE_KEY = "admin-matches-operations-open";
 const ADMIN_TOURNAMENT_PROGRESS_DISCLOSURE_KEY = "admin-matches-tournament-progress-open";
 const ADMIN_DANGER_ZONE_DISCLOSURE_KEY = "admin-matches-danger-zone-open";
 
@@ -77,6 +80,7 @@ export function AdminMatchesClient() {
   const [isRescoringKnockout, setIsRescoringKnockout] = useState(false);
   const [isRepairingKnockout, setIsRepairingKnockout] = useState(false);
   const [isSyncingMatches, setIsSyncingMatches] = useState(false);
+  const [isOperationsOpen, setIsOperationsOpen] = useSessionDisclosureState(ADMIN_MATCH_OPERATIONS_DISCLOSURE_KEY, true);
   const [isFiltersOpen, setIsFiltersOpen] = useSessionDisclosureState(ADMIN_MATCH_FILTERS_DISCLOSURE_KEY, false);
   const [isTournamentProgressOpen, setIsTournamentProgressOpen] = useSessionDisclosureState(
     ADMIN_TOURNAMENT_PROGRESS_DISCLOSURE_KEY,
@@ -120,9 +124,19 @@ export function AdminMatchesClient() {
   const [matchResetConfirmationText, setMatchResetConfirmationText] = useState("");
   const [isResettingMatch, setIsResettingMatch] = useState(false);
   const [isRepairingLeaderboard, setIsRepairingLeaderboard] = useState(false);
+  const [selectedOperationsMatchId, setSelectedOperationsMatchId] = useState("");
+  const [operationsReason, setOperationsReason] = useState("");
+  const [isScoringSelectedMatch, setIsScoringSelectedMatch] = useState(false);
+  const [isRepairingOperationsLeaderboard, setIsRepairingOperationsLeaderboard] = useState(false);
+  const [isRunningScoringAudit, setIsRunningScoringAudit] = useState(false);
+  const [scoringAuditReport, setScoringAuditReport] = useState<AdminScoringAuditReport | null>(null);
   const [fullResetConfirmationText, setFullResetConfirmationText] = useState("");
   const [isFullResetAcknowledged, setIsFullResetAcknowledged] = useState(false);
   const [isRunningFullReset, setIsRunningFullReset] = useState(false);
+  const [selectedReviewMatchId, setSelectedReviewMatchId] = useState("");
+  const conflictQueueRef = useRef<HTMLDivElement | null>(null);
+  const needsReviewQueueRef = useRef<HTMLDivElement | null>(null);
+  const manualOverrideQueueRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     loadMatches();
@@ -254,6 +268,15 @@ export function AdminMatchesClient() {
   }, [matches]);
   const hasSyncErrors = useMemo(() => matches.some((match) => match.syncStatus === "error"), [matches]);
   const canUseDangerZone = user ? getAccessLevel(user) === "super_admin" : false;
+  const matchOperationSummary = useMemo(() => buildMatchOperationSummary(matches), [matches]);
+  const scoreableOperationMatches = useMemo(
+    () => matches.filter((match) => match.status === "final").sort(compareAdminMatches),
+    [matches]
+  );
+  const selectedOperationsMatch = useMemo(
+    () => matches.find((match) => match.id === selectedOperationsMatchId) ?? null,
+    [matches, selectedOperationsMatchId]
+  );
   const scopeAvailability = destructiveToolStatus?.ok ? destructiveToolStatus.scopes : null;
   const knockoutAvailability = scopeAvailability?.knockout ?? null;
   const groupAvailability = scopeAvailability?.group_stage ?? null;
@@ -399,6 +422,19 @@ export function AdminMatchesClient() {
   }, [resettableMatches]);
 
   useEffect(() => {
+    if (scoreableOperationMatches.length === 0) {
+      setSelectedOperationsMatchId("");
+      return;
+    }
+
+    setSelectedOperationsMatchId((current) =>
+      current && scoreableOperationMatches.some((match) => match.id === current)
+        ? current
+        : scoreableOperationMatches[0]?.id ?? ""
+    );
+  }, [scoreableOperationMatches]);
+
+  useEffect(() => {
     if (!knockoutSeedStatus.hasAnySeeds || knockoutSeedStatus.hasKnockoutStarted || !knockoutSeedStatus.isReady) {
       setIsConfirmingReseed(false);
     }
@@ -483,6 +519,125 @@ export function AdminMatchesClient() {
       showAppToast({ tone: "error", text: (error as Error).message });
     } finally {
       setIsSyncingMatches(false);
+    }
+  }
+
+  function handleOperationQueueJump(targetRef: { current: HTMLDivElement | null }) {
+    setIsOperationsOpen(true);
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const target = targetRef.current;
+        if (!target) {
+          return;
+        }
+
+        const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        target.scrollIntoView({
+          behavior: prefersReducedMotion ? "auto" : "smooth",
+          block: "start"
+        });
+        target.focus({ preventScroll: true });
+      });
+    });
+  }
+
+  function handleReviewMatchFromQueue(match: AdminMatch) {
+    setIsFiltersOpen(true);
+    setStageFilter(match.stage);
+    setDateFilter("all");
+    setSelectedReviewMatchId(match.id);
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const target = document.getElementById(getAdminMatchEditorId(match.id));
+        if (!target) {
+          return;
+        }
+
+        const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        target.scrollIntoView({
+          behavior: prefersReducedMotion ? "auto" : "smooth",
+          block: "center"
+        });
+      });
+    });
+  }
+
+  async function handleScoreSelectedMatch() {
+    if (!selectedOperationsMatch || selectedOperationsMatch.status !== "final" || isScoringSelectedMatch) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Rerun scoring for this finalized match? This may clear/rebuild canonical score rows for the match, recompute leaderboard totals, rebuild affected leaderboard cache, and revalidate affected pages. User predictions will not be changed."
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsScoringSelectedMatch(true);
+    try {
+      const result = await scoreFinalizedGroupMatch(selectedOperationsMatch.id);
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        await loadMatches();
+        router.refresh();
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsScoringSelectedMatch(false);
+    }
+  }
+
+  async function handleRepairOperationsLeaderboard() {
+    if (!operationsReason.trim() || isRepairingOperationsLeaderboard) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Rebuild leaderboard cache and canonical totals? This does not change predictions or match results, but it may update users.total_points, leaderboard entries, snapshots, and affected cached pages."
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsRepairingOperationsLeaderboard(true);
+    try {
+      const result = await repairLeaderboardStateAction({
+        reason: operationsReason
+      });
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        setOperationsReason("");
+        setResetReasonByScope((current) => ({ ...current, leaderboard: "" }));
+        await loadMatches();
+        router.refresh();
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsRepairingOperationsLeaderboard(false);
+    }
+  }
+
+  async function handleRunScoringAudit() {
+    if (isRunningScoringAudit) {
+      return;
+    }
+
+    setIsRunningScoringAudit(true);
+    try {
+      const result = await runAdminScoringAuditAction();
+      showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        setScoringAuditReport(result.report);
+      }
+    } catch (error) {
+      showAppToast({ tone: "error", text: (error as Error).message });
+    } finally {
+      setIsRunningScoringAudit(false);
     }
   }
 
@@ -938,6 +1093,203 @@ export function AdminMatchesClient() {
     <div className="space-y-5">
       <AdminHeader eyebrow="Matches" title="Update match results." />
 
+      {canUseDangerZone ? (
+        <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Match Operations / Scoring Control</p>
+              <h3 className="text-lg font-black text-gray-950">Publish safety, scoring recovery, and audit</h3>
+              <p className="text-sm font-semibold text-gray-600">
+                Use automatic publish when imported result matches official match/team IDs and no validation warnings exist.
+                Use manual review when team IDs, winner, score, or final status conflict.
+              </p>
+            </div>
+            <InlineDisclosureButton
+              isOpen={isOperationsOpen}
+              variant="subtle"
+              onClick={() => setIsOperationsOpen((current) => !current)}
+            />
+          </div>
+
+          {isOperationsOpen ? (
+            <div className="mt-4 space-y-4">
+              <div className="grid gap-3 md:grid-cols-5">
+                <OperationMetric label="Automatic OK" value={matchOperationSummary.automaticOk} tone="emerald" />
+                <OperationMetric
+                  label="Needs review"
+                  value={matchOperationSummary.needsReview}
+                  tone="amber"
+                  onClick={() => handleOperationQueueJump(needsReviewQueueRef)}
+                  actionLabel="View needs review queue"
+                />
+                <OperationMetric
+                  label="Manual override"
+                  value={matchOperationSummary.manualOverride}
+                  tone="slate"
+                  onClick={() => handleOperationQueueJump(manualOverrideQueueRef)}
+                  actionLabel="View manual override queue"
+                />
+                <OperationMetric
+                  label="Conflict"
+                  value={matchOperationSummary.conflict}
+                  tone="rose"
+                  onClick={() => handleOperationQueueJump(conflictQueueRef)}
+                  actionLabel="View conflict queue"
+                />
+                <OperationMetric label="Finalized" value={matchOperationSummary.finalized} tone="gray" />
+              </div>
+
+              {matchOperationSummary.reviewQueue.length > 0 ? (
+                <div className="space-y-3">
+                  {matchOperationSummary.conflictQueue.length > 0 ? (
+                    <div ref={conflictQueueRef} tabIndex={-1} className="scroll-mt-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-300">
+                      <MatchReviewQueueSection
+                        title="Conflicts"
+                        items={matchOperationSummary.conflictQueue}
+                        tone="rose"
+                        onReviewMatch={handleReviewMatchFromQueue}
+                      />
+                    </div>
+                  ) : null}
+                  {matchOperationSummary.needsReviewQueue.length > 0 ? (
+                    <div ref={needsReviewQueueRef} tabIndex={-1} className="scroll-mt-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300">
+                      <MatchReviewQueueSection
+                        title="Needs review"
+                        items={matchOperationSummary.needsReviewQueue}
+                        tone="amber"
+                        onReviewMatch={handleReviewMatchFromQueue}
+                      />
+                    </div>
+                  ) : null}
+                  {matchOperationSummary.manualOverrideQueue.length > 0 ? (
+                    <div ref={manualOverrideQueueRef} tabIndex={-1} className="scroll-mt-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-300">
+                      <MatchReviewQueueSection
+                        title="Manual overrides"
+                        items={matchOperationSummary.manualOverrideQueue}
+                        tone="slate"
+                        onReviewMatch={handleReviewMatchFromQueue}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
+                  No match validation warnings are currently detected.
+                </div>
+              )}
+
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+                <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Selected match recovery</p>
+                    <h4 className="text-base font-black text-gray-950">Rerun scoring for one finalized match</h4>
+                    <p className="text-sm font-semibold text-gray-600">
+                      Reuses the existing scoring path for one final match. It preserves predictions and rebuilds affected totals.
+                    </p>
+                  </div>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Finalized match</span>
+                    <select
+                      value={selectedOperationsMatchId}
+                      onChange={(event) => setSelectedOperationsMatchId(event.target.value)}
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    >
+                      <option value="">Select a finalized match</option>
+                      {scoreableOperationMatches.map((match) => (
+                        <option key={`ops-match-${match.id}`} value={match.id}>
+                          {match.id} · {formatStage(match.stage)} · {getSideLabel(match, "home").short} vs {getSideLabel(match, "away").short}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {selectedOperationsMatch ? (
+                    <MatchOperationSnapshot match={selectedOperationsMatch} />
+                  ) : (
+                    <p className="mt-3 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-600">
+                      No finalized matches are currently available for rerun scoring.
+                    </p>
+                  )}
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={!selectedOperationsMatch || selectedOperationsMatch.status !== "final" || isScoringSelectedMatch}
+                      onClick={() => void handleScoreSelectedMatch()}
+                      className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                    >
+                      {isScoringSelectedMatch ? "Rerunning scoring..." : "Rerun match scoring"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSyncingMatches}
+                      onClick={() => void handleSyncMatchesNow()}
+                      className="rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 disabled:bg-gray-100 disabled:text-gray-500"
+                    >
+                      {isSyncingMatches ? "Syncing..." : "Sync imported results"}
+                    </button>
+                  </div>
+                </section>
+
+                <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Canonical recovery</p>
+                    <h4 className="text-base font-black text-gray-950">Audit and rebuild leaderboard cache</h4>
+                    <p className="text-sm font-semibold text-gray-600">
+                      Run read-only checks first. Repair only rebuilds derived totals and cache rows; it does not change predictions.
+                    </p>
+                  </div>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-bold text-gray-700">Repair reason</span>
+                    <input
+                      type="text"
+                      value={operationsReason}
+                      onChange={(event) => setOperationsReason(event.target.value)}
+                      placeholder="Required before rebuilding leaderboard cache"
+                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-900"
+                    />
+                  </label>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={isRunningScoringAudit}
+                      onClick={() => void handleRunScoringAudit()}
+                      className="rounded-md bg-accent px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                    >
+                      {isRunningScoringAudit ? "Running audit..." : "Run read-only audit"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!operationsReason.trim() || isRepairingOperationsLeaderboard}
+                      onClick={() => void handleRepairOperationsLeaderboard()}
+                      className="rounded-md bg-gray-950 px-4 py-3 text-sm font-bold text-white disabled:bg-gray-300 disabled:text-gray-600"
+                    >
+                      {isRepairingOperationsLeaderboard ? "Rebuilding..." : "Rebuild leaderboard cache"}
+                    </button>
+                  </div>
+
+                  {scoringAuditReport ? <ScoringAuditSummary report={scoringAuditReport} /> : null}
+                </section>
+              </div>
+
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-600">
+                <p className="font-black uppercase tracking-wide text-gray-700">Backend coverage</p>
+                <p className="mt-1">
+                  Available now: manual finalize/unfinalize, one-match scoring rerun, knockout rescoring, knockout advancement repair,
+                  leaderboard cache rebuild, match sync, read-only scoring audit, and explicit advanced reset tools.
+                </p>
+                <p className="mt-1">
+                  Missing as UI-backed safe repair: full `scripts/scoring-audit.ts --apply` extraction and per-match change-history viewer.
+                </p>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
@@ -1015,10 +1367,12 @@ export function AdminMatchesClient() {
                 <MatchResultCard
                   key={match.id}
                   match={match}
+                  isReviewTarget={match.id === selectedReviewMatchId}
                   onSaved={(updatedMatch) => {
                     setMatches((currentMatches) =>
                       currentMatches.map((currentMatch) => (currentMatch.id === updatedMatch.id ? updatedMatch : currentMatch))
                     );
+                    setSelectedReviewMatchId("");
                     showAppToast({ tone: "success", text: "Match updated." });
                   }}
                   onScored={(text) => showAppToast({ tone: "success", text })}
@@ -1163,11 +1517,11 @@ export function AdminMatchesClient() {
         <section className="rounded-lg border border-rose-200 bg-rose-50/60 p-4">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-1">
-              <p className="text-sm font-bold uppercase tracking-wide text-rose-700">Maintenance / Danger Zone</p>
-              <h3 className="text-lg font-black text-gray-950">Testing-only recovery tools</h3>
+              <p className="text-sm font-bold uppercase tracking-wide text-rose-700">Advanced</p>
+              <h3 className="text-lg font-black text-gray-950">Testing and destructive recovery tools</h3>
               <p className="text-sm font-semibold text-gray-600">
-                These tools are intended for testing and recovery. They can remove tournament data and should not be used
-                during normal play.
+                These tools were built for pre-launch QA and emergency recovery. Keep normal match publishing and scoring
+                repair in the operations panel above.
               </p>
               <p className="text-sm font-semibold text-rose-700">
                 Production deployments require explicit reset environment variables before either action can run.
@@ -1856,14 +2210,229 @@ export function AdminMatchesClient() {
   );
 }
 
+function OperationMetric({
+  label,
+  value,
+  tone,
+  onClick,
+  actionLabel
+}: {
+  label: string;
+  value: number;
+  tone: "emerald" | "amber" | "slate" | "rose" | "gray";
+  onClick?: () => void;
+  actionLabel?: string;
+}) {
+  const toneClass =
+    tone === "emerald"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : tone === "amber"
+        ? "border-amber-200 bg-amber-50 text-amber-800"
+        : tone === "rose"
+          ? "border-rose-200 bg-rose-50 text-rose-800"
+          : tone === "slate"
+            ? "border-slate-200 bg-slate-50 text-slate-800"
+            : "border-gray-200 bg-gray-50 text-gray-800";
+  const content = (
+    <>
+      <p className="text-[11px] font-black uppercase tracking-wide">{label}</p>
+      <p className="mt-1 text-2xl font-black">{value}</p>
+      {onClick && value > 0 ? <p className="mt-1 text-[10px] font-black uppercase tracking-wide opacity-75">View</p> : null}
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        disabled={value === 0}
+        onClick={onClick}
+        aria-label={actionLabel ?? `View ${label}`}
+        className={`rounded-lg border px-3 py-3 text-left transition focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:cursor-default ${toneClass}`}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className={`rounded-lg border px-3 py-3 ${toneClass}`}>
+      {content}
+    </div>
+  );
+}
+
+function MatchReviewQueueSection({
+  title,
+  items,
+  tone,
+  onReviewMatch
+}: {
+  title: string;
+  items: Array<{ match: AdminMatch; issues: string[] }>;
+  tone: "amber" | "rose" | "slate";
+  onReviewMatch: (match: AdminMatch) => void;
+}) {
+  const toneClass =
+    tone === "rose"
+      ? {
+          wrapper: "border-rose-200 bg-rose-50",
+          title: "text-rose-800",
+          card: "border-rose-100",
+          issue: "text-rose-800"
+        }
+      : tone === "slate"
+        ? {
+            wrapper: "border-slate-200 bg-slate-50",
+            title: "text-slate-800",
+            card: "border-slate-100",
+            issue: "text-slate-700"
+          }
+        : {
+            wrapper: "border-amber-200 bg-amber-50",
+            title: "text-amber-800",
+            card: "border-amber-100",
+            issue: "text-amber-800"
+          };
+  const visibleItems = items.slice(0, 6);
+  const hiddenCount = Math.max(0, items.length - visibleItems.length);
+
+  return (
+    <div className={`rounded-lg border p-3 ${toneClass.wrapper}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className={`text-xs font-black uppercase tracking-wide ${toneClass.title}`}>
+          {title} · {items.length}
+        </p>
+        {hiddenCount > 0 ? (
+          <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+            Showing first {visibleItems.length}; use filters below for all
+          </p>
+        ) : null}
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        {visibleItems.map((item) => (
+          <div key={`${title}-${item.match.id}`} className={`rounded-md border bg-white px-3 py-2 ${toneClass.card}`}>
+            <p className="text-sm font-black text-gray-950">
+              {item.match.id} · {getSideLabel(item.match, "home").short} vs {getSideLabel(item.match, "away").short}
+            </p>
+            <p className={`mt-1 text-xs font-semibold ${toneClass.issue}`}>{item.issues.join(" · ")}</p>
+            <p className="mt-1 text-xs font-semibold text-gray-600">
+              {formatMatchStatus(item.match.status)} · Score {formatScore(item.match)} · Winner{" "}
+              {getResolvedWinnerLabel(item.match, item.match.winnerTeamId)}
+            </p>
+            <p className="mt-2 rounded-md bg-gray-50 px-2 py-1.5 text-xs font-semibold text-gray-700">
+              Fix: {getMatchIssueRecommendation(item.match, item.issues)}
+            </p>
+            <button
+              type="button"
+              onClick={() => onReviewMatch(item.match)}
+              className="mt-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wide text-gray-800"
+            >
+              Review match
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MatchOperationSnapshot({ match }: { match: AdminMatch }) {
+  const issues = getMatchValidationIssues(match);
+  const operationState = getMatchOperationState(match);
+
+  return (
+    <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-black text-gray-950">
+            {match.id} · {getSideLabel(match, "home").short} vs {getSideLabel(match, "away").short}
+          </p>
+          <p className="mt-1 text-xs font-semibold text-gray-500">
+            Score: {formatScore(match)} · Winner: {getResolvedWinnerLabel(match, match.winnerTeamId)}
+          </p>
+        </div>
+        <span className={`rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-wide ${operationState.className}`}>
+          {operationState.label}
+        </span>
+      </div>
+
+      <dl className="mt-3 grid gap-2 text-xs font-semibold text-gray-600 sm:grid-cols-2">
+        <div>
+          <dt className="font-black uppercase tracking-wide text-gray-500">Source</dt>
+          <dd>{match.externalId ? `External ${match.externalId}` : match.syncStatus ? `Sync ${match.syncStatus}` : "Manual/app state"}</dd>
+        </div>
+        <div>
+          <dt className="font-black uppercase tracking-wide text-gray-500">Imported / updated</dt>
+          <dd>
+            {match.lastSyncedAt ? `Imported ${formatDateTime(match.lastSyncedAt)}` : "No import timestamp"} ·{" "}
+            {match.updatedAt ? `Updated ${formatDateTime(match.updatedAt)}` : "No update timestamp"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-black uppercase tracking-wide text-gray-500">Status</dt>
+          <dd>{formatMatchStatus(match.status)}</dd>
+        </div>
+        <div>
+          <dt className="font-black uppercase tracking-wide text-gray-500">Validation</dt>
+          <dd>{issues.length === 0 ? "Automatic OK" : issues.join(" · ")}</dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+function ScoringAuditSummary({ report }: { report: AdminScoringAuditReport }) {
+  return (
+    <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-black text-gray-950">Read-only audit report</p>
+        <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{formatDateTime(report.generatedAt)}</p>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {report.checks.map((check) => (
+          <div
+            key={check.key}
+            className={`rounded-md border px-3 py-2 ${
+              check.tone === "ok"
+                ? "border-emerald-100 bg-emerald-50 text-emerald-800"
+                : check.tone === "danger"
+                  ? "border-rose-100 bg-rose-50 text-rose-800"
+                  : "border-amber-100 bg-amber-50 text-amber-800"
+            }`}
+          >
+            <p className="text-xs font-black uppercase tracking-wide">{check.label}</p>
+            <p className="mt-1 text-lg font-black">{check.count}</p>
+            <p className="mt-1 text-xs font-semibold">{check.description}</p>
+          </div>
+        ))}
+      </div>
+
+      {report.warnings.length > 0 ? (
+        <div className="mt-3 rounded-md border border-amber-100 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+          {report.warnings.slice(0, 3).join(" · ")}
+        </div>
+      ) : null}
+
+      {report.terminalOnlyInterventions.length > 0 ? (
+        <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-600">
+          {report.terminalOnlyInterventions[0]}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 type MatchResultCardProps = {
   match: AdminMatch;
+  isReviewTarget?: boolean;
   onSaved: (match: AdminMatch) => void;
   onScored: (message: string) => void;
   onError: (message: string) => void;
 };
 
-function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardProps) {
+function MatchResultCard({ match, isReviewTarget = false, onSaved, onScored, onError }: MatchResultCardProps) {
   const router = useRouter();
   const [status, setStatus] = useState<MatchStatus>(match.status);
   const [homeScore, setHomeScore] = useState(getAdminInitialScoreInput(match.homeScore));
@@ -1874,6 +2443,8 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
   const predictionStateLabel = getPredictionStateLabel(status);
   const homeLabel = getSideLabel(match, "home");
   const awayLabel = getSideLabel(match, "away");
+  const validationIssues = getMatchValidationIssues(match);
+  const operationState = getMatchOperationState(match, validationIssues);
   const resolvedWinnerTeamId = getResolvedWinnerTeamId(match, homeScore, awayScore);
   const resolvedWinnerLabel = getResolvedWinnerLabel(match, resolvedWinnerTeamId);
   const hasUnsavedChanges =
@@ -1889,6 +2460,17 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    const affectsScoresOrLeaderboard = status === "final" || match.status === "final";
+    if (affectsScoresOrLeaderboard) {
+      const confirmed = window.confirm(
+        "Save this match operation? Match status may change, bracket scores may be cleared or rebuilt, canonical totals may be recomputed, leaderboard cache may be rebuilt, and affected pages may be revalidated. User predictions will not be changed."
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
     setIsSaving(true);
 
     try {
@@ -1933,13 +2515,16 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
 
   return (
     <form
+      id={getAdminMatchEditorId(match.id)}
       onSubmit={handleSubmit}
-      className={`rounded-lg border p-4 transition-colors ${
-        isFinalized
-          ? "border-gray-300 bg-gray-100"
-          : isLive
-            ? "border-amber-200 bg-amber-50"
-            : "border-gray-200 bg-white"
+      className={`scroll-mt-6 rounded-lg border p-4 transition-colors ${
+        isReviewTarget
+          ? "border-accent bg-white ring-2 ring-accent/30"
+          : isFinalized
+            ? "border-gray-300 bg-gray-100"
+            : isLive
+              ? "border-amber-200 bg-amber-50"
+              : "border-gray-200 bg-white"
       }`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -2015,6 +2600,9 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
             }`}
           >
             {predictionStateLabel}
+          </span>
+          <span className={`rounded-md px-2 py-1 text-xs font-bold uppercase ${operationState.className}`}>
+            {operationState.label}
           </span>
         </div>
       </div>
@@ -2107,6 +2695,7 @@ function MatchResultCard({ match, onSaved, onScored, onError }: MatchResultCardP
           ) : null}
           <span>{match.lastSyncedAt ? `Results synced ${formatRelativeMinutes(match.lastSyncedAt)}` : "Waiting for results"}</span>
           {match.syncError ? <span className="text-rose-700">{match.syncError}</span> : null}
+          {validationIssues.length > 0 ? <span className="text-amber-700">{validationIssues.join(" · ")}</span> : null}
         </div>
 
         <button
@@ -2257,6 +2846,185 @@ function compareAdminMatches(left: AdminMatch, right: AdminMatch) {
   }
 
   return left.id.localeCompare(right.id, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function buildMatchOperationSummary(matches: AdminMatch[]) {
+  const summary = {
+    automaticOk: 0,
+    needsReview: 0,
+    manualOverride: 0,
+    conflict: 0,
+    finalized: 0,
+    reviewQueue: [] as Array<{ match: AdminMatch; issues: string[] }>,
+    conflictQueue: [] as Array<{ match: AdminMatch; issues: string[] }>,
+    needsReviewQueue: [] as Array<{ match: AdminMatch; issues: string[] }>,
+    manualOverrideQueue: [] as Array<{ match: AdminMatch; issues: string[] }>
+  };
+
+  for (const match of matches) {
+    const issues = getMatchValidationIssues(match);
+    const state = getMatchOperationState(match, issues);
+
+    if (state.key === "automatic_ok") {
+      summary.automaticOk += 1;
+    }
+    if (state.key === "needs_review") {
+      summary.needsReview += 1;
+    }
+    if (state.key === "manual_override") {
+      summary.manualOverride += 1;
+    }
+    if (state.key === "conflict") {
+      summary.conflict += 1;
+    }
+    if (match.status === "final") {
+      summary.finalized += 1;
+    }
+    if (issues.length > 0 || match.isManualOverride) {
+      const queueItem = {
+        match,
+        issues: issues.length > 0 ? issues : ["Manual override active"]
+      };
+
+      summary.reviewQueue.push(queueItem);
+
+      if (state.key === "conflict") {
+        summary.conflictQueue.push(queueItem);
+      } else if (state.key === "needs_review") {
+        summary.needsReviewQueue.push(queueItem);
+      } else if (state.key === "manual_override") {
+        summary.manualOverrideQueue.push(queueItem);
+      }
+    }
+  }
+
+  return summary;
+}
+
+function getAdminMatchEditorId(matchId: string) {
+  return `admin-match-editor-${matchId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+function getMatchIssueRecommendation(match: AdminMatch, issues: string[]) {
+  if (issues.includes("winner/score conflict")) {
+    return "Make the saved winner match the score, or correct the score before publishing.";
+  }
+  if (issues.includes("winner/team ID mismatch")) {
+    return "Clear the winner or choose one of the two teams shown in this match.";
+  }
+  if (issues.includes("knockout draw conflict")) {
+    return "Knockout matches need an official winner; enter the tie-break winner before finalizing.";
+  }
+  if (issues.includes("missing score")) {
+    return "Enter both scores before marking this match final.";
+  }
+  if (issues.includes("missing team")) {
+    return match.stage === "group"
+      ? "Assign both teams before publishing this group match."
+      : "Seed the knockout teams first; do not publish this match until both teams are known.";
+  }
+  if (issues.includes("impossible score")) {
+    return "Use non-negative scores only.";
+  }
+  if (issues.includes("sync conflict detected")) {
+    return "Compare the imported result with the published result, then sync or keep the manual override intentionally.";
+  }
+  if (issues.includes("published result newer than import")) {
+    return "Keep the manual result if intentional, or sync imported results after confirming the official feed.";
+  }
+  if (match.isManualOverride) {
+    return "Leave this alone if the override is intentional; otherwise review and clear the test result.";
+  }
+
+  return "Review status, teams, score, and winner before publishing.";
+}
+
+function getMatchValidationIssues(match: AdminMatch) {
+  const issues: string[] = [];
+  const hasHomeScore = typeof match.homeScore === "number";
+  const hasAwayScore = typeof match.awayScore === "number";
+  const isKnockout = match.stage !== "group";
+
+  if ((!match.homeTeamId || !match.awayTeamId) && (match.stage === "group" || match.status !== "scheduled")) {
+    issues.push("missing team");
+  }
+  if (match.status === "final" && (!hasHomeScore || !hasAwayScore)) {
+    issues.push("missing score");
+  }
+  if ((hasHomeScore && match.homeScore! < 0) || (hasAwayScore && match.awayScore! < 0)) {
+    issues.push("impossible score");
+  }
+  if (match.winnerTeamId && match.winnerTeamId !== match.homeTeamId && match.winnerTeamId !== match.awayTeamId) {
+    issues.push("winner/team ID mismatch");
+  }
+  if (hasHomeScore && hasAwayScore) {
+    const expectedWinner =
+      match.homeScore === match.awayScore
+        ? null
+        : match.homeScore! > match.awayScore!
+          ? match.homeTeamId ?? null
+          : match.awayTeamId ?? null;
+
+    if (expectedWinner !== match.winnerTeamId && !(expectedWinner === null && !match.winnerTeamId)) {
+      issues.push("winner/score conflict");
+    }
+    if (isKnockout && match.status === "final" && expectedWinner === null) {
+      issues.push("knockout draw conflict");
+    }
+  }
+  if (match.syncStatus === "error") {
+    issues.push("sync conflict detected");
+  }
+  if (match.lastSyncedAt && match.updatedAt && new Date(match.updatedAt).getTime() > new Date(match.lastSyncedAt).getTime()) {
+    issues.push("published result newer than import");
+  }
+
+  return issues;
+}
+
+function getMatchOperationState(match: AdminMatch, knownIssues = getMatchValidationIssues(match)) {
+  const hasConflict = knownIssues.some((issue) => issue.includes("conflict") || issue.includes("mismatch"));
+
+  if (hasConflict) {
+    return {
+      key: "conflict",
+      label: "Conflict detected",
+      className: "bg-rose-100 text-rose-800"
+    };
+  }
+  if (match.isManualOverride) {
+    return {
+      key: "manual_override",
+      label: "Manual override active",
+      className: "bg-slate-900 text-white"
+    };
+  }
+  if (knownIssues.length > 0) {
+    return {
+      key: "needs_review",
+      label: "Needs review",
+      className: "bg-amber-100 text-amber-800"
+    };
+  }
+  if (match.status === "final") {
+    return {
+      key: "published",
+      label: "Published / Finalized",
+      className: "bg-gray-200 text-gray-800"
+    };
+  }
+
+  return {
+    key: "automatic_ok",
+    label: "Automatic OK",
+    className: "bg-emerald-100 text-emerald-800"
+  };
+}
+
+function formatScore(match: AdminMatch) {
+  return typeof match.homeScore === "number" && typeof match.awayScore === "number"
+    ? `${match.homeScore}-${match.awayScore}`
+    : "not set";
 }
 
 function formatMatchStatus(status: MatchStatus) {

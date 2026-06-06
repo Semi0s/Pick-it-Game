@@ -67,6 +67,10 @@ import {
   rebuildScopedLeaderboardState
 } from "@/lib/scoped-scoring";
 import {
+  runReadOnlyAdminScoringAudit,
+  type AdminScoringAuditReport
+} from "@/lib/admin-scoring-audit";
+import {
   DASHBOARD_UI_RESET_EPOCH_SETTING_KEY,
   LEADERBOARD_SOCIAL_RESET_AT_SETTING_KEY
 } from "@/lib/ui-storage-keys";
@@ -216,6 +220,17 @@ export type RescoreKnockoutScoresResult =
       ok: true;
       rescoredMatches: number;
       rescoredPredictions: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type RunAdminScoringAuditResult =
+  | {
+      ok: true;
+      report: AdminScoringAuditReport;
       message: string;
     }
   | {
@@ -3297,7 +3312,7 @@ type KnockoutResetRpcRow = {
 };
 
 export async function updateAdminMatchResultAction(input: UpdateMatchResultInput): Promise<UpdateMatchResult> {
-  const adminCheck = await assertCurrentUserIsAdmin();
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
   if (!adminCheck.ok) {
     return adminCheck;
   }
@@ -3413,7 +3428,7 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
 }
 
 export async function rescoreKnockoutScoresAction(): Promise<RescoreKnockoutScoresResult> {
-  const adminCheck = await assertCurrentUserIsAdmin();
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
   if (!adminCheck.ok) {
     return adminCheck;
   }
@@ -3459,6 +3474,29 @@ export async function rescoreKnockoutScoresAction(): Promise<RescoreKnockoutScor
     rescoredPredictions,
     message: `Rescored ${rescoredPredictions} knockout predictions across ${finalizedKnockoutMatches.length} finalized matches.`
   };
+}
+
+export async function runAdminScoringAuditAction(): Promise<RunAdminScoringAuditResult> {
+  const superAdminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!superAdminCheck.ok) {
+    return superAdminCheck;
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const report = await runReadOnlyAdminScoringAudit(adminSupabase);
+
+    return {
+      ok: true,
+      report,
+      message:
+        report.counts.mismatches === 0
+          ? "Read-only scoring audit completed with no mismatches."
+          : `Read-only scoring audit found ${report.counts.mismatches} mismatches.`
+    };
+  } catch (error) {
+    return { ok: false, message: buildAdminActionErrorMessage(error, "Could not run the read-only scoring audit.") };
+  }
 }
 
 export async function batchFinalizeMatchResultsAction(
@@ -3875,7 +3913,7 @@ export async function batchClearMatchResultsAction(
 }
 
 export async function repairKnockoutAdvancementAction(): Promise<RepairKnockoutAdvancementResult> {
-  const adminCheck = await assertCurrentUserIsAdmin();
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
   if (!adminCheck.ok) {
     return adminCheck;
   }
@@ -3913,7 +3951,7 @@ export async function repairKnockoutAdvancementAction(): Promise<RepairKnockoutA
 }
 
 export async function syncMatchesNowAction(): Promise<SyncMatchesNowResult> {
-  const adminCheck = await assertCurrentUserIsAdmin();
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
   if (!adminCheck.ok) {
     return adminCheck;
   }
@@ -5095,7 +5133,7 @@ export async function fetchKnockoutSeedingStatusAction(): Promise<KnockoutSeedin
 }
 
 export async function scoreFinalizedGroupMatch(matchId: string): Promise<ScoreMatchResult> {
-  const adminCheck = await assertCurrentUserIsAdmin();
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
   if (!adminCheck.ok) {
     return adminCheck;
   }
