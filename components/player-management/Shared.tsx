@@ -968,7 +968,8 @@ export function InlineTextConfirmation({
   onConfirm,
   onCancel,
   isPending = false,
-  tone = "danger"
+  tone = "danger",
+  children
 }: {
   title: string;
   description: string;
@@ -983,6 +984,7 @@ export function InlineTextConfirmation({
   onCancel: () => void;
   isPending?: boolean;
   tone?: "danger" | "neutral";
+  children?: ReactNode;
 }) {
   const matches = value.trim() === expectedValue.trim();
 
@@ -1002,6 +1004,7 @@ export function InlineTextConfirmation({
       <p className="mt-2 text-xs font-semibold text-gray-600">
         Type <span className="font-black text-gray-950">{expectedValue}</span> to continue.
       </p>
+      {children ? <div className="mt-4">{children}</div> : null}
       <div className="mt-4 flex flex-wrap gap-2">
         <ActionButton onClick={onConfirm} disabled={isPending || !matches} tone={tone === "danger" ? "danger" : "accent"}>
           {isPending ? "Working..." : confirmLabel}

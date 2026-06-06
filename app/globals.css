@@ -186,6 +186,14 @@ select {
   font: inherit;
 }
 
+@supports (-webkit-touch-callout: none) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
+
 @layer components {
   .ui-card {
     @apply rounded-[1.15rem] border border-gray-200 bg-white;

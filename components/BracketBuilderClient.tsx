@@ -7,7 +7,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, GitFork, TriangleAle
 import { saveLightSeedBuilderAction } from "@/app/groups/actions";
 import { ActionButton, InlineDisclosureButton } from "@/components/player-management/Shared";
 import { useAppLanguage } from "@/lib/app-language";
-import { showAppToast } from "@/lib/app-toast";
+import { dismissAppToast, showAppToast } from "@/lib/app-toast";
 import { formatDate, formatNumber, formatTime } from "@/lib/i18n-format";
 import { storeGroupsEntryIntent } from "@/lib/groups-entry-intent";
 import {
@@ -122,6 +122,8 @@ type TopTwoSlotDraft = {
 
 const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
 const BRACKET_BUILDER_COMPLETION_SEEN_STORAGE_KEY = "bracket-builder-completion-seen";
+const GROUP_STAGE_SAVE_REMINDER_TOAST_ID = "group-stage-save-reminder";
+const GROUP_STAGE_SAVE_REMINDER_DISMISS_STORAGE_PREFIX = "pickit:group-stage-save-reminder-dismissed:v1";
 
 const SWIPE_THRESHOLD_PX = 42;
 const GROUP_SWIPE_EXIT_MS = 190;
@@ -195,6 +197,10 @@ function clearUnsavedGroupStageDraft() {
   } catch {
     // Ignore storage failures. The server save remains the source of truth.
   }
+}
+
+function getGroupStageSaveReminderDismissStorageKey(userId?: string | null) {
+  return `${GROUP_STAGE_SAVE_REMINDER_DISMISS_STORAGE_PREFIX}:${userId ?? "anonymous"}`;
 }
 
 function clampNumber(value: number, min: number, max: number) {
@@ -1343,6 +1349,40 @@ export function BracketBuilderClient({
     () => new Map(bracketScenarioImpact.affectedSlots.map((slot) => [slot.slotId, slot])),
     [bracketScenarioImpact.affectedSlots]
   );
+  const groupStageSaveReminderDismissStorageKey = useMemo(
+    () => getGroupStageSaveReminderDismissStorageKey(userId),
+    [userId]
+  );
+
+  useEffect(() => {
+    const shouldShowSaveReminder =
+      hasCompletedBracketOnce &&
+      hasUnsavedGroupStageChanges &&
+      canSaveProgress &&
+      !isReadOnly;
+
+    if (!shouldShowSaveReminder) {
+      dismissAppToast(GROUP_STAGE_SAVE_REMINDER_TOAST_ID);
+      return;
+    }
+
+    showAppToast({
+      id: GROUP_STAGE_SAVE_REMINDER_TOAST_ID,
+      tone: "tip",
+      text: t(language, "bracket.unsavedChangesSaveReminder"),
+      durationMs: null,
+      dismissLabel: t(language, "bracket.dismissSaveReminder"),
+      dismissStorageKey: groupStageSaveReminderDismissStorageKey
+    });
+  }, [
+    canSaveProgress,
+    groupStageSaveReminderDismissStorageKey,
+    hasCompletedBracketOnce,
+    hasUnsavedGroupStageChanges,
+    isReadOnly,
+    language
+  ]);
+
   const scenarioImpactPicksLabel = t(
     language,
     scenarioImpact.affectedPickCount === 1

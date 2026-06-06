@@ -1280,7 +1280,7 @@ begin
     when 'captain' then v_limit := 1;
     when 'manager' then v_limit := 3;
     when 'director' then v_limit := 10;
-    when 'managing_director' then v_limit := 30;
+    when 'managing_director' then v_limit := 25;
     else v_limit := 0;
   end case;
 
@@ -1328,7 +1328,7 @@ begin
   case v_plan_tier
     when 'captain' then v_limit := 20;
     when 'manager' then v_limit := 30;
-    when 'director' then v_limit := 20;
+    when 'director' then v_limit := 100;
     when 'managing_director' then v_limit := 100;
     else v_limit := 0;
   end case;

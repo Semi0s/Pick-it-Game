@@ -746,6 +746,7 @@ export type RemoveGroupMemberResult = ResendGroupInviteResult;
 export type LeaveJoinedGroupResult = ResendGroupInviteResult;
 export type UpdateGroupInviteNameResult = ResendGroupInviteResult;
 export type DeleteManagedGroupResult = ResendGroupInviteResult;
+export type TransferManagedGroupOwnershipResult = ResendGroupInviteResult;
 export type UpdateManagedGroupLimitResult = ResendGroupInviteResult;
 export type UpdateManagedGroupProfileResult = ResendGroupInviteResult;
 export type UpdateManagedGroupAvatarResult =
@@ -4486,6 +4487,119 @@ export async function deleteManagedGroupAction(groupId: string, confirmationName
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not delete that group."
+    };
+  }
+}
+
+export async function transferManagedGroupOwnershipAction(
+  groupId: string,
+  nextOwnerUserId: string,
+  confirmationName: string
+): Promise<TransferManagedGroupOwnershipResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedGroupId = groupId.trim();
+  const trimmedNextOwnerUserId = nextOwnerUserId.trim();
+  const trimmedConfirmationName = confirmationName.trim();
+  if (!trimmedGroupId || !trimmedNextOwnerUserId || !trimmedConfirmationName) {
+    return { ok: false, message: "Choose a group, recipient, and type the group name to transfer management." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    if (currentUser.role !== "admin" && managedGroup.owner_user_id !== currentUser.userId) {
+      return { ok: false, message: "Only the group owner can transfer management." };
+    }
+
+    if (trimmedConfirmationName !== managedGroup.name.trim()) {
+      return { ok: false, message: "Type the exact group name before transferring management." };
+    }
+
+    if (managedGroup.owner_user_id === trimmedNextOwnerUserId) {
+      return { ok: false, message: "That player already manages this group." };
+    }
+
+    const { data: recipientMembership, error: recipientMembershipError } = await adminSupabase
+      .from("group_members")
+      .select("id,user_id,role,user:users!group_members_user_id_fkey(id,name,email,plan_tier)")
+      .eq("group_id", managedGroup.id)
+      .eq("user_id", trimmedNextOwnerUserId)
+      .maybeSingle();
+
+    if (recipientMembershipError) {
+      return { ok: false, message: recipientMembershipError.message };
+    }
+
+    const recipient = recipientMembership as
+      | {
+          id: string;
+          user_id: string;
+          role: GroupMemberRole;
+          user?:
+            | { id: string; name: string; email: string; plan_tier?: string | null }
+            | Array<{ id: string; name: string; email: string; plan_tier?: string | null }>
+            | null;
+        }
+      | null;
+    const recipientUser = Array.isArray(recipient?.user) ? recipient?.user[0] : recipient?.user;
+
+    if (!recipient || !recipientUser) {
+      return { ok: false, message: "Choose a current group member to receive management." };
+    }
+
+    const recipientPlanTier = normalizeCommercialTier(recipientUser.plan_tier ?? null) ?? "player";
+    if (recipientPlanTier === "player") {
+      const { error: tierUpdateError } = await adminSupabase
+        .from("users")
+        .update({ plan_tier: "captain", updated_at: new Date().toISOString() })
+        .eq("id", recipientUser.id);
+
+      if (tierUpdateError) {
+        return { ok: false, message: tierUpdateError.message };
+      }
+    }
+
+    const { error: groupUpdateError } = await adminSupabase
+      .from("groups")
+      .update({
+        owner_user_id: recipientUser.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", managedGroup.id);
+
+    if (groupUpdateError) {
+      return { ok: false, message: groupUpdateError.message };
+    }
+
+    console.info("[tier-access:group-management-transferred]", {
+      userId: currentUser.userId,
+      accessLevel: currentUser.accessLevel,
+      groupId: managedGroup.id,
+      previousOwnerUserId: managedGroup.owner_user_id,
+      nextOwnerUserId: recipientUser.id,
+      recipientPlanTierBefore: recipientPlanTier,
+      recipientPlanTierAfter: recipientPlanTier === "player" ? "captain" : recipientPlanTier
+    });
+
+    revalidatePath("/my-groups");
+    revalidatePath("/dashboard");
+
+    return {
+      ok: true,
+      message: `${recipientUser.name || recipientUser.email} now manages ${managedGroup.name}.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not transfer that group."
     };
   }
 }
