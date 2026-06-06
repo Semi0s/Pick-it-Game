@@ -39,6 +39,25 @@ export type PickProbabilityGroupRanking = {
   rankedTeamIds: string[];
 };
 
+export function mergeProbabilityRowTeamIds(
+  selectedTeamIds: readonly (string | null | undefined)[],
+  fullGroupTeamIds: readonly (string | null | undefined)[]
+): string[] {
+  const seenTeamIds = new Set<string>();
+  const mergedTeamIds: string[] = [];
+
+  for (const teamId of [...selectedTeamIds, ...fullGroupTeamIds]) {
+    if (!teamId || seenTeamIds.has(teamId)) {
+      continue;
+    }
+
+    seenTeamIds.add(teamId);
+    mergedTeamIds.push(teamId);
+  }
+
+  return mergedTeamIds;
+}
+
 export function shouldShowMiniTablePickProbability({
   predictedPlace,
   isSelectedThirdPlaceQualifier

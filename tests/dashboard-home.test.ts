@@ -25,6 +25,7 @@ import {
   getPickProbabilityForTeam,
   getThirdPlaceCandidatePoolFromGroupRankings,
   getThirdPlaceSelectionProbability,
+  mergeProbabilityRowTeamIds,
   shouldShowMiniTablePickProbability
 } from "../lib/group-pick-probability.ts";
 import { shouldUseOfficialGroupStandingsOrder } from "../lib/group-standings.ts";
@@ -394,6 +395,51 @@ test("pick probability uses exact placement for top two and advance probability 
     getPickProbabilityForTeam({ rows: finalRows, teamId: "rsa", predictedPlace: 4, isAdvancing: false })?.probability,
     0
   );
+});
+
+test("top-two picker exact-place probabilities use the full group roster", () => {
+  const teams = [
+    { id: "bra", name: "Brazil", shortName: "BRA", groupName: "Group C", fifaRank: 5, fifaPoints: 1780, flagEmoji: "🇧🇷" },
+    { id: "mex", name: "Mexico", shortName: "MEX", groupName: "Group C", fifaRank: 14, fifaPoints: 1660, flagEmoji: "🇲🇽" },
+    { id: "sco", name: "Scotland", shortName: "SCO", groupName: "Group C", fifaRank: 44, fifaPoints: 1485, flagEmoji: "🏴" },
+    { id: "hai", name: "Haiti", shortName: "HAI", groupName: "Group C", fifaRank: 89, fifaPoints: 1270, flagEmoji: "🇭🇹" }
+  ];
+  const teamsById = new Map(teams.map((team) => [team.id, team] as const));
+  const selectedTopTwoTeamIds = ["bra", "mex"];
+  const fullGroupTeamIds = ["bra", "mex", "sco", "hai"];
+  const probabilityRowTeamIds = mergeProbabilityRowTeamIds(selectedTopTwoTeamIds, fullGroupTeamIds);
+  const rows = probabilityRowTeamIds.map((teamId, index) => ({
+    teamId,
+    rank: index + 1,
+    played: 0,
+    goalsFor: 0,
+    goalDifference: 0,
+    points: 0
+  }));
+  const selectedOnlyTeams = selectedTopTwoTeamIds.map((teamId) => teamsById.get(teamId)!);
+  const fullGroupTeams = fullGroupTeamIds.map((teamId) => teamsById.get(teamId)!);
+  const mexico = teamsById.get("mex")!;
+
+  const partialPoolPick = getPickProbabilityForTeam({
+    rows,
+    teamId: "mex",
+    team: mexico,
+    groupTeams: selectedOnlyTeams,
+    predictedPlace: 2
+  });
+  const canonicalPick = getPickProbabilityForTeam({
+    rows,
+    teamId: "mex",
+    team: mexico,
+    groupTeams: fullGroupTeams,
+    predictedPlace: 2
+  });
+
+  assert.deepEqual(probabilityRowTeamIds, fullGroupTeamIds);
+  assert.notEqual(partialPoolPick?.probability, canonicalPick?.probability);
+  assert.equal(canonicalPick?.probability, getGroupSelectionProbability(mexico, 2, fullGroupTeams));
+  assert.equal(canonicalPick?.source, "finish_2");
+  assert.equal(canonicalPick?.fullLabel, `${canonicalPick?.probability}% for 2nd`);
 });
 
 test("third-place mini standings use the full candidate pool for canonical advance probability", () => {
