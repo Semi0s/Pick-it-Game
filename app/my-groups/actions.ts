@@ -479,8 +479,13 @@ export type MyManagedGroup = {
   memberCount?: number;
   pendingInviteCount?: number;
   canManage: boolean;
+  isCurrentUserOwner: boolean;
   userRole: "super_admin" | GroupMemberRole | "viewer";
   currentUserGroupLevelLabel: "Admin View" | "Manager" | "Player" | "Viewer";
+  activeInviteCode?: {
+    code: string;
+    expiresAt?: string | null;
+  } | null;
 };
 
 export type ManagedGroupMember = {
@@ -5580,9 +5585,10 @@ async function fetchVisibleGroups(
       isOwner: group.owner_user_id === userId,
       isGroupManager: membershipRole === "manager"
     };
+    const isCurrentUserOwner = group.owner_user_id === userId;
     const groupKind = normalizeGroupKind(group.group_kind);
     const accessMode = normalizeGroupAccessMode(group.access_mode);
-    const canManageCaptainPrivate = groupKind === "captain_private" && group.owner_user_id === userId;
+    const canManageCaptainPrivate = groupKind === "captain_private" && isCurrentUserOwner;
     const canManage = role === "admin" || canManageCaptainPrivate || canManageGroup(currentUser, relation);
 
     return {
@@ -5598,6 +5604,7 @@ async function fetchVisibleGroups(
       membershipLimit: group.membership_limit,
       status: group.status,
       canManage,
+      isCurrentUserOwner,
       userRole:
         role === "admin"
           ? "super_admin"
@@ -5617,7 +5624,8 @@ async function fetchVisibleGroups(
 
   const groupIds = baseGroups.map((group) => group.id);
   const manageableGroupIds = baseGroups.filter((group) => group.canManage).map((group) => group.id);
-  const [memberRowsResult, pendingInviteRowsResult] = await Promise.all([
+  const ownedGroupIds = baseGroups.filter((group) => group.isCurrentUserOwner).map((group) => group.id);
+  const [memberRowsResult, pendingInviteRowsResult, inviteCodeRowsResult] = await Promise.all([
     adminSupabase
       .from("group_members")
       .select("group_id")
@@ -5628,6 +5636,14 @@ async function fetchVisibleGroups(
           .select("group_id,status")
           .in("group_id", manageableGroupIds)
           .eq("status", "pending")
+      : Promise.resolve({ data: [], error: null }),
+    ownedGroupIds.length > 0
+      ? adminSupabase
+          .from("access_codes")
+          .select("id,code,active,max_uses,used_count,expires_at,group_id,created_at,updated_at")
+          .in("group_id", ownedGroupIds)
+          .eq("code_type", "standard")
+          .order("updated_at", { ascending: false })
       : Promise.resolve({ data: [], error: null })
   ]);
 
@@ -5637,6 +5653,10 @@ async function fetchVisibleGroups(
 
   if (pendingInviteRowsResult.error) {
     throw new Error(pendingInviteRowsResult.error.message);
+  }
+
+  if (inviteCodeRowsResult.error) {
+    throw new Error(inviteCodeRowsResult.error.message);
   }
 
   const memberCounts = new Map<string, number>();
@@ -5649,10 +5669,26 @@ async function fetchVisibleGroups(
     pendingInviteCounts.set(row.group_id, (pendingInviteCounts.get(row.group_id) ?? 0) + 1);
   }
 
+  const activeInviteCodeByGroup = new Map<string, AccessCodeRecord>();
+  for (const row of ((inviteCodeRowsResult.data ?? []) as AccessCodeRecord[])) {
+    if (!row.group_id || activeInviteCodeByGroup.has(row.group_id) || !isManagedGroupInviteCodeUsable(row)) {
+      continue;
+    }
+
+    activeInviteCodeByGroup.set(row.group_id, row);
+  }
+
   return baseGroups.map((group) => ({
     ...group,
     memberCount: memberCounts.get(group.id) ?? 0,
-    pendingInviteCount: group.canManage ? pendingInviteCounts.get(group.id) ?? 0 : 0
+    pendingInviteCount: group.canManage ? pendingInviteCounts.get(group.id) ?? 0 : 0,
+    activeInviteCode:
+      group.isCurrentUserOwner && activeInviteCodeByGroup.has(group.id)
+        ? {
+            code: activeInviteCodeByGroup.get(group.id)?.code ?? "",
+            expiresAt: activeInviteCodeByGroup.get(group.id)?.expires_at ?? null
+          }
+        : null
   }));
 }
 

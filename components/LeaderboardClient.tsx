@@ -134,6 +134,8 @@ function LeaderboardPlayerRow({
       ? "border-gray-300 bg-white shadow-[0_8px_20px_rgba(15,23,42,0.06)]"
       : "border-gray-200 bg-white shadow-[0_6px_18px_rgba(15,23,42,0.04)]";
   const rankTone = isCurrentUser ? "text-accent-dark" : isLightlyHighlighted ? "text-gray-800" : "text-gray-700";
+  const canShowTrophyAwardAction = canAwardManagedTrophies && (profile.id !== currentUserId || canSelfAwardTrophies);
+  const rowContentPadding = canShowTrophyAwardAction ? "pr-32" : "pr-20";
 
   const rowContent = (
     <>
@@ -171,7 +173,24 @@ function LeaderboardPlayerRow({
       style={localizedCardVars}
     >
       <LeaderboardPlayerLocalizationBackground theme={localizedTheme} />
-      <div className="pointer-events-none absolute right-3 top-1/2 z-10 -translate-y-1/2">
+      <div className="absolute right-3 top-1/2 z-20 flex -translate-y-1/2 items-center gap-1.5">
+        {canShowTrophyAwardAction ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!managedAwardGroup) {
+                return;
+              }
+              onOpenTrophySheet(profile.id);
+            }}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-sm shadow-[0_6px_16px_rgba(15,23,42,0.12)] transition hover:border-accent hover:bg-accent-light focus:outline-none focus:ring-2 focus:ring-accent-light"
+            aria-label={`Award trophy to ${profile.name}`}
+          >
+            🏆
+          </button>
+        ) : null}
         <span className="leaderboard-score-chip ui-chip-sm border border-gray-200 bg-white/95 px-1.5 text-[9px] font-black text-gray-950">
           {homeTeam?.flagEmoji ? (
             <span
@@ -188,34 +207,17 @@ function LeaderboardPlayerRow({
         </span>
       </div>
       {isCurrentUser ? (
-        <div className="relative z-10 grid min-h-[3.65rem] min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 pr-20">
+        <div className={`relative z-10 grid min-h-[3.65rem] min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 ${rowContentPadding}`}>
           {rowContent}
         </div>
       ) : (
         <Link
           href={`/leaderboard/${profile.id}`}
-          className="relative z-10 grid min-h-[3.65rem] min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 pr-20"
+          className={`relative z-10 grid min-h-[3.65rem] min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 ${rowContentPadding}`}
         >
           {rowContent}
         </Link>
       )}
-      {canAwardManagedTrophies && (profile.id !== currentUserId || canSelfAwardTrophies) ? (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            if (!managedAwardGroup) {
-              return;
-            }
-            onOpenTrophySheet(profile.id);
-          }}
-          className="absolute bottom-3 right-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-base shadow-[0_8px_20px_rgba(15,23,42,0.12)] transition hover:border-accent hover:bg-accent-light"
-          aria-label={`Award trophy to ${profile.name}`}
-        >
-          🏆
-        </button>
-      ) : null}
     </div>
   );
 }
