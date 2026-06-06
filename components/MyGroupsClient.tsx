@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChangeEvent, Dispatch, FormEvent, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Info } from "lucide-react";
+import { Copy, Info } from "lucide-react";
 import { fetchGroupInvitePreviewAction } from "@/app/group-invite-preview/actions";
 import {
   acceptGroupInviteAction,
@@ -41,6 +41,11 @@ import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { OrganizationBrandingPanel } from "@/components/OrganizationBrandingPanel";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { showAppToast } from "@/lib/app-toast";
+import {
+  getAvatarImageInputAcceptAttribute,
+  getAvatarImageProcessingErrorMessage,
+  processAvatarImage
+} from "@/lib/avatar-image-processing";
 import { useAppLanguage } from "@/lib/app-language";
 import { formatDateOnly } from "@/lib/date-time";
 import {
@@ -69,7 +74,6 @@ import {
   useSessionDisclosureState
 } from "@/components/player-management/Shared";
 import {
-  MAX_GROUP_AVATAR_FILE_BYTES,
   getGroupInviteSourceLabel,
   getGroupJoinSourceLabel,
   MAX_CAPTAIN_PRIVATE_GROUP_MEMBERS,
@@ -144,6 +148,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [groupLimitForms, setGroupLimitForms] = useState<Record<string, string>>({});
   const [groupProfileDrafts, setGroupProfileDrafts] = useState<Record<string, { name: string; description: string }>>({});
   const [groupAvatarDrafts, setGroupAvatarDrafts] = useState<Record<string, GroupAvatarDraft>>({});
+  const [groupAvatarProcessingIds, setGroupAvatarProcessingIds] = useState<Record<string, boolean>>({});
   const [allowedEmailsDrafts, setAllowedEmailsDrafts] = useState<Record<string, string>>({});
   const [captainPassSelections, setCaptainPassSelections] = useState<Record<string, { userId: string; allowance: string }>>({});
   const [captainOnboardingDrafts, setCaptainOnboardingDrafts] = useState<Record<string, { email: string; allowance: string }>>({});
@@ -230,6 +235,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     tier?: "bronze" | "silver" | "gold" | "special" | null;
   } | null>(null);
   const groupAvatarInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const groupAvatarDraftsRef = useRef(groupAvatarDrafts);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -279,14 +285,18 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   }, [inviteToken]);
 
   useEffect(() => {
+    groupAvatarDraftsRef.current = groupAvatarDrafts;
+  }, [groupAvatarDrafts]);
+
+  useEffect(() => {
     return () => {
-      Object.values(groupAvatarDrafts).forEach((draft) => {
+      Object.values(groupAvatarDraftsRef.current).forEach((draft) => {
         if (draft.previewUrl?.startsWith("blob:")) {
           URL.revokeObjectURL(draft.previewUrl);
         }
       });
     };
-  }, [groupAvatarDrafts]);
+  }, []);
 
   const loadGroupDetail = useCallback(async (groupId: string, force = false) => {
     if (!force && (groupDetailsById[groupId] || loadingGroupDetailIds[groupId])) {
@@ -324,7 +334,16 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   accessMode: result.group.accessMode,
                   membershipLimit: result.group.membershipLimit,
                   memberCount: result.group.memberCount,
-                  pendingInviteCount: result.group.pendingInviteCount
+                  pendingInviteCount: result.group.pendingInviteCount,
+                  activeInviteCode:
+                    result.group.isCurrentUserOwner &&
+                    result.group.inviteCodeStatus === "active" &&
+                    result.group.inviteCode
+                      ? {
+                          code: result.group.inviteCode.code,
+                          expiresAt: result.group.inviteCode.expiresAt ?? null
+                        }
+                      : null
                 }
               : group
           )
@@ -700,42 +719,59 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     });
   }
 
+  function setGroupAvatarProcessing(groupId: string, isProcessing: boolean) {
+    setGroupAvatarProcessingIds((current) => {
+      if (Boolean(current[groupId]) === isProcessing) {
+        return current;
+      }
+
+      const next = { ...current };
+      if (isProcessing) {
+        next[groupId] = true;
+      } else {
+        delete next[groupId];
+      }
+      return next;
+    });
+  }
+
   async function handleGroupAvatarSelection(group: MyManagedGroup, event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
     const file = event.target.files?.[0];
     if (!file) {
       return;
     }
 
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      setMessage({ tone: "error", text: "Use a JPG, PNG, or WEBP image for the group avatar." });
-      event.target.value = "";
-      return;
-    }
+    setGroupAvatarProcessing(group.id, true);
+    setMessage({ tone: "tip", text: "Preparing image..." });
 
-    if (file.size > MAX_GROUP_AVATAR_FILE_BYTES) {
-      setMessage({ tone: "error", text: "Choose a JPG, PNG, or WEBP image under 2 MB." });
-      event.target.value = "";
-      return;
-    }
-
-    const nextPreviewUrl = URL.createObjectURL(file);
-    setGroupAvatarDrafts((current) => {
-      const previous = current[group.id];
-      if (previous?.previewUrl?.startsWith("blob:")) {
-        URL.revokeObjectURL(previous.previewUrl);
-      }
-
-      return {
-        ...current,
-        [group.id]: {
-          file,
-          previewUrl: nextPreviewUrl,
-          removeCurrent: false
+    try {
+      const processedAvatar = await processAvatarImage(file);
+      setGroupAvatarDrafts((current) => {
+        const previous = current[group.id];
+        if (previous?.previewUrl?.startsWith("blob:")) {
+          URL.revokeObjectURL(previous.previewUrl);
         }
-      };
-    });
 
-    event.target.value = "";
+        return {
+          ...current,
+          [group.id]: {
+            file: processedAvatar.file,
+            previewUrl: processedAvatar.previewUrl,
+            removeCurrent: false
+          }
+        };
+      });
+      setMessage({ tone: "success", text: "Avatar ready. Save Group Profile to apply it." });
+    } catch (caughtError) {
+      setMessage({
+        tone: "error",
+        text: getAvatarImageProcessingErrorMessage(caughtError)
+      });
+    } finally {
+      setGroupAvatarProcessing(group.id, false);
+      input.value = "";
+    }
   }
 
   function handleRemoveGroupAvatar(group: MyManagedGroup) {
@@ -1882,6 +1918,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const avatarDraft = groupAvatarDrafts[group.id] ?? { file: null, previewUrl: null, removeCurrent: false };
             const avatarPreviewUrl = avatarDraft.previewUrl ?? (avatarDraft.removeCurrent ? undefined : group.avatarUrl ?? undefined);
             const isGroupProfileSaveReady = isGroupProfileDirty(group, groupProfileDraft, avatarDraft);
+            const isGroupAvatarProcessing = Boolean(groupAvatarProcessingIds[group.id]);
             const captainPassSelection = captainPassSelections[group.id] ?? { userId: "", allowance: "1" };
             const captainOnboardingDraft = captainOnboardingDrafts[group.id] ?? { email: "", allowance: "1" };
             const captainOnboardingLink = captainOnboardingLinksByGroup[group.id] ?? null;
@@ -1891,6 +1928,17 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const isCaptainInviteHelperVisible = Boolean(captainPass?.canCurrentUserUseInvites && !group.canManage);
             const inviteAccessChipLabel =
               group.accessMode === "restricted_by_email" ? tg("accessEmail") : group.accessMode === "closed" ? tg("accessClosed") : tg("accessCode");
+            const activeOwnerInviteCode =
+              group.isCurrentUserOwner && group.activeInviteCode?.code
+                ? group.activeInviteCode
+                : detailedGroup?.isCurrentUserOwner &&
+                    detailedGroup.inviteCodeStatus === "active" &&
+                    detailedGroup.inviteCode?.code
+                  ? {
+                      code: detailedGroup.inviteCode.code,
+                      expiresAt: detailedGroup.inviteCode.expiresAt ?? null
+                    }
+                  : null;
 
             return (
               <ManagementCard
@@ -1900,8 +1948,33 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     <div className="flex min-w-0 items-start justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <Avatar name={group.name} avatarUrl={group.avatarUrl} size="sm" />
-                        <div className="min-w-0 truncate text-base font-black leading-tight text-gray-950">
-                          {group.name}
+                        <div className="min-w-0">
+                          <div className="truncate text-base font-black leading-tight text-gray-950">
+                            {group.name}
+                          </div>
+                          {activeOwnerInviteCode ? (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void navigator.clipboard
+                                  .writeText(activeOwnerInviteCode.code)
+                                  .then(() => {
+                                    setMessage({ tone: "success", text: tg("inviteCodeCopied") });
+                                  })
+                                  .catch((clipboardError) => {
+                                    console.warn("Could not copy invite code.", clipboardError);
+                                    setMessage({ tone: "tip", text: tg("inviteCodeCopyFailed") });
+                                  });
+                              }}
+                              className="mt-1 inline-flex max-w-full items-center gap-1 rounded-full border border-accent-light bg-white px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.12em] text-gray-700 shadow-sm transition hover:border-accent hover:text-accent-dark focus:outline-none focus:ring-2 focus:ring-accent-light"
+                              aria-label={`${tg("copyCode")}: ${activeOwnerInviteCode.code}`}
+                              title={tg("copyCode")}
+                            >
+                              <Copy aria-hidden className="h-3 w-3 shrink-0 text-gray-500" />
+                              <code className="truncate font-black text-accent-dark">{activeOwnerInviteCode.code}</code>
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                       <div className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-gray-700">
@@ -1952,7 +2025,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 groupAvatarInputRefs.current[group.id] = node;
                               }}
                               type="file"
-                              accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                              accept={getAvatarImageInputAcceptAttribute()}
                               className="hidden"
                               onChange={(event) => void handleGroupAvatarSelection(group, event)}
                             />
@@ -1966,7 +2039,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                 />
                                 <div className="min-w-0 flex-1">
                                   <p className="text-sm font-bold text-gray-900">
-                                    {avatarDraft.file
+                                    {isGroupAvatarProcessing
+                                      ? "Preparing image..."
+                                      : avatarDraft.file
                                       ? tg("avatarSelected")
                                       : avatarDraft.removeCurrent
                                         ? tg("avatarWillBeRemoved")
@@ -1975,7 +2050,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                           : tg("noAvatarYet")}
                                   </p>
                                   <p className="mt-1 text-xs font-semibold text-gray-500">
-                                    {avatarDraft.file
+                                    {isGroupAvatarProcessing
+                                      ? "Cropping and compressing your avatar."
+                                      : avatarDraft.file
                                       ? tg("avatarSelectedHelp")
                                       : avatarDraft.removeCurrent
                                         ? tg("avatarRemoveHelp")
@@ -1986,16 +2063,16 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               <div className="mt-3 grid grid-cols-2 gap-2">
                                 <ActionButton
                                   type="button"
-                                  disabled={actionKey === `save-group-profile-${group.id}`}
+                                  disabled={actionKey === `save-group-profile-${group.id}` || isGroupAvatarProcessing}
                                   onClick={() => groupAvatarInputRefs.current[group.id]?.click()}
                                   fullWidth
                                 >
-                                  {tg("uploadAvatar")}
+                                  {isGroupAvatarProcessing ? "Preparing..." : tg("uploadAvatar")}
                                 </ActionButton>
                                 {group.avatarUrl || avatarDraft.previewUrl ? (
                                   <ActionButton
                                     type="button"
-                                    disabled={actionKey === `save-group-profile-${group.id}`}
+                                    disabled={actionKey === `save-group-profile-${group.id}` || isGroupAvatarProcessing}
                                     onClick={() => {
                                       handleRemoveGroupAvatar(group);
                                     }}
@@ -2043,7 +2120,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                             </label>
                             <ActionButton
                               type="button"
-                              disabled={actionKey === `save-group-profile-${group.id}` || !isGroupProfileSaveReady}
+                              disabled={
+                                actionKey === `save-group-profile-${group.id}` ||
+                                isGroupAvatarProcessing ||
+                                !isGroupProfileSaveReady
+                              }
                               onClick={() => void handleSaveGroupProfile(group)}
                               tone={isGroupProfileSaveReady ? "accent" : "neutral"}
                               fullWidth

@@ -25,6 +25,11 @@ import {
 } from "@/lib/auth-client";
 import { getAccessLevel } from "@/lib/access-levels";
 import { showAppToast } from "@/lib/app-toast";
+import {
+  getAvatarImageInputAcceptAttribute,
+  getAvatarImageProcessingErrorMessage,
+  processAvatarImage
+} from "@/lib/avatar-image-processing";
 import { normalizeLanguage } from "@/lib/i18n";
 import { getSpecialVisualThemeOption } from "@/lib/localized-card-themes";
 import type { LegalDocument } from "@/lib/legal";
@@ -71,7 +76,8 @@ export function ProfileSummary({
   );
   const [isSendingReset, setIsSendingReset] = useState(false);
   const [isUpdatingDisplayName, setIsUpdatingDisplayName] = useState(false);
-  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [avatarUploadStage, setAvatarUploadStage] = useState<"idle" | "preparing" | "uploading">("idle");
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null);
   const [isUpdatingNotifications, setIsUpdatingNotifications] = useState(false);
   const [isRegisteringPush, setIsRegisteringPush] = useState(false);
   const [isUpdatingHomeTeam, setIsUpdatingHomeTeam] = useState(false);
@@ -98,6 +104,7 @@ export function ProfileSummary({
   const [followedTeamIdsDraft, setFollowedTeamIdsDraft] = useState<string[]>([]);
   const [followedTeamSelection, setFollowedTeamSelection] = useState("");
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const isUploadingAvatar = avatarUploadStage !== "idle";
   const sortedTeams = useMemo(
     () => [...teams].sort(compareTeamsByGroupThenName),
     []
@@ -161,6 +168,16 @@ export function ProfileSummary({
   useEffect(() => {
     setFollowedTeamIdsDraft(user?.followedTeamIds ?? []);
   }, [user?.followedTeamIds]);
+
+  useEffect(() => {
+    if (!avatarPreviewUrl?.startsWith("blob:")) {
+      return;
+    }
+
+    return () => {
+      URL.revokeObjectURL(avatarPreviewUrl);
+    };
+  }, [avatarPreviewUrl]);
 
   useEffect(() => {
     const openFollowedTeamsFromHash = () => {
@@ -361,7 +378,7 @@ export function ProfileSummary({
           </div>
         </div>
         <div className="mt-4 flex min-w-0 items-center gap-4">
-          <Avatar name={user.name} avatarUrl={user.avatarUrl} size="lg" className="rounded-lg" />
+          <Avatar name={user.name} avatarUrl={avatarPreviewUrl ?? user.avatarUrl} size="lg" className="rounded-lg" />
           <div className="min-w-0">
             <h2 className="truncate text-xl font-black leading-tight sm:text-2xl">{user.name}</h2>
             {membershipSummaryLines.length > 0 ? (
@@ -389,24 +406,40 @@ export function ProfileSummary({
           <input
             ref={avatarInputRef}
             type="file"
-            accept="image/*"
+            accept={getAvatarImageInputAcceptAttribute()}
             className="hidden"
             onChange={async (event) => {
+              const input = event.currentTarget;
               const file = event.target.files?.[0];
               if (!file) {
                 return;
               }
 
-              setIsUploadingAvatar(true);
               setPasswordMessage(null);
               setNotificationMessage(null);
-              const result = await uploadCurrentUserAvatar(file);
-              setPasswordMessage({ tone: result.ok ? "success" : "error", text: result.message });
-              if (result.ok) {
-                await refresh();
+              setAvatarPreviewUrl(null);
+
+              try {
+                setAvatarUploadStage("preparing");
+                const processedAvatar = await processAvatarImage(file);
+                setAvatarPreviewUrl(processedAvatar.previewUrl);
+                setAvatarUploadStage("uploading");
+
+                const result = await uploadCurrentUserAvatar(processedAvatar.file);
+                setPasswordMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                if (result.ok) {
+                  await refresh();
+                }
+              } catch (caughtError) {
+                setPasswordMessage({
+                  tone: "error",
+                  text: getAvatarImageProcessingErrorMessage(caughtError)
+                });
+              } finally {
+                setAvatarUploadStage("idle");
+                setAvatarPreviewUrl(null);
+                input.value = "";
               }
-              setIsUploadingAvatar(false);
-              event.target.value = "";
             }}
           />
           <div className="grid grid-cols-2 gap-2">
@@ -416,8 +449,10 @@ export function ProfileSummary({
               onClick={() => avatarInputRef.current?.click()}
               className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-center text-xs font-bold leading-tight [overflow-wrap:anywhere] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
             >
-              {isUploadingAvatar
-                ? t(uiLanguage, "profile.uploading")
+              {avatarUploadStage === "preparing"
+                ? "Preparing image..."
+                : avatarUploadStage === "uploading"
+                  ? t(uiLanguage, "profile.uploading")
                 : user.avatarUrl
                   ? t(uiLanguage, "profile.updateAvatar")
                   : t(uiLanguage, "profile.uploadAvatar")}
@@ -427,7 +462,7 @@ export function ProfileSummary({
                 type="button"
                 disabled={isUploadingAvatar}
                 onClick={async () => {
-                  setIsUploadingAvatar(true);
+                  setAvatarUploadStage("uploading");
                   setPasswordMessage(null);
                   setNotificationMessage(null);
                   const result = await clearCurrentUserAvatar();
@@ -438,7 +473,7 @@ export function ProfileSummary({
                   if (result.ok) {
                     await refresh();
                   }
-                  setIsUploadingAvatar(false);
+                  setAvatarUploadStage("idle");
                 }}
                 className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-center text-xs font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
               >
