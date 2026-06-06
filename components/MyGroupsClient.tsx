@@ -26,6 +26,7 @@ import {
   removeGroupMemberAction,
   resendGroupInviteAction,
   saveManagedGroupAllowedEmailsAction,
+  transferManagedGroupOwnershipAction,
   uploadManagedGroupAvatarAction,
   updateManagedGroupAccessAction,
   updateManagedGroupProfileAction,
@@ -129,6 +130,13 @@ type GroupAvatarDraft = {
   removeCurrent: boolean;
 };
 
+type GroupTransferCandidate = {
+  userId: string;
+  name: string;
+  email: string;
+  isCaptain: boolean;
+};
+
 export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLanguage, forceCreateGroupOpen }: MyGroupsClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -185,8 +193,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     key: string;
     groupId: string;
     groupName: string;
+    transferCandidates: GroupTransferCandidate[];
   } | null>(null);
   const [deleteConfirmationValue, setDeleteConfirmationValue] = useState("");
+  const [deleteTransferTargetUserId, setDeleteTransferTargetUserId] = useState("");
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
   const [inviteEntryStatus, setInviteEntryStatus] = useState<string | null>(null);
@@ -1565,7 +1575,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
           {deleteConfirmation ? (
             <InlineTextConfirmation
               title={`Delete ${deleteConfirmation.groupName}?`}
-              description="This removes the group, its memberships, and its pending group invites. It does not delete player accounts, app-level invites, or predictions."
+              description="Transfer management to a current player or Captain, or delete only after removing everyone else. Deleting removes the group, memberships, and pending group invites. It does not delete player accounts, app-level invites, or predictions."
               confirmLabel="Delete Group"
               expectedValue={deleteConfirmation.groupName}
               inputLabel="Type the group name to confirm"
@@ -1579,6 +1589,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   if (result.ok) {
                     setDeleteConfirmation(null);
                     setDeleteConfirmationValue("");
+                    setDeleteTransferTargetUserId("");
                     await load();
                   }
                 });
@@ -1586,9 +1597,67 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
               onCancel={() => {
                 setDeleteConfirmation(null);
                 setDeleteConfirmationValue("");
+                setDeleteTransferTargetUserId("");
               }}
               isPending={actionKey === deleteConfirmation.key}
-            />
+            >
+              {deleteConfirmation.transferCandidates.length > 0 ? (
+                <div className="rounded-[1rem] border border-amber-200 bg-white p-3">
+                  <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-800">Transfer management instead</p>
+                  <p className="mt-1 text-xs font-semibold leading-5 text-gray-600">
+                    Pass this group to a current player or Captain before you step away.
+                  </p>
+                  <label className="mt-3 block">
+                    <span className="text-xs font-bold uppercase tracking-wide text-gray-600">New manager</span>
+                    <select
+                      value={deleteTransferTargetUserId}
+                      onChange={(event) => setDeleteTransferTargetUserId(event.target.value)}
+                      disabled={actionKey === `transfer-group-${deleteConfirmation.groupId}`}
+                      className="mt-2 w-full rounded-md border border-amber-200 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
+                    >
+                      <option value="">Choose a player or Captain</option>
+                      {deleteConfirmation.transferCandidates.map((candidate) => (
+                        <option key={candidate.userId} value={candidate.userId}>
+                          {candidate.name || candidate.email}{candidate.isCaptain ? " · Captain" : " · Player"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="mt-3">
+                    <ActionButton
+                      tone="accent"
+                      disabled={
+                        actionKey === `transfer-group-${deleteConfirmation.groupId}` ||
+                        !deleteTransferTargetUserId ||
+                        deleteConfirmationValue.trim() !== deleteConfirmation.groupName.trim()
+                      }
+                      onClick={() => {
+                        void withAction(`transfer-group-${deleteConfirmation.groupId}`, async () => {
+                          const result = await transferManagedGroupOwnershipAction(
+                            deleteConfirmation.groupId,
+                            deleteTransferTargetUserId,
+                            deleteConfirmationValue
+                          );
+                          setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                          if (result.ok) {
+                            setDeleteConfirmation(null);
+                            setDeleteConfirmationValue("");
+                            setDeleteTransferTargetUserId("");
+                            await load();
+                          }
+                        });
+                      }}
+                    >
+                      {actionKey === `transfer-group-${deleteConfirmation.groupId}` ? "Transferring..." : "Transfer management"}
+                    </ActionButton>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-[1rem] border border-gray-200 bg-white p-3 text-xs font-semibold leading-5 text-gray-600">
+                  No eligible player or Captain is currently available to receive management.
+                </div>
+              )}
+            </InlineTextConfirmation>
           ) : null}
         </div>
       ) : null}
@@ -1924,6 +1993,14 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const captainOnboardingLink = captainOnboardingLinksByGroup[group.id] ?? null;
             const availableCaptainCandidates = activeMembers.filter((member) => member.userId !== currentUserId);
             const captainPass = detailedGroup?.captainPass ?? null;
+            const managementTransferCandidates: GroupTransferCandidate[] = activeMembers
+              .filter((member) => member.userId !== currentUserId)
+              .map((member) => ({
+                userId: member.userId,
+                name: member.name,
+                email: member.email,
+                isCaptain: Boolean(captainPass?.captainUserId && captainPass.captainUserId === member.userId)
+              }));
             const isCurrentUserCaptainForGroup = Boolean(captainPass?.canCurrentUserUseInvites);
             const isCaptainInviteHelperVisible = Boolean(captainPass?.canCurrentUserUseInvites && !group.canManage);
             const inviteAccessChipLabel =
@@ -3409,9 +3486,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                     setDeleteConfirmation({
                                       key: `delete-group-${group.id}`,
                                       groupId: group.id,
-                                      groupName: group.name
+                                      groupName: group.name,
+                                      transferCandidates: managementTransferCandidates
                                     });
                                     setDeleteConfirmationValue("");
+                                    setDeleteTransferTargetUserId("");
                                   }}
                                   fullWidth
                                 >

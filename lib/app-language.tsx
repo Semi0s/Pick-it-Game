@@ -57,14 +57,7 @@ export function useAppLanguage() {
 
 export function useResolvedAppLanguage(user: UserProfile | null, isUserLoading: boolean) {
   const [optimisticLanguage, setOptimisticLanguage] = useState<AppLanguage | null>(null);
-  const [storedLanguage, setStoredLanguage] = useState<AppLanguage>(() =>
-    typeof window === "undefined"
-      ? "en"
-      : readPersistedLanguage() ??
-        resolveAppLanguage({
-          browserLanguage: window.navigator.language
-        })
-  );
+  const [storedLanguage, setStoredLanguage] = useState<AppLanguage>("en");
   const userLanguage = user?.preferredLanguage ? normalizeLanguage(user.preferredLanguage) : null;
   const activeLanguage = resolveAppLanguage({
     userLanguage: optimisticLanguage ?? (userLanguage && !isUserLoading ? userLanguage : null),

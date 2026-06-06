@@ -1397,18 +1397,35 @@ export async function deleteUserAndStartOverAction(
 
   const adminSupabase = createAdminClient();
   const authUser = await findAuthUserByEmail(adminSupabase, normalizedEmail);
-  const { data: appUser, error: appUserError } = await adminSupabase
-    .from("users")
-    .select("id")
-    .eq("email", normalizedEmail)
-    .maybeSingle();
+  const [
+    { data: appUser, error: appUserError },
+    inviteCountResult,
+    groupInviteCountResult,
+    emailJobCountResult
+  ] = await Promise.all([
+    adminSupabase.from("users").select("id").eq("email", normalizedEmail).maybeSingle(),
+    adminSupabase.from("invites").select("email", { count: "exact", head: true }).eq("email", normalizedEmail),
+    adminSupabase.from("group_invites").select("id", { count: "exact", head: true }).eq("normalized_email", normalizedEmail),
+    adminSupabase.from("email_jobs").select("id", { count: "exact", head: true }).eq("email", normalizedEmail)
+  ]);
 
   if (appUserError) {
     return { ok: false, message: appUserError.message };
   }
 
-  if (!authUser && !appUser) {
-    return { ok: false, message: "No auth or app user was found for that email." };
+  const cleanupSurfaceCount =
+    (inviteCountResult.count ?? 0) +
+    (groupInviteCountResult.count ?? 0) +
+    (emailJobCountResult.count ?? 0);
+
+  const cleanupCountError =
+    inviteCountResult.error ?? groupInviteCountResult.error ?? emailJobCountResult.error ?? null;
+  if (cleanupCountError) {
+    return { ok: false, message: cleanupCountError.message };
+  }
+
+  if (!authUser && !appUser && cleanupSurfaceCount === 0) {
+    return { ok: false, message: "No auth user, app profile, invite, group invite, or email job was found for that email." };
   }
 
   if (appUser?.id) {
@@ -1451,7 +1468,13 @@ export async function deleteUserAndStartOverAction(
   const deleteOperations = await Promise.all([
     adminSupabase.from("group_invites").delete().eq("normalized_email", normalizedEmail),
     adminSupabase.from("invites").delete().eq("email", normalizedEmail),
-    adminSupabase.from("email_jobs").delete().eq("email", normalizedEmail)
+    adminSupabase.from("email_jobs").delete().eq("email", normalizedEmail),
+    appUser?.id
+      ? adminSupabase.from("group_members").delete().eq("user_id", appUser.id)
+      : Promise.resolve({ error: null }),
+    authUser?.id && authUser.id !== appUser?.id
+      ? adminSupabase.from("group_members").delete().eq("user_id", authUser.id)
+      : Promise.resolve({ error: null })
   ]);
 
   const failedDelete = deleteOperations.find((result) => result.error);

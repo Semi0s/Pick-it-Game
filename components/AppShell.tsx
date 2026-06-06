@@ -9,7 +9,7 @@ import { TierIconBadge } from "@/components/TierIconBadge";
 import { ThemedPickItLogo } from "@/components/ThemedPickItLogo";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { AppLanguageProvider, useResolvedAppLanguage } from "@/lib/app-language";
-import { APP_TOAST_EVENT, markAppToastsReady, showAppToast, type AppToastDetail } from "@/lib/app-toast";
+import { APP_TOAST_EVENT, markAppToastsReady, showAppToast, type AppToastDetail, type AppToastEventDetail, type AppToastTone } from "@/lib/app-toast";
 import { getStrings, t } from "@/lib/strings";
 import { getAppAccentCssVars, getLocalizedCardThemeForUserSurface } from "@/lib/localized-card-themes";
 import { type ExplainerLanguage } from "@/lib/i18n";
@@ -171,7 +171,13 @@ export function AppShell({ children }: AppShellProps) {
   const [pendingCelebrationQueue, setPendingCelebrationQueue] = useState<PendingTrophyCelebration[]>([]);
   const [activeCelebration, setActiveCelebration] = useState<PendingTrophyCelebration | null>(null);
   const [readinessBanner, setReadinessBanner] = useState<string | null>(null);
-  const [toasts, setToasts] = useState<Array<{ id: string; tone: AppToastDetail["tone"]; text: string }>>([]);
+  const [toasts, setToasts] = useState<Array<{
+    id: string;
+    tone: AppToastTone;
+    text: string;
+    dismissLabel?: string;
+    dismissStorageKey?: string;
+  }>>([]);
   const lastTrophySignatureRef = useRef<string>("");
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const languagePopoverPlacement = useViewportAwarePopoverPlacement({
@@ -226,20 +232,47 @@ export function AppShell({ children }: AppShellProps) {
         return;
       }
 
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      setToasts((current) => [...current, { id, tone: detail.tone, text: detail.text }]);
+      if (detail.dismissStorageKey) {
+        try {
+          if (window.localStorage.getItem(detail.dismissStorageKey) === "dismissed") {
+            return;
+          }
+        } catch {
+          // Storage can be unavailable in private or constrained browser contexts.
+        }
+      }
+
+      const id = detail.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setToasts((current) => [
+        ...current.filter((toast) => toast.id !== id),
+        {
+          id,
+          tone: detail.tone,
+          text: detail.text,
+          dismissLabel: detail.dismissLabel,
+          dismissStorageKey: detail.dismissStorageKey
+        }
+      ]);
       const fallbackDuration =
         detail.tone === "error"
           ? ERROR_TOAST_DURATION_MS
           : detail.tone === "tip"
             ? TIP_TOAST_DURATION_MS
             : DEFAULT_TOAST_DURATION_MS;
-      dismissToastLater(id, detail.durationMs ?? fallbackDuration);
+      if (detail.durationMs !== null) {
+        dismissToastLater(id, detail.durationMs ?? fallbackDuration);
+      }
     };
 
     const handleToast = (event: Event) => {
-      const customEvent = event as CustomEvent<AppToastDetail>;
-      enqueueToast(customEvent.detail);
+      const customEvent = event as CustomEvent<AppToastEventDetail>;
+      const detail = customEvent.detail;
+      if ("action" in detail) {
+        setToasts((current) => current.filter((toast) => toast.id !== detail.id));
+        return;
+      }
+
+      enqueueToast(detail);
     };
 
     window.addEventListener(APP_TOAST_EVENT, handleToast as EventListener);
@@ -249,6 +282,18 @@ export function AppShell({ children }: AppShellProps) {
       window.removeEventListener(APP_TOAST_EVENT, handleToast as EventListener);
     };
   }, []);
+
+  function handleDismissToast(id: string, dismissStorageKey?: string) {
+    if (dismissStorageKey) {
+      try {
+        window.localStorage.setItem(dismissStorageKey, "dismissed");
+      } catch {
+        // Dismissing the visible toast is still useful if persistence fails.
+      }
+    }
+
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }
 
   useEffect(() => {
     const header = headerRef.current;
@@ -643,7 +688,18 @@ export function AppShell({ children }: AppShellProps) {
                     : "border-red-200 bg-white text-red-700"
                 }`}
               >
-                {toast.text}
+                <div className="flex items-start gap-3">
+                  <span className="min-w-0 flex-1">{toast.text}</span>
+                  {toast.dismissLabel ? (
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-full border border-current/20 px-2.5 py-1 text-[0.68rem] font-black uppercase tracking-[0.12em] opacity-80 transition hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
+                      onClick={() => handleDismissToast(toast.id, toast.dismissStorageKey)}
+                    >
+                      {toast.dismissLabel}
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ))}
           </div>
