@@ -1535,46 +1535,45 @@ export function LeaderboardClient() {
         />
       ) : shouldRenderLeaderboardRows ? (
         <section className="space-y-2" style={{ minHeight: LEADERBOARD_STABLE_CONTENT_MIN_HEIGHT }}>
-          <div className="flex items-start justify-between gap-2 px-1 pt-1">
-            {isGroupView && selectedGroupSummary ? (
-              <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <Avatar
-                    name={leaderboardTitle}
-                    avatarUrl={selectedGroupSummary.avatarUrl ?? undefined}
-                    size="sm"
-                  />
-                  <h3 className="min-w-0 truncate text-base font-black text-gray-950">{leaderboardTitle}</h3>
-                </div>
-                <span className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700">
-                  {selectedGroupSummary.context === "managed" ? t(uiLanguage, "leaderboard.managed") : t(uiLanguage, "leaderboard.invited")}
-                </span>
-              </div>
-            ) : (
-              <h3 className="text-base font-black text-gray-950">{leaderboardTitle}</h3>
-            )}
-          </div>
           {isGroupView && selectedGroupSummary ? (
-            <div className="px-3 py-1">
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 text-[11px] font-semibold text-gray-600">
-                <div className="min-w-0">
-                  <span className="font-black text-gray-900">{t(uiLanguage, "leaderboard.managedBy")}</span>{" "}
-                  <span className="truncate">{selectedGroupSummary.managerName ?? t(uiLanguage, "leaderboard.groupManager")}</span>
+            <div className="flex min-w-0 items-start gap-3 px-1 pt-1">
+              <Avatar
+                name={leaderboardTitle}
+                avatarUrl={selectedGroupSummary.avatarUrl ?? undefined}
+                size="lg"
+                className="h-[4.5rem] w-[4.5rem] shrink-0 text-lg shadow-sm"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <h3 className="min-w-0 truncate text-base font-black text-gray-950">{leaderboardTitle}</h3>
+                  <span className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700">
+                    {selectedGroupSummary.context === "managed" ? t(uiLanguage, "leaderboard.managed") : t(uiLanguage, "leaderboard.invited")}
+                  </span>
                 </div>
-                <div className="text-right font-black text-gray-900">
-                  {t(uiLanguage, "leaderboard.playerCountFull", { count: selectedGroupSummary.totalPlayers })}
-                </div>
-                <div className="min-w-0">
-                  <span className="font-black text-gray-900">{t(uiLanguage, "leaderboard.averagePoints")}</span>{" "}
-                  {selectedGroupSummary.averagePoints !== null ? formatAveragePoints(selectedGroupSummary.averagePoints) : "—"}
-                </div>
-                <div className="text-right">
-                  <span className="font-black text-gray-900">{t(uiLanguage, "leaderboard.globalRank")}</span>{" "}
-                  {selectedGroupSummary.globalRank ? `#${selectedGroupSummary.globalRank}` : "—"}
+                <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1.5 text-[11px] font-semibold text-gray-600">
+                  <div className="min-w-0 truncate">
+                    <span className="font-black text-gray-900">{t(uiLanguage, "leaderboard.managedBy")}</span>{" "}
+                    <span>{selectedGroupSummary.managerName ?? t(uiLanguage, "leaderboard.groupManager")}</span>
+                  </div>
+                  <div className="text-right font-black text-gray-900">
+                    {t(uiLanguage, "leaderboard.playerCountFull", { count: selectedGroupSummary.totalPlayers })}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="font-black text-gray-900">{t(uiLanguage, "leaderboard.averagePoints")}</span>{" "}
+                    {selectedGroupSummary.averagePoints !== null ? formatAveragePoints(selectedGroupSummary.averagePoints) : "—"}
+                  </div>
+                  <div className="text-right">
+                    <span className="font-black text-gray-900">{t(uiLanguage, "leaderboard.globalRank")}</span>{" "}
+                    {selectedGroupSummary.globalRank ? `#${selectedGroupSummary.globalRank}` : "—"}
+                  </div>
                 </div>
               </div>
             </div>
-          ) : null}
+          ) : (
+            <div className="flex items-start justify-between gap-2 px-1 pt-1">
+              <h3 className="text-base font-black text-gray-950">{leaderboardTitle}</h3>
+            </div>
+          )}
           {!isLoading && !error && leaders.length > 1 ? (
             <LeaderSummaryCard
               leaders={leaders}

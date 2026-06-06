@@ -211,8 +211,7 @@ export const localizedCardThemes = {
     borderColor: "#3F3F46",
     controlZoneTint: "rgba(255,255,255,0.1)",
     patternVariant: "bands",
-    emblemKind: "germany",
-    emblemAsset: "/patterns/germany-bundesadler.svg"
+    emblemKind: "none"
   },
   japan: {
     id: "japan",
@@ -1177,10 +1176,7 @@ export function getAppAccentCssVars(theme: LocalizedCardTheme): CSSProperties {
   const fallbackTheme = localizedCardThemes.generic;
   const accent = getSafeAccentColor(theme, fallbackTheme);
   const accentDark = theme.accentDark ?? fallbackTheme.accentDark;
-  const accentLight =
-    theme.id === "ecuador"
-      ? theme.accentLight ?? fallbackTheme.accentLight
-      : getReadableLightAccentColor(theme.accentLight ?? fallbackTheme.accentLight, accent, accentDark);
+  const accentLight = getReadableLightAccentColor(theme.accentLight ?? fallbackTheme.accentLight, accent, accentDark);
   const preferredAccentText = theme.accentText ?? fallbackTheme.accentText;
   const accentText = getSafeAccentTextColor(accent, preferredAccentText);
   const accentFill = theme.useNeutralAccent
