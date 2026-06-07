@@ -1,3 +1,5 @@
+import { GROUP_AVATAR_IMAGE_UPLOAD_POLICY, IMAGE_EXTENSION_BY_MIME_TYPE } from "./image-upload-config.ts";
+
 export const GROUP_ACCESS_MODES = ["open_by_code", "restricted_by_email", "closed"] as const;
 export type GroupAccessMode = (typeof GROUP_ACCESS_MODES)[number];
 
@@ -34,12 +36,8 @@ export const MAX_CAPTAIN_PRIVATE_GROUP_MEMBERS = 6;
 export const MAX_CAPTAINS_PASS_ALLOWANCE = 6;
 export const MAX_GROUP_NAME_LENGTH = 80;
 export const GROUP_AVATAR_BUCKET = "group-avatars";
-export const MAX_GROUP_AVATAR_FILE_BYTES = 2 * 1024 * 1024;
-export const GROUP_AVATAR_EXTENSION_BY_MIME_TYPE = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp"
-} as const;
+export const MAX_GROUP_AVATAR_FILE_BYTES = GROUP_AVATAR_IMAGE_UPLOAD_POLICY.maxBytes;
+export const GROUP_AVATAR_EXTENSION_BY_MIME_TYPE = IMAGE_EXTENSION_BY_MIME_TYPE;
 
 const BASIC_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

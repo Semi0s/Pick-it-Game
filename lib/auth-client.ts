@@ -33,6 +33,7 @@ import { demoSignIn, demoSignOut, demoSignUp, getDemoCurrentUser } from "@/lib/d
 import { isSpecialVisualThemeId } from "@/lib/localized-card-themes";
 import { getLanguageLabel } from "@/lib/strings";
 import type { UserProfile, UserTrophy } from "@/lib/types";
+import type { PushPermissionState, PushPlatform } from "@/lib/push-notifications";
 
 type AuthMode = "login" | "signup";
 
@@ -77,6 +78,12 @@ type ManagerLimitsRow = {
 
 type UserSettingsRow = {
   notifications_enabled?: boolean | null;
+  notify_picks_lock_reminders?: boolean | null;
+  notify_match_finalized?: boolean | null;
+  notify_leaderboard_updates?: boolean | null;
+  notify_group_activity?: boolean | null;
+  push_permission_state?: PushPermissionState | null;
+  push_permission_updated_at?: string | null;
   followed_team_ids?: string[] | null;
   visual_theme_id?: string | null;
   dismissed_message_ids?: string[] | null;
@@ -85,6 +92,9 @@ type UserSettingsRow = {
 type PushTokenRow = {
   id: string;
 };
+
+type NativePushPlatform = Extract<PushPlatform, "ios" | "android">;
+type CapacitorPushNotifications = typeof import("@capacitor/push-notifications").PushNotifications;
 
 type UserTrophyRow = {
   awarded_at: string;
@@ -139,7 +149,6 @@ type UserLegalAcceptanceRow = {
   accepted_at: string;
 };
 
-const MAX_AVATAR_FILE_BYTES = 5 * 1024 * 1024;
 const AVATAR_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/jpg": "jpg",
@@ -712,63 +721,23 @@ export async function uploadCurrentUserAvatar(file: File): Promise<AvatarUploadR
     return { ok: false, message: "Avatar uploads need a configured Supabase project." };
   }
 
-  const supabase = createClient();
-  const {
-    data: { user },
-    error: authError
-  } = await supabase.auth.getUser();
-
-  if (authError || !user) {
-    return { ok: false, message: "You must be signed in to upload an avatar." };
-  }
-
-  if (!file.type.startsWith("image/")) {
-    return { ok: false, message: "Choose an image file for your avatar." };
-  }
-
-  if (file.size > MAX_AVATAR_FILE_BYTES) {
-    return { ok: false, message: "Choose an image smaller than 5 MB for your avatar." };
-  }
-
-  const extension = getAvatarExtension(file.type);
-  if (!extension) {
-    return { ok: false, message: "Use a JPG, PNG, WEBP, GIF, or AVIF image for your avatar." };
-  }
-
-  const objectPath = `${user.id}.${extension}`;
-  await removeKnownAvatarObjects(supabase, user.id);
-  const { error: uploadError } = await supabase.storage.from("avatars").upload(objectPath, file, {
-    upsert: true,
-    contentType: file.type,
-    cacheControl: "3600"
+  const formData = new FormData();
+  formData.set("file", file);
+  const response = await fetch("/api/profile/avatar", {
+    method: "POST",
+    body: formData
   });
+  const result = await parseJsonResponse<AvatarUploadResult>(
+    response,
+    "Could not upload your avatar.",
+    "profile avatar upload"
+  );
 
-  if (uploadError) {
-    if (isMissingStorageBucketError(uploadError.message, "avatars")) {
-      return { ok: false, message: "Avatar uploads are not available yet. Apply the avatar storage migration first." };
-    }
-    return { ok: false, message: uploadError.message };
+  if (result.ok) {
+    notifyCurrentUserProfileChanged();
   }
 
-  const { data: publicUrlData } = supabase.storage.from("avatars").getPublicUrl(objectPath);
-  const avatarUrl = `${publicUrlData.publicUrl}?v=${Date.now()}`;
-
-  const { error: profileError } = await supabase
-    .from("users")
-    .update({ avatar_url: avatarUrl })
-    .eq("id", user.id);
-
-  if (profileError) {
-    return { ok: false, message: profileError.message };
-  }
-
-  notifyCurrentUserProfileChanged();
-
-  return {
-    ok: true,
-    avatarUrl,
-    message: "Avatar updated."
-  };
+  return result;
 }
 
 export async function clearCurrentUserAvatar(): Promise<AuthResult> {
@@ -1116,10 +1085,6 @@ function resolvePreferredLegalDocument(rows: LegalDocumentRow[], preferredLangua
   return rowsByLanguage.get(preferredLanguage) ?? rowsByLanguage.get(defaultLanguage) ?? null;
 }
 
-function getAvatarExtension(mimeType: string) {
-  return AVATAR_EXTENSION_BY_MIME_TYPE[mimeType.toLowerCase()] ?? null;
-}
-
 async function removeKnownAvatarObjects(
   supabase: ReturnType<typeof createClient>,
   userId: string
@@ -1147,13 +1112,41 @@ export async function updateCurrentUserNotificationPreferences(enabled: boolean)
     return { ok: false, message: "You must be signed in to update notifications." };
   }
 
-  const { error } = await supabase.from("user_settings").upsert(
-    {
-      user_id: user.id,
-      notifications_enabled: enabled
-    },
-    { onConflict: "user_id" }
-  );
+  const notificationPreferencePayload = {
+    user_id: user.id,
+    notifications_enabled: enabled,
+    notify_picks_lock_reminders: enabled,
+    notify_match_finalized: enabled,
+    notify_leaderboard_updates: enabled,
+    notify_group_activity: enabled
+  };
+  const { error } = await supabase.from("user_settings").upsert(notificationPreferencePayload, { onConflict: "user_id" });
+
+  if (error && isMissingNotificationPreferenceColumnError(error.message)) {
+    const { error: fallbackError } = await supabase.from("user_settings").upsert(
+      {
+        user_id: user.id,
+        notifications_enabled: enabled
+      },
+      { onConflict: "user_id" }
+    );
+
+    if (!fallbackError) {
+      return {
+        ok: true,
+        message: enabled ? "Notifications turned on." : "Notifications turned off."
+      };
+    }
+
+    if (isMissingUserSettingsTableError(fallbackError.message)) {
+      return {
+        ok: false,
+        message: "Notification preferences are not available yet. Apply the user notifications migration first."
+      };
+    }
+
+    return { ok: false, message: fallbackError.message || "Could not update notifications right now." };
+  }
 
   if (error) {
     if (isMissingUserSettingsTableError(error.message)) {
@@ -1168,7 +1161,7 @@ export async function updateCurrentUserNotificationPreferences(enabled: boolean)
 
   return {
     ok: true,
-    message: enabled ? "Leaderboard notifications turned on." : "Leaderboard notifications turned off."
+    message: enabled ? "Notifications turned on." : "Notifications turned off."
   };
 }
 
@@ -1197,6 +1190,11 @@ export async function deleteCurrentUserAccount(confirmationText: string): Promis
 export async function registerCurrentBrowserPushNotifications(): Promise<PushRegistrationResult> {
   if (!hasSupabaseConfig()) {
     return { ok: false, message: "Push notifications need a configured Supabase project." };
+  }
+
+  const nativePlatform = await detectNativePushPlatform();
+  if (nativePlatform) {
+    return registerCurrentNativePushNotifications(nativePlatform);
   }
 
   if (
@@ -1263,6 +1261,200 @@ export async function registerCurrentBrowserPushNotifications(): Promise<PushReg
       message: error instanceof Error ? error.message : "Could not register this browser for push notifications."
     };
   }
+}
+
+async function registerCurrentNativePushNotifications(platform: NativePushPlatform): Promise<PushRegistrationResult> {
+  if (platform === "android") {
+    await updateCurrentUserPushPermissionState("unknown");
+    return {
+      ok: false,
+      message: "Android push registration is not configured yet. Your notification preference was saved."
+    };
+  }
+
+  try {
+    const { PushNotifications } = await import("@capacitor/push-notifications");
+    let permissionStatus = await PushNotifications.checkPermissions();
+    let permissionState = normalizeNativePushPermissionState(permissionStatus.receive);
+
+    if (permissionState === "prompt" || permissionState === "prompt-with-rationale") {
+      permissionStatus = await PushNotifications.requestPermissions();
+      permissionState = normalizeNativePushPermissionState(permissionStatus.receive);
+    }
+
+    await updateCurrentUserPushPermissionState(permissionState);
+
+    if (permissionState !== "granted") {
+      return {
+        ok: true,
+        message: "Your notification preference was saved. iOS notification permission was not granted."
+      };
+    }
+
+    const token = await registerNativePushToken(PushNotifications);
+    const response = await fetch("/api/push/register", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        token,
+        platform,
+        permissionState
+      })
+    });
+
+    const result = await parseJsonResponse<{ ok: true; message?: string } | { ok: false; message?: string }>(
+      response,
+      "Could not register this device for push notifications.",
+      "native push registration"
+    );
+    if (!response.ok || !result.ok) {
+      throw new Error(result.ok ? "Could not register this device for push notifications." : result.message);
+    }
+
+    return {
+      ok: true,
+      message: result.message ?? "Push notifications enabled for this device."
+    };
+  } catch (error) {
+    console.error("Failed to register native push notifications.", {
+      platform,
+      message: error instanceof Error ? error.message : "Unknown native push registration error."
+    });
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not register this device for push notifications."
+    };
+  }
+}
+
+async function detectNativePushPlatform(): Promise<NativePushPlatform | null> {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const { Capacitor } = await import("@capacitor/core");
+    const platform = Capacitor.getPlatform();
+    const isNative =
+      typeof Capacitor.isNativePlatform === "function" ? Capacitor.isNativePlatform() : platform !== "web";
+
+    if (!isNative) {
+      return null;
+    }
+
+    return platform === "ios" || platform === "android" ? platform : null;
+  } catch {
+    return null;
+  }
+}
+
+async function registerNativePushToken(PushNotifications: CapacitorPushNotifications) {
+  let timeoutId: number | null = null;
+  let resolveToken: (token: string) => void = () => undefined;
+  let rejectToken: (error: Error) => void = () => undefined;
+  const tokenPromise = new Promise<string>((resolve, reject) => {
+    resolveToken = resolve;
+    rejectToken = reject;
+  });
+
+  timeoutId = window.setTimeout(() => {
+    rejectToken(new Error("Push registration timed out."));
+  }, 15000);
+
+  const { registrationHandle, registrationErrorHandle } = await attachNativePushListeners(
+    PushNotifications,
+    (token) => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      if (!token.value?.trim()) {
+        rejectToken(new Error("Push registration returned an empty token."));
+        return;
+      }
+
+      resolveToken(token.value.trim());
+    },
+    (error) => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      rejectToken(new Error(error.error || "Push registration failed."));
+    }
+  );
+
+  try {
+    await PushNotifications.register();
+    return await tokenPromise;
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+    await registrationHandle.remove();
+    await registrationErrorHandle.remove();
+  }
+}
+
+async function attachNativePushListeners(
+  PushNotifications: CapacitorPushNotifications,
+  onRegistration: (token: { value?: string }) => void,
+  onRegistrationError: (error: { error?: string }) => void
+) {
+  const [registrationHandle, registrationErrorHandle] = await Promise.all([
+    PushNotifications.addListener("registration", onRegistration),
+    PushNotifications.addListener("registrationError", onRegistrationError)
+  ]);
+
+  return { registrationHandle, registrationErrorHandle };
+}
+
+async function updateCurrentUserPushPermissionState(permissionState: PushPermissionState): Promise<AuthResult> {
+  if (!hasSupabaseConfig()) {
+    return { ok: false, message: "Notifications need a configured Supabase project." };
+  }
+
+  const supabase = createClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, message: "You must be signed in to update notifications." };
+  }
+
+  const { error } = await supabase.from("user_settings").upsert(
+    {
+      user_id: user.id,
+      push_permission_state: normalizeNativePushPermissionState(permissionState),
+      push_permission_updated_at: new Date().toISOString()
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error) {
+    if (isMissingUserSettingsTableError(error.message) || isMissingPushPermissionColumnError(error.message)) {
+      return { ok: true, message: "Notification permission preference saved." };
+    }
+
+    return { ok: false, message: error.message || "Could not update notifications right now." };
+  }
+
+  return { ok: true, message: "Notification permission preference saved." };
+}
+
+function normalizeNativePushPermissionState(permissionState: string | undefined): PushPermissionState {
+  if (
+    permissionState === "prompt" ||
+    permissionState === "prompt-with-rationale" ||
+    permissionState === "granted" ||
+    permissionState === "denied"
+  ) {
+    return permissionState;
+  }
+
+  return "unknown";
 }
 
 export async function updateCurrentUserDisplayName(displayName: string): Promise<DisplayNameUpdateResult> {
@@ -1816,6 +2008,22 @@ function isMissingVisualThemeIdColumnError(message?: string) {
 
 function isMissingDismissedMessageIdsColumnError(message?: string) {
   return isMissingColumnError(message, "user_settings", "dismissed_message_ids");
+}
+
+function isMissingNotificationPreferenceColumnError(message?: string) {
+  return (
+    isMissingColumnError(message, "user_settings", "notify_picks_lock_reminders") ||
+    isMissingColumnError(message, "user_settings", "notify_match_finalized") ||
+    isMissingColumnError(message, "user_settings", "notify_leaderboard_updates") ||
+    isMissingColumnError(message, "user_settings", "notify_group_activity")
+  );
+}
+
+function isMissingPushPermissionColumnError(message?: string) {
+  return (
+    isMissingColumnError(message, "user_settings", "push_permission_state") ||
+    isMissingColumnError(message, "user_settings", "push_permission_updated_at")
+  );
 }
 
 function isMissingPlanTierColumnError(message: string) {

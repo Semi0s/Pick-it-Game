@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Trophy, UsersRound } from "lucide-react";
+import { Images, Trophy, UsersRound } from "lucide-react";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import type { AdminCounts } from "@/lib/admin-data";
 
@@ -22,6 +22,7 @@ export function DashboardAdminPanel({ adminError }: DashboardAdminPanelProps) {
       <div className="grid grid-cols-2 gap-2">
         <DashboardAdminButton href="/admin/players" icon={UsersRound} label="Players" />
         <DashboardAdminButton href="/admin/matches" icon={Trophy} label="Matches" />
+        <DashboardAdminButton href="/admin/media" icon={Images} label="Media" />
       </div>
     </section>
   );

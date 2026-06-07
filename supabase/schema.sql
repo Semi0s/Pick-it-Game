@@ -307,6 +307,14 @@ create index match_probability_snapshots_match_id_fetched_at_idx
 create table public.user_settings (
   user_id uuid primary key references public.users(id) on delete cascade,
   notifications_enabled boolean not null default false,
+  notify_picks_lock_reminders boolean not null default true,
+  notify_match_finalized boolean not null default true,
+  notify_leaderboard_updates boolean not null default true,
+  notify_group_activity boolean not null default true,
+  push_permission_state text not null default 'unknown'
+    constraint user_settings_push_permission_state_check
+    check (push_permission_state in ('prompt', 'prompt-with-rationale', 'granted', 'denied', 'unknown')),
+  push_permission_updated_at timestamptz,
   prediction_start_mode text
     constraint user_settings_prediction_start_mode_check
     check (prediction_start_mode in ('easy_bracket', 'full_scoring', 'strategy_mode', 'groups')),
@@ -645,6 +653,11 @@ create table public.push_tokens (
   platform text not null,
   token text not null,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  permission_state text not null default 'unknown'
+    constraint push_tokens_permission_state_check
+    check (permission_state in ('prompt', 'prompt-with-rationale', 'granted', 'denied', 'unknown')),
   constraint push_tokens_platform_check check (platform in ('ios', 'android', 'web'))
 );
 
@@ -2091,6 +2104,10 @@ create trigger set_user_settings_updated_at
 before update on public.user_settings
 for each row execute function public.set_updated_at();
 
+create trigger set_push_tokens_updated_at
+before update on public.push_tokens
+for each row execute function public.set_updated_at();
+
 create trigger set_side_pick_packages_updated_at
 before update on public.side_pick_packages
 for each row execute function public.set_updated_at();
@@ -3109,9 +3126,35 @@ create table public.organization_branding_audit_log (
   constraint organization_branding_audit_log_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade
 );
 
+create table public.media_moderation_audit_log (
+  id uuid not null default gen_random_uuid(),
+  actor_user_id uuid,
+  actor_access_level text not null,
+  action text not null,
+  target_type text not null,
+  target_id text not null,
+  scope_type text,
+  scope_id text,
+  old_status text,
+  new_status text,
+  note text,
+  details jsonb not null default '{}'::jsonb,
+  created_at timestamp with time zone not null default now(),
+  constraint media_moderation_audit_log_pkey primary key (id),
+  constraint media_moderation_audit_log_actor_user_id_fkey foreign key (actor_user_id) references public.users(id) on delete set null,
+  constraint media_moderation_action_length check ((char_length(TRIM(BOTH FROM action)) >= 1) and (char_length(TRIM(BOTH FROM action)) <= 80)),
+  constraint media_moderation_target_type_length check ((char_length(TRIM(BOTH FROM target_type)) >= 1) and (char_length(TRIM(BOTH FROM target_type)) <= 80)),
+  constraint media_moderation_target_id_length check ((char_length(TRIM(BOTH FROM target_id)) >= 1) and (char_length(TRIM(BOTH FROM target_id)) <= 120)),
+  constraint media_moderation_note_length check (char_length(coalesce(note, ''::text)) <= 500)
+);
+
 create index organization_branding_status_idx on public.organization_branding using btree (status);
 
 create index organization_branding_audit_log_org_created_idx on public.organization_branding_audit_log using btree (organization_id, created_at desc);
+
+create index media_moderation_audit_created_idx on public.media_moderation_audit_log using btree (created_at desc);
+
+create index media_moderation_audit_target_idx on public.media_moderation_audit_log using btree (target_type, target_id, created_at desc);
 
 create table public.admin_access_change_audit_log (
   id uuid not null default gen_random_uuid(),
@@ -3184,6 +3227,7 @@ revoke all on public.leaderboard_event_comments from anon, authenticated, public
 revoke all on public.access_codes from anon, authenticated, public;
 revoke all on public.access_code_redemptions from anon, authenticated, public;
 revoke all on public.organization_branding_audit_log from anon, authenticated, public;
+revoke all on public.media_moderation_audit_log from anon, authenticated, public;
 revoke all on public.admin_access_change_audit_log from anon, authenticated, public;
 revoke all on public.admin_reset_audit_log from anon, authenticated, public;
 revoke all on public.prediction_scores from anon, authenticated, public;
@@ -3197,6 +3241,7 @@ grant select, insert, update, delete on public.leaderboard_event_comments to ser
 grant select, insert, update, delete on public.access_codes to service_role;
 grant select, insert, update, delete on public.access_code_redemptions to service_role;
 grant select, insert, update, delete on public.organization_branding_audit_log to service_role;
+grant select, insert, update, delete on public.media_moderation_audit_log to service_role;
 grant select, insert, update, delete on public.admin_access_change_audit_log to service_role;
 grant select, insert, update, delete on public.admin_reset_audit_log to service_role;
 grant select, insert, update, delete on public.prediction_scores to service_role;
@@ -3278,6 +3323,7 @@ grant select on public.side_pick_scores to authenticated;
 grant select on public.group_bonus_scores to authenticated;
 grant select, insert, update, delete on public.organizations to authenticated;
 grant select, insert, update, delete on public.organization_branding to authenticated;
+grant select, insert on public.media_moderation_audit_log to authenticated;
 
 grant select, insert, update, delete on public.invites to service_role;
 grant select, insert, update, delete on public.teams to service_role;
@@ -3318,6 +3364,7 @@ grant select, insert, update, delete on public.side_pick_scores to service_role;
 grant select, insert, update, delete on public.group_bonus_scores to service_role;
 grant select, insert, update, delete on public.organizations to service_role;
 grant select, insert, update, delete on public.organization_branding to service_role;
+grant select, insert, update, delete on public.media_moderation_audit_log to service_role;
 
 create or replace function public.initialize_organization_branding()
 returns trigger
@@ -3351,6 +3398,7 @@ on conflict (id) do nothing;
 alter table public.organizations enable row level security;
 alter table public.organization_branding enable row level security;
 alter table public.organization_branding_audit_log enable row level security;
+alter table public.media_moderation_audit_log enable row level security;
 alter table public.admin_access_change_audit_log enable row level security;
 alter table public.admin_reset_audit_log enable row level security;
 
@@ -3400,6 +3448,14 @@ using (public.is_super_admin(auth.uid()));
 create policy "Super admins manage organization branding audit log"
 on public.organization_branding_audit_log for all
 using (public.is_super_admin(auth.uid()))
+with check (public.is_super_admin(auth.uid()));
+
+create policy "Super admins read media moderation audit log"
+on public.media_moderation_audit_log for select
+using (public.is_super_admin(auth.uid()));
+
+create policy "Super admins write media moderation audit log"
+on public.media_moderation_audit_log for insert
 with check (public.is_super_admin(auth.uid()));
 
 create policy "Super admins read admin access change audit log"

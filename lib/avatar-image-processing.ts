@@ -1,3 +1,10 @@
+import {
+  AVATAR_IMAGE_UPLOAD_POLICY,
+  IMAGE_UPLOAD_ACCEPT_ATTRIBUTE,
+  ORGANIZATION_BACKGROUND_IMAGE_UPLOAD_POLICY,
+  ORGANIZATION_LOGO_IMAGE_UPLOAD_POLICY
+} from "./image-upload-config.ts";
+
 export type AvatarImageProcessingErrorCode =
   | "unsupported_type"
   | "decode_failed"
@@ -22,6 +29,21 @@ export type ProcessedAvatarImage = {
   mimeType: "image/webp" | "image/jpeg";
 };
 
+export type ProcessBrandingImageOptions = {
+  kind: "logo" | "background";
+  outputType?: "image/webp" | "image/jpeg";
+  quality?: number;
+};
+
+export type ProcessedBrandingImage = {
+  file: File;
+  previewUrl: string;
+  width: number;
+  height: number;
+  size: number;
+  mimeType: "image/webp" | "image/jpeg";
+};
+
 export class AvatarImageProcessingError extends Error {
   code: AvatarImageProcessingErrorCode;
 
@@ -32,12 +54,10 @@ export class AvatarImageProcessingError extends Error {
   }
 }
 
-const DEFAULT_MAX_SIZE_PX = 512;
 const DEFAULT_QUALITY = 0.82;
-const DEFAULT_MAX_BYTES = 500_000;
-const DEFAULT_MIN_SOURCE_SIZE_PX = 128;
-const IMAGE_INPUT_ACCEPT_ATTRIBUTE =
-  ".jpg,.jpeg,.png,.webp,.heic,.heif,image/jpeg,image/png,image/webp,image/heic,image/heif";
+const DEFAULT_MAX_SIZE_PX = AVATAR_IMAGE_UPLOAD_POLICY.maxWidth;
+const DEFAULT_MAX_BYTES = AVATAR_IMAGE_UPLOAD_POLICY.maxBytes;
+const DEFAULT_MIN_SOURCE_SIZE_PX = AVATAR_IMAGE_UPLOAD_POLICY.minWidth;
 
 const SUPPORTED_INPUT_MIME_TYPES = new Set([
   "image/jpeg",
@@ -58,7 +78,7 @@ type LoadedImageSource = {
 };
 
 export function getAvatarImageInputAcceptAttribute() {
-  return IMAGE_INPUT_ACCEPT_ATTRIBUTE;
+  return IMAGE_UPLOAD_ACCEPT_ATTRIBUTE;
 }
 
 export function getAvatarImageProcessingErrorMessage(error: unknown) {
@@ -229,6 +249,12 @@ function getOutputFileName(inputName: string, mimeType: "image/webp" | "image/jp
   return `${baseName || "avatar"}-avatar.${extension}`;
 }
 
+function getBrandingOutputFileName(inputName: string, kind: "logo" | "background", mimeType: "image/webp" | "image/jpeg") {
+  const extension = mimeType === "image/webp" ? "webp" : "jpg";
+  const baseName = inputName.replace(/\.[^.]+$/, "").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "");
+  return `${baseName || kind}-${kind}.${extension}`;
+}
+
 function getQualityAttempts(initialQuality: number) {
   const boundedQuality = Math.min(0.92, Math.max(0.48, initialQuality));
   return [boundedQuality, 0.74, 0.66, 0.58, 0.5, 0.44].filter((quality, index, values) => {
@@ -241,6 +267,31 @@ function getSizeAttempts(maxSizePx: number) {
   return [boundedMaxSize, 384, 320, 256, 192].filter((size, index, values) => {
     return size <= boundedMaxSize && values.indexOf(size) === index;
   });
+}
+
+function createScaledImageCanvas(source: LoadedImageSource, maxLongEdgePx: number, fillWhite: boolean) {
+  const scale = Math.min(1, maxLongEdgePx / Math.max(source.width, source.height));
+  const width = Math.max(1, Math.round(source.width * scale));
+  const height = Math.max(1, Math.round(source.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new AvatarImageProcessingError(
+      "canvas_unavailable",
+      "This image could not be processed. Please try another photo."
+    );
+  }
+
+  if (fillWhite) {
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+  }
+
+  context.drawImage(source.source, 0, 0, source.width, source.height, 0, 0, width, height);
+  return canvas;
 }
 
 export async function processAvatarImage(
@@ -342,6 +393,110 @@ export async function processAvatarImage(
       previewUrl: URL.createObjectURL(bestResult.blob),
       width: bestResult.sizePx,
       height: bestResult.sizePx,
+      size: bestResult.blob.size,
+      mimeType: bestResult.mimeType
+    };
+  } finally {
+    source.cleanup();
+  }
+}
+
+export async function processBrandingImage(
+  file: File,
+  options: ProcessBrandingImageOptions
+): Promise<ProcessedBrandingImage> {
+  assertBrowserImageProcessingAvailable();
+
+  const inputMimeType = getNormalizedInputMimeType(file);
+  if (!SUPPORTED_INPUT_MIME_TYPES.has(inputMimeType)) {
+    throw new AvatarImageProcessingError(
+      "unsupported_type",
+      "This file type is not supported yet. Try a JPG or PNG."
+    );
+  }
+
+  const policy = options.kind === "logo" ? ORGANIZATION_LOGO_IMAGE_UPLOAD_POLICY : ORGANIZATION_BACKGROUND_IMAGE_UPLOAD_POLICY;
+  const maxLongEdgePx = Math.max(policy.maxWidth, policy.maxHeight);
+  const maxBytes = policy.maxBytes;
+  const preferredType = options.outputType ?? "image/webp";
+  const qualityAttempts = getQualityAttempts(options.quality ?? DEFAULT_QUALITY);
+
+  let source: LoadedImageSource;
+  try {
+    source = await loadImageSource(file);
+  } catch {
+    if (HEIC_INPUT_MIME_TYPES.has(inputMimeType)) {
+      throw new AvatarImageProcessingError(
+        "unsupported_type",
+        "This file type is not supported yet. Try a JPG or PNG."
+      );
+    }
+
+    throw new AvatarImageProcessingError(
+      "decode_failed",
+      "This image could not be processed. Please try another photo."
+    );
+  }
+
+  try {
+    if (source.width < policy.minWidth || source.height < policy.minHeight) {
+      throw new AvatarImageProcessingError("too_small", "The image is too small to use for this brand asset.");
+    }
+
+    const outputTypes: Array<"image/webp" | "image/jpeg"> =
+      preferredType === "image/webp" && (await canEncodeWebP())
+        ? ["image/webp", "image/jpeg"]
+        : ["image/jpeg"];
+    let bestResult: { blob: Blob; mimeType: "image/webp" | "image/jpeg"; width: number; height: number } | null = null;
+
+    for (const mimeType of outputTypes) {
+      const canvas = createScaledImageCanvas(source, maxLongEdgePx, mimeType === "image/jpeg");
+
+      for (const quality of qualityAttempts) {
+        try {
+          const blob = await canvasToBlob(canvas, mimeType, quality);
+          if (!bestResult || blob.size < bestResult.blob.size) {
+            bestResult = { blob, mimeType, width: canvas.width, height: canvas.height };
+          }
+          if (blob.size <= maxBytes) {
+            const processedFile = new File([blob], getBrandingOutputFileName(file.name, options.kind, mimeType), {
+              type: mimeType,
+              lastModified: Date.now()
+            });
+            return {
+              file: processedFile,
+              previewUrl: URL.createObjectURL(blob),
+              width: canvas.width,
+              height: canvas.height,
+              size: blob.size,
+              mimeType
+            };
+          }
+        } catch {
+          if (mimeType === "image/webp") {
+            break;
+          }
+        }
+      }
+    }
+
+    if (!bestResult || bestResult.blob.size > maxBytes) {
+      throw new AvatarImageProcessingError(
+        "encode_failed",
+        "This image could not be processed. Please try another photo."
+      );
+    }
+
+    const processedFile = new File([bestResult.blob], getBrandingOutputFileName(file.name, options.kind, bestResult.mimeType), {
+      type: bestResult.mimeType,
+      lastModified: Date.now()
+    });
+
+    return {
+      file: processedFile,
+      previewUrl: URL.createObjectURL(bestResult.blob),
+      width: bestResult.width,
+      height: bestResult.height,
       size: bestResult.blob.size,
       mimeType: bestResult.mimeType
     };

@@ -1,9 +1,11 @@
 import webpush from "web-push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPublicWebPushVapidKey } from "@/lib/push-config";
+import { isMissingColumnError } from "@/lib/schema-safety";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export type PushPlatform = "ios" | "android" | "web";
+export type PushPermissionState = "prompt" | "prompt-with-rationale" | "granted" | "denied" | "unknown";
 
 type PushTokenRow = {
   id: string;
@@ -11,6 +13,9 @@ type PushTokenRow = {
   platform: PushPlatform;
   token: string;
   created_at: string;
+  updated_at?: string | null;
+  last_seen_at?: string | null;
+  permission_state?: PushPermissionState | null;
 };
 
 type WebPushRegistrationPayload = {
@@ -38,6 +43,7 @@ let vapidConfigured = false;
 export async function registerCurrentUserPushToken(input: {
   token: string;
   platform: PushPlatform;
+  permissionState?: PushPermissionState;
 }) {
   const userResult = await getCurrentPushUserId();
   if (!userResult.ok) {
@@ -47,7 +53,8 @@ export async function registerCurrentUserPushToken(input: {
   return registerPushTokenForUser(createAdminClient(), {
     userId: userResult.userId,
     token: input.token,
-    platform: input.platform
+    platform: input.platform,
+    permissionState: input.permissionState
   });
 }
 
@@ -57,21 +64,52 @@ export async function registerPushTokenForUser(
     userId: string;
     token: string;
     platform: PushPlatform;
+    permissionState?: PushPermissionState;
   }
 ) {
+  if (!isPushPlatform(input.platform)) {
+    return { ok: false as const, message: "A valid push platform is required." };
+  }
+
   const normalizedToken = normalizePushToken(input.platform, input.token);
   if (!normalizedToken) {
     return { ok: false as const, message: "A valid push token is required." };
   }
 
-  const { error } = await adminSupabase.from("push_tokens").upsert(
-    {
-      user_id: input.userId,
-      platform: input.platform,
-      token: normalizedToken
-    },
-    { onConflict: "user_id,token" }
-  );
+  const now = new Date().toISOString();
+  const tokenPayload = {
+    user_id: input.userId,
+    platform: input.platform,
+    token: normalizedToken,
+    permission_state: normalizePushPermissionState(input.permissionState),
+    last_seen_at: now,
+    updated_at: now
+  };
+  const { error } = await adminSupabase.from("push_tokens").upsert(tokenPayload, { onConflict: "user_id,token" });
+
+  if (error && isMissingPushTokenMetadataColumnError(error.message)) {
+    const fallbackResult = await adminSupabase.from("push_tokens").upsert(
+      {
+        user_id: input.userId,
+        platform: input.platform,
+        token: normalizedToken
+      },
+      { onConflict: "user_id,token" }
+    );
+
+    if (!fallbackResult.error) {
+      return { ok: true as const, message: "This device is ready for push notifications." };
+    }
+
+    if (isMissingPushTokensTableError(fallbackResult.error.message)) {
+      return {
+        ok: false as const,
+        message: "Push notifications are not available yet. Apply the push_tokens migration first."
+      };
+    }
+
+    return { ok: false as const, message: fallbackResult.error.message };
+  }
 
   if (error) {
     if (isMissingPushTokensTableError(error.message)) {
@@ -85,6 +123,40 @@ export async function registerPushTokenForUser(
   }
 
   return { ok: true as const, message: "This device is ready for push notifications." };
+}
+
+export async function updateCurrentUserPushPermissionState(permissionState: PushPermissionState) {
+  const userResult = await getCurrentPushUserId();
+  if (!userResult.ok) {
+    return { ok: false as const, message: userResult.message };
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await createAdminClient().from("user_settings").upsert(
+    {
+      user_id: userResult.userId,
+      push_permission_state: normalizePushPermissionState(permissionState),
+      push_permission_updated_at: now
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error) {
+    if (isMissingUserSettingsPushColumnError(error.message)) {
+      return { ok: true as const, message: "Notification permission preference saved." };
+    }
+
+    if (isMissingUserSettingsTableError(error.message)) {
+      return {
+        ok: false as const,
+        message: "Notification preferences are not available yet. Apply the user notifications migration first."
+      };
+    }
+
+    return { ok: false as const, message: error.message };
+  }
+
+  return { ok: true as const, message: "Notification permission preference saved." };
 }
 
 export async function fetchHasPushTokenForUser(
@@ -116,10 +188,19 @@ export async function sendPushNotification(
   body: string,
   data?: Record<string, unknown>
 ) {
-  const { data: tokens, error } = await adminSupabase
+  const tokensResult = await adminSupabase
     .from("push_tokens")
-    .select("id,user_id,platform,token,created_at")
+    .select("id,user_id,platform,token,created_at,updated_at,last_seen_at,permission_state")
     .eq("user_id", userId);
+  const fallbackTokensResult =
+    tokensResult.error && isMissingPushTokenMetadataColumnError(tokensResult.error.message)
+      ? await adminSupabase
+          .from("push_tokens")
+          .select("id,user_id,platform,token,created_at")
+          .eq("user_id", userId)
+      : null;
+  const tokens = fallbackTokensResult?.data ?? tokensResult.data;
+  const error = fallbackTokensResult?.error ?? tokensResult.error;
 
   if (error) {
     if (isMissingPushTokensTableError(error.message)) {
@@ -271,6 +352,23 @@ function normalizePushToken(platform: PushPlatform, token: string) {
   return subscription ? JSON.stringify(subscription) : "";
 }
 
+function normalizePushPermissionState(permissionState: PushPermissionState | undefined): PushPermissionState {
+  if (
+    permissionState === "prompt" ||
+    permissionState === "prompt-with-rationale" ||
+    permissionState === "granted" ||
+    permissionState === "denied"
+  ) {
+    return permissionState;
+  }
+
+  return "unknown";
+}
+
+function isPushPlatform(platform: string): platform is PushPlatform {
+  return platform === "ios" || platform === "android" || platform === "web";
+}
+
 function parseWebPushToken(token: string): WebPushRegistrationPayload | null {
   try {
     const parsed = JSON.parse(token) as Partial<WebPushRegistrationPayload> & {
@@ -322,5 +420,30 @@ export function isMissingPushTokensTableError(message: string) {
     normalized.includes("relation \"public.push_tokens\" does not exist") ||
     normalized.includes("relation \"push_tokens\" does not exist") ||
     (normalized.includes("push_tokens") && normalized.includes("schema cache"))
+  );
+}
+
+function isMissingPushTokenMetadataColumnError(message: string) {
+  return (
+    isMissingColumnError(message, "push_tokens", "updated_at") ||
+    isMissingColumnError(message, "push_tokens", "last_seen_at") ||
+    isMissingColumnError(message, "push_tokens", "permission_state")
+  );
+}
+
+function isMissingUserSettingsTableError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("could not find the table 'public.user_settings'") ||
+    normalized.includes("relation \"public.user_settings\" does not exist") ||
+    normalized.includes("relation \"user_settings\" does not exist") ||
+    (normalized.includes("user_settings") && normalized.includes("schema cache"))
+  );
+}
+
+function isMissingUserSettingsPushColumnError(message: string) {
+  return (
+    isMissingColumnError(message, "user_settings", "push_permission_state") ||
+    isMissingColumnError(message, "user_settings", "push_permission_updated_at")
   );
 }
