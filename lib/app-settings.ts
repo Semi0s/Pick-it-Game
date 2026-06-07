@@ -4,7 +4,8 @@ import { isMissingColumnError, isMissingRelationError, warnOptionalFeatureOnce }
 export const LEADERBOARD_FEATURE_SETTING_KEYS = [
   "daily_winner_enabled",
   "perfect_pick_enabled",
-  "leaderboard_activity_enabled"
+  "leaderboard_activity_enabled",
+  "leaderboard_comments_enabled"
 ] as const;
 
 export type LeaderboardFeatureSettingKey = (typeof LEADERBOARD_FEATURE_SETTING_KEYS)[number];
@@ -20,7 +21,8 @@ export type LeaderboardFeatureSettings = Record<LeaderboardFeatureSettingKey, bo
 export const DEFAULT_LEADERBOARD_FEATURE_SETTINGS: LeaderboardFeatureSettings = {
   daily_winner_enabled: false,
   perfect_pick_enabled: false,
-  leaderboard_activity_enabled: false
+  leaderboard_activity_enabled: false,
+  leaderboard_comments_enabled: false
 };
 
 export async function fetchLeaderboardFeatureSettings(): Promise<LeaderboardFeatureSettings> {

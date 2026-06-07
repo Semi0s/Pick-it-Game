@@ -306,12 +306,14 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
       ? activeView === "global"
         ? await fetchRecentGlobalLeaderboardActivity({
             includeDailyWinner: settings.daily_winner_enabled,
-            dailyWinnersFallback: dailyWinners
+            dailyWinnersFallback: dailyWinners,
+            includeComments: settings.leaderboard_comments_enabled
           })
         : selectedGroupId
           ? await fetchGroupLeaderboardActivity(selectedGroupId, {
               includeDailyWinner: settings.daily_winner_enabled,
-              dailyWinnersFallback: dailyWinners
+              dailyWinnersFallback: dailyWinners,
+              includeComments: settings.leaderboard_comments_enabled
             })
           : []
       : [];

@@ -53,17 +53,19 @@ const RECENT_EVENT_LIMIT = 10;
 export async function fetchRecentGlobalLeaderboardActivity(options?: {
   includeDailyWinner?: boolean;
   dailyWinnersFallback?: DailyWinner[];
+  includeComments?: boolean;
 }): Promise<LeaderboardActivityItem[]> {
   return fetchRecentLeaderboardActivity({
     scopeType: "global",
     includeDailyWinner: options?.includeDailyWinner,
-    dailyWinnersFallback: options?.dailyWinnersFallback
+    dailyWinnersFallback: options?.dailyWinnersFallback,
+    includeComments: options?.includeComments
   });
 }
 
 export async function fetchGroupLeaderboardActivity(
   groupId: string,
-  options?: { includeDailyWinner?: boolean; dailyWinnersFallback?: DailyWinner[] }
+  options?: { includeDailyWinner?: boolean; dailyWinnersFallback?: DailyWinner[]; includeComments?: boolean }
 ): Promise<LeaderboardActivityItem[]> {
   if (!groupId.trim()) {
     return [];
@@ -73,7 +75,8 @@ export async function fetchGroupLeaderboardActivity(
     scopeType: "group",
     groupId,
     includeDailyWinner: options?.includeDailyWinner,
-    dailyWinnersFallback: options?.dailyWinnersFallback
+    dailyWinnersFallback: options?.dailyWinnersFallback,
+    includeComments: options?.includeComments
   });
 }
 
@@ -82,9 +85,11 @@ async function fetchRecentLeaderboardActivity(options: {
   groupId?: string;
   includeDailyWinner?: boolean;
   dailyWinnersFallback?: DailyWinner[];
+  includeComments?: boolean;
 }): Promise<LeaderboardActivityItem[]> {
   const adminSupabase = createAdminClient();
   const includeDailyWinner = options.includeDailyWinner ?? false;
+  const includeComments = options.includeComments ?? false;
 
   let query = adminSupabase
     .from("leaderboard_events")
@@ -116,10 +121,12 @@ async function fetchRecentLeaderboardActivity(options: {
 
   const persistedEvents = (data as LeaderboardEventRow[] | null) ?? [];
   const reactionsByEventId = await fetchLeaderboardEventReactions(persistedEvents.map((event) => event.id));
-  const commentableEventIds = persistedEvents
-    .filter((event) => event.event_type === "daily_winner" || event.event_type === "trophy_awarded")
-    .map((event) => event.id);
-  const commentsByEventId = await fetchCommentsForEvents(commentableEventIds);
+  const commentableEventIds = includeComments
+    ? persistedEvents
+        .filter((event) => event.event_type === "daily_winner" || event.event_type === "trophy_awarded")
+        .map((event) => event.id)
+    : [];
+  const commentsByEventId = includeComments ? await fetchCommentsForEvents(commentableEventIds) : new Map<string, LeaderboardEventComment[]>();
   const persistedItems = persistedEvents.map((event, index) => {
     const userRow = Array.isArray(event.user) ? event.user[0] : event.user;
     return {
@@ -134,9 +141,9 @@ async function fetchRecentLeaderboardActivity(options: {
       userAvatarUrl: userRow?.avatar_url ?? null,
       userHomeTeamId: userRow?.home_team_id ?? null,
       reactions: reactionsByEventId.get(event.id) ?? [],
-      comments: commentsByEventId.get(event.id) ?? [],
+      comments: includeComments ? commentsByEventId.get(event.id) ?? [] : [],
       canReact: true,
-      canComment: event.event_type === "daily_winner" || event.event_type === "trophy_awarded"
+      canComment: includeComments && (event.event_type === "daily_winner" || event.event_type === "trophy_awarded")
     };
   });
 

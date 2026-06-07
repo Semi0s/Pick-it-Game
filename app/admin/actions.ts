@@ -6217,6 +6217,8 @@ function formatLeaderboardFeatureSettingLabel(key: LeaderboardFeatureSettingKey)
       return "Perfect Pick";
     case "leaderboard_activity_enabled":
       return "Leaderboard activity";
+    case "leaderboard_comments_enabled":
+      return "Leaderboard comments";
     default:
       return "Leaderboard feature";
   }

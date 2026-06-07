@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchBooleanAppSetting } from "@/lib/app-settings";
 import { createCommentNotification } from "@/lib/notifications";
 import {
   assertUserCanSeeLeaderboardEvent,
@@ -47,6 +48,11 @@ export async function addLeaderboardEventComment(
   eventId: string,
   body: string
 ): Promise<CommentMutationResult> {
+  const commentsEnabled = await fetchBooleanAppSetting("leaderboard_comments_enabled", false);
+  if (!commentsEnabled) {
+    return { ok: false, message: "Leaderboard comments are not enabled yet." };
+  }
+
   const normalizedBody = normalizeCommentBody(body);
   if (!normalizedBody) {
     return { ok: false, message: "Comments cannot be empty." };
