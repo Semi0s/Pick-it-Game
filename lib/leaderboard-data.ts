@@ -20,6 +20,7 @@ import { fetchGroupPhaseSummaries } from "@/lib/group-phase-data";
 import { isMissingAnyRelationError, isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { assignDeterministicRanks, compareLeaderboardEntries } from "@/lib/scoring-engine";
 import { hasOrganizerAccess, normalizeCommercialTier, resolveAccessLevel, type AccessLevel } from "@/lib/tier-access";
+import { areLeaderboardCommentsEnabledForScope } from "@/lib/ugc-safety";
 import type { UserProfile, UserTrophy } from "@/lib/types";
 
 type UserRow = {
@@ -301,19 +302,23 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
     activeView === "global" && phase === "global_top10"
       ? rawLeaderboard.slice(0, hasGlobalTopTenScoringStarted ? 10 : 30)
       : rawLeaderboard;
+  const commentsEnabledForActivity =
+    settings.leaderboard_comments_enabled && selectedGroupId
+      ? await areLeaderboardCommentsEnabledForScope("group", selectedGroupId)
+      : false;
   const activityFeed =
     settings.leaderboard_activity_enabled
       ? activeView === "global"
         ? await fetchRecentGlobalLeaderboardActivity({
             includeDailyWinner: settings.daily_winner_enabled,
             dailyWinnersFallback: dailyWinners,
-            includeComments: settings.leaderboard_comments_enabled
+            includeComments: false
           })
         : selectedGroupId
           ? await fetchGroupLeaderboardActivity(selectedGroupId, {
               includeDailyWinner: settings.daily_winner_enabled,
               dailyWinnersFallback: dailyWinners,
-              includeComments: settings.leaderboard_comments_enabled
+              includeComments: commentsEnabledForActivity
             })
           : []
       : [];

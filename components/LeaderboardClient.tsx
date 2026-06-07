@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Flag, X } from "lucide-react";
 import { InlineDisclosureButton, WindowChoiceRail, useSessionDisclosureState, useSessionJsonState } from "@/components/player-management/Shared";
 import {
   awardManagedGroupTrophyAction,
@@ -15,6 +15,7 @@ import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { LeaderboardPlayerLocalizationBackground } from "@/components/localized-card/LeaderboardPlayerLocalizationBackground";
 import { LocalizedCardBackground } from "@/components/localized-card/LocalizedCardBackground";
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
+import { ReportBlockDialog, type ReportTargetOption } from "@/components/ReportBlockDialog";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
 import { useAppLanguage } from "@/lib/app-language";
 import { parseJsonResponse } from "@/lib/fetch-json";
@@ -257,6 +258,20 @@ function getLeaderboardNumericScore(profile: LeaderboardListItem, activePhase: L
   return profile.globalTopTenPoints ?? profile.totalPoints ?? 0;
 }
 
+function SafetyButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-black uppercase tracking-wide text-gray-600 shadow-sm transition hover:border-accent hover:bg-accent-light hover:text-accent-dark focus:outline-none focus:ring-2 focus:ring-accent-light"
+      aria-label="Report or block"
+    >
+      <Flag className="h-3.5 w-3.5" aria-hidden />
+      <span>Safety</span>
+    </button>
+  );
+}
+
 export function LeaderboardClient() {
   const { user, isLoading: isUserLoading } = useCurrentUser();
   const { activeLanguage: uiLanguage } = useAppLanguage();
@@ -314,6 +329,9 @@ export function LeaderboardClient() {
   const [managedAwardGroup, setManagedAwardGroup] = useState<ManagedGroupDetails | null>(null);
   const [managedTrophySheetTarget, setManagedTrophySheetTarget] = useState<{ groupId: string; userId: string } | null>(null);
   const [activeManagedTrophyKey, setActiveManagedTrophyKey] = useState<string | null>(null);
+  const [isSafetyReportOpen, setIsSafetyReportOpen] = useState(false);
+  const [extraReportTarget, setExtraReportTarget] = useState<ReportTargetOption | null>(null);
+  const [initialReportTargetId, setInitialReportTargetId] = useState<string | null>(null);
   const [celebrationTrophy, setCelebrationTrophy] = useState<{
     name: string;
     icon: string;
@@ -1038,6 +1056,49 @@ export function LeaderboardClient() {
     hasDirectorAccess(switcher?.accessLevel ?? "player") &&
     Boolean(managedAwardGroup);
   const canSelfAwardTrophies = user?.role === "admin";
+  const baseReportTargets = useMemo<ReportTargetOption[]>(() => {
+    const targets: ReportTargetOption[] = [];
+    if (isGroupView && selectedGroupSummary) {
+      targets.push({
+        type: "group",
+        id: selectedGroupSummary.id,
+        label: `Group: ${selectedGroupSummary.label}`,
+        groupId: selectedGroupSummary.id
+      });
+    } else {
+      targets.push({
+        type: "other",
+        id: "page",
+        label: `Page: ${leaderboardTitle}`,
+        groupId: null
+      });
+    }
+
+    for (const profile of users) {
+      if (profile.id === user?.id) {
+        continue;
+      }
+
+      targets.push({
+        type: "user",
+        id: profile.id,
+        label: `Player: ${profile.name}`,
+        groupId: isGroupView ? selectedGroupId : null,
+        canBlock: true
+      });
+    }
+
+    return targets;
+  }, [isGroupView, leaderboardTitle, selectedGroupId, selectedGroupSummary, user?.id, users]);
+  const reportTargets = useMemo(() => {
+    if (!extraReportTarget) {
+      return baseReportTargets;
+    }
+
+    const extraKey = `${extraReportTarget.type}:${extraReportTarget.id}:${extraReportTarget.groupId ?? "global"}`;
+    const hasExtra = baseReportTargets.some((target) => `${target.type}:${target.id}:${target.groupId ?? "global"}` === extraKey);
+    return hasExtra ? baseReportTargets : [extraReportTarget, ...baseReportTargets];
+  }, [baseReportTargets, extraReportTarget]);
   const shallowLeaderboardSpacerHeight = useMemo(() => {
     if (!shouldRenderLeaderboardRows || isLoading || Boolean(error) || users.length === 0) {
       return 0;
@@ -1297,9 +1358,27 @@ export function LeaderboardClient() {
                       <div key={comment.id} className="rounded-md bg-white/80 px-3 py-2">
                         <div className="flex items-start justify-between gap-2">
                           <p className="text-xs font-bold text-gray-800">{comment.userName}</p>
-                          <p className="text-[11px] font-semibold text-gray-500">
-                            {formatRelativeTime(comment.createdAt)}
-                          </p>
+                          <div className="flex items-center gap-2">
+                            {!comment.isOwn && user ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openSafetyReport({
+                                    type: "comment",
+                                    id: comment.id,
+                                    label: `Comment by ${comment.userName}`,
+                                    groupId: isGroupView ? selectedGroupId : null
+                                  })
+                                }
+                                className="text-[11px] font-bold text-gray-500 underline-offset-2 hover:text-accent-dark hover:underline"
+                              >
+                                Report
+                              </button>
+                            ) : null}
+                            <p className="text-[11px] font-semibold text-gray-500">
+                              {formatRelativeTime(comment.createdAt)}
+                            </p>
+                          </div>
                         </div>
                         <p className="mt-1 text-sm text-gray-700">{comment.body}</p>
                       </div>
@@ -1546,9 +1625,14 @@ export function LeaderboardClient() {
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-start justify-between gap-3">
                   <h3 className="min-w-0 truncate text-base font-black text-gray-950">{leaderboardTitle}</h3>
-                  <span className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700">
-                    {selectedGroupSummary.context === "managed" ? t(uiLanguage, "leaderboard.managed") : t(uiLanguage, "leaderboard.invited")}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {user ? (
+                      <SafetyButton onClick={() => openSafetyReport()} />
+                    ) : null}
+                    <span className="rounded-md bg-gray-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700">
+                      {selectedGroupSummary.context === "managed" ? t(uiLanguage, "leaderboard.managed") : t(uiLanguage, "leaderboard.invited")}
+                    </span>
+                  </div>
                 </div>
                 <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1.5 text-[11px] font-semibold text-gray-600">
                   <div className="min-w-0 truncate">
@@ -1572,6 +1656,7 @@ export function LeaderboardClient() {
           ) : (
             <div className="flex items-start justify-between gap-2 px-1 pt-1">
               <h3 className="text-base font-black text-gray-950">{leaderboardTitle}</h3>
+              {user ? <SafetyButton onClick={() => openSafetyReport()} /> : null}
             </div>
           )}
           {!isLoading && !error && leaders.length > 1 ? (
@@ -1697,8 +1782,31 @@ export function LeaderboardClient() {
         trophy={celebrationTrophy}
         onDismiss={() => setCelebrationTrophy(null)}
       />
+
+      <ReportBlockDialog
+        open={isSafetyReportOpen}
+        targets={reportTargets}
+        initialTargetId={initialReportTargetId}
+        onClose={() => {
+          setIsSafetyReportOpen(false);
+          setExtraReportTarget(null);
+          setInitialReportTargetId(null);
+        }}
+        onSubmitted={() => setRefreshNonce((current) => current + 1)}
+      />
     </div>
   );
+
+  function openSafetyReport(target?: ReportTargetOption) {
+    if (target) {
+      setExtraReportTarget(target);
+      setInitialReportTargetId(target.id);
+    } else {
+      setExtraReportTarget(null);
+      setInitialReportTargetId(null);
+    }
+    setIsSafetyReportOpen(true);
+  }
 
   async function handleReactionToggle(eventId: string | null, emoji: string, reacted: boolean) {
     if (!eventId || !user) {

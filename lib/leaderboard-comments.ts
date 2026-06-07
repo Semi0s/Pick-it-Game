@@ -7,6 +7,7 @@ import {
 } from "@/lib/leaderboard-reactions";
 import { isMissingRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { awardFirstReactionTrophy } from "@/lib/trophy-awards";
+import { areLeaderboardCommentsEnabledForScope, fetchBlockedUserIds } from "@/lib/ugc-safety";
 
 const MAX_COMMENT_LENGTH = 280;
 
@@ -87,6 +88,19 @@ export async function addLeaderboardEventComment(
     return { ok: false, message: eventRowError.message };
   }
 
+  const leaderboardEvent = eventRow as LeaderboardEventOwnerRow | null;
+  if (!leaderboardEvent) {
+    return { ok: false, message: "That activity event could not be found." };
+  }
+
+  const commentsEnabledForEvent = await areLeaderboardCommentsEnabledForScope(
+    leaderboardEvent.scope_type,
+    leaderboardEvent.group_id
+  );
+  if (!commentsEnabledForEvent) {
+    return { ok: false, message: "Comments are not enabled for this group." };
+  }
+
   const { data: insertedComment, error } = await adminSupabase
     .from("leaderboard_event_comments")
     .insert({
@@ -103,7 +117,6 @@ export async function addLeaderboardEventComment(
 
   await awardFirstReactionTrophy(adminSupabase, userResult.userId);
 
-  const leaderboardEvent = eventRow as LeaderboardEventOwnerRow | null;
   if (leaderboardEvent?.user_id && leaderboardEvent.user_id !== userResult.userId) {
     await createCommentNotification({
       adminSupabase,
@@ -141,6 +154,7 @@ export async function fetchCommentsForEvents(
     .from("leaderboard_event_comments")
     .select("id,event_id,user_id,body,created_at,user:users!leaderboard_event_comments_user_id_fkey(id,name,avatar_url,home_team_id)")
     .in("event_id", uniqueEventIds)
+    .eq("is_deleted", false)
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -158,8 +172,13 @@ export async function fetchCommentsForEvents(
 
   const rows = (data as LeaderboardEventCommentRow[] | null) ?? [];
   const grouped = new Map<string, LeaderboardEventComment[]>();
+  const blockedUserIds = await fetchBlockedUserIds(adminSupabase, viewerId);
 
   for (const row of rows) {
+    if (blockedUserIds.has(row.user_id)) {
+      continue;
+    }
+
     const current = grouped.get(row.event_id) ?? [];
     const userRow = Array.isArray(row.user) ? row.user[0] : row.user;
     current.push({

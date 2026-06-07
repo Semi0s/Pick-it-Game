@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { isMissingRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { awardFirstReactionTrophy } from "@/lib/trophy-awards";
+import { fetchBlockedUserIds } from "@/lib/ugc-safety";
 
 export const LEADERBOARD_REACTION_EMOJIS = ["🔥", "🎯", "👀", "👍", "👏"] as const;
 
@@ -139,9 +140,14 @@ export async function fetchLeaderboardEventReactions(
   }
 
   const rows = (data as LeaderboardEventReactionRow[] | null) ?? [];
+  const blockedUserIds = await fetchBlockedUserIds(adminSupabase, viewerId);
   const countsByEvent = new Map<string, Map<AllowedReactionEmoji, { count: number; reacted: boolean }>>();
 
   for (const row of rows) {
+    if (blockedUserIds.has(row.user_id)) {
+      continue;
+    }
+
     const perEvent = countsByEvent.get(row.event_id) ?? new Map();
     const current = perEvent.get(row.emoji) ?? { count: 0, reacted: false };
     current.count += 1;
