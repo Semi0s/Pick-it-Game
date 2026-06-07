@@ -1,3 +1,4 @@
+/// <reference types="@capacitor/push-notifications" />
 import type { CapacitorConfig } from "@capacitor/cli";
 import { KeyboardResize } from "@capacitor/keyboard";
 
@@ -16,6 +17,9 @@ const config: CapacitorConfig = {
   plugins: {
     Keyboard: {
       resize: KeyboardResize.Body
+    },
+    PushNotifications: {
+      presentationOptions: ["badge", "sound", "banner", "list"]
     }
   }
 };

@@ -6,6 +6,8 @@ import { fetchBooleanAppSetting, fetchIntegerAppSetting } from "@/lib/app-settin
 import { normalizeAccessCode } from "@/lib/access-codes";
 import { buildGroupInviteEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
 import { ensureUserCanJoinAnotherGroup, fetchJoinedPlayerGroupCount } from "@/lib/group-membership-limits";
+import { GROUP_AVATAR_IMAGE_UPLOAD_POLICY } from "@/lib/image-upload-config";
+import { validateImageUploadFile } from "@/lib/image-upload-validation";
 import {
   appendExplainerLanguageToPath,
   appendLanguageToPath,
@@ -49,12 +51,10 @@ import {
 } from "@/lib/group-scoring-defaults";
 import { normalizeGroupBaseMode, type GroupBaseMode } from "@/lib/play-mode";
 import {
-  getGroupAvatarExtension,
   getCaptainsPassStatusLabel,
   GROUP_AVATAR_BUCKET,
   getRemainingCaptainsPassAllowance,
   MAX_CAPTAIN_PRIVATE_GROUP_MEMBERS,
-  MAX_GROUP_AVATAR_FILE_BYTES,
   MAX_CAPTAINS_PASS_ALLOWANCE,
   MAX_GROUP_NAME_LENGTH,
   normalizeCaptainsPassStatus,
@@ -2723,15 +2723,6 @@ export async function uploadManagedGroupAvatarAction(formData: FormData): Promis
     return { ok: false, message: "Choose an image file first." };
   }
 
-  if (file.size > MAX_GROUP_AVATAR_FILE_BYTES) {
-    return { ok: false, message: "Choose a JPG, PNG, or WEBP image under 2 MB." };
-  }
-
-  const extension = getGroupAvatarExtension(file.type);
-  if (!extension) {
-    return { ok: false, message: "Use a JPG, PNG, or WEBP image for the group avatar." };
-  }
-
   try {
     const adminSupabase = createAdminClient();
     const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
@@ -2739,13 +2730,17 @@ export async function uploadManagedGroupAvatarAction(formData: FormData): Promis
       return { ok: false, message: "You do not manage that group." };
     }
 
-    const uploadBytes = Buffer.from(await file.arrayBuffer());
+    const validation = await validateImageUploadFile(file, GROUP_AVATAR_IMAGE_UPLOAD_POLICY);
+    if (!validation.ok) {
+      return validation;
+    }
+
     await removeKnownGroupAvatarObjects(adminSupabase, trimmedGroupId);
 
-    const objectPath = buildManagedGroupAvatarObjectPath(trimmedGroupId, extension);
-    const { error: uploadError } = await adminSupabase.storage.from(GROUP_AVATAR_BUCKET).upload(objectPath, uploadBytes, {
+    const objectPath = buildManagedGroupAvatarObjectPath(trimmedGroupId, validation.value.extension);
+    const { error: uploadError } = await adminSupabase.storage.from(GROUP_AVATAR_BUCKET).upload(objectPath, validation.value.bytes, {
       upsert: false,
-      contentType: file.type,
+      contentType: validation.value.mimeType,
       cacheControl: "3600"
     });
 

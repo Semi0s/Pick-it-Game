@@ -58,6 +58,15 @@ const FILTERS = [
   { value: "pending", label: "Pending signup or confirmation" }
 ] as const;
 
+const SIGNUP_DATE_FILTERS = [
+  { value: "any", label: "Any signup date" },
+  { value: "on", label: "Signed up on" },
+  { value: "since", label: "Signed up since" },
+  { value: "before", label: "Signed up before" }
+] as const;
+
+type SignupDateFilterMode = (typeof SIGNUP_DATE_FILTERS)[number]["value"];
+
 type AdminManagementTab = "setup" | "users" | "groups";
 
 export function AdminPlayersClient() {
@@ -71,6 +80,8 @@ export function AdminPlayersClient() {
   const [activeActionKey, setActiveActionKey] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState("");
   const [filterValue, setFilterValue] = useState<(typeof FILTERS)[number]["value"]>("all");
+  const [signupDateFilterMode, setSignupDateFilterMode] = useState<SignupDateFilterMode>("any");
+  const [signupDateFilterValue, setSignupDateFilterValue] = useState("");
   const [activeTab, setActiveTab] = useState<AdminManagementTab>("users");
   const [managerEditor, setManagerEditor] = useState<{
     userId: string;
@@ -184,6 +195,10 @@ export function AdminPlayersClient() {
         return false;
       }
 
+      if (!matchesSignupDateFilter(player.createdAt, signupDateFilterMode, signupDateFilterValue)) {
+        return false;
+      }
+
       if (filterValue === "manager") {
         return player.roleLabel === "admin" || player.isManager;
       }
@@ -202,7 +217,7 @@ export function AdminPlayersClient() {
 
       return true;
     });
-  }, [filterValue, players, searchValue]);
+  }, [filterValue, players, searchValue, signupDateFilterMode, signupDateFilterValue]);
   const attentionPlayerCount = useMemo(
     () => players.filter((player) => player.healthBadge === "mismatch" || player.healthBadge === "needs_attention").length,
     [players]
@@ -573,9 +588,24 @@ export function AdminPlayersClient() {
             filters={FILTERS.map((filter) => ({ ...filter }))}
             className="sticky top-20 z-10 shadow-sm"
             trailing={
-              !isLoading ? (
-                <ActionButton onClick={() => void refreshPlayers()}>Refresh Auth Status</ActionButton>
-              ) : null
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <SignupDateFilterControl
+                  mode={signupDateFilterMode}
+                  value={signupDateFilterValue}
+                  onModeChange={(mode) => {
+                    setSignupDateFilterMode(mode);
+                    if (mode === "any") {
+                      setSignupDateFilterValue("");
+                    }
+                  }}
+                  onValueChange={setSignupDateFilterValue}
+                  onClear={() => {
+                    setSignupDateFilterMode("any");
+                    setSignupDateFilterValue("");
+                  }}
+                />
+                {!isLoading ? <ActionButton onClick={() => void refreshPlayers()}>Refresh Auth Status</ActionButton> : null}
+              </div>
             }
           />
 
@@ -753,6 +783,103 @@ function AdminManagementTabs({
       })}
     </div>
   );
+}
+
+function SignupDateFilterControl({
+  mode,
+  value,
+  onModeChange,
+  onValueChange,
+  onClear
+}: {
+  mode: SignupDateFilterMode;
+  value: string;
+  onModeChange: (mode: SignupDateFilterMode) => void;
+  onValueChange: (value: string) => void;
+  onClear: () => void;
+}) {
+  const isDateDisabled = mode === "any";
+  const canClear = mode !== "any" || Boolean(value);
+
+  return (
+    <div className="grid gap-2 sm:min-w-[23rem] sm:grid-cols-[minmax(0,11rem)_minmax(0,10rem)_auto] sm:items-end">
+      <label className="block">
+        <span className="text-sm font-bold text-gray-800">Signup date</span>
+        <select
+          value={mode}
+          onChange={(event) => onModeChange(event.target.value as SignupDateFilterMode)}
+          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+        >
+          {SIGNUP_DATE_FILTERS.map((filter) => (
+            <option key={filter.value} value={filter.value}>
+              {filter.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block">
+        <span className="text-sm font-bold text-gray-800">Date</span>
+        <input
+          type="date"
+          value={value}
+          disabled={isDateDisabled}
+          onChange={(event) => onValueChange(event.target.value)}
+          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+        />
+      </label>
+      <button
+        type="button"
+        onClick={onClear}
+        disabled={!canClear}
+        className="rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+      >
+        Clear
+      </button>
+    </div>
+  );
+}
+
+function matchesSignupDateFilter(
+  createdAt: string | null | undefined,
+  mode: SignupDateFilterMode,
+  selectedDate: string
+) {
+  if (mode === "any" || !selectedDate) {
+    return true;
+  }
+
+  const createdDate = getIsoDateKey(createdAt);
+  if (!createdDate) {
+    return false;
+  }
+
+  if (mode === "on") {
+    return createdDate === selectedDate;
+  }
+
+  if (mode === "since") {
+    return createdDate >= selectedDate;
+  }
+
+  return createdDate <= selectedDate;
+}
+
+function getIsoDateKey(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const directIsoDate = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+  if (directIsoDate) {
+    return directIsoDate;
+  }
+
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return parsedDate.toISOString().slice(0, 10);
 }
 
 function AdminToolCard({

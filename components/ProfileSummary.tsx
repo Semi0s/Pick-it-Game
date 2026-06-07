@@ -47,8 +47,8 @@ import {
 } from "@/lib/visual-theme-options";
 
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
-const SUPPORT_EMAIL = process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim() || "santiago@semiosdesign.com";
-const PRIVACY_POLICY_URL = process.env.NEXT_PUBLIC_PRIVACY_POLICY_URL?.trim() || "https://www.semiosdesign.com/pick-it-game";
+const SUPPORT_EMAIL = process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim() || "pickit@semiosdesign.com";
+const PRIVACY_POLICY_URL = process.env.NEXT_PUBLIC_PRIVACY_POLICY_URL?.trim() || "/privacy";
 
 type ProfileTeam = (typeof teams)[number];
 
@@ -971,7 +971,7 @@ export function ProfileSummary({
         <h3 className="text-lg font-bold">Support and privacy</h3>
         <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
           Report problems, objectionable content, account issues, or privacy questions from here. Account deletion is
-          available above in Profile settings.
+          available above in Profile settings, with public help below.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <a
@@ -982,11 +982,27 @@ export function ProfileSummary({
           </a>
           <a
             href={PRIVACY_POLICY_URL}
-            target="_blank"
-            rel="noreferrer"
             className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
           >
-            Privacy / support page
+            Privacy Policy
+          </a>
+          <a
+            href="/terms"
+            className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Terms
+          </a>
+          <a
+            href="/support"
+            className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Support
+          </a>
+          <a
+            href="/support#account-deletion"
+            className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Account deletion help
           </a>
         </div>
       </div>

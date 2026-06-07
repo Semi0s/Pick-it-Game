@@ -15,6 +15,11 @@ import {
   type FetchOrganizationBrandingWorkspaceResult
 } from "@/app/my-groups/organization-branding-actions";
 import { OrganizationPortalPreview } from "@/components/OrganizationPortalPreview";
+import {
+  getAvatarImageInputAcceptAttribute,
+  getAvatarImageProcessingErrorMessage,
+  processBrandingImage
+} from "@/lib/avatar-image-processing";
 import { showAppToast } from "@/lib/app-toast";
 import {
   ORGANIZATION_REVIEW_NOTE_MAX_LENGTH,
@@ -160,12 +165,20 @@ export function OrganizationBrandingPanel() {
       return;
     }
 
-    const formData = new FormData();
-    formData.set("organizationId", organization.organizationId);
-    formData.set("assetKind", assetKind);
-    formData.set("file", file);
+    const result = await withAction(`upload-${assetKind}`, async () => {
+      const processedImage = await processBrandingImage(file, { kind: assetKind });
+      URL.revokeObjectURL(processedImage.previewUrl);
+      const formData = new FormData();
+      formData.set("organizationId", organization.organizationId);
+      formData.set("assetKind", assetKind);
+      formData.set("file", processedImage.file);
 
-    const result = await withAction(`upload-${assetKind}`, () => uploadOrganizationBrandingAssetAction(formData));
+      return uploadOrganizationBrandingAssetAction(formData);
+    }).catch((caughtError) => ({
+      ok: false as const,
+      message: getAvatarImageProcessingErrorMessage(caughtError)
+    }));
+
     showAppToast({ tone: result.ok ? "success" : "error", text: result.message });
     if (result.ok) {
       syncOrganization(result.organization);
@@ -307,7 +320,7 @@ export function OrganizationBrandingPanel() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className={fieldLabelClassName}>Logo</p>
-                        <p className="mt-1 text-sm font-semibold text-gray-600">JPG, PNG, or WebP up to 2 MB.</p>
+                        <p className="mt-1 text-sm font-semibold text-gray-600">JPG, PNG, WebP, or phone photo. We compress to about 500 KB.</p>
                       </div>
                       <ManagementBadge label={workspace.organization.logo.signedUrl ? "set" : "default"} tone="neutral" />
                     </div>
@@ -322,7 +335,7 @@ export function OrganizationBrandingPanel() {
                     <input
                       ref={logoInputRef}
                       type="file"
-                      accept="image/jpeg,image/png,image/webp"
+                      accept={getAvatarImageInputAcceptAttribute()}
                       className="hidden"
                       onChange={(event) => void handleUpload("logo", event)}
                     />
@@ -349,7 +362,7 @@ export function OrganizationBrandingPanel() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className={fieldLabelClassName}>Background</p>
-                        <p className="mt-1 text-sm font-semibold text-gray-600">JPG, PNG, or WebP up to 5 MB.</p>
+                        <p className="mt-1 text-sm font-semibold text-gray-600">JPG, PNG, WebP, or phone photo. We compress to about 1.5 MB.</p>
                       </div>
                       <ManagementBadge label={workspace.organization.background.signedUrl ? "set" : "default"} tone="neutral" />
                     </div>
@@ -364,7 +377,7 @@ export function OrganizationBrandingPanel() {
                     <input
                       ref={backgroundInputRef}
                       type="file"
-                      accept="image/jpeg,image/png,image/webp"
+                      accept={getAvatarImageInputAcceptAttribute()}
                       className="hidden"
                       onChange={(event) => void handleUpload("background", event)}
                     />

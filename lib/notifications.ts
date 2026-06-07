@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendPushNotification } from "@/lib/push-notifications";
+import { isMissingColumnError } from "@/lib/schema-safety";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export type NotificationType = "perfect_pick" | "daily_winner" | "big_rank_movement" | "event_comment" | "trophy_earned";
@@ -7,6 +8,10 @@ export type NotificationType = "perfect_pick" | "daily_winner" | "big_rank_movem
 type NotificationSettingRow = {
   user_id: string;
   notifications_enabled: boolean;
+  notify_picks_lock_reminders?: boolean | null;
+  notify_match_finalized?: boolean | null;
+  notify_leaderboard_updates?: boolean | null;
+  notify_group_activity?: boolean | null;
 };
 
 type NotificationRow = {
@@ -75,10 +80,41 @@ export async function updateCurrentUserNotificationPreferences(enabled: boolean)
   const { error } = await adminSupabase.from("user_settings").upsert(
     {
       user_id: userResult.userId,
-      notifications_enabled: enabled
+      notifications_enabled: enabled,
+      notify_picks_lock_reminders: enabled,
+      notify_match_finalized: enabled,
+      notify_leaderboard_updates: enabled,
+      notify_group_activity: enabled
     },
     { onConflict: "user_id" }
   );
+
+  if (error && isMissingNotificationPreferenceColumnError(error.message)) {
+    const { error: fallbackError } = await adminSupabase.from("user_settings").upsert(
+      {
+        user_id: userResult.userId,
+        notifications_enabled: enabled
+      },
+      { onConflict: "user_id" }
+    );
+
+    if (!fallbackError) {
+      return {
+        ok: true as const,
+        notificationsEnabled: enabled,
+        message: enabled ? "Notifications turned on." : "Notifications turned off."
+      };
+    }
+
+    if (isMissingUserSettingsTableError(fallbackError.message)) {
+      return {
+        ok: false as const,
+        message: "Notification preferences are not available yet. Apply the user_notifications migration first."
+      };
+    }
+
+    return { ok: false as const, message: fallbackError.message };
+  }
 
   if (error) {
     if (isMissingUserSettingsTableError(error.message)) {
@@ -94,7 +130,7 @@ export async function updateCurrentUserNotificationPreferences(enabled: boolean)
   return {
     ok: true as const,
     notificationsEnabled: enabled,
-    message: enabled ? "Leaderboard notifications turned on." : "Leaderboard notifications turned off."
+    message: enabled ? "Notifications turned on." : "Notifications turned off."
   };
 }
 
@@ -398,12 +434,14 @@ async function insertNotificationBatch(
   let allowedInserts = uniqueInserts;
 
   if (requireNotificationsEnabled) {
-    const enabledUserIds = await fetchEnabledNotificationUserIds(
+    const enabledNotificationSettings = await fetchEnabledNotificationSettings(
       adminSupabase,
       uniqueInserts.map((item) => item.user_id)
     );
 
-    allowedInserts = uniqueInserts.filter((item) => enabledUserIds.has(item.user_id));
+    allowedInserts = uniqueInserts.filter((item) =>
+      isNotificationTypeEnabled(enabledNotificationSettings.get(item.user_id), item.type)
+    );
   }
 
   if (allowedInserts.length === 0) {
@@ -444,32 +482,62 @@ async function insertNotificationBatch(
   queueNotificationDeliveryStub(newInserts);
 }
 
-async function fetchEnabledNotificationUserIds(
+async function fetchEnabledNotificationSettings(
   adminSupabase: ReturnType<typeof createAdminClient>,
   userIds: string[]
 ) {
   const uniqueUserIds = Array.from(new Set(userIds.filter(Boolean)));
   if (uniqueUserIds.length === 0) {
-    return new Set<string>();
+    return new Map<string, NotificationSettingRow>();
   }
 
   const { data, error } = await adminSupabase
     .from("user_settings")
-    .select("user_id,notifications_enabled")
+    .select("user_id,notifications_enabled,notify_picks_lock_reminders,notify_match_finalized,notify_leaderboard_updates,notify_group_activity")
     .in("user_id", uniqueUserIds)
     .eq("notifications_enabled", true);
 
+  if (error && isMissingNotificationPreferenceColumnError(error.message)) {
+    const fallbackResult = await adminSupabase
+      .from("user_settings")
+      .select("user_id,notifications_enabled")
+      .in("user_id", uniqueUserIds)
+      .eq("notifications_enabled", true);
+
+    if (fallbackResult.error) {
+      if (isMissingUserSettingsTableError(fallbackResult.error.message)) {
+        return new Map<string, NotificationSettingRow>();
+      }
+
+      throw new Error(fallbackResult.error.message);
+    }
+
+    return new Map(
+      (((fallbackResult.data as NotificationSettingRow[] | null) ?? []).map((row) => [row.user_id, row]))
+    );
+  }
+
   if (error) {
     if (isMissingUserSettingsTableError(error.message)) {
-      return new Set<string>();
+      return new Map<string, NotificationSettingRow>();
     }
 
     throw new Error(error.message);
   }
 
-  return new Set(
-    (((data as NotificationSettingRow[] | null) ?? []).map((row) => row.user_id))
-  );
+  return new Map((((data as NotificationSettingRow[] | null) ?? []).map((row) => [row.user_id, row])));
+}
+
+function isNotificationTypeEnabled(settings: NotificationSettingRow | undefined, type: NotificationType) {
+  if (!settings?.notifications_enabled) {
+    return false;
+  }
+
+  if (type === "event_comment") {
+    return settings.notify_group_activity ?? true;
+  }
+
+  return settings.notify_leaderboard_updates ?? true;
 }
 
 function dedupeNotificationInserts(inserts: NotificationInsert[]) {
@@ -626,6 +694,15 @@ function isMissingUserSettingsTableError(message: string) {
     normalized.includes("relation \"public.user_settings\" does not exist") ||
     normalized.includes("relation \"user_settings\" does not exist") ||
     (normalized.includes("user_settings") && normalized.includes("schema cache"))
+  );
+}
+
+function isMissingNotificationPreferenceColumnError(message: string) {
+  return (
+    isMissingColumnError(message, "user_settings", "notify_picks_lock_reminders") ||
+    isMissingColumnError(message, "user_settings", "notify_match_finalized") ||
+    isMissingColumnError(message, "user_settings", "notify_leaderboard_updates") ||
+    isMissingColumnError(message, "user_settings", "notify_group_activity")
   );
 }
 

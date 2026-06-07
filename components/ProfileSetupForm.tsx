@@ -7,7 +7,10 @@ import { completeProfileSetupAction } from "@/app/profile-setup/actions";
 import { TeamPickerMenu } from "@/components/TeamPickerMenu";
 import { VisualThemeMenu } from "@/components/VisualThemeMenu";
 import { showAppToast } from "@/lib/app-toast";
-import { updateCurrentUserNotificationPreferences } from "@/lib/auth-client";
+import {
+  registerCurrentBrowserPushNotifications,
+  updateCurrentUserNotificationPreferences
+} from "@/lib/auth-client";
 import {
   APP_LANGUAGE_COOKIE_KEY,
   APP_LANGUAGE_STORAGE_KEY,
@@ -353,6 +356,8 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
                 setMessage(null);
                 try {
                   const result = await updateCurrentUserNotificationPreferences(nextNotificationsEnabled);
+                  const pushResult =
+                    result.ok && nextNotificationsEnabled ? await registerCurrentBrowserPushNotifications() : null;
                   setMessage({
                     tone: result.ok ? "success" : "error",
                     text: result.ok
@@ -361,7 +366,7 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
                           nextNotificationsEnabled
                             ? "profile.notificationsUpdatedOn"
                             : "profile.notificationsUpdatedOff"
-                        )
+                        ) + (pushResult?.message ? ` ${pushResult.message}` : "")
                       : result.message ?? t(uiLanguage, "errors.generic")
                   });
                   if (result.ok) {
