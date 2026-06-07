@@ -28,6 +28,8 @@ import {
   type ProjectedGroupStandings
 } from "@/lib/knockout-seeding";
 import { canEditPrediction, getPredictionStateLabel } from "@/lib/prediction-state";
+import { setUserProjectedKnockoutSource } from "@/lib/projected-knockout-source";
+import { isMissingRelationError } from "@/lib/schema-safety";
 import { fetchTournamentEntrySettings, saveTournamentEntrySettings } from "@/lib/tournament-entry";
 import type { Prediction } from "@/lib/types";
 
@@ -462,6 +464,19 @@ export async function saveLightSeedBuilderAction(
         return { ok: false, message: insertThirdPlaceError.message };
       }
     }
+
+    await setUserProjectedKnockoutSource(adminSupabase, userResult.userId, "seed_builder");
+    const { error: clearProjectedBracketError } = await adminSupabase
+      .from("projected_bracket_predictions")
+      .delete()
+      .eq("user_id", userResult.userId);
+    if (
+      clearProjectedBracketError &&
+      !isMissingRelationError(clearProjectedBracketError.message, "projected_bracket_predictions")
+    ) {
+      return { ok: false, message: clearProjectedBracketError.message };
+    }
+
     const touchedGroupNames = new Set(incomingRankings.map((ranking) => ranking.groupName));
     if (touchedGroupNames.size > 0) {
       const preservedScoreAppliedRows = Array.from(existingSourceMap.entries())

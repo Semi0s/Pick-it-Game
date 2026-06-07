@@ -3568,10 +3568,10 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                 }
                 className="bg-gray-50 !pb-2.5"
               >
-                <div className="mt-1 grid gap-2 sm:flex sm:justify-end">
+                <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
                   <Link
                     href={getGroupLeaderboardHref(group)}
-                    className="inline-flex w-full justify-center rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark sm:w-auto"
+                    className="inline-flex justify-center rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
                   >
                     {tg("leaderboard")}
                   </Link>
@@ -3579,7 +3579,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     type="button"
                     onClick={() => setLeaveGroupConfirmId(group.id)}
                     disabled={leaveGroupPendingId === group.id}
-                    className="inline-flex w-full justify-center rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                    className="inline-flex justify-center rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {t(groupsLanguage, "leaderboard.leaveGroup")}
                   </button>
