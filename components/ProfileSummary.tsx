@@ -47,6 +47,8 @@ import {
 } from "@/lib/visual-theme-options";
 
 const TROPHY_STATE_CHANGED_EVENT = "pickit:trophies-updated";
+const SUPPORT_EMAIL = process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim() || "santiago@semiosdesign.com";
+const PRIVACY_POLICY_URL = process.env.NEXT_PUBLIC_PRIVACY_POLICY_URL?.trim() || "https://www.semiosdesign.com/pick-it-game";
 
 type ProfileTeam = (typeof teams)[number];
 
@@ -963,6 +965,30 @@ export function ProfileSummary({
             {t(uiLanguage, "profile.currentOnTerms")}
           </p>
         )}
+      </div>
+
+      <div className="ui-card p-4">
+        <h3 className="text-lg font-bold">Support and privacy</h3>
+        <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
+          Report problems, objectionable content, account issues, or privacy questions from here. Account deletion is
+          available above in Profile settings.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <a
+            href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("PICK-IT! support request")}`}
+            className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Report a problem
+          </a>
+          <a
+            href={PRIVACY_POLICY_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
+          >
+            Privacy / support page
+          </a>
+        </div>
       </div>
 
       {user.role === "admin" ? (

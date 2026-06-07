@@ -492,7 +492,7 @@ export function AdminPlayersClient() {
               <p className="text-sm font-semibold text-gray-600">
                 These switches control what appears on the live leaderboard. All features stay off until you turn them on.
               </p>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <LeaderboardSettingToggle
                   label="Daily Winner"
                   description="Show the top scorer or tied scorers for the current day."
@@ -534,6 +534,22 @@ export function AdminPlayersClient() {
                   onToggle={(enabled) => {
                     void withAction(`leaderboard-setting-leaderboard_activity_enabled`, async () => {
                       const result = await updateLeaderboardFeatureSettingAction("leaderboard_activity_enabled", enabled);
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadLeaderboardSettings();
+                      }
+                    });
+                  }}
+                />
+                <LeaderboardSettingToggle
+                  label="Comments"
+                  description="Free-form activity comments. Keep off until report, block, and moderation controls are ready."
+                  settingKey="leaderboard_comments_enabled"
+                  settings={leaderboardSettings}
+                  activeActionKey={activeActionKey}
+                  onToggle={(enabled) => {
+                    void withAction(`leaderboard-setting-leaderboard_comments_enabled`, async () => {
+                      const result = await updateLeaderboardFeatureSettingAction("leaderboard_comments_enabled", enabled);
                       setMessage({ tone: result.ok ? "success" : "error", text: result.message });
                       if (result.ok) {
                         await loadLeaderboardSettings();
