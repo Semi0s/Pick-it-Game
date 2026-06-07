@@ -2,14 +2,17 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { Flag } from "lucide-react";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
+import { ReportBlockDialog, type ReportTargetOption } from "@/components/ReportBlockDialog";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
 import { getMatchDateKey, formatCalendarDate, tournamentCalendar } from "@/lib/tournament-calendar";
 import { fetchLeaderboardUsers, fetchPredictionsForUser, fetchTrophiesForUser, type SocialPrediction } from "@/lib/social-predictions";
 import type { MatchWithTeams, UserProfile, UserTrophy } from "@/lib/types";
+import { useCurrentUser } from "@/lib/use-current-user";
 import { PredictionRow } from "@/components/SocialPredictionList";
 
 type UserPredictionsClientProps = {
@@ -17,11 +20,13 @@ type UserPredictionsClientProps = {
 };
 
 export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
+  const { user } = useCurrentUser();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [predictions, setPredictions] = useState<SocialPrediction[]>([]);
   const [trophies, setTrophies] = useState<UserTrophy[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
   const matches = useMemo<MatchWithTeams[]>(
     () =>
       getGroupMatches().map((match) => ({
@@ -32,6 +37,17 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
     []
   );
   const matchMap = useMemo(() => new Map(matches.map((match) => [match.id, match])), [matches]);
+  const reportTargets = useMemo<ReportTargetOption[]>(
+    () => [
+      {
+        type: "user",
+        id: userId,
+        label: `Player: ${profile?.name ?? "Player"}`,
+        canBlock: true
+      }
+    ],
+    [profile?.name, userId]
+  );
   const predictionsByDate = predictions.reduce<Record<string, SocialPrediction[]>>((groups, prediction) => {
     const match = matchMap.get(prediction.matchId);
     if (!match) {
@@ -88,14 +104,34 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
           </div>
         </div>
         {profile ? (
-          <Link
-            href="/leaderboard"
-            className="mt-4 inline-flex w-full items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 sm:w-auto"
-          >
-            Back to Leaderboard
-          </Link>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              href="/leaderboard"
+              className="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 sm:w-auto"
+            >
+              Back to Leaderboard
+            </Link>
+            {user && user.id !== userId ? (
+              <button
+                type="button"
+                onClick={() => setIsReportDialogOpen(true)}
+                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark sm:w-auto"
+              >
+                <Flag className="h-4 w-4" aria-hidden />
+                Report / block
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </section>
+
+      <ReportBlockDialog
+        open={isReportDialogOpen}
+        title="Report player"
+        targets={reportTargets}
+        initialTargetId={userId}
+        onClose={() => setIsReportDialogOpen(false)}
+      />
 
       {!isLoading && trophies.length > 0 ? (
         <section className="ui-card p-4">

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Trophy, UsersRound } from "lucide-react";
+import { Flag, Trophy, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 
@@ -42,6 +42,7 @@ export function AdminToolsSection() {
     <section className="grid gap-3 sm:grid-cols-2">
       <AdminCard href="/admin/players" icon={UsersRound} title="Players" copy="Manage invites and review auth state." />
       <AdminCard href="/admin/matches" icon={Trophy} title="Matches" copy="Enter scores and winners." />
+      <AdminCard href="/admin/reports" icon={Flag} title="Reports" copy="Review player safety reports." />
     </section>
   );
 }
