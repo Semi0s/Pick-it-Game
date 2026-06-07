@@ -151,6 +151,23 @@ test("group-stage prediction progress handles empty, partial, and complete state
   assert.equal(complete.completedUnits, 20);
   assert.equal(complete.isComplete, true);
   assert.equal(complete.headline, "All group picks saved.");
+
+  const unresolvedRoundOf32 = getPredictionProgress({
+    phase: "group_stage",
+    completedGroups: 12,
+    totalGroups: 12,
+    selectedThirdPlaceCount: 8,
+    requiredThirdPlaceCount: 8,
+    projectedRoundOf32ResolvedSideCount: 28,
+    projectedRoundOf32ExpectedSideCount: 32,
+    deadlineAt: new Date(BASE_NOW + 5 * 24 * 60 * 60 * 1000).toISOString(),
+    now: BASE_NOW
+  });
+  assert.equal(unresolvedRoundOf32.completedUnits, 20);
+  assert.equal(unresolvedRoundOf32.totalUnits, 21);
+  assert.equal(unresolvedRoundOf32.isComplete, false);
+  assert.equal(unresolvedRoundOf32.headline, "Group Stage picks need review.");
+  assert.equal(unresolvedRoundOf32.detail, "Review Group Stage picks to resolve the projected Round of 32");
 });
 
 test("group-stage commit comparison ignores the finalize autosave grace window", () => {

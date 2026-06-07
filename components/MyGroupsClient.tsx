@@ -213,6 +213,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
   const [expandedPeopleInviteIds, setExpandedPeopleInviteIds] = useState<string[]>([]);
   const [expandedTrophyIds, setExpandedTrophyIds] = useState<string[]>([]);
   const [expandedGroupInfoIds, setExpandedGroupInfoIds] = useState<string[]>([]);
+  const [collapsedGroupProfileIds, setCollapsedGroupProfileIds] = useState<string[]>([]);
   const [expandedApprovedEmailIds, setExpandedApprovedEmailIds] = useSessionJsonState<string[]>(
     GROUP_APPROVED_EMAILS_SECTION_STORAGE_KEY,
     []
@@ -1961,6 +1962,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const isPeopleInvitesExpanded = expandedPeopleInviteIds.includes(group.id);
             const isTrophyExpanded = expandedTrophyIds.includes(group.id);
             const isGroupInfoExpanded = expandedGroupInfoIds.includes(group.id);
+            const isGroupProfileExpanded = !collapsedGroupProfileIds.includes(group.id);
             const isApprovedEmailsExpanded = expandedApprovedEmailIds.includes(group.id);
             const isCaptainPassExpanded = expandedCaptainPassIds.includes(group.id);
             const managerTrophies = groupTrophies.filter(
@@ -2094,8 +2096,21 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                             <div>
                               <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">{tg("groupProfile")}</h4>
                             </div>
-                            <Avatar name={groupProfileDraft.name || group.name} avatarUrl={avatarPreviewUrl} size="md" />
+                            <div className="shrink-0">
+                              <InlineDisclosureButton
+                                isOpen={isGroupProfileExpanded}
+                                variant="subtle"
+                                onClick={() =>
+                                  setCollapsedGroupProfileIds((current) =>
+                                    current.includes(group.id)
+                                      ? current.filter((entry) => entry !== group.id)
+                                      : [...current, group.id]
+                                  )
+                                }
+                              />
+                            </div>
                           </div>
+                          {isGroupProfileExpanded ? (
                           <div className="mt-3 space-y-3">
                             <input
                               ref={(node) => {
@@ -2135,6 +2150,14 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                         ? tg("avatarRemoveHelp")
                                         : tg("avatarOptionalHelp")}
                                   </p>
+                                  <p className="mt-2 inline-flex rounded-full bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-600">
+                                    Media status: {getGroupAvatarMediaStatusLabel(group.avatarUrl ?? null, avatarDraft, isGroupAvatarProcessing)}
+                                  </p>
+                                  {!group.avatarUrl && !avatarDraft.file && !avatarDraft.removeCurrent && !isGroupAvatarProcessing ? (
+                                    <p className="mt-1 text-[11px] font-semibold text-gray-500">
+                                      If an image was reset by an admin, details appear under Notifications.
+                                    </p>
+                                  ) : null}
                                 </div>
                               </div>
                               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -2209,101 +2232,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                               {actionKey === `save-group-profile-${group.id}` ? tg("saving") : tg("saveGroupProfile")}
                             </ActionButton>
                           </div>
-                        </div>
-
-                        <div className="ui-card p-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">{tg("restrictedEmailList")}</h4>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                              <ManagementBadge
-                                label={tg("approvedCount", { count: detailedGroup?.allowedEmails.length ?? 0 })}
-                                tone={group.accessMode === "restricted_by_email" ? "accent" : "neutral"}
-                              />
-                              <InlineDisclosureButton
-                                isOpen={isApprovedEmailsExpanded}
-                                variant="subtle"
-                                onClick={() => toggleExpandedSection(group.id, setExpandedApprovedEmailIds)}
-                              />
-                            </div>
-                          </div>
-                          {isApprovedEmailsExpanded ? (
-                            <div className="mt-3 space-y-3">
-                              <p className="text-xs font-semibold text-gray-500">
-                                {tg("restrictedEmailListHelp")}
-                              </p>
-                              <label className="block">
-                                <span className="text-sm font-bold text-gray-800">{tg("addApprovedEmails")}</span>
-                                <textarea
-                                  value={allowedEmailsDrafts[group.id] ?? ""}
-                                  onChange={(event) =>
-                                    setAllowedEmailsDrafts((current) => ({
-                                      ...current,
-                                      [group.id]: event.target.value
-                                    }))
-                                  }
-                                  rows={4}
-                                  placeholder="player@example.com&#10;captain@example.com"
-                                  className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                                />
-                              </label>
-                              <label className="block">
-                                <span className="text-xs font-bold uppercase tracking-wide text-gray-500">{tg("uploadCsv")}</span>
-                                <input
-                                  type="file"
-                                  accept=".csv,text/csv"
-                                  onChange={(event) => {
-                                    const file = event.target.files?.[0];
-                                    if (!file) {
-                                      return;
-                                    }
-
-                                    void file.text().then((text) => {
-                                      setAllowedEmailsDrafts((current) => ({
-                                        ...current,
-                                        [group.id]: text
-                                      }));
-                                    });
-                                  }}
-                                  className="mt-2 block w-full text-xs font-semibold text-gray-600"
-                                />
-                              </label>
-                              <ActionButton
-                                type="button"
-                                disabled={actionKey === `save-allowed-emails-${group.id}`}
-                                onClick={() => void handleSaveAllowedEmails(group)}
-                                fullWidth
-                              >
-                                {actionKey === `save-allowed-emails-${group.id}` ? tg("saving") : tg("saveApprovedEmails")}
-                              </ActionButton>
-                              <div className="space-y-2">
-                                {(detailedGroup?.allowedEmails ?? []).length > 0 ? (
-                                  detailedGroup?.allowedEmails.map((entry) => (
-                                    <div key={entry.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-                                      <div className="min-w-0">
-                                        <p className="truncate text-sm font-black text-gray-950">{entry.email}</p>
-                                        <p className="mt-1 text-xs font-semibold text-gray-500">
-                                          {entry.status === "joined" ? tg("joinedAsPlayer", { name: entry.joinedUserName ?? "player" }) : tg("allowed")}
-                                        </p>
-                                      </div>
-                                      <ActionButton
-                                        type="button"
-                                        tone="danger"
-                                        disabled={actionKey === `remove-allowed-email-${entry.id}`}
-                                        onClick={() => void handleRemoveAllowedEmail(group, entry.id)}
-                                      >
-                                        {tg("remove")}
-                                      </ActionButton>
-                                    </div>
-                                  ))
-                                ) : (
-                                  <p className="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
-                                    {tg("noApprovedEmails")}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
                           ) : null}
                         </div>
 
@@ -2541,18 +2469,20 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                     ) : null}
                     {group.canManage ? (
                       <div className="ui-card mt-4 p-4">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
                             <p className="text-sm font-black uppercase tracking-wide text-gray-700">Access &amp; Invites</p>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
                               Control how new members join, then share a code or direct invite that respects those rules.
                             </p>
                           </div>
-                          <InlineDisclosureButton
-                            isOpen={isInviteCodeExpanded}
-                            variant="subtle"
-                            onClick={() => toggleExpandedSection(group.id, setExpandedInviteCodeIds)}
-                          />
+                          <div className="shrink-0">
+                            <InlineDisclosureButton
+                              isOpen={isInviteCodeExpanded}
+                              variant="subtle"
+                              onClick={() => toggleExpandedSection(group.id, setExpandedInviteCodeIds)}
+                            />
+                          </div>
                         </div>
 
                         {isInviteCodeExpanded ? (
@@ -2793,6 +2723,103 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         ) : null}
                       </div>
                     ) : null}
+                    {group.canManage ? (
+                      <div className="ui-card mt-4 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">{tg("restrictedEmailList")}</h4>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <ManagementBadge
+                              label={tg("approvedCount", { count: detailedGroup?.allowedEmails.length ?? 0 })}
+                              tone={group.accessMode === "restricted_by_email" ? "accent" : "neutral"}
+                            />
+                            <InlineDisclosureButton
+                              isOpen={isApprovedEmailsExpanded}
+                              variant="subtle"
+                              onClick={() => toggleExpandedSection(group.id, setExpandedApprovedEmailIds)}
+                            />
+                          </div>
+                        </div>
+                        {isApprovedEmailsExpanded ? (
+                          <div className="mt-3 space-y-3">
+                            <p className="text-xs font-semibold text-gray-500">
+                              {tg("restrictedEmailListHelp")}
+                            </p>
+                            <label className="block">
+                              <span className="text-sm font-bold text-gray-800">{tg("addApprovedEmails")}</span>
+                              <textarea
+                                value={allowedEmailsDrafts[group.id] ?? ""}
+                                onChange={(event) =>
+                                  setAllowedEmailsDrafts((current) => ({
+                                    ...current,
+                                    [group.id]: event.target.value
+                                  }))
+                                }
+                                rows={4}
+                                placeholder="player@example.com&#10;captain@example.com"
+                                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="text-xs font-bold uppercase tracking-wide text-gray-500">{tg("uploadCsv")}</span>
+                              <input
+                                type="file"
+                                accept=".csv,text/csv"
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0];
+                                  if (!file) {
+                                    return;
+                                  }
+
+                                  void file.text().then((text) => {
+                                    setAllowedEmailsDrafts((current) => ({
+                                      ...current,
+                                      [group.id]: text
+                                    }));
+                                  });
+                                }}
+                                className="mt-2 block w-full text-xs font-semibold text-gray-600"
+                              />
+                            </label>
+                            <ActionButton
+                              type="button"
+                              disabled={actionKey === `save-allowed-emails-${group.id}`}
+                              onClick={() => void handleSaveAllowedEmails(group)}
+                              fullWidth
+                            >
+                              {actionKey === `save-allowed-emails-${group.id}` ? tg("saving") : tg("saveApprovedEmails")}
+                            </ActionButton>
+                            <div className="space-y-2">
+                              {(detailedGroup?.allowedEmails ?? []).length > 0 ? (
+                                detailedGroup?.allowedEmails.map((entry) => (
+                                  <div key={entry.id} className="flex items-start justify-between gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-black text-gray-950">{entry.email}</p>
+                                      <p className="mt-1 text-xs font-semibold text-gray-500">
+                                        {entry.status === "joined" ? tg("joinedAsPlayer", { name: entry.joinedUserName ?? "player" }) : tg("allowed")}
+                                      </p>
+                                    </div>
+                                    <ActionButton
+                                      type="button"
+                                      tone="danger"
+                                      disabled={actionKey === `remove-allowed-email-${entry.id}`}
+                                      onClick={() => void handleRemoveAllowedEmail(group, entry.id)}
+                                    >
+                                      {tg("remove")}
+                                    </ActionButton>
+                                  </div>
+                                ))
+                              ) : (
+                                <p className="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-600">
+                                  {tg("noApprovedEmails")}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
 
                     {!detailedGroup ? (
                       <div className="ui-card mt-4 p-4">
@@ -2858,18 +2885,20 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                   return (
                     <div className="mt-6 space-y-3">
                       <div className="ui-card p-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Members</h4>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
                               Search, filter, and manage members and pending invites for this group.
                             </p>
                           </div>
-                          <InlineDisclosureButton
-                            isOpen={isPeopleInvitesExpanded}
-                            variant="subtle"
-                            onClick={() => toggleExpandedSection(group.id, setExpandedPeopleInviteIds)}
-                          />
+                          <div className="shrink-0">
+                            <InlineDisclosureButton
+                              isOpen={isPeopleInvitesExpanded}
+                              variant="subtle"
+                              onClick={() => toggleExpandedSection(group.id, setExpandedPeopleInviteIds)}
+                            />
+                          </div>
                         </div>
 
                         {isPeopleInvitesExpanded ? (
@@ -3387,18 +3416,20 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
 
                     {group.canManage ? (
                       <div className="ui-card mt-4 p-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
                             <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Advanced</h4>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
                               Adjust group limits or delete this group.
                             </p>
                           </div>
-                          <InlineDisclosureButton
-                            isOpen={isGroupInfoExpanded}
-                            variant="subtle"
-                            onClick={() => toggleExpandedSection(group.id, setExpandedGroupInfoIds)}
-                          />
+                          <div className="shrink-0">
+                            <InlineDisclosureButton
+                              isOpen={isGroupInfoExpanded}
+                              variant="subtle"
+                              onClick={() => toggleExpandedSection(group.id, setExpandedGroupInfoIds)}
+                            />
+                          </div>
                         </div>
 
                         {isGroupInfoExpanded ? (
@@ -3686,6 +3717,26 @@ function JoinGroupInlineForm({
 function getGroupLeaderboardHref(group: MyManagedGroup) {
   const view = group.canManage ? "managed_groups" : "my_groups";
   return `/leaderboard?view=${view}&groupId=${encodeURIComponent(group.id)}`;
+}
+
+function getGroupAvatarMediaStatusLabel(
+  avatarUrl: string | null,
+  avatarDraft: GroupAvatarDraft,
+  isProcessing: boolean
+) {
+  if (isProcessing) {
+    return "Preparing image";
+  }
+
+  if (avatarDraft.file) {
+    return "Pending save";
+  }
+
+  if (avatarDraft.removeCurrent) {
+    return "Using default image after save";
+  }
+
+  return avatarUrl ? "Approved" : "Using default image";
 }
 
 function getPendingTrophyId(activeActionKey: string | null, groupId: string, userId: string) {
