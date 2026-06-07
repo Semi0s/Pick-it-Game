@@ -6,6 +6,7 @@ import {
   disableOrganizationBrandingAction,
   rejectOrganizationBrandingAction
 } from "@/app/my-groups/organization-branding-actions";
+import { createMediaModerationNotification } from "@/lib/notifications";
 import { isMissingRelationError, isMissingStorageBucketError } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
@@ -280,6 +281,15 @@ export async function removeUserAvatarAsAdminAction(userId: string, note: string
       previousAvatarUrl: (existingUser as { avatar_url?: string | null }).avatar_url ?? null
     }
   });
+  await createMediaModerationNotification({
+    adminSupabase,
+    recipientUserIds: [normalizedUserId],
+    targetType: "profile_avatar",
+    targetId: normalizedUserId,
+    status: "removed",
+    note,
+    href: "/profile"
+  });
 
   revalidatePath("/dashboard");
   revalidatePath("/leaderboard");
@@ -301,7 +311,7 @@ export async function removeGroupAvatarAsAdminAction(groupId: string, note: stri
   const adminSupabase = createAdminClient();
   const { data: existingGroup, error: existingGroupError } = await adminSupabase
     .from("groups")
-    .select("id,avatar_url")
+    .select("id,avatar_url,owner_user_id")
     .eq("id", normalizedGroupId)
     .maybeSingle();
 
@@ -331,12 +341,54 @@ export async function removeGroupAvatarAsAdminAction(groupId: string, note: stri
       previousAvatarUrl: (existingGroup as { avatar_url?: string | null }).avatar_url ?? null
     }
   });
+  await createMediaModerationNotification({
+    adminSupabase,
+    recipientUserIds: await fetchGroupAvatarNotificationRecipients(adminSupabase, normalizedGroupId, (existingGroup as GroupRow).owner_user_id ?? null),
+    targetType: "group_avatar",
+    targetId: normalizedGroupId,
+    status: "removed",
+    note,
+    href: "/my-groups"
+  });
 
   revalidatePath("/my-groups");
   revalidatePath("/dashboard");
   revalidatePath("/leaderboard");
   revalidatePath("/admin/media");
   return { ok: true, message: "Group avatar reset to default." };
+}
+
+async function fetchGroupAvatarNotificationRecipients(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  groupId: string,
+  ownerUserId: string | null
+) {
+  const recipientIds = new Set<string>();
+  if (ownerUserId) {
+    recipientIds.add(ownerUserId);
+  }
+
+  const { data, error } = await adminSupabase
+    .from("group_members")
+    .select("user_id,role")
+    .eq("group_id", groupId)
+    .eq("role", "manager");
+
+  if (error) {
+    console.warn("Could not fetch group avatar moderation notification recipients.", {
+      groupId,
+      message: error.message
+    });
+    return Array.from(recipientIds);
+  }
+
+  for (const member of ((data as Array<{ user_id?: string | null; role?: string | null }> | null) ?? [])) {
+    if (member.user_id) {
+      recipientIds.add(member.user_id);
+    }
+  }
+
+  return Array.from(recipientIds);
 }
 
 async function requireSuperAdmin(): Promise<AdminMediaUserContext> {

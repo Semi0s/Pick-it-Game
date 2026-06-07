@@ -361,6 +361,8 @@ export function getPredictionProgress(
         hasUncommittedChanges?: boolean;
         lastCommittedAt?: string | null;
         lastChangedAt?: string | null;
+        projectedRoundOf32ResolvedSideCount?: number | null;
+        projectedRoundOf32ExpectedSideCount?: number | null;
       }
     | {
         phase: "knockout_stage";
@@ -380,18 +382,35 @@ export function getPredictionProgress(
       Math.max(input.selectedThirdPlaceCount, 0),
       Math.max(input.requiredThirdPlaceCount, 0)
     );
-    const totalUnits = totalGroups + (requiresThirdPlace ? input.requiredThirdPlaceCount : 0);
-    const completedUnits = completedGroups + (requiresThirdPlace ? selectedThirdPlaceCount : 0);
+    const baseTotalUnits = totalGroups + (requiresThirdPlace ? input.requiredThirdPlaceCount : 0);
+    const baseCompletedUnits = completedGroups + (requiresThirdPlace ? selectedThirdPlaceCount : 0);
     const remainingGroups = Math.max(totalGroups - completedGroups, 0);
     const thirdPlaceRemaining = Math.max(input.requiredThirdPlaceCount - selectedThirdPlaceCount, 0);
-    const isComplete = totalUnits > 0 && completedUnits >= totalUnits;
+    const projectedRoundOf32ExpectedSideCount = Math.max(input.projectedRoundOf32ExpectedSideCount ?? 0, 0);
+    const projectedRoundOf32ResolvedSideCount = Math.max(input.projectedRoundOf32ResolvedSideCount ?? 0, 0);
+    const shouldValidateProjectedRoundOf32 =
+      projectedRoundOf32ExpectedSideCount > 0 &&
+      totalGroups > 0 &&
+      completedGroups >= totalGroups &&
+      (!requiresThirdPlace || selectedThirdPlaceCount >= input.requiredThirdPlaceCount);
+    const isProjectedRoundOf32Complete =
+      !shouldValidateProjectedRoundOf32 ||
+      projectedRoundOf32ResolvedSideCount >= projectedRoundOf32ExpectedSideCount;
+    const totalUnits = baseTotalUnits + (shouldValidateProjectedRoundOf32 ? 1 : 0);
+    const completedUnits =
+      baseCompletedUnits + (shouldValidateProjectedRoundOf32 && isProjectedRoundOf32Complete ? 1 : 0);
+    const isComplete = totalUnits > 0 && completedUnits >= totalUnits && isProjectedRoundOf32Complete;
     const detail =
-      requiresThirdPlace && remainingGroups === 0
-        ? `${selectedThirdPlaceCount} of ${input.requiredThirdPlaceCount} third-place qualifiers selected`
-        : `${completedGroups} of ${totalGroups} groups complete`;
+      shouldValidateProjectedRoundOf32 && !isProjectedRoundOf32Complete
+        ? `Review Group Stage picks to resolve the projected Round of 32`
+        : requiresThirdPlace && remainingGroups === 0
+          ? `${selectedThirdPlaceCount} of ${input.requiredThirdPlaceCount} third-place qualifiers selected`
+          : `${completedGroups} of ${totalGroups} groups complete`;
 
     let headline = "Keep ranking the groups.";
-    if (isComplete) {
+    if (shouldValidateProjectedRoundOf32 && !isProjectedRoundOf32Complete) {
+      headline = "Group Stage picks need review.";
+    } else if (isComplete) {
       headline = "All group picks saved.";
     } else if (remainingGroups === 0 && requiresThirdPlace) {
       headline =

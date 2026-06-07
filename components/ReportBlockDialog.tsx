@@ -124,7 +124,7 @@ export function ReportBlockDialog({
       <div className="w-full max-w-lg rounded-[1.25rem] border border-gray-200 bg-white p-4 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-black uppercase tracking-wide text-accent-dark">Safety</p>
+            <p className="text-xs font-black uppercase tracking-wide text-accent-dark">Report</p>
             <h2 className="mt-1 text-xl font-black text-gray-950">{title}</h2>
             <p className="mt-1 text-sm font-semibold text-gray-600">
               Reports go to moderators. The reported player is not notified.

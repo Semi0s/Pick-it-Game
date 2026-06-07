@@ -10,7 +10,6 @@ import { VisualThemeMenu } from "@/components/VisualThemeMenu";
 import {
   clearCurrentUserAvatar,
   deleteCurrentUserAccount,
-  fetchCurrentLegalDocumentForProfile,
   fetchCurrentUserTrophies,
   registerCurrentBrowserPushNotifications,
   signOutCurrentUser,
@@ -30,15 +29,12 @@ import {
   getAvatarImageProcessingErrorMessage,
   processAvatarImage
 } from "@/lib/avatar-image-processing";
-import { normalizeLanguage } from "@/lib/i18n";
 import { getSpecialVisualThemeOption } from "@/lib/localized-card-themes";
-import type { LegalDocument } from "@/lib/legal";
-import { getLanguageLabel, getStrings, getSupportedLanguageOptions, t } from "@/lib/strings";
+import { getStrings, getSupportedLanguageOptions, t } from "@/lib/strings";
 import { teams } from "@/lib/mock-data";
 import { compareAccessLevels, resolveTierAccess } from "@/lib/tier-access";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import type { UserTrophy } from "@/lib/types";
-import type { CurrentLegalDocument } from "@/lib/auth-client";
 import { useCurrentUser } from "@/lib/use-current-user";
 import {
   getVisualThemeSelectOptions,
@@ -65,11 +61,24 @@ function compareTeamsByGroupThenName(left: ProfileTeam, right: ProfileTeam) {
   return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
 }
 
-export function ProfileSummary({
-  initialLegalDocument
-}: {
-  initialLegalDocument?: LegalDocument | null;
-}) {
+function getProfileAccessLabel(accessLevel: string) {
+  switch (accessLevel) {
+    case "captain":
+      return "Captain";
+    case "manager":
+      return "Manager";
+    case "director":
+      return "Director";
+    case "managing_director":
+      return "Managing Director";
+    case "super_admin":
+      return "Super Admin";
+    default:
+      return "Player";
+  }
+}
+
+export function ProfileSummary() {
   const router = useRouter();
   const { user, isLoading, refresh } = useCurrentUser();
   const [passwordMessage, setPasswordMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -91,16 +100,6 @@ export function ProfileSummary({
   const [showDeleteAccountPrompt, setShowDeleteAccountPrompt] = useState(false);
   const [trophies, setTrophies] = useState<UserTrophy[]>([]);
   const [isLoadingTrophies, setIsLoadingTrophies] = useState(true);
-  const [currentLegalDocument, setCurrentLegalDocument] = useState<CurrentLegalDocument | null>(
-    initialLegalDocument
-      ? {
-          language: initialLegalDocument.language,
-          requiredVersion: initialLegalDocument.requiredVersion,
-          title: initialLegalDocument.title,
-          body: initialLegalDocument.body
-        }
-      : null
-  );
   const [isProfileEditingOpen, setIsProfileEditingOpen] = useSessionDisclosureState("profile-editing-disclosure", false);
   const [isFollowedTeamsOpen, setIsFollowedTeamsOpen] = useSessionDisclosureState("profile-followed-teams-disclosure", false);
   const [followedTeamIdsDraft, setFollowedTeamIdsDraft] = useState<string[]>([]);
@@ -217,33 +216,6 @@ export function ProfileSummary({
     }
   }, [deleteAccountMessage]);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const preferredLanguage = user?.preferredLanguage ?? null;
-    if (
-      currentLegalDocument &&
-      (!preferredLanguage || currentLegalDocument.language === preferredLanguage)
-    ) {
-      return () => {
-        isMounted = false;
-      };
-    }
-
-    async function loadCurrentLegalDocument() {
-      const document = await fetchCurrentLegalDocumentForProfile(user?.preferredLanguage);
-      if (isMounted) {
-        setCurrentLegalDocument(document ?? currentLegalDocument);
-      }
-    }
-
-    void loadCurrentLegalDocument();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [currentLegalDocument, user?.preferredLanguage]);
-
   if (isLoading || !user) {
     return (
       <div className="rounded-[1.15rem] bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
@@ -263,19 +235,7 @@ export function ProfileSummary({
   const canEditDisplayName = compareAccessLevels(currentAccessLevel, "manager") >= 0;
   const allTeamsFollowed = sortedTeams.length > 0 && followedTeamIdsDraft.length === sortedTeams.length;
   const selectedSpecialVisualTheme = getSpecialVisualThemeOption(user.visualThemeId ?? null);
-  const membershipSummaryLines = currentTierAccess.limits.isUnlimited
-    ? [
-        t(uiLanguage, "profile.membershipUnlimitedGroups"),
-        t(uiLanguage, "profile.membershipUnlimitedMembers"),
-        t(uiLanguage, "profile.membershipUnlimitedPlayers")
-      ]
-    : currentTierAccess.accessLevel === "player"
-      ? []
-      : [
-          t(uiLanguage, "profile.membershipMaxGroups", { count: currentTierAccess.limits.maxGroups ?? 0 }),
-          t(uiLanguage, "profile.membershipMaxMembersPerGroup", { count: currentTierAccess.limits.maxMembersPerGroup ?? 0 }),
-          t(uiLanguage, "profile.membershipMaxTotalPlayers", { count: currentTierAccess.limits.maxTotalPlayers ?? 0 })
-        ];
+  const profileAccessLabel = getProfileAccessLabel(currentTierAccess.accessLevel);
 
   async function handleVisualThemeSelectionChange(value: string) {
     const selection = parseVisualThemeSelectValue(value);
@@ -375,21 +335,14 @@ export function ProfileSummary({
       <div className="rounded-[1.15rem] bg-gray-100 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(uiLanguage, "profile.profile")}</p>
-          <div className="rounded-[0.75rem] bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 sm:px-3 sm:py-2">
-            {t(uiLanguage, "profile.active")}
+          <div className="ui-chip-sm border border-gray-200 bg-white font-bold text-gray-700">
+            {profileAccessLabel}
           </div>
         </div>
         <div className="mt-4 flex min-w-0 items-center gap-4">
           <Avatar name={user.name} avatarUrl={avatarPreviewUrl ?? user.avatarUrl} size="lg" className="rounded-lg" />
           <div className="min-w-0">
             <h2 className="truncate text-xl font-black leading-tight sm:text-2xl">{user.name}</h2>
-            {membershipSummaryLines.length > 0 ? (
-              <div className="mt-2 space-y-0.5 text-sm leading-tight text-accent-dark">
-                {membershipSummaryLines.map((line) => (
-                  <p key={line}>{line}</p>
-                ))}
-              </div>
-            ) : null}
             <p className="mt-2 truncate text-sm text-gray-600">{user.email}</p>
             <div className="mt-2">
               {user.homeTeamId ? (
@@ -404,175 +357,65 @@ export function ProfileSummary({
             </div>
           </div>
         </div>
-        <div className="mt-4 mx-auto max-w-xl text-center">
-          <input
-            ref={avatarInputRef}
-            type="file"
-            accept={getAvatarImageInputAcceptAttribute()}
-            className="hidden"
-            onChange={async (event) => {
-              const input = event.currentTarget;
-              const file = event.target.files?.[0];
-              if (!file) {
-                return;
-              }
+      </div>
 
-              setPasswordMessage(null);
-              setNotificationMessage(null);
-              setAvatarPreviewUrl(null);
-
-              try {
-                setAvatarUploadStage("preparing");
-                const processedAvatar = await processAvatarImage(file);
-                setAvatarPreviewUrl(processedAvatar.previewUrl);
-                setAvatarUploadStage("uploading");
-
-                const result = await uploadCurrentUserAvatar(processedAvatar.file);
-                setPasswordMessage({ tone: result.ok ? "success" : "error", text: result.message });
-                if (result.ok) {
-                  await refresh();
-                }
-              } catch (caughtError) {
-                setPasswordMessage({
-                  tone: "error",
-                  text: getAvatarImageProcessingErrorMessage(caughtError)
-                });
-              } finally {
-                setAvatarUploadStage("idle");
-                setAvatarPreviewUrl(null);
-                input.value = "";
-              }
-            }}
-          />
-          <div className="grid grid-cols-2 gap-2">
+      <div className="ui-card p-4">
+        <h3 className="text-lg font-bold">Account</h3>
+        {passwordMessage ? (
+          <p
+            className={`mt-3 rounded-[0.9rem] border px-3 py-2 text-sm font-semibold ${
+              passwordMessage.tone === "success"
+                ? "border-accent-light bg-accent-light text-accent-dark"
+                : "border-red-200 bg-red-50 text-red-700"
+            }`}
+          >
+            {passwordMessage.text}
+          </p>
+        ) : null}
+        <div className={canEditDisplayName ? "mt-4 space-y-2" : "mt-4 grid gap-2 sm:grid-cols-2"}>
+          <div className={canEditDisplayName ? "grid grid-cols-2 gap-2" : "contents"}>
             <button
               type="button"
-              disabled={isUploadingAvatar}
-              onClick={() => avatarInputRef.current?.click()}
-              className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-center text-xs font-bold leading-tight [overflow-wrap:anywhere] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+              disabled={isSendingReset}
+              onClick={async () => {
+                setIsSendingReset(true);
+                setPasswordMessage(null);
+                const result = await sendCurrentUserPasswordReset(user.email);
+                setPasswordMessage({
+                  tone: result.ok ? "success" : "error",
+                  text: result.message ?? t(user.preferredLanguage, "errors.generic")
+                });
+                setIsSendingReset(false);
+              }}
+              className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-3 text-center text-sm font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
             >
-              {avatarUploadStage === "preparing"
-                ? "Preparing image..."
-                : avatarUploadStage === "uploading"
-                  ? t(uiLanguage, "profile.uploading")
-                : user.avatarUrl
-                  ? t(uiLanguage, "profile.updateAvatar")
-                  : t(uiLanguage, "profile.uploadAvatar")}
+              {isSendingReset ? t(uiLanguage, "profile.sending") : t(uiLanguage, "profile.resetMyPassword")}
             </button>
-            {user.avatarUrl ? (
+            {canEditDisplayName ? (
               <button
                 type="button"
-                disabled={isUploadingAvatar}
-                onClick={async () => {
-                  setAvatarUploadStage("uploading");
-                  setPasswordMessage(null);
-                  setNotificationMessage(null);
-                  const result = await clearCurrentUserAvatar();
-                  setPasswordMessage({
-                    tone: result.ok ? "success" : "error",
-                    text: result.message ?? "Avatar updated."
-                  });
-                  if (result.ok) {
-                    await refresh();
-                  }
-                  setAvatarUploadStage("idle");
-                }}
-                className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-center text-xs font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
-              >
-                {isUploadingAvatar ? t(uiLanguage, "auth.working") : t(uiLanguage, "profile.removeAvatar")}
-              </button>
-            ) : (
-              <div />
-            )}
-          </div>
-          <p className="mt-2 text-center text-xs text-gray-500">{t(uiLanguage, "profile.avatarUploadHelp")}</p>
-        </div>
-        <div className="mt-5 border-t border-gray-200 pt-4">
-          {passwordMessage ? (
-            <p
-              className={`mb-3 rounded-[0.9rem] border px-3 py-2 text-sm font-semibold ${
-                passwordMessage.tone === "success"
-                  ? "border-accent-light bg-accent-light text-accent-dark"
-                  : "border-red-200 bg-red-50 text-red-700"
-              }`}
-            >
-              {passwordMessage.text}
-            </p>
-          ) : null}
-          {canEditDisplayName ? (
-            <div className="space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={isSendingReset}
-                  onClick={async () => {
-                    setIsSendingReset(true);
-                    setPasswordMessage(null);
-                    const result = await sendCurrentUserPasswordReset(user.email);
-                    setPasswordMessage({
-                      tone: result.ok ? "success" : "error",
-                      text: result.message ?? t(user.preferredLanguage, "errors.generic")
-                    });
-                    setIsSendingReset(false);
-                  }}
-                  className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-2 py-3 text-center text-[10px] font-bold uppercase leading-[1.05] tracking-[0.01em] text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:px-4 sm:text-sm sm:normal-case sm:leading-tight sm:tracking-normal"
-                >
-                  {isSendingReset ? t(uiLanguage, "profile.sending") : t(uiLanguage, "profile.resetMyPassword")}
-                </button>
-                <button
-                  type="button"
-                  disabled={isUpdatingDisplayName}
-                  onClick={() => void handleChangeDisplayName()}
-                  aria-label={t(uiLanguage, "profile.changeDisplayName")}
-                  className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-2 py-3 text-center text-[10px] font-bold uppercase leading-[1.05] tracking-[0.01em] text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:px-4 sm:text-sm sm:normal-case sm:leading-tight sm:tracking-normal"
-                >
-                  {isUpdatingDisplayName ? t(uiLanguage, "profile.updatingDisplayName") : t(uiLanguage, "profile.displayNameAction")}
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={async () => {
-                  await signOutCurrentUser();
-                  router.replace("/login");
-                  router.refresh();
-                }}
-                className="inline-flex w-full min-w-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-3 text-center text-sm font-bold leading-tight [overflow-wrap:anywhere] transition"
-              >
-                {t(uiLanguage, "profile.signOut")}
-              </button>
-            </div>
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                disabled={isSendingReset}
-                onClick={async () => {
-                  setIsSendingReset(true);
-                  setPasswordMessage(null);
-                  const result = await sendCurrentUserPasswordReset(user.email);
-                  setPasswordMessage({
-                    tone: result.ok ? "success" : "error",
-                    text: result.message ?? t(user.preferredLanguage, "errors.generic")
-                  });
-                  setIsSendingReset(false);
-                }}
+                disabled={isUpdatingDisplayName}
+                onClick={() => void handleChangeDisplayName()}
+                aria-label={t(uiLanguage, "profile.changeDisplayName")}
                 className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border border-gray-300 bg-white px-4 py-3 text-center text-sm font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
               >
-                {isSendingReset ? t(uiLanguage, "profile.sending") : t(uiLanguage, "profile.resetMyPassword")}
+                {isUpdatingDisplayName ? t(uiLanguage, "profile.updatingDisplayName") : t(uiLanguage, "profile.displayNameAction")}
               </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  await signOutCurrentUser();
-                  router.replace("/login");
-                  router.refresh();
-                }}
-                className="inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-3 text-center text-sm font-bold leading-tight [overflow-wrap:anywhere] transition"
-              >
-                {t(uiLanguage, "profile.signOut")}
-              </button>
-            </div>
-          )}
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              await signOutCurrentUser();
+              router.replace("/login");
+              router.refresh();
+            }}
+            className={`inline-flex min-w-0 items-center justify-center rounded-[0.9rem] border ui-button-accent px-4 py-3 text-center text-sm font-bold leading-tight [overflow-wrap:anywhere] transition ${
+              canEditDisplayName ? "w-full" : ""
+            }`}
+          >
+            {t(uiLanguage, "profile.signOut")}
+          </button>
         </div>
       </div>
 
@@ -588,6 +431,103 @@ export function ProfileSummary({
         </div>
         {isProfileEditingOpen ? (
           <>
+            <div className="mt-4 rounded-[1rem] border border-gray-200 bg-gray-50/70 p-3">
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept={getAvatarImageInputAcceptAttribute()}
+                className="hidden"
+                onChange={async (event) => {
+                  const input = event.currentTarget;
+                  const file = event.target.files?.[0];
+                  if (!file) {
+                    return;
+                  }
+
+                  setPasswordMessage(null);
+                  setNotificationMessage(null);
+                  setAvatarPreviewUrl(null);
+
+                  try {
+                    setAvatarUploadStage("preparing");
+                    const processedAvatar = await processAvatarImage(file);
+                    setAvatarPreviewUrl(processedAvatar.previewUrl);
+                    setAvatarUploadStage("uploading");
+
+                    const result = await uploadCurrentUserAvatar(processedAvatar.file);
+                    setPasswordMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                    if (result.ok) {
+                      await refresh();
+                    }
+                  } catch (caughtError) {
+                    setPasswordMessage({
+                      tone: "error",
+                      text: getAvatarImageProcessingErrorMessage(caughtError)
+                    });
+                  } finally {
+                    setAvatarUploadStage("idle");
+                    setAvatarPreviewUrl(null);
+                    input.value = "";
+                  }
+                }}
+              />
+              <div className="flex items-start gap-3">
+                <Avatar name={user.name} avatarUrl={avatarPreviewUrl ?? user.avatarUrl} size="md" className="rounded-lg" />
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-sm font-black text-gray-900">Profile photo</h4>
+                  <p className="mt-1 text-sm font-semibold text-gray-500">{t(uiLanguage, "profile.avatarUploadHelp")}</p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={isUploadingAvatar}
+                      onClick={() => avatarInputRef.current?.click()}
+                      className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border ui-button-accent px-3 py-2 text-center text-xs font-bold leading-tight [overflow-wrap:anywhere] transition disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                    >
+                      {avatarUploadStage === "preparing"
+                        ? "Preparing image..."
+                        : avatarUploadStage === "uploading"
+                          ? t(uiLanguage, "profile.uploading")
+                          : user.avatarUrl
+                            ? t(uiLanguage, "profile.updateAvatar")
+                            : t(uiLanguage, "profile.uploadAvatar")}
+                    </button>
+                    {user.avatarUrl ? (
+                      <button
+                        type="button"
+                        disabled={isUploadingAvatar}
+                        onClick={async () => {
+                          setAvatarUploadStage("uploading");
+                          setPasswordMessage(null);
+                          setNotificationMessage(null);
+                          const result = await clearCurrentUserAvatar();
+                          setPasswordMessage({
+                            tone: result.ok ? "success" : "error",
+                            text: result.message ?? "Avatar updated."
+                          });
+                          if (result.ok) {
+                            await refresh();
+                          }
+                          setAvatarUploadStage("idle");
+                        }}
+                        className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[0.85rem] border border-gray-300 bg-white px-3 py-2 text-center text-xs font-bold leading-tight text-gray-800 [overflow-wrap:anywhere] transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+                      >
+                        {isUploadingAvatar ? t(uiLanguage, "auth.working") : t(uiLanguage, "profile.removeAvatar")}
+                      </button>
+                    ) : (
+                      <div />
+                    )}
+                  </div>
+                  <p className="mt-3 inline-flex rounded-full bg-white px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-gray-600">
+                    Media status: {isUploadingAvatar ? "Updating" : user.avatarUrl ? "Approved" : "Using default image"}
+                  </p>
+                  {!user.avatarUrl ? (
+                    <p className="mt-1 text-[11px] font-semibold text-gray-500">
+                      If an image was removed by an admin, details appear under Notifications.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
             <label className="mt-4 block">
               <span className="text-sm font-bold text-gray-800">{t(uiLanguage, "profile.visualTheme")}</span>
               <p className="mt-1 text-sm font-semibold text-gray-500">{t(uiLanguage, "profile.visualThemeHelp")}</p>
@@ -930,48 +870,11 @@ export function ProfileSummary({
       </div>
 
       <div className="ui-card p-4">
-        <h3 className="text-lg font-bold">{copy.termsOfUse}</h3>
-        <div className="mt-4 rounded-md bg-gray-100 px-4 py-4">
-          <p className="text-sm font-bold text-gray-900">
-            {currentLegalDocument?.title ?? user.currentEulaTitle ?? copy.termsOfUse}
-          </p>
-          <p className="mt-1 text-xs font-semibold text-gray-500">
-            {(currentLegalDocument?.body ?? user.currentEulaBody)
-              ? t(user.preferredLanguage, "legal.activeTermsLanguage", {
-                  termsLabel: copy.termsOfUse.toLowerCase(),
-                  languageLabel: getLanguageLabel(normalizeLanguage(currentLegalDocument?.language ?? user.currentEulaLanguage), user.preferredLanguage)
-                })
-              : t(user.preferredLanguage, "legal.termsUnavailable")}
-          </p>
-          {(currentLegalDocument?.body ?? user.currentEulaBody) ? (
-            <div className="mt-3 max-h-56 overflow-y-auto whitespace-pre-wrap text-sm font-semibold leading-6 text-gray-700">
-              {currentLegalDocument?.body ?? user.currentEulaBody}
-            </div>
-          ) : (
-            <p className="mt-3 text-sm font-semibold leading-6 text-gray-700">
-              {t(user.preferredLanguage, "legal.reviewCurrentTerms")}
-            </p>
-          )}
-        </div>
-        {user.needsLegalAcceptance ? (
-          <a
-            href="/legal/accept?next=/profile"
-            className="mt-4 inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
-          >
-            {t(uiLanguage, "profile.reviewAcceptTerms")}
-          </a>
-        ) : (
-          <p className="mt-4 text-sm font-semibold text-gray-600">
-            {t(uiLanguage, "profile.currentOnTerms")}
-          </p>
-        )}
-      </div>
-
-      <div className="ui-card p-4">
-        <h3 className="text-lg font-bold">Support and privacy</h3>
+        <h3 className="text-lg font-bold">Support, privacy, and Terms of Service</h3>
         <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
-          Report problems, objectionable content, account issues, or privacy questions from here. Account deletion is
-          available above in Profile settings, with public help below.
+          Report problems, objectionable content, account issues, or privacy questions from here. You can also review
+          the Privacy Policy and Terms of Service. Account deletion is available above in Profile settings, with public
+          help below.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <a
@@ -984,13 +887,13 @@ export function ProfileSummary({
             href={PRIVACY_POLICY_URL}
             className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
           >
-            Privacy Policy
+            {copy.privacyPolicy}
           </a>
           <a
             href="/terms"
             className="inline-flex rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light"
           >
-            Terms
+            {copy.termsOfUse}
           </a>
           <a
             href="/support"

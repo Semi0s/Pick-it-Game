@@ -22,10 +22,12 @@ import {
 } from "@/lib/avatar-image-processing";
 import { showAppToast } from "@/lib/app-toast";
 import {
+  getOrganizationBrandingLabel,
   ORGANIZATION_REVIEW_NOTE_MAX_LENGTH,
   ORGANIZATION_SPONSOR_MESSAGE_MAX_LENGTH,
   ORGANIZATION_WELCOME_HEADLINE_MAX_LENGTH,
-  ORGANIZATION_WELCOME_MESSAGE_MAX_LENGTH
+  ORGANIZATION_WELCOME_MESSAGE_MAX_LENGTH,
+  type OrganizationBrandingStatus
 } from "@/lib/organization-branding";
 import {
   ActionButton,
@@ -275,11 +277,23 @@ export function OrganizationBrandingPanel() {
               </label>
             ) : null}
 
-            {workspace.organization.reviewNote ? (
-              <div className="rounded-[1rem] border border-amber-200 bg-amber-50 px-3 py-3 text-sm font-semibold text-amber-900">
-                {workspace.organization.reviewNote}
+            <div className="rounded-[1rem] border border-gray-200 bg-white px-3 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-black uppercase tracking-[0.14em] text-gray-600">Media status</span>
+                <ManagementBadge
+                  label={getOrganizationBrandingLabel(workspace.organization.status)}
+                  tone={getOrganizationStatusTone(workspace.organization.status)}
+                />
               </div>
-            ) : null}
+              <p className="mt-2 text-sm font-semibold text-gray-700">
+                {getOrganizationStatusHelp(workspace.organization.status)}
+              </p>
+              {workspace.organization.reviewNote ? (
+                <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900">
+                  Reason: {workspace.organization.reviewNote}
+                </p>
+              ) : null}
+            </div>
 
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
               <div className="space-y-4">
@@ -480,4 +494,35 @@ export function OrganizationBrandingPanel() {
       ) : null}
     </ManagementCard>
   );
+}
+
+function getOrganizationStatusTone(status: OrganizationBrandingStatus): "neutral" | "accent" | "warning" | "danger" {
+  if (status === "approved") {
+    return "accent";
+  }
+
+  if (status === "pending_review") {
+    return "warning";
+  }
+
+  if (status === "rejected" || status === "disabled") {
+    return "danger";
+  }
+
+  return "neutral";
+}
+
+function getOrganizationStatusHelp(status: OrganizationBrandingStatus) {
+  switch (status) {
+    case "approved":
+      return "Approved branding is live.";
+    case "pending_review":
+      return "Pending review. The public portal keeps using approved or default imagery until approval.";
+    case "rejected":
+      return "Rejected. Update the draft and submit it again.";
+    case "disabled":
+      return "Disabled by Super Admin. The public portal is using default imagery.";
+    case "draft":
+      return "Draft changes are not public yet. Submit for review when ready.";
+  }
 }

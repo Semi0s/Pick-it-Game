@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { createMediaModerationNotification } from "@/lib/notifications";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
+import { isMissingRelationError } from "@/lib/schema-safety";
 import {
   ORGANIZATION_BRANDING_BUCKET,
   ORGANIZATION_REVIEW_NOTE_MAX_LENGTH,
@@ -494,6 +496,21 @@ export async function approveOrganizationBrandingAction(
         previousStatus: branding.status
       }
     });
+    await logMediaModerationAudit(adminSupabase, {
+      organization,
+      actorUserId: currentUser.userId,
+      action: "organization_branding_approved",
+      oldStatus: branding.status,
+      newStatus: "approved"
+    });
+    await createMediaModerationNotification({
+      adminSupabase,
+      recipientUserIds: [organization.owner_user_id],
+      targetType: "organization_branding",
+      targetId: organization.id,
+      status: "approved",
+      href: "/my-groups"
+    });
 
     const refreshedBranding = await ensureOrganizationBrandingRow(adminSupabase, organization.id);
     const editorState = await buildOrganizationBrandingEditorState(adminSupabase, organization, refreshedBranding);
@@ -550,6 +567,23 @@ export async function rejectOrganizationBrandingAction(
         reason
       }
     });
+    await logMediaModerationAudit(adminSupabase, {
+      organization,
+      actorUserId: currentUser.userId,
+      action: "organization_branding_rejected",
+      oldStatus: branding.status,
+      newStatus: "rejected",
+      note: reason
+    });
+    await createMediaModerationNotification({
+      adminSupabase,
+      recipientUserIds: [organization.owner_user_id],
+      targetType: "organization_branding",
+      targetId: organization.id,
+      status: "rejected",
+      note: reason,
+      href: "/my-groups"
+    });
 
     const refreshedBranding = await ensureOrganizationBrandingRow(adminSupabase, organization.id);
     const editorState = await buildOrganizationBrandingEditorState(adminSupabase, organization, refreshedBranding);
@@ -604,6 +638,23 @@ export async function disableOrganizationBrandingAction(
         previousStatus: branding.status,
         reason: reason || null
       }
+    });
+    await logMediaModerationAudit(adminSupabase, {
+      organization,
+      actorUserId: currentUser.userId,
+      action: "organization_branding_disabled",
+      oldStatus: branding.status,
+      newStatus: "disabled",
+      note: reason || "Branding has been disabled by a Super Admin."
+    });
+    await createMediaModerationNotification({
+      adminSupabase,
+      recipientUserIds: [organization.owner_user_id],
+      targetType: "organization_branding",
+      targetId: organization.id,
+      status: "disabled",
+      note: reason || "Branding has been disabled by a Super Admin.",
+      href: "/my-groups"
     });
 
     const refreshedBranding = await ensureOrganizationBrandingRow(adminSupabase, organization.id);
@@ -1102,6 +1153,43 @@ async function logOrganizationBrandingAudit(
   if (error) {
     console.warn("Could not write organization branding audit log.", {
       organizationId: input.organizationId,
+      action: input.action,
+      message: error.message
+    });
+  }
+}
+
+async function logMediaModerationAudit(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    organization: OrganizationRow;
+    actorUserId: string;
+    action: string;
+    oldStatus: string;
+    newStatus: string;
+    note?: string | null;
+  }
+) {
+  const { error } = await adminSupabase.from("media_moderation_audit_log").insert({
+    actor_user_id: input.actorUserId,
+    actor_access_level: "super_admin",
+    action: input.action,
+    target_type: "organization_branding",
+    target_id: input.organization.id,
+    scope_type: "organization",
+    scope_id: input.organization.id,
+    old_status: input.oldStatus,
+    new_status: input.newStatus,
+    note: input.note?.trim() || null,
+    details: {
+      organizationName: input.organization.name,
+      organizationSlug: input.organization.slug
+    }
+  });
+
+  if (error && !isMissingRelationError(error.message, "media_moderation_audit_log")) {
+    console.warn("Could not write organization media moderation audit log.", {
+      organizationId: input.organization.id,
       action: input.action,
       message: error.message
     });

@@ -3,7 +3,25 @@ import { sendPushNotification } from "@/lib/push-notifications";
 import { isMissingColumnError } from "@/lib/schema-safety";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
-export type NotificationType = "perfect_pick" | "daily_winner" | "big_rank_movement" | "event_comment" | "trophy_earned";
+export type NotificationType =
+  | "perfect_pick"
+  | "daily_winner"
+  | "big_rank_movement"
+  | "event_comment"
+  | "trophy_earned"
+  | "media_moderation";
+
+export type MediaModerationNotificationStatus =
+  | "approved"
+  | "rejected"
+  | "removed"
+  | "disabled"
+  | "needs_revision";
+
+export type MediaModerationNotificationTarget =
+  | "profile_avatar"
+  | "group_avatar"
+  | "organization_branding";
 
 type NotificationSettingRow = {
   user_id: string;
@@ -352,6 +370,50 @@ export async function createTrophyEarnedNotifications(input: {
   await insertNotificationBatch(input.adminSupabase, inserts, { requireNotificationsEnabled: false });
 }
 
+export async function createMediaModerationNotification(input: {
+  adminSupabase: ReturnType<typeof createAdminClient>;
+  recipientUserIds: string[];
+  targetType: MediaModerationNotificationTarget;
+  targetId: string;
+  status: MediaModerationNotificationStatus;
+  note?: string | null;
+  href?: string | null;
+}) {
+  const recipientUserIds = Array.from(new Set(input.recipientUserIds.map((userId) => userId.trim()).filter(Boolean)));
+  if (recipientUserIds.length === 0) {
+    return;
+  }
+
+  const copy = buildMediaModerationNotificationCopy({
+    targetType: input.targetType,
+    status: input.status,
+    note: input.note
+  });
+  const href = normalizeNotificationHref(input.href) ?? getDefaultMediaModerationHref(input.targetType);
+  const moderationKey = `${input.targetType}:${input.targetId}:${input.status}:${Date.now().toString(36)}`;
+
+  await insertNotificationBatch(
+    input.adminSupabase,
+    recipientUserIds.map((userId) => ({
+      user_id: userId,
+      event_id: null,
+      type: "media_moderation",
+      read_at: null,
+      payload: {
+        title: copy.title,
+        body: copy.body,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        status: input.status,
+        note: sanitizePublicModerationNote(input.note),
+        href,
+        moderationKey
+      }
+    })),
+    { requireNotificationsEnabled: false, sendPush: false }
+  );
+}
+
 function selectPreferredNotificationEvents(events: NotificationEventSeed[]) {
   const bestByKey = new Map<string, NotificationEventSeed>();
 
@@ -423,7 +485,7 @@ export async function fetchNotificationsEnabledForUser(
 async function insertNotificationBatch(
   adminSupabase: ReturnType<typeof createAdminClient>,
   inserts: NotificationInsert[],
-  options?: { requireNotificationsEnabled?: boolean }
+  options?: { requireNotificationsEnabled?: boolean; sendPush?: boolean }
 ) {
   const uniqueInserts = dedupeNotificationInserts(inserts);
   if (uniqueInserts.length === 0) {
@@ -464,20 +526,22 @@ async function insertNotificationBatch(
     throw new Error(error.message);
   }
 
-  await Promise.all(
-    newInserts.map((insert) =>
-      sendPushNotification(
-        adminSupabase,
-        insert.user_id,
-        typeof insert.payload.title === "string" ? insert.payload.title : fallbackTitle(insert.type),
-        typeof insert.payload.body === "string" ? insert.payload.body : "",
-        {
-          eventId: insert.event_id,
-          type: insert.type
-        }
+  if (options?.sendPush !== false) {
+    await Promise.all(
+      newInserts.map((insert) =>
+        sendPushNotification(
+          adminSupabase,
+          insert.user_id,
+          typeof insert.payload.title === "string" ? insert.payload.title : fallbackTitle(insert.type),
+          typeof insert.payload.body === "string" ? insert.payload.body : "",
+          {
+            eventId: insert.event_id,
+            type: insert.type
+          }
+        )
       )
-    )
-  );
+    );
+  }
 
   queueNotificationDeliveryStub(newInserts);
 }
@@ -587,12 +651,18 @@ async function fetchExistingNotificationKeys(
   }
 
   return new Set(
-    (((data as Array<{ user_id: string; event_id: string | null; type: NotificationType }> | null) ?? []).map(
+    (((data as Array<{
+      user_id: string;
+      event_id: string | null;
+      type: NotificationType;
+      payload?: Record<string, unknown> | null;
+    }> | null) ?? []).map(
       (row) =>
         notificationInsertKey({
           user_id: row.user_id,
           event_id: row.event_id,
-          type: row.type
+          type: row.type,
+          payload: row.payload ?? undefined
         })
     ))
   );
@@ -612,7 +682,11 @@ function notificationInsertKey(insert: {
     insert.type === "trophy_earned" && "payload" in insert && typeof insert.payload?.trophyId === "string"
       ? insert.payload.trophyId
       : "none";
-  return `${insert.user_id}:${insert.event_id ?? "none"}:${insert.type}:${commentId}:${trophyId}`;
+  const mediaModerationKey =
+    insert.type === "media_moderation" && "payload" in insert && typeof insert.payload?.moderationKey === "string"
+      ? insert.payload.moderationKey
+      : "none";
+  return `${insert.user_id}:${insert.event_id ?? "none"}:${insert.type}:${commentId}:${trophyId}:${mediaModerationKey}`;
 }
 
 function mapNotificationRow(row: NotificationRow): UserNotification {
@@ -628,7 +702,7 @@ function mapNotificationRow(row: NotificationRow): UserNotification {
     body,
     createdAt: row.created_at,
     readAt: row.read_at,
-    href: "/leaderboard"
+    href: getNotificationHref(row.type, payload)
   };
 }
 
@@ -662,9 +736,93 @@ function fallbackTitle(type: NotificationType) {
       return "💬 New Comment";
     case "trophy_earned":
       return "🏆 Trophy Earned";
+    case "media_moderation":
+      return "Media status update";
     default:
       return "Leaderboard update";
   }
+}
+
+function getNotificationHref(type: NotificationType, payload: Record<string, unknown>) {
+  const href = normalizeNotificationHref(typeof payload.href === "string" ? payload.href : null);
+  if (href) {
+    return href;
+  }
+
+  if (type === "media_moderation") {
+    const targetType = typeof payload.targetType === "string" ? payload.targetType : "";
+    return getDefaultMediaModerationHref(targetType as MediaModerationNotificationTarget);
+  }
+
+  return "/leaderboard";
+}
+
+function getDefaultMediaModerationHref(targetType: MediaModerationNotificationTarget) {
+  if (targetType === "profile_avatar") {
+    return "/profile";
+  }
+
+  return "/my-groups";
+}
+
+function buildMediaModerationNotificationCopy(input: {
+  targetType: MediaModerationNotificationTarget;
+  status: MediaModerationNotificationStatus;
+  note?: string | null;
+}) {
+  const targetLabel = getMediaModerationTargetLabel(input.targetType);
+  const note = sanitizePublicModerationNote(input.note);
+  const reason = note ? `Reason: ${note}` : null;
+
+  switch (input.status) {
+    case "approved":
+      return {
+        title: `Your ${targetLabel} was approved.`,
+        body: "No action needed."
+      };
+    case "rejected":
+      return {
+        title: `Your ${targetLabel} was rejected.`,
+        body: reason ?? "Upload a new image when ready."
+      };
+    case "removed":
+      return {
+        title: `Your ${targetLabel} was removed.`,
+        body: reason ?? "The default image is now being used."
+      };
+    case "disabled":
+      return {
+        title: `Your ${targetLabel} was disabled by Super Admin.`,
+        body: reason ?? "The default image is now being used."
+      };
+    case "needs_revision":
+      return {
+        title: `Your ${targetLabel} needs revision.`,
+        body: reason ?? "Update the image and submit it again."
+      };
+  }
+}
+
+function getMediaModerationTargetLabel(targetType: MediaModerationNotificationTarget) {
+  if (targetType === "profile_avatar") {
+    return "profile image";
+  }
+
+  if (targetType === "group_avatar") {
+    return "group image";
+  }
+
+  return "league branding";
+}
+
+function sanitizePublicModerationNote(note?: string | null) {
+  const trimmed = note?.trim().replace(/\s+/g, " ") ?? "";
+  return trimmed ? trimmed.slice(0, 180) : null;
+}
+
+function normalizeNotificationHref(href?: string | null) {
+  const normalized = href?.trim() ?? "";
+  return normalized.startsWith("/") && !normalized.startsWith("//") ? normalized : null;
 }
 
 async function getCurrentNotificationViewerId(): Promise<

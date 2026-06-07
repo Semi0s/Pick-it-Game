@@ -16,6 +16,7 @@ import { fetchGlobalLeaderboardRankSummaryForUser } from "@/lib/leaderboard-data
 import { EXPECTED_KNOCKOUT_MATCH_COUNTS, isRoundOf32Stage, normalizeKnockoutStage } from "@/lib/match-stage";
 import { getGroupMatches, teams as demoTeams } from "@/lib/mock-data";
 import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
+import { loadProjectedRoundOf32FromPreferredSource } from "@/lib/projected-knockout-source";
 import { isMissingColumnError, isMissingRelationError } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
@@ -49,6 +50,8 @@ type MatchRow = {
   kickoff_time: string | null;
   home_team_id: string | null;
   away_team_id: string | null;
+  home_source?: string | null;
+  away_source?: string | null;
   home_score: number | null;
   away_score: number | null;
 };
@@ -89,7 +92,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     totalPlayersResult,
     tournamentEntrySettings,
     latestGroupSeedUpdateResult,
-    latestThirdPlaceUpdateResult
+    latestThirdPlaceUpdateResult,
+    projectedRoundOf32Result
   ] = await Promise.all([
     adminSupabase
       .from("teams")
@@ -98,7 +102,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       .order("name", { ascending: true }),
     adminSupabase
       .from("matches")
-      .select("id,stage,status,kickoff_time,home_team_id,away_team_id,home_score,away_score")
+      .select("id,stage,status,kickoff_time,home_team_id,away_team_id,home_source,away_source,home_score,away_score")
       .order("kickoff_time", { ascending: true }),
     adminSupabase.from("users").select("total_points").eq("id", userId).maybeSingle(),
     adminSupabase.from("group_members").select("group_id,role").eq("user_id", userId),
@@ -124,7 +128,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       .select("updated_at")
       .eq("user_id", userId)
       .order("updated_at", { ascending: false })
-      .limit(1)
+      .limit(1),
+    loadProjectedRoundOf32FromPreferredSource(adminSupabase, userId).catch(() => null)
   ]);
 
   const teams = ((teamsResult.data as TeamRow[] | null) ?? []).length
@@ -145,6 +150,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         kickoff_time: match.kickoffTime,
         home_team_id: match.homeTeamId ?? null,
         away_team_id: match.awayTeamId ?? null,
+        home_source: null,
+        away_source: null,
         home_score: match.homeScore ?? null,
         away_score: match.awayScore ?? null
       }));
@@ -208,13 +215,16 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       id: match.id,
       stage: match.stage,
       status: match.status,
-      homeSource: null,
-      awaySource: null,
+      homeSource: match.home_source ?? null,
+      awaySource: match.away_source ?? null,
       homeTeamId: match.home_team_id,
       awayTeamId: match.away_team_id
     }));
   const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(roundOf32Placeholders) || 8;
   const selectedThirdPlaceCount = Math.min(snapshot?.thirdPlaceRankings?.length ?? 0, requiredThirdPlaceQualifierCount);
+  const projectedRoundOf32ExpectedSideCount = EXPECTED_KNOCKOUT_MATCH_COUNTS.r32 * 2;
+  const projectedRoundOf32ResolvedSideCount =
+    projectedRoundOf32Result?.projectedSeeds.resolvedSideCount ?? null;
   const latestGroupStageChangedAt = getLatestTimestamp([
     ((latestGroupSeedUpdateResult.data as UpdatedAtRow[] | null) ?? [])[0]?.updated_at ?? null,
     ((latestThirdPlaceUpdateResult.data as UpdatedAtRow[] | null) ?? [])[0]?.updated_at ?? null
@@ -290,7 +300,9 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         needsSave: groupStageSaveStatus.needsSave,
         hasUncommittedChanges: groupStageSaveStatus.hasMeaningfulChangesAfterCommit,
         lastCommittedAt: groupStageCommittedAt,
-        lastChangedAt: latestGroupStageChangedAt
+        lastChangedAt: latestGroupStageChangedAt,
+        projectedRoundOf32ResolvedSideCount,
+        projectedRoundOf32ExpectedSideCount
       });
   const progress = {
     ...progressBase,

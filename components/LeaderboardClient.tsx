@@ -263,11 +263,11 @@ function SafetyButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-black uppercase tracking-wide text-gray-600 shadow-sm transition hover:border-accent hover:bg-accent-light hover:text-accent-dark focus:outline-none focus:ring-2 focus:ring-accent-light"
+      title="Report or block"
+      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:border-accent hover:bg-accent-light hover:text-accent-dark focus:outline-none focus:ring-2 focus:ring-accent-light"
       aria-label="Report or block"
     >
       <Flag className="h-3.5 w-3.5" aria-hidden />
-      <span>Safety</span>
     </button>
   );
 }
