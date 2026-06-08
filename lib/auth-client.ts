@@ -32,6 +32,7 @@ import { notifyCurrentUserProfileChanged } from "@/lib/current-user-events";
 import { demoSignIn, demoSignOut, demoSignUp, getDemoCurrentUser } from "@/lib/demo-auth-fallback";
 import { isSpecialVisualThemeId } from "@/lib/localized-card-themes";
 import { getLanguageLabel } from "@/lib/strings";
+import { Capacitor } from "@capacitor/core";
 import type { UserProfile, UserTrophy } from "@/lib/types";
 import type { PushPermissionState, PushPlatform } from "@/lib/push-notifications";
 
@@ -498,6 +499,11 @@ export async function resendSignupConfirmationEmail(
     language: options?.language ?? undefined
   });
   const emailRedirectTo = buildAuthCallbackUrl(loginReturnPath, options?.language);
+  console.info("Resending signup confirmation email.", {
+    email: redactEmailForAuthLog(normalizedEmail),
+    redirectMode: isNativeAuthRedirect() ? "native" : "web",
+    emailRedirectTo
+  });
   const { error } = await supabase.auth.resend({
     type: "signup",
     email: normalizedEmail,
@@ -508,9 +514,18 @@ export async function resendSignupConfirmationEmail(
 
   if (error) {
     const safeAuthError = getSafeSupabaseErrorInfo(error, "Could not resend confirmation email.");
+    console.warn("Could not resend signup confirmation email.", {
+      email: redactEmailForAuthLog(normalizedEmail),
+      redirectMode: isNativeAuthRedirect() ? "native" : "web",
+      emailRedirectTo,
+      code: safeAuthError.code,
+      details: safeAuthError.details,
+      hint: safeAuthError.hint,
+      message: safeAuthError.message
+    });
     return {
       ok: false,
-      message: safeAuthError.message || "Could not resend confirmation email."
+      message: getResendConfirmationErrorMessage(safeAuthError)
     };
   }
 
@@ -2105,13 +2120,58 @@ function buildLoginReturnPath(input: {
 }
 
 function buildAuthCallbackUrl(nextPath: string, language?: string | null) {
-  const callbackUrl = new URL("/auth/callback", getPublicSiteUrl());
+  const callbackUrl = isNativeAuthRedirect()
+    ? new URL("pickit://auth/callback")
+    : new URL("/auth/callback", getPublicSiteUrl());
   callbackUrl.searchParams.set("next", appendLanguageToPath(nextPath, language));
   if (language) {
     callbackUrl.searchParams.set("lang", normalizeLanguage(language));
   }
 
   return callbackUrl.toString();
+}
+
+function isNativeAuthRedirect() {
+  try {
+    return Capacitor.isNativePlatform();
+  } catch {
+    return false;
+  }
+}
+
+function getResendConfirmationErrorMessage(error: ReturnType<typeof getSafeSupabaseErrorInfo>) {
+  const combined = `${error.code ?? ""} ${error.message} ${error.details ?? ""} ${error.hint ?? ""}`.toLowerCase();
+
+  if (
+    combined.includes("rate") ||
+    combined.includes("too many") ||
+    combined.includes("over_email_send_rate_limit") ||
+    (combined.includes("security") && combined.includes("request"))
+  ) {
+    return "Confirmation emails are rate-limited. Wait a minute, then try sending another link.";
+  }
+
+  if (
+    combined.includes("redirect") ||
+    combined.includes("not allowed") ||
+    combined.includes("invalid redirect") ||
+    combined.includes("url not allowed")
+  ) {
+    return isNativeAuthRedirect()
+      ? "The native confirmation redirect is not accepted yet. Confirm Supabase allows pickit://auth/callback and try again."
+      : "The web confirmation redirect is not accepted yet. Confirm Supabase allows the production auth callback and try again.";
+  }
+
+  return error.message || "Could not resend confirmation email.";
+}
+
+function redactEmailForAuthLog(email: string) {
+  const [localPart, domainPart] = email.split("@");
+  if (!localPart || !domainPart) {
+    return "[invalid-email]";
+  }
+
+  return `${localPart.slice(0, 2)}***@${domainPart}`;
 }
 
 function normalizeDisplayNameValue(value: string) {

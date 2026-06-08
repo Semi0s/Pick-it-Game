@@ -1,6 +1,7 @@
 import { redactEmailAddress } from "./redact-email.ts";
 
 export const PENDING_CONFIRMATION_EMAIL_STORAGE_KEY = "pickit:pending-confirmation-email";
+const PENDING_CONFIRMATION_EMAIL_FALLBACK_STORAGE_KEY = "pickit:pending-confirmation-email:v1";
 
 export function normalizeConfirmationEmail(email: string) {
   return email.trim().toLowerCase();
@@ -30,6 +31,12 @@ export function storePendingConfirmationEmail(email: string) {
   } catch (error) {
     console.warn("Could not store pending confirmation email.", error);
   }
+
+  try {
+    window.localStorage.setItem(PENDING_CONFIRMATION_EMAIL_FALLBACK_STORAGE_KEY, normalizedEmail);
+  } catch (error) {
+    console.warn("Could not persist pending confirmation email.", error);
+  }
 }
 
 export function readPendingConfirmationEmail() {
@@ -38,9 +45,18 @@ export function readPendingConfirmationEmail() {
   }
 
   try {
-    return normalizeConfirmationEmail(window.sessionStorage.getItem(PENDING_CONFIRMATION_EMAIL_STORAGE_KEY) ?? "");
+    const sessionValue = normalizeConfirmationEmail(window.sessionStorage.getItem(PENDING_CONFIRMATION_EMAIL_STORAGE_KEY) ?? "");
+    if (sessionValue) {
+      return sessionValue;
+    }
   } catch (error) {
     console.warn("Could not read pending confirmation email.", error);
+  }
+
+  try {
+    return normalizeConfirmationEmail(window.localStorage.getItem(PENDING_CONFIRMATION_EMAIL_FALLBACK_STORAGE_KEY) ?? "");
+  } catch (error) {
+    console.warn("Could not read persisted pending confirmation email.", error);
     return "";
   }
 }
@@ -54,5 +70,11 @@ export function clearPendingConfirmationEmail() {
     window.sessionStorage.removeItem(PENDING_CONFIRMATION_EMAIL_STORAGE_KEY);
   } catch (error) {
     console.warn("Could not clear pending confirmation email.", error);
+  }
+
+  try {
+    window.localStorage.removeItem(PENDING_CONFIRMATION_EMAIL_FALLBACK_STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not clear persisted pending confirmation email.", error);
   }
 }
