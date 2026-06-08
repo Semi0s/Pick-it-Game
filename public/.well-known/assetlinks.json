@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.semios.pickit",
+      "sha256_cert_fingerprints": [
+        "B8:C0:1A:66:02:14:7B:23:9D:62:72:B7:86:05:10:4B:45:58:55:FC:C8:E9:A2:2C:A3:AC:7D:E2:11:2A:55:C8"
+      ]
+    }
+  }
+]
