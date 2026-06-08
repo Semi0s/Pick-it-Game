@@ -46,7 +46,7 @@ export function CheckEmailClient({ language }: { language?: string | null }) {
     setIsResending(false);
 
     if (!result.ok) {
-      setError(t(uiLanguage, "auth.confirmationEmailSendFailed"));
+      setError(result.message || t(uiLanguage, "auth.confirmationEmailSendFailed"));
       return;
     }
 
