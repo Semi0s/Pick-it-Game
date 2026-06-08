@@ -118,3 +118,47 @@ test("projected bracket preview ignores stale third-place qualifier rows instead
   assert.equal(preview.matches.length, 16);
   assert.equal(preview.matches.some((match) => match.home.teamId === "a4" || match.away.teamId === "a4"), false);
 });
+
+test("explicit empty third-place override keeps projected R32 third-place slots unresolved", () => {
+  const groupLetters = "ABCDEFGHIJKL".split("");
+  const teams = groupLetters.flatMap((groupLetter) =>
+    [1, 2, 3, 4].map((seed) => ({
+      id: `${groupLetter.toLowerCase()}${seed}`,
+      name: `Group ${groupLetter} Team ${seed}`,
+      shortName: `${groupLetter}${seed}`,
+      groupName: `Group ${groupLetter}`,
+      fifaRank: seed,
+      fifaPoints: null,
+      flagEmoji: ""
+    }))
+  );
+  const rankings = groupLetters.map((groupLetter) => ({
+    groupName: `Group ${groupLetter}`,
+    rankedTeamIds: [1, 2, 3, 4].map((seed) => `${groupLetter.toLowerCase()}${seed}`)
+  }));
+  const standings = buildProjectedGroupStandingsFromSeedRankings(teams, rankings);
+  const placeholders = Array.from({ length: 16 }, (_, index) => ({
+    id: `M${73 + index}`,
+    stage: "r32",
+    status: "scheduled" as const,
+    homeSource: null,
+    awaySource: index < 8 ? `Best third-place ${index + 1}` : null,
+    homeTeamId: null,
+    awayTeamId: null
+  }));
+
+  const preview = buildUserProjectedRoundOf32({
+    groupMatches: [],
+    teams,
+    predictions: [],
+    roundOf32Placeholders: placeholders,
+    standingsByGroupOverride: standings,
+    rankedThirdPlaceTeamIdsOverride: []
+  });
+
+  const resolvedThirdPlaceSides = preview.matches.filter((match) =>
+    [match.home, match.away].some((side) => side.sourceLabel?.startsWith("Best third-place") && side.teamId)
+  );
+
+  assert.equal(resolvedThirdPlaceSides.length, 0);
+});

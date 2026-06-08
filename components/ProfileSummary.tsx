@@ -517,12 +517,9 @@ export function ProfileSummary() {
                       <div />
                     )}
                   </div>
-                  <p className="mt-3 inline-flex rounded-full bg-white px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-gray-600">
-                    Media status: {isUploadingAvatar ? "Updating" : user.avatarUrl ? "Approved" : "Using default image"}
-                  </p>
-                  {!user.avatarUrl ? (
-                    <p className="mt-1 text-[11px] font-semibold text-gray-500">
-                      If an image was removed by an admin, details appear under Notifications.
+                  {isUploadingAvatar ? (
+                    <p className="mt-3 inline-flex rounded-full bg-white px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-gray-600">
+                      Media status: Updating
                     </p>
                   ) : null}
                 </div>

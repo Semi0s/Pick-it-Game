@@ -17,6 +17,7 @@ import {
   createManagedGroupInviteCodeAction,
   createManagedGroupTrophyAction,
   deactivateManagedGroupInviteCodeAction,
+  deleteManagedGroupTrophyAction,
   deleteManagedGroupAction,
   fetchManagedGroupDetailAction,
   fetchMyGroupsAction,
@@ -29,6 +30,7 @@ import {
   transferManagedGroupOwnershipAction,
   uploadManagedGroupAvatarAction,
   updateManagedGroupAccessAction,
+  updateManagedGroupTrophyAction,
   updateManagedGroupProfileAction,
   updateManagedGroupLimitAction,
   updateGroupInviteNameAction,
@@ -239,6 +241,8 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     {}
   );
   const [groupTrophyDrafts, setGroupTrophyDrafts] = useState<Record<string, { name: string; icon: string; description: string }>>({});
+  const [groupTrophyEditDrafts, setGroupTrophyEditDrafts] = useState<Record<string, { name: string; icon: string; description: string }>>({});
+  const [editingTrophyIds, setEditingTrophyIds] = useState<string[]>([]);
   const [trophySheetTarget, setTrophySheetTarget] = useState<{ groupId: string; userId: string } | null>(null);
   const [celebrationTrophy, setCelebrationTrophy] = useState<{
     name: string;
@@ -1328,6 +1332,72 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
     });
   }
 
+  function handleStartEditingManagedTrophy(trophy: ManagedGroupDetails["trophies"][number]) {
+    setGroupTrophyEditDrafts((current) => ({
+      ...current,
+      [trophy.id]: {
+        name: trophy.name,
+        icon: trophy.icon,
+        description: trophy.description
+      }
+    }));
+    setEditingTrophyIds((current) => (current.includes(trophy.id) ? current : [...current, trophy.id]));
+  }
+
+  function handleCancelEditingManagedTrophy(trophyId: string) {
+    setEditingTrophyIds((current) => current.filter((id) => id !== trophyId));
+    setGroupTrophyEditDrafts((current) => {
+      const next = { ...current };
+      delete next[trophyId];
+      return next;
+    });
+  }
+
+  async function handleUpdateManagedTrophy(groupId: string, trophyId: string) {
+    const draft = groupTrophyEditDrafts[trophyId] ?? { name: "", icon: "", description: "" };
+
+    await withAction(`update-trophy-${groupId}:${trophyId}`, async () => {
+      const result = await updateManagedGroupTrophyAction({
+        groupId,
+        trophyId,
+        name: draft.name,
+        icon: draft.icon,
+        description: draft.description
+      });
+      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+      if (result.ok) {
+        handleCancelEditingManagedTrophy(trophyId);
+        await load();
+      }
+    });
+  }
+
+  function handleConfirmDeleteManagedTrophy(
+    groupId: string,
+    trophy: ManagedGroupDetails["trophies"][number]
+  ) {
+    setConfirmation({
+      key: `delete-trophy-${groupId}:${trophy.id}`,
+      title: `Delete ${trophy.icon} ${trophy.name}?`,
+      description:
+        trophy.awardedCount > 0
+          ? `This deletes the custom trophy and removes ${trophy.awardedCount} existing award${trophy.awardedCount === 1 ? "" : "s"} from group members.`
+          : "This deletes the custom trophy from this group. Core preset trophies are not affected.",
+      confirmLabel: "Delete Trophy",
+      onConfirm: () => {
+        void withAction(`delete-trophy-${groupId}:${trophy.id}`, async () => {
+          const result = await deleteManagedGroupTrophyAction(groupId, trophy.id);
+          setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+          if (result.ok) {
+            setConfirmation(null);
+            handleCancelEditingManagedTrophy(trophy.id);
+            await load();
+          }
+        });
+      }
+    });
+  }
+
   async function handleInviteEntrySubmit() {
     if (isJoiningFromInviteEntry) {
       return;
@@ -1968,11 +2038,11 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
             const managerTrophies = groupTrophies.filter(
               (trophy) => trophy.awardSource === "manager" && trophy.scope === "group"
             );
-            const coreTrophies = managerTrophies.filter((trophy) => !trophy.key.startsWith(`group_${group.id}_`));
-            const customTrophies = managerTrophies.filter((trophy) => trophy.key.startsWith(`group_${group.id}_`));
+            const coreTrophies = managerTrophies.filter((trophy) => !isCustomGroupTrophy(trophy, group.id));
+            const customTrophies = managerTrophies.filter((trophy) => isCustomGroupTrophy(trophy, group.id));
             const orderedManagerTrophies = [...managerTrophies].sort((left, right) => {
-              const leftIsCustom = left.key.startsWith(`group_${group.id}_`);
-              const rightIsCustom = right.key.startsWith(`group_${group.id}_`);
+              const leftIsCustom = isCustomGroupTrophy(left, group.id);
+              const rightIsCustom = isCustomGroupTrophy(right, group.id);
 
               if (leftIsCustom !== rightIsCustom) {
                 return leftIsCustom ? -1 : 1;
@@ -2018,6 +2088,328 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                       expiresAt: detailedGroup.inviteCode.expiresAt ?? null
                     }
                   : null;
+            const trophyManagementCard = canManageSocialTrophies ? (
+              <div className="ui-card mt-4 p-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Trophies</h4>
+                    <p className="mt-1 text-xs font-semibold text-gray-500">
+                      {coreTrophies.length} core · {customTrophies.length} of 10 custom
+                    </p>
+                  </div>
+                  <InlineDisclosureButton
+                    isOpen={isTrophyExpanded}
+                    variant="subtle"
+                    onClick={() => toggleExpandedSection(group.id, setExpandedTrophyIds)}
+                  />
+                </div>
+
+                {isTrophyExpanded ? (
+                  <>
+                    {isSuperAdmin || managerCustomTrophiesEnabled ? (
+                      <div className="mt-3 space-y-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-600">
+                        <div>
+                          <p className="font-black text-gray-900">Create Trophy</p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            Core trophies stay consistent. Use a custom trophy when this group deserves its own running joke.
+                          </p>
+                          {hasReachedCustomTrophyLimit ? (
+                            <p className="mt-2 text-xs font-bold text-amber-800">
+                              This group has reached the 10 custom trophy limit.
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-[96px_minmax(0,1fr)]">
+                          <label className="block">
+                            <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Emoji</span>
+                            <input
+                              value={trophyDraft.icon}
+                              onChange={(event) =>
+                                setGroupTrophyDrafts((current) => ({
+                                  ...current,
+                                  [group.id]: {
+                                    ...(current[group.id] ?? { name: "", icon: "", description: "" }),
+                                    icon: event.target.value
+                                  }
+                                }))
+                              }
+                              placeholder="🏅"
+                              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-lg outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Name</span>
+                            <input
+                              value={trophyDraft.name}
+                              onChange={(event) =>
+                                setGroupTrophyDrafts((current) => ({
+                                  ...current,
+                                  [group.id]: {
+                                    ...(current[group.id] ?? { name: "", icon: "", description: "" }),
+                                    name: event.target.value
+                                  }
+                                }))
+                              }
+                              placeholder="Late Night Legend"
+                              className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                            />
+                          </label>
+                        </div>
+                        <label className="block">
+                          <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Description</span>
+                          <textarea
+                            value={trophyDraft.description}
+                            onChange={(event) =>
+                              setGroupTrophyDrafts((current) => ({
+                                ...current,
+                                [group.id]: {
+                                  ...(current[group.id] ?? { name: "", icon: "", description: "" }),
+                                  description: event.target.value
+                                }
+                              }))
+                            }
+                            rows={2}
+                            placeholder="What makes this trophy fun?"
+                            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                          />
+                        </label>
+                        <div className="space-y-2">
+                          <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Need ideas?</p>
+                          <div className="flex flex-wrap gap-2">
+                            {TROPHY_PROMPTS.map((prompt) => (
+                              <button
+                                key={prompt.name}
+                                type="button"
+                                onClick={() =>
+                                  setGroupTrophyDrafts((current) => ({
+                                    ...current,
+                                    [group.id]: {
+                                      name: prompt.name,
+                                      icon: prompt.icon,
+                                      description: prompt.description
+                                    }
+                                  }))
+                                }
+                                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-left text-xs font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                              >
+                                {prompt.icon} {prompt.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <ActionButton
+                          type="button"
+                          disabled={
+                            hasReachedCustomTrophyLimit ||
+                            actionKey === `create-trophy-${group.id}` ||
+                            !trophyDraft.name.trim() ||
+                            !trophyDraft.icon.trim()
+                          }
+                          onClick={() => void handleCreateManagedTrophy(group.id)}
+                          fullWidth
+                        >
+                          {actionKey === `create-trophy-${group.id}` ? "Saving Trophy..." : "Save Custom Trophy"}
+                        </ActionButton>
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-600">
+                        Custom trophy creation is only available for League organizers and is currently turned off.
+                      </div>
+                    )}
+
+                    <div className="mt-4 space-y-2">
+                      {orderedManagerTrophies.length > 0 ? (
+                        orderedManagerTrophies.map((trophy) => {
+                          const selectedUserId = groupTrophyAwardSelections[group.id]?.[trophy.id] ?? "";
+                          const alreadyAwardedUserIds = new Set(
+                            groupMembers
+                              .filter((member) => member.trophies.some((awarded) => awarded.id === trophy.id))
+                              .map((member) => member.userId)
+                          );
+                          const eligibleMembers = activeMembers.filter(
+                            (member) =>
+                              (canSelfAwardTrophies || member.userId !== currentUserId) &&
+                              !alreadyAwardedUserIds.has(member.userId)
+                          );
+                          const isCustomTrophy = isCustomGroupTrophy(trophy, group.id);
+                          const isEditingTrophy = editingTrophyIds.includes(trophy.id);
+                          const trophyEditDraft = groupTrophyEditDrafts[trophy.id] ?? {
+                            name: trophy.name,
+                            icon: trophy.icon,
+                            description: trophy.description
+                          };
+
+                          return (
+                            <div key={trophy.id} className="rounded-md border border-gray-200 bg-white px-3 py-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black text-gray-950">
+                                    {trophy.icon} {trophy.name}
+                                  </p>
+                                  <p className="mt-1 text-sm font-semibold text-gray-600">
+                                    {trophy.description || "Group recognition trophy"}
+                                  </p>
+                                </div>
+                                <div className="flex flex-col items-end gap-2">
+                                  <ManagementBadge
+                                    label={isCustomTrophy ? "custom" : "core"}
+                                    tone={isCustomTrophy ? "neutral" : "accent"}
+                                  />
+                                  <span className="text-xs font-semibold text-gray-500">
+                                    Awarded {trophy.awardedCount} time{trophy.awardedCount === 1 ? "" : "s"}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {isEditingTrophy ? (
+                                <div className="mt-3 space-y-3 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-3">
+                                  <div className="grid gap-3 sm:grid-cols-[96px_minmax(0,1fr)]">
+                                    <label className="block">
+                                      <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Emoji</span>
+                                      <input
+                                        value={trophyEditDraft.icon}
+                                        onChange={(event) =>
+                                          setGroupTrophyEditDrafts((current) => ({
+                                            ...current,
+                                            [trophy.id]: {
+                                              ...trophyEditDraft,
+                                              icon: event.target.value
+                                            }
+                                          }))
+                                        }
+                                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-lg outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                      />
+                                    </label>
+                                    <label className="block">
+                                      <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Name</span>
+                                      <input
+                                        value={trophyEditDraft.name}
+                                        onChange={(event) =>
+                                          setGroupTrophyEditDrafts((current) => ({
+                                            ...current,
+                                            [trophy.id]: {
+                                              ...trophyEditDraft,
+                                              name: event.target.value
+                                            }
+                                          }))
+                                        }
+                                        className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                      />
+                                    </label>
+                                  </div>
+                                  <label className="block">
+                                    <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Description</span>
+                                    <textarea
+                                      value={trophyEditDraft.description}
+                                      onChange={(event) =>
+                                        setGroupTrophyEditDrafts((current) => ({
+                                          ...current,
+                                          [trophy.id]: {
+                                            ...trophyEditDraft,
+                                            description: event.target.value
+                                          }
+                                        }))
+                                      }
+                                      rows={2}
+                                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                    />
+                                  </label>
+                                  <div className="flex flex-col gap-2 sm:flex-row">
+                                    <ActionButton
+                                      type="button"
+                                      disabled={
+                                        actionKey === `update-trophy-${group.id}:${trophy.id}` ||
+                                        !trophyEditDraft.name.trim() ||
+                                        !trophyEditDraft.icon.trim()
+                                      }
+                                      onClick={() => void handleUpdateManagedTrophy(group.id, trophy.id)}
+                                    >
+                                      {actionKey === `update-trophy-${group.id}:${trophy.id}` ? "Saving..." : "Save Changes"}
+                                    </ActionButton>
+                                    <ActionButton
+                                      type="button"
+                                      onClick={() => handleCancelEditingManagedTrophy(trophy.id)}
+                                    >
+                                      Cancel
+                                    </ActionButton>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                                    <label className="min-w-0 flex-1">
+                                      <span className="sr-only">Select player to award {trophy.name}</span>
+                                      <select
+                                        value={selectedUserId}
+                                        onChange={(event) =>
+                                          setGroupTrophyAwardSelections((current) => ({
+                                            ...current,
+                                            [group.id]: {
+                                              ...(current[group.id] ?? {}),
+                                              [trophy.id]: event.target.value
+                                            }
+                                          }))
+                                        }
+                                        className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                                      >
+                                        <option value="">
+                                          {eligibleMembers.length > 0 ? "Choose a player to award" : "Everyone already has this trophy"}
+                                        </option>
+                                        {eligibleMembers.map((member) => (
+                                          <option key={member.userId} value={member.userId}>
+                                            {member.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <ActionButton
+                                      type="button"
+                                      disabled={
+                                        !selectedUserId ||
+                                        eligibleMembers.length === 0 ||
+                                        actionKey === `award-trophy-${group.id}:${selectedUserId}:${trophy.id}`
+                                      }
+                                      onClick={() => void handleAwardTrophyFromList(group.id, trophy.id)}
+                                    >
+                                      {actionKey === `award-trophy-${group.id}:${selectedUserId}:${trophy.id}` ? "Awarding..." : "Award"}
+                                    </ActionButton>
+                                  </div>
+                                  {isCustomTrophy ? (
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      <ActionButton
+                                        type="button"
+                                        onClick={() => handleStartEditingManagedTrophy(trophy)}
+                                      >
+                                        Edit
+                                      </ActionButton>
+                                      <ActionButton
+                                        type="button"
+                                        tone="danger"
+                                        disabled={actionKey === `delete-trophy-${group.id}:${trophy.id}`}
+                                        onClick={() => handleConfirmDeleteManagedTrophy(group.id, trophy)}
+                                      >
+                                        {actionKey === `delete-trophy-${group.id}:${trophy.id}` ? "Deleting..." : "Delete"}
+                                      </ActionButton>
+                                    </div>
+                                  ) : null}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="rounded-md bg-white px-3 py-3 text-sm font-semibold text-gray-600">
+                          <p>No trophies available yet</p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            Save a custom trophy to recognize a player in this group.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null;
 
             return (
               <ManagementCard
@@ -2150,12 +2542,9 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                                         ? tg("avatarRemoveHelp")
                                         : tg("avatarOptionalHelp")}
                                   </p>
-                                  <p className="mt-2 inline-flex rounded-full bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-600">
-                                    Media status: {getGroupAvatarMediaStatusLabel(group.avatarUrl ?? null, avatarDraft, isGroupAvatarProcessing)}
-                                  </p>
-                                  {!group.avatarUrl && !avatarDraft.file && !avatarDraft.removeCurrent && !isGroupAvatarProcessing ? (
-                                    <p className="mt-1 text-[11px] font-semibold text-gray-500">
-                                      If an image was reset by an admin, details appear under Notifications.
+                                  {getGroupAvatarMediaStatusLabel(avatarDraft, isGroupAvatarProcessing) ? (
+                                    <p className="mt-2 inline-flex rounded-full bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-gray-600">
+                                      Media status: {getGroupAvatarMediaStatusLabel(avatarDraft, isGroupAvatarProcessing)}
                                     </p>
                                   ) : null}
                                 </div>
@@ -2467,6 +2856,7 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                         ) : null}
                       </div>
                     ) : null}
+                    {trophyManagementCard}
                     {group.canManage ? (
                       <div className="ui-card mt-4 p-4">
                         <div className="flex items-start justify-between gap-3">
@@ -3150,229 +3540,6 @@ export function MyGroupsClient({ inviteToken, inviteLanguage, inviteHelperLangua
                           </p>
                         ) : null}
                       </div>
-
-                      {canManageSocialTrophies ? (
-                      <div className="ui-card-soft mt-4 p-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <h4 className="text-sm font-black uppercase tracking-wide text-gray-700">Trophies</h4>
-                            <p className="mt-1 text-xs font-semibold text-gray-500">
-                              {coreTrophies.length} core · {customTrophies.length} of 10 custom
-                            </p>
-                          </div>
-                          <InlineDisclosureButton
-                            isOpen={isTrophyExpanded}
-                            variant="subtle"
-                            onClick={() => toggleExpandedSection(group.id, setExpandedTrophyIds)}
-                          />
-                        </div>
-
-                        {isTrophyExpanded ? (
-                          <>
-                            {isSuperAdmin || managerCustomTrophiesEnabled ? (
-                              <div className="mt-3 space-y-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-600">
-                                <div>
-                                  <p className="font-black text-gray-900">Create Trophy</p>
-                                  <p className="mt-1 text-xs text-gray-500">
-                                    Core trophies stay consistent. Use a custom trophy when this group deserves its own running joke.
-                                  </p>
-                                  {hasReachedCustomTrophyLimit ? (
-                                    <p className="mt-2 text-xs font-bold text-amber-800">
-                                      This group has reached the 10 custom trophy limit.
-                                    </p>
-                                  ) : null}
-                                </div>
-                                <div className="grid gap-3 sm:grid-cols-[96px_minmax(0,1fr)]">
-                                  <label className="block">
-                                    <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Emoji</span>
-                                    <input
-                                      value={trophyDraft.icon}
-                                      onChange={(event) =>
-                                        setGroupTrophyDrafts((current) => ({
-                                          ...current,
-                                          [group.id]: {
-                                            ...(current[group.id] ?? { name: "", icon: "", description: "" }),
-                                            icon: event.target.value
-                                          }
-                                        }))
-                                      }
-                                      placeholder="🏅"
-                                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-lg outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                                    />
-                                  </label>
-                                  <label className="block">
-                                    <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Name</span>
-                                    <input
-                                      value={trophyDraft.name}
-                                      onChange={(event) =>
-                                        setGroupTrophyDrafts((current) => ({
-                                          ...current,
-                                          [group.id]: {
-                                            ...(current[group.id] ?? { name: "", icon: "", description: "" }),
-                                            name: event.target.value
-                                          }
-                                        }))
-                                      }
-                                      placeholder="Late Night Legend"
-                                      className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                                    />
-                                  </label>
-                                </div>
-                                <label className="block">
-                                  <span className="text-xs font-bold uppercase tracking-wide text-gray-500">Description</span>
-                                  <textarea
-                                    value={trophyDraft.description}
-                                    onChange={(event) =>
-                                      setGroupTrophyDrafts((current) => ({
-                                        ...current,
-                                        [group.id]: {
-                                          ...(current[group.id] ?? { name: "", icon: "", description: "" }),
-                                          description: event.target.value
-                                        }
-                                      }))
-                                    }
-                                    rows={2}
-                                    placeholder="What makes this trophy fun?"
-                                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                                  />
-                                </label>
-                                <div className="space-y-2">
-                                  <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Need ideas?</p>
-                                  <div className="flex flex-wrap gap-2">
-                                    {TROPHY_PROMPTS.map((prompt) => (
-                                      <button
-                                        key={prompt.name}
-                                        type="button"
-                                        onClick={() =>
-                                          setGroupTrophyDrafts((current) => ({
-                                            ...current,
-                                            [group.id]: {
-                                              name: prompt.name,
-                                              icon: prompt.icon,
-                                              description: prompt.description
-                                            }
-                                          }))
-                                        }
-                                        className="rounded-md border border-gray-200 bg-white px-3 py-2 text-left text-xs font-semibold text-gray-700 transition hover:border-accent hover:bg-accent-light"
-                                      >
-                                        {prompt.icon} {prompt.name}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                                <ActionButton
-                                  type="button"
-                                  disabled={
-                                    hasReachedCustomTrophyLimit ||
-                                    actionKey === `create-trophy-${group.id}` ||
-                                    !trophyDraft.name.trim() ||
-                                    !trophyDraft.icon.trim()
-                                  }
-                                  onClick={() => void handleCreateManagedTrophy(group.id)}
-                                  fullWidth
-                                >
-                                  {actionKey === `create-trophy-${group.id}` ? "Saving Trophy..." : "Save Custom Trophy"}
-                                </ActionButton>
-                              </div>
-                            ) : (
-                              <div className="mt-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-600">
-                                Custom trophy creation is only available for League organizers and is currently turned off.
-                              </div>
-                            )}
-
-                            <div className="mt-4 space-y-2">
-                              {orderedManagerTrophies.length > 0 ? (
-                                orderedManagerTrophies.map((trophy) => {
-                                  const selectedUserId = groupTrophyAwardSelections[group.id]?.[trophy.id] ?? "";
-                                  const alreadyAwardedUserIds = new Set(
-                                    groupMembers
-                                      .filter((member) => member.trophies.some((awarded) => awarded.id === trophy.id))
-                                      .map((member) => member.userId)
-                                  );
-                                  const eligibleMembers = activeMembers.filter(
-                                    (member) =>
-                                      (canSelfAwardTrophies || member.userId !== currentUserId) &&
-                                      !alreadyAwardedUserIds.has(member.userId)
-                                  );
-
-                                  return (
-                                    <div key={trophy.id} className="rounded-md border border-gray-200 bg-white px-3 py-3">
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                          <p className="truncate text-sm font-black text-gray-950">
-                                            {trophy.icon} {trophy.name}
-                                          </p>
-                                          <p className="mt-1 text-sm font-semibold text-gray-600">
-                                            {trophy.description || "Group recognition trophy"}
-                                          </p>
-                                        </div>
-                                        <div className="flex flex-col items-end gap-2">
-                                          <ManagementBadge
-                                            label={trophy.key.startsWith(`group_${group.id}_`) ? "custom" : "core"}
-                                            tone={trophy.key.startsWith(`group_${group.id}_`) ? "neutral" : "accent"}
-                                          />
-                                          <span className="text-xs font-semibold text-gray-500">
-                                            Awarded {trophy.awardedCount} time{trophy.awardedCount === 1 ? "" : "s"}
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                                        <label className="min-w-0 flex-1">
-                                          <span className="sr-only">Select player to award {trophy.name}</span>
-                                          <select
-                                            value={selectedUserId}
-                                            onChange={(event) =>
-                                              setGroupTrophyAwardSelections((current) => ({
-                                                ...current,
-                                                [group.id]: {
-                                                  ...(current[group.id] ?? {}),
-                                                  [trophy.id]: event.target.value
-                                                }
-                                              }))
-                                            }
-                                            className="w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
-                                          >
-                                            <option value="">
-                                              {eligibleMembers.length > 0 ? "Choose a player to award" : "Everyone already has this trophy"}
-                                            </option>
-                                            {eligibleMembers.map((member) => (
-                                              <option key={member.userId} value={member.userId}>
-                                                {member.name}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        </label>
-                                        <ActionButton
-                                          type="button"
-                                          disabled={
-                                            !selectedUserId ||
-                                            eligibleMembers.length === 0 ||
-                                            actionKey === `award-trophy-${group.id}:${selectedUserId}:${trophy.id}`
-                                          }
-                                          onClick={() => void handleAwardTrophyFromList(group.id, trophy.id)}
-                                        >
-                                          {actionKey === `award-trophy-${group.id}:${selectedUserId}:${trophy.id}`
-                                            ? "Awarding..."
-                                            : "Award"}
-                                        </ActionButton>
-                                      </div>
-                                    </div>
-                                  );
-                                })
-                              ) : (
-                                <div className="rounded-md bg-white px-3 py-3 text-sm font-semibold text-gray-600">
-                                  <p>No trophies available yet</p>
-                                  <p className="mt-1 text-xs text-gray-500">
-                                    Save a custom trophy to recognize a player in this group.
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                          </>
-                        ) : null}
-                      </div>
-                      ) : null}
                           </>
                         ) : null}
                       </div>
@@ -3720,10 +3887,9 @@ function getGroupLeaderboardHref(group: MyManagedGroup) {
 }
 
 function getGroupAvatarMediaStatusLabel(
-  avatarUrl: string | null,
   avatarDraft: GroupAvatarDraft,
   isProcessing: boolean
-) {
+): string | null {
   if (isProcessing) {
     return "Preparing image";
   }
@@ -3732,11 +3898,11 @@ function getGroupAvatarMediaStatusLabel(
     return "Pending save";
   }
 
-  if (avatarDraft.removeCurrent) {
-    return "Using default image after save";
-  }
+  return null;
+}
 
-  return avatarUrl ? "Approved" : "Using default image";
+function isCustomGroupTrophy(trophy: ManagedGroupDetails["trophies"][number], groupId: string) {
+  return trophy.awardSource === "manager" && trophy.groupId === groupId;
 }
 
 function getPendingTrophyId(activeActionKey: string | null, groupId: string, userId: string) {

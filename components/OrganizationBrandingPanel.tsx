@@ -277,23 +277,25 @@ export function OrganizationBrandingPanel() {
               </label>
             ) : null}
 
-            <div className="rounded-[1rem] border border-gray-200 bg-white px-3 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-black uppercase tracking-[0.14em] text-gray-600">Media status</span>
-                <ManagementBadge
-                  label={getOrganizationBrandingLabel(workspace.organization.status)}
-                  tone={getOrganizationStatusTone(workspace.organization.status)}
-                />
-              </div>
-              <p className="mt-2 text-sm font-semibold text-gray-700">
-                {getOrganizationStatusHelp(workspace.organization.status)}
-              </p>
-              {workspace.organization.reviewNote ? (
-                <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900">
-                  Reason: {workspace.organization.reviewNote}
+            {shouldShowOrganizationBrandingStatus(workspace.organization.status) ? (
+              <div className="rounded-[1rem] border border-gray-200 bg-white px-3 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-black uppercase tracking-[0.14em] text-gray-600">Media status</span>
+                  <ManagementBadge
+                    label={getOrganizationBrandingLabel(workspace.organization.status)}
+                    tone={getOrganizationStatusTone(workspace.organization.status)}
+                  />
+                </div>
+                <p className="mt-2 text-sm font-semibold text-gray-700">
+                  {getOrganizationStatusHelp(workspace.organization.status)}
                 </p>
-              ) : null}
-            </div>
+                {workspace.organization.reviewNote ? (
+                  <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900">
+                    Reason: {workspace.organization.reviewNote}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
               <div className="space-y-4">
@@ -510,6 +512,10 @@ function getOrganizationStatusTone(status: OrganizationBrandingStatus): "neutral
   }
 
   return "neutral";
+}
+
+function shouldShowOrganizationBrandingStatus(status: OrganizationBrandingStatus) {
+  return status === "pending_review" || status === "rejected" || status === "disabled";
 }
 
 function getOrganizationStatusHelp(status: OrganizationBrandingStatus) {
