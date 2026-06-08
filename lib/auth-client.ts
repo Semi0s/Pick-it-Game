@@ -1279,14 +1279,6 @@ export async function registerCurrentBrowserPushNotifications(): Promise<PushReg
 }
 
 async function registerCurrentNativePushNotifications(platform: NativePushPlatform): Promise<PushRegistrationResult> {
-  if (platform === "android") {
-    await updateCurrentUserPushPermissionState("unknown");
-    return {
-      ok: false,
-      message: "Android push registration is not configured yet. Your notification preference was saved."
-    };
-  }
-
   try {
     const { PushNotifications } = await import("@capacitor/push-notifications");
     let permissionStatus = await PushNotifications.checkPermissions();
@@ -1302,7 +1294,7 @@ async function registerCurrentNativePushNotifications(platform: NativePushPlatfo
     if (permissionState !== "granted") {
       return {
         ok: true,
-        message: "Your notification preference was saved. iOS notification permission was not granted."
+        message: "Your notification preference was saved. Native notification permission was not granted."
       };
     }
 
