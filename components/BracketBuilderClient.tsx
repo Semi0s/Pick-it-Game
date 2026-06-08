@@ -19,6 +19,7 @@ import { normalizeRankingSlotsForPersistence } from "@/lib/group-stage-ranking-s
 import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
 import { formatGroupName, normalizeGroupKey } from "@/lib/group-standings";
 import {
+  buildRoundOf32MatchIdLookup,
   buildProjectedGroupStandingsFromSeedRankings,
   buildUserProjectedRoundOf32,
   type GroupSeedRankingInput,
@@ -96,6 +97,7 @@ type BracketPreviewSide = {
 
 type BracketPreviewMatch = {
   matchId: string;
+  targetMatchId: string;
   stage: string;
   home: BracketPreviewSide;
   away: BracketPreviewSide;
@@ -126,7 +128,7 @@ const GROUP_STAGE_SAVE_REMINDER_TOAST_ID = "group-stage-save-reminder";
 const GROUP_STAGE_SAVE_REMINDER_DISMISS_STORAGE_PREFIX = "pickit:group-stage-save-reminder-dismissed:v1";
 
 const SWIPE_THRESHOLD_PX = 42;
-const GROUP_SWIPE_EXIT_MS = 190;
+const GROUP_SWIPE_EXIT_MS = 240;
 const GROUP_SWIPE_WHEEL_COOLDOWN_MS = 760;
 const NEAR_DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
 const CUSTOM_TOUCH_DRAG_HOLD_MS = 245;
@@ -1251,13 +1253,10 @@ export function BracketBuilderClient({
         predictions: [],
         roundOf32Placeholders,
         standingsByGroupOverride: projectedStandings,
-        rankedThirdPlaceTeamIdsOverride: isThirdPlacePhase && hasCommittedThirdPlaceSelection
-          ? committedThirdPlaceRankingIds
-          : null
+        rankedThirdPlaceTeamIdsOverride: isThirdPlacePhase ? committedThirdPlaceRankingIds : null
       }),
     [
       committedThirdPlaceRankingIds,
-      hasCommittedThirdPlaceSelection,
       isThirdPlacePhase,
       projectedStandings,
       roundOf32Placeholders,
@@ -1288,7 +1287,7 @@ export function BracketBuilderClient({
       predictions: [],
       roundOf32Placeholders,
       standingsByGroupOverride: savedStandings,
-      rankedThirdPlaceTeamIdsOverride: savedThirdPlaceTeamIds.length > 0 ? savedThirdPlaceTeamIds : null
+      rankedThirdPlaceTeamIdsOverride: savedThirdPlaceTeamIds
     });
   }, [committedSnapshotForProjection, roundOf32Placeholders, teamIdsByGroup, teams]);
   const hasCompletedBracketOnce = Boolean(committedBracketSavedAt || finalBracketSavedAt || committedSnapshotRef.current);
@@ -1413,10 +1412,15 @@ export function BracketBuilderClient({
     () => knockoutProjectedPreview?.stages.find((stage) => stage.stage === "r32")?.matches ?? null,
     [knockoutProjectedPreview]
   );
+  const storedRoundOf32MatchIdByProjectedId = useMemo(
+    () => buildRoundOf32MatchIdLookup(roundOf32Placeholders),
+    [roundOf32Placeholders]
+  );
   const bracketPreviewMatches = useMemo<BracketPreviewMatch[]>(() => {
     if (!showBracketImpactOverlay && initialKnockoutSeeded && projectedComparisonRound?.length) {
       return projectedComparisonRound.map((match) => ({
         matchId: match.matchId,
+        targetMatchId: storedRoundOf32MatchIdByProjectedId.get(match.matchId) ?? match.matchId,
         stage: match.stage,
         home: {
           teamId: match.homeTeam?.id ?? null,
@@ -1452,6 +1456,7 @@ export function BracketBuilderClient({
       const awayTeam = match.away.teamId ? teamsById.get(match.away.teamId) ?? null : null;
       return {
         matchId: match.matchId,
+        targetMatchId: storedRoundOf32MatchIdByProjectedId.get(match.matchId) ?? match.matchId,
         stage: "r32",
         home: {
           teamId: homeTeam?.id ?? null,
@@ -1469,7 +1474,14 @@ export function BracketBuilderClient({
         }
       };
     });
-  }, [initialKnockoutSeeded, projectedBracket.matches, projectedComparisonRound, showBracketImpactOverlay, teamsById]);
+  }, [
+    initialKnockoutSeeded,
+    projectedBracket.matches,
+    projectedComparisonRound,
+    showBracketImpactOverlay,
+    storedRoundOf32MatchIdByProjectedId,
+    teamsById
+  ]);
 
   const nearDeadlineMessage = useMemo(() => {
     if (!groupStageDueAt || isReadOnly || isComplete) {
@@ -2840,7 +2852,8 @@ export function BracketBuilderClient({
       return 360;
     }
 
-    return Math.max(320, Math.min(window.innerWidth * 0.9, 540));
+    const viewportWidth = Math.max(window.innerWidth, document.documentElement.clientWidth || 0);
+    return Math.max(360, Math.min(viewportWidth + 96, 760));
   }
 
   function getBoundedGroupSwipeOffset(deltaX: number) {
@@ -4114,7 +4127,7 @@ export function BracketBuilderClient({
             )}
           </div>
           <div
-            className={`relative flex min-h-9 items-center justify-center gap-2 select-none [touch-action:pan-y] [will-change:transform] ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
+            className={`relative flex min-h-9 items-center justify-center gap-2 select-none [touch-action:pan-y] [will-change:transform] ${isGroupSurfaceSwiping ? "" : "transition-transform duration-[220ms] ease-out"}`}
             style={{
               transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
             }}
@@ -4199,7 +4212,7 @@ export function BracketBuilderClient({
             </div>
           </div>
           <div
-            className={`px-1 text-center select-none [touch-action:pan-y] [will-change:transform] ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
+            className={`px-1 text-center select-none [touch-action:pan-y] [will-change:transform] ${isGroupSurfaceSwiping ? "" : "transition-transform duration-[220ms] ease-out"}`}
             style={{
               transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
             }}
@@ -4222,7 +4235,7 @@ export function BracketBuilderClient({
             shouldHighlightTopTwoCard
               ? "border-accent-dark ring-1 ring-accent-dark/35"
               : "border-gray-200"
-          } ${isGroupSurfaceSwiping ? "" : "transition-transform duration-200 ease-out"}`}
+          } ${isGroupSurfaceSwiping ? "" : "transition-transform duration-[220ms] ease-out"}`}
           style={{
             transform: groupSwipeOffsetX ? `translate3d(${groupSwipeOffsetX}px, 0, 0)` : undefined
           }}
@@ -4934,7 +4947,7 @@ export function BracketBuilderClient({
                 return (
                   <Link
                     key={match.matchId}
-                    href={`/knockout?stage=${match.stage}&matchId=${match.matchId}&compare=projected${onboardingQuery}`}
+                    href={`/knockout?stage=${match.stage}&matchId=${match.targetMatchId}&compare=projected${onboardingQuery}`}
                     onClick={primeKnockoutProjectedCompareView}
                     className={sharedClassName}
                     style={sharedStyle}
@@ -5033,7 +5046,7 @@ export function BracketBuilderClient({
                 return (
                   <Link
                     key={match.matchId}
-                    href={`/knockout?stage=${match.stage}&matchId=${match.matchId}&compare=projected${onboardingQuery}`}
+                    href={`/knockout?stage=${match.stage}&matchId=${match.targetMatchId}&compare=projected${onboardingQuery}`}
                     onClick={primeKnockoutProjectedCompareView}
                     className={sharedClassName}
                     style={sharedStyle}

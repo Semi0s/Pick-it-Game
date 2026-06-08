@@ -600,6 +600,7 @@ export type ManagedGroupDetails = MyManagedGroup & {
     icon: string;
     tier?: "bronze" | "silver" | "gold" | "special" | null;
     awardSource?: "system" | "manager";
+    groupId?: string | null;
     scope: "group" | "system";
     awardedCount: number;
   }>;
@@ -808,6 +809,11 @@ export type CreateManagedGroupTrophyInput = {
   icon: string;
 };
 export type CreateManagedGroupTrophyResult = ResendGroupInviteResult;
+export type UpdateManagedGroupTrophyInput = CreateManagedGroupTrophyInput & {
+  trophyId?: string | null;
+};
+export type UpdateManagedGroupTrophyResult = ResendGroupInviteResult;
+export type DeleteManagedGroupTrophyResult = ResendGroupInviteResult;
 export type AwardManagedGroupTrophyResult =
   | {
       ok: true;
@@ -1940,6 +1946,197 @@ export async function createManagedGroupTrophyAction(
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not create that trophy."
+    };
+  }
+}
+
+export async function updateManagedGroupTrophyAction(
+  input: UpdateManagedGroupTrophyInput
+): Promise<UpdateManagedGroupTrophyResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const name = input.name.trim();
+  const description = input.description.trim();
+  const icon = input.icon.trim();
+  const trimmedGroupId = input.groupId?.trim() ?? "";
+  const trimmedTrophyId = input.trophyId?.trim() ?? "";
+
+  if (!name || !icon) {
+    return { ok: false, message: "Name and icon are required." };
+  }
+
+  if (!trimmedGroupId || !trimmedTrophyId) {
+    return { ok: false, message: "Group and trophy are required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managerCustomTrophiesEnabled = await fetchBooleanAppSetting("manager_custom_trophies_enabled", false);
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    const relation: GroupRelation = {
+      isOwner: managedGroup.owner_user_id === currentUser.userId,
+      isGroupManager: true
+    };
+
+    if (!hasDirectorAccess(currentUser.accessLevel) || !canAwardSocialTrophy(currentUser, relation)) {
+      return { ok: false, message: "Custom group trophies are only available for League organizers right now." };
+    }
+
+    if (currentUser.role !== "admin" && !managerCustomTrophiesEnabled) {
+      return { ok: false, message: "Custom group trophies are not enabled right now." };
+    }
+
+    const { data: trophy, error: trophyError } = await adminSupabase
+      .from("trophies")
+      .select("id,name,group_id,award_source")
+      .eq("id", trimmedTrophyId)
+      .maybeSingle();
+
+    if (trophyError) {
+      return { ok: false, message: trophyError.message };
+    }
+
+    const trophyRow = trophy as { id: string; name: string; group_id: string | null; award_source?: "system" | "manager" } | null;
+    if (!trophyRow || trophyRow.award_source !== "manager" || trophyRow.group_id !== trimmedGroupId) {
+      return { ok: false, message: "Only custom trophies for this group can be edited." };
+    }
+
+    const { data: existingTrophies, error: existingTrophiesError } = await adminSupabase
+      .from("trophies")
+      .select("id,name,group_id,award_source")
+      .eq("award_source", "manager")
+      .or(`group_id.is.null,group_id.eq.${trimmedGroupId}`);
+
+    if (existingTrophiesError) {
+      return { ok: false, message: existingTrophiesError.message };
+    }
+
+    const normalizedName = name.toLowerCase();
+    const conflictingTrophy = ((existingTrophies ?? []) as Array<{
+      id: string;
+      name: string;
+      group_id: string | null;
+      award_source: "manager";
+    }>).find((candidate) => candidate.id !== trimmedTrophyId && candidate.name.trim().toLowerCase() === normalizedName);
+
+    if (conflictingTrophy) {
+      return {
+        ok: false,
+        message:
+          conflictingTrophy.group_id === null
+            ? "That name is already used by a core trophy. Try a more specific custom name."
+            : "This group already has a trophy with that name."
+      };
+    }
+
+    const { error } = await adminSupabase
+      .from("trophies")
+      .update({
+        key: buildCustomTrophyKey(trimmedGroupId, name),
+        name,
+        description: description || "",
+        icon
+      })
+      .eq("id", trimmedTrophyId);
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    revalidatePath("/my-groups");
+    revalidatePath("/leaderboard");
+    revalidatePath("/profile");
+    revalidatePath("/trophies");
+
+    return {
+      ok: true,
+      message: "Group trophy updated."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update that trophy."
+    };
+  }
+}
+
+export async function deleteManagedGroupTrophyAction(
+  groupId: string,
+  trophyId: string
+): Promise<DeleteManagedGroupTrophyResult> {
+  const currentUser = await getCurrentUserContext();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  const trimmedGroupId = groupId.trim();
+  const trimmedTrophyId = trophyId.trim();
+  if (!trimmedGroupId || !trimmedTrophyId) {
+    return { ok: false, message: "Group and trophy are required." };
+  }
+
+  try {
+    const adminSupabase = createAdminClient();
+    const managerCustomTrophiesEnabled = await fetchBooleanAppSetting("manager_custom_trophies_enabled", false);
+    const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
+    if (!managedGroup) {
+      return { ok: false, message: "You do not manage that group." };
+    }
+
+    const relation: GroupRelation = {
+      isOwner: managedGroup.owner_user_id === currentUser.userId,
+      isGroupManager: true
+    };
+
+    if (!hasDirectorAccess(currentUser.accessLevel) || !canAwardSocialTrophy(currentUser, relation)) {
+      return { ok: false, message: "Custom group trophies are only available for League organizers right now." };
+    }
+
+    if (currentUser.role !== "admin" && !managerCustomTrophiesEnabled) {
+      return { ok: false, message: "Custom group trophies are not enabled right now." };
+    }
+
+    const { data: trophy, error: trophyError } = await adminSupabase
+      .from("trophies")
+      .select("id,name,group_id,award_source")
+      .eq("id", trimmedTrophyId)
+      .maybeSingle();
+
+    if (trophyError) {
+      return { ok: false, message: trophyError.message };
+    }
+
+    const trophyRow = trophy as { id: string; name: string; group_id: string | null; award_source?: "system" | "manager" } | null;
+    if (!trophyRow || trophyRow.award_source !== "manager" || trophyRow.group_id !== trimmedGroupId) {
+      return { ok: false, message: "Only custom trophies for this group can be deleted." };
+    }
+
+    const { error } = await adminSupabase.from("trophies").delete().eq("id", trimmedTrophyId);
+
+    if (error) {
+      return { ok: false, message: error.message };
+    }
+
+    revalidatePath("/my-groups");
+    revalidatePath("/leaderboard");
+    revalidatePath("/profile");
+    revalidatePath("/trophies");
+
+    return {
+      ok: true,
+      message: "Group trophy deleted."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not delete that trophy."
     };
   }
 }
@@ -5359,6 +5556,7 @@ async function fetchManagedGroupDetailRows(
         icon: trophy.icon,
         tier: trophy.tier ?? "special",
         awardSource: trophy.award_source ?? "manager",
+        groupId: trophy.group_id,
         scope: "group",
         awardedCount: awardCountsByTrophyId.get(trophy.id) ?? 0
       });
@@ -5378,6 +5576,7 @@ async function fetchManagedGroupDetailRows(
           icon: trophy.icon,
           tier: trophy.tier ?? "special",
           awardSource: trophy.award_source ?? "system",
+          groupId: trophy.group_id,
           scope: trophy.award_source === "manager" ? "group" : "system",
           awardedCount: awardCountsByTrophyId.get(trophy.id) ?? 0
         });

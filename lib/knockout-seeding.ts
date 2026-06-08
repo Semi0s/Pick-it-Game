@@ -530,16 +530,16 @@ export function buildUserProjectedRoundOf32({
   }
 
   const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(roundOf32Placeholders);
-  const { automaticQualifiers, rankedThirdPlaceTeams } =
-    rankedThirdPlaceTeamIdsOverride && rankedThirdPlaceTeamIdsOverride.length > 0
-      ? rankedThirdPlaceTeamIdsOverride.length >= requiredThirdPlaceQualifierCount
-        ? buildQualifiedTeamSeedsFromManualThirdPlaceRankingForPreview(
-            completeRowsByGroup,
-            rankedThirdPlaceTeamIdsOverride,
-            requiredThirdPlaceQualifierCount
-          )
-        : buildQualifiedTeamSeeds(completeRowsByGroup, 0)
-      : buildQualifiedTeamSeeds(completeRowsByGroup, requiredThirdPlaceQualifierCount || 8);
+  const hasManualThirdPlaceOverride = Array.isArray(rankedThirdPlaceTeamIdsOverride);
+  const { automaticQualifiers, rankedThirdPlaceTeams } = hasManualThirdPlaceOverride
+    ? rankedThirdPlaceTeamIdsOverride.length >= requiredThirdPlaceQualifierCount
+      ? buildQualifiedTeamSeedsFromManualThirdPlaceRankingForPreview(
+          completeRowsByGroup,
+          rankedThirdPlaceTeamIdsOverride,
+          requiredThirdPlaceQualifierCount
+        )
+      : buildQualifiedTeamSeeds(completeRowsByGroup, 0)
+    : buildQualifiedTeamSeeds(completeRowsByGroup, requiredThirdPlaceQualifierCount || 8);
   const allGroupsComplete = Array.from(standingsByGroup.values()).every((group) => group.isComplete);
   const officialRoundOf32 = buildFifa2026RoundOf32FromSeeds({
     fixedQualifiers: toFifaQualifiedSeedMap(automaticQualifiers),

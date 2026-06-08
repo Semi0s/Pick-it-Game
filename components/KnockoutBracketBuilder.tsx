@@ -147,6 +147,20 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     [roundChoices]
   );
   const activeSlide = slides[activeSlideIndex] ?? null;
+  const activeSlideProjectedComparisonMatches = useMemo(() => {
+    if (!projectedComparisonView || activeSlide?.currentStage !== "r32") {
+      return [];
+    }
+
+    return projectedComparisonView.stages.find((stage) => stage.stage === activeSlide.currentStage)?.matches ?? [];
+  }, [activeSlide?.currentStage, projectedComparisonView]);
+  const shouldShowR32ComparisonHint = activeSlide
+    ? shouldShowProjectedComparisonRound({
+        currentStage: activeSlide.currentStage,
+        mode: baseView.mode,
+        projectedComparisonMatchCount: activeSlideProjectedComparisonMatches.length
+      })
+    : false;
   const activeFilterTeam = useMemo(() => {
     if (!selectedCountryFilter || !activeSlide) {
       return null;
@@ -273,7 +287,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
 
   if (baseView.mode === "official" && !baseView.isSeeded) {
     return (
-      <section className="rounded-lg border border-gray-200 bg-white p-5">
+      <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
         <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{kt(uiLanguage, "title")}</p>
         <h2 className="mt-2 text-2xl font-black leading-tight">{kt(uiLanguage, "empty")}</h2>
         <p className="mt-3 text-base leading-7 text-gray-600">
@@ -288,7 +302,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     <KnockoutLandingMatchContext.Provider value={landingMatchId}>
     <section className="space-y-3">
       <div
-        className="compact-landscape-sticky-rail sticky z-[14] w-full !overflow-visible rounded-lg !rounded-t-none bg-white px-3 py-1.5 sm:border sm:border-gray-200 sm:px-4"
+        className="compact-landscape-sticky-rail sticky z-[14] w-full !overflow-visible rounded-lg !rounded-t-none bg-white px-3 py-1.5 shadow-[0_12px_22px_-18px_rgba(15,23,42,0.45)] sm:border sm:border-gray-200 sm:px-4"
         style={{ top: "calc(var(--app-header-sticky-offset, var(--app-header-height, 72px)) + var(--app-sticky-rail-gap, 1.5rem))" }}
       >
         <KnockoutPhaseChoiceRail
@@ -344,10 +358,20 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
             </button>
           </div>
         ) : null}
-        <div className="mt-1.5 border-b border-gray-200/80" />
+        {shouldShowR32ComparisonHint ? (
+          <div className="mt-1.5 flex items-center justify-center gap-3 px-1 sm:hidden">
+            <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white/90 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.05em] text-gray-500 shadow-sm">
+              <span aria-hidden>‹</span>
+              <span>{kt(uiLanguage, "myPick")}</span>
+              <span className="text-gray-300">|</span>
+              <span>{kt(uiLanguage, "qualifyingTeams")}</span>
+              <span aria-hidden>›</span>
+            </span>
+          </div>
+        ) : null}
       </div>
 
-      <div className="w-full max-w-full overflow-x-clip overflow-y-visible bg-transparent px-0">
+      <div className="w-full max-w-full overflow-x-clip overflow-y-visible px-2 drop-shadow-[0_8px_20px_rgba(15,23,42,0.06)] sm:px-3">
         <div className="select-none">
           <BracketStageViewport
             slide={slides[activeSlideIndex]}
@@ -1114,15 +1138,6 @@ function ProjectedAndOfficialRoundView({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-center gap-3 px-1 sm:hidden">
-        <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white/90 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.05em] text-gray-500 shadow-sm">
-          <span aria-hidden>‹</span>
-          <span>{kt(language, "myPick")}</span>
-          <span className="text-gray-300">|</span>
-          <span>{kt(language, "qualifyingTeams")}</span>
-          <span aria-hidden>›</span>
-        </span>
-      </div>
       <div className="space-y-4">
         {pairs.map((pair) => (
           <div key={pair.slotKey} className="space-y-2">
@@ -1143,16 +1158,6 @@ function ProjectedAndOfficialRoundView({
               </p>
             </div>
             <div className="relative">
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-y-1 left-0 z-[1] w-2 sm:w-3"
-                style={{ boxShadow: "inset 8px 0 8px -8px rgba(15,23,42,0.22)" }}
-              />
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-y-1 right-0 z-[1] w-2 sm:w-3"
-                style={{ boxShadow: "inset -8px 0 8px -8px rgba(15,23,42,0.22)" }}
-              />
               {isNarrowViewport ? (
                 <div
                   aria-hidden
