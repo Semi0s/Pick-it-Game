@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "512686113455",
+    "project_id": "pickit-app-6d694",
+    "storage_bucket": "pickit-app-6d694.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:512686113455:android:04343c97469651f4d18a5a",
+        "android_client_info": {
+          "package_name": "com.semios.pickit"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAfxn299QWoIdYC8IGK9mMfqjRaR42v-ao"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
