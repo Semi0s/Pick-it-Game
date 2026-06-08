@@ -17,5 +17,7 @@ Keep follow-up work explicit before relying on the branch for TestFlight or Goog
 - Enable Apple Push Notifications for App ID `com.semios.pickit`.
 - Refresh iOS provisioning profiles after enabling Push Notifications.
 - Test APNs token registration on a real iOS device.
+- Add Android Firebase Cloud Messaging config before Android push testing: place the Firebase `google-services.json` for package `com.semios.pickit` at `android/app/google-services.json`, then run `npx cap sync android` and rebuild.
+- Android App Links require `/.well-known/assetlinks.json` on the production domain. The current file includes the local debug signing fingerprint for emulator/internal validation; add the Play App Signing SHA-256 fingerprint before public Google Play release.
 - Keep `leaderboard_comments_enabled` false until report/block/moderation exists.
 - Manually QA `/privacy`, `/terms`, `/support`, `/admin/media`, image uploads, iOS simulator, and Android emulator.
