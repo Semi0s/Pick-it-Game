@@ -48,7 +48,7 @@ export default async function LegalAcceptPage({
 
   if (!fallbackDocument) {
     return (
-      <main className="min-h-screen bg-white px-4 py-8">
+      <main className="min-h-screen min-h-[100dvh] bg-white px-4 py-8">
         <section className="mx-auto max-w-2xl space-y-5">
           <div className="rounded-lg bg-gray-100 p-5">
             <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">Terms</p>
@@ -63,7 +63,7 @@ export default async function LegalAcceptPage({
   }
 
   return (
-    <main className="min-h-screen bg-white px-4 py-8">
+    <main className="min-h-screen min-h-[100dvh] bg-white px-4 py-8">
       <section className="mx-auto max-w-2xl">
         <LegalAcceptanceForm
           documentType={fallbackDocument.documentType}

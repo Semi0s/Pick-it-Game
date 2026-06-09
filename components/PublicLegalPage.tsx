@@ -39,7 +39,7 @@ export function PublicLegalShell({
   const localizedPath = (path: string) => `${path}?lang=${language}`;
 
   return (
-    <main className="min-h-screen bg-gray-50 px-4 py-6 text-gray-950 sm:px-6 lg:px-8" style={accentStyle}>
+    <main className="min-h-screen min-h-[100dvh] bg-gray-50 px-4 py-6 text-gray-950 sm:px-6 lg:px-8" style={accentStyle}>
       <div className="mx-auto max-w-4xl">
         <header className="rounded-[1.5rem] border border-gray-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
