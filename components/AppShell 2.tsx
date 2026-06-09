@@ -545,7 +545,7 @@ export function AppShell({ children }: AppShellProps) {
 
   if (isLoading || !user || user.needsProfileSetup || user.needsLegalAcceptance) {
     return (
-      <main className="flex min-h-screen min-h-[100dvh] items-center justify-center bg-white px-5">
+      <main className="flex min-h-screen items-center justify-center bg-white px-5">
         <div className="rounded-[1rem] bg-gray-100 px-4 py-3 text-sm font-medium text-gray-700">
           {t(displayLanguage, "common.loading")}
         </div>
@@ -556,7 +556,7 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <AppLanguageProvider activeLanguage={activeLanguage} setActiveLanguage={setActiveLanguage}>
       <div
-        className="app-shell min-h-screen min-h-[100dvh] overflow-x-clip bg-white text-gray-950"
+        className="app-shell min-h-screen overflow-x-clip bg-white text-gray-950"
         style={
           {
             ...(isOnboardingExperience ? { "--app-shell-padding-bottom": "0px" } : {}),

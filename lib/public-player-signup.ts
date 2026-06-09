@@ -66,7 +66,7 @@ export async function fetchPublicPlayerSignupStatus(
     defaultGroupId: defaultGroup.id,
     defaultGroupName: defaultGroup.name,
     defaultTier,
-    message: `Create a free Player account to join ${defaultGroup.name}.`
+    message: "Create a free Player account to start your predictions."
   };
 }
 
