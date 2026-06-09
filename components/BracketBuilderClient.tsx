@@ -5,6 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, GitFork, TriangleAlert, X } from "lucide-react";
 import { saveLightSeedBuilderAction } from "@/app/groups/actions";
+import { TeamFlag } from "@/components/TeamFlag";
 import { ActionButton, InlineDisclosureButton } from "@/components/player-management/Shared";
 import { useAppLanguage } from "@/lib/app-language";
 import { dismissAppToast, showAppToast } from "@/lib/app-toast";
@@ -4916,7 +4917,15 @@ export function BracketBuilderClient({
                           key={`${match.matchId}-${sideIndex}`}
                           className={`relative grid min-h-[16px] grid-cols-[1.15rem_minmax(0,1fr)] items-center gap-1.5 rounded-md px-1 py-0 ${side.teamId ? "text-gray-900" : "text-gray-400"} ${isScenarioHighlighted ? "bg-accent-light/20 ring-1 ring-accent/45" : ""}`}
                         >
-                          <span aria-hidden className="text-xs">{side.flagEmoji ?? " "}</span>
+                          <span aria-hidden className="text-xs">
+                            <TeamFlag
+                              flagEmoji={side.flagEmoji}
+                              teamId={side.teamId}
+                              shortName={side.shortLabel}
+                              className="text-xs"
+                              emojiClassName="text-[1em]"
+                            />
+                          </span>
                           <span className="inline-flex min-w-0 items-center gap-1">
                             <span className="truncate text-[11px] font-black">
                               {side.shortLabel}
@@ -5032,7 +5041,15 @@ export function BracketBuilderClient({
                               {side.shortLabel}
                             </span>
                           </span>
-                          <span aria-hidden className="text-xs">{side.flagEmoji ?? " "}</span>
+                          <span aria-hidden className="text-xs">
+                            <TeamFlag
+                              flagEmoji={side.flagEmoji}
+                              teamId={side.teamId}
+                              shortName={side.shortLabel}
+                              className="text-xs"
+                              emojiClassName="text-[1em]"
+                            />
+                          </span>
                           {bracketChangeDetails && isBracketChangeDetailsOpen ? (
                             <BracketChangePopover details={bracketChangeDetails} align="right" />
                           ) : null}

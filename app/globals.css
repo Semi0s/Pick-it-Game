@@ -24,7 +24,8 @@
   --app-header-padding-top: calc(env(safe-area-inset-top, 0px) + 14px);
   --app-header-padding-bottom: 8px;
   --app-header-sticky-offset: calc(var(--app-header-padding-top) + var(--app-header-content-height) + var(--app-header-padding-bottom));
-  --app-shell-padding-bottom: calc(5.75rem + env(safe-area-inset-bottom, 0px));
+  --app-dock-height: 5.25rem;
+  --app-shell-padding-bottom: calc(var(--app-dock-height) + env(safe-area-inset-bottom, 0px));
   --app-sticky-rail-gap: 1.5rem;
   --triptych-micro-scale: 1.2;
   --mini-table-micro-scale: 1.2;
@@ -96,6 +97,7 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  min-height: 100%;
   width: 100%;
 }
 
@@ -105,6 +107,8 @@ html {
 
 body {
   margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
   width: 100%;
   overflow-x: clip;
   background: #ffffff;
@@ -271,6 +275,8 @@ select {
   }
 
   .app-shell {
+    min-height: 100vh;
+    min-height: 100dvh;
     padding-bottom: var(--app-shell-padding-bottom);
   }
 
@@ -290,6 +296,7 @@ select {
   }
 
   .bottom-nav-dock {
+    min-height: var(--app-dock-height);
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
@@ -325,6 +332,7 @@ select {
     .app-shell {
       min-height: 100dvh;
       padding-left: calc(var(--landscape-dock-width) + env(safe-area-inset-left, 0px));
+      padding-right: env(safe-area-inset-right, 0px);
       padding-bottom: 0;
     }
 
@@ -341,15 +349,19 @@ select {
     .app-shell .main-content {
       max-width: none;
       min-height: calc(100dvh - var(--app-header-sticky-offset, var(--app-header-height, 44px)));
-      padding: 0.5rem 0.75rem 0.75rem;
+      padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.75rem);
+      padding-left: 0.75rem;
+      padding-right: 0.75rem;
+      padding-top: 0.5rem;
     }
 
     .app-shell .bottom-nav-dock {
       inset: 0 auto 0 env(safe-area-inset-left, 0px);
       width: var(--landscape-dock-width);
       height: 100dvh;
-      padding-top: env(safe-area-inset-top, 0px);
-      padding-bottom: env(safe-area-inset-bottom, 0px);
+      min-height: 100dvh;
+      padding-top: max(env(safe-area-inset-top, 0px), 0.35rem);
+      padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.35rem);
       border-top-width: 0;
       border-right: 1px solid rgb(64 64 64);
     }
@@ -357,17 +369,20 @@ select {
     .bottom-nav-dock .bottom-nav-dock-inner {
       display: flex;
       height: 100%;
+      min-height: 0;
       max-width: none;
       flex-direction: column;
-      justify-content: center;
-      gap: 0.55rem;
-      padding: 0.55rem 0.45rem;
+      justify-content: space-evenly;
+      gap: 0.25rem;
+      padding: 0.35rem 0.45rem;
     }
 
     .bottom-nav-dock .bottom-nav-dock-item {
-      min-height: 58px;
+      flex: 1 1 0;
+      min-height: 0;
+      max-height: 72px;
       width: 100%;
-      padding: 0.5rem 0.25rem;
+      padding: 0.35rem 0.25rem;
     }
 
     .bottom-nav-dock .bottom-nav-icon {

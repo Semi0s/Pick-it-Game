@@ -33,7 +33,7 @@ export default async function CheckEmailPage({
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-neutral-950 px-4 py-8">
+    <main className="relative min-h-screen min-h-[100dvh] overflow-hidden bg-neutral-950 px-4 py-8">
       <Image
         src="/images/signin-stadium.jpeg"
         alt=""
@@ -42,7 +42,7 @@ export default async function CheckEmailPage({
         className="object-cover object-center"
       />
       <div className="absolute inset-0 bg-black/30" aria-hidden />
-      <section className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] max-w-[19rem] flex-col justify-center">
+      <section className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] min-h-[calc(100dvh-4rem)] max-w-[19rem] flex-col justify-center">
         <CheckEmailClient language={language} />
       </section>
     </main>

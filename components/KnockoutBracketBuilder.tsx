@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useSearchParams } from "next/navigation";
 import { previewBracketPredictionImpactAction, saveBracketPredictionAction } from "@/app/knockout/actions";
 import { WindowChoiceRail, useSessionJsonState } from "@/components/player-management/Shared";
+import { isEnglandTeam, TeamFlag } from "@/components/TeamFlag";
 import { useAppLanguage } from "@/lib/app-language";
 import { showAppToast } from "@/lib/app-toast";
 import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
@@ -2114,9 +2115,14 @@ function KnockoutTeamPanel({
       <span className="mt-1 block w-full min-w-0 max-w-full px-1">
           {displayFlag ? (
             <span className="mb-1 flex items-center justify-center">
-              <span aria-hidden className="shrink-0 text-xl leading-none">
-                {displayFlag}
-              </span>
+              <TeamFlag
+                flagEmoji={displayFlag}
+                teamId={(viewMode === "projected" ? team : team ?? officialTeam)?.id ?? null}
+                teamName={(viewMode === "projected" ? team : team ?? officialTeam)?.name ?? displayLabel}
+                shortName={(viewMode === "projected" ? team : team ?? officialTeam)?.shortName ?? null}
+                className="text-xl"
+                emojiClassName="text-[1em]"
+              />
             </span>
           ) : null}
           {unresolvedLabel ? (
@@ -2826,7 +2832,9 @@ function formatTeamToken(team: BracketTeamOption | null): MatchContextChip | nul
   }
 
   return {
-    primary: team.flagEmoji ? `${team.flagEmoji} ${team.shortName}` : team.shortName
+    primary: team.flagEmoji && !isEnglandTeam({ teamId: team.id, teamName: team.name, shortName: team.shortName })
+      ? `${team.flagEmoji} ${team.shortName}`
+      : team.shortName
   };
 }
 

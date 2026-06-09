@@ -9,8 +9,8 @@ export default async function ProfileSetupPage({
   const nextPath = typeof resolvedSearchParams.next === "string" ? resolvedSearchParams.next : undefined;
 
   return (
-    <main className="min-h-screen bg-white px-4 py-8">
-      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-2xl flex-col justify-center">
+    <main className="min-h-screen min-h-[100dvh] bg-white px-4 py-8">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] min-h-[calc(100dvh-4rem)] max-w-2xl flex-col justify-center">
         <ProfileSetupForm nextPath={nextPath} />
       </div>
     </main>

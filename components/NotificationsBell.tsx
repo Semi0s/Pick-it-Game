@@ -137,7 +137,7 @@ export function NotificationsBell() {
               </div>
             </div>
 
-            <div className="mt-4 max-h-[calc(100vh-9rem)] space-y-2 overflow-y-auto pr-1 sm:max-h-[28rem]">
+            <div className="mt-4 max-h-[calc(100vh-9rem)] max-h-[calc(100dvh-9rem)] space-y-2 overflow-y-auto pr-1 sm:max-h-[28rem]">
               {isLoading ? (
                 <p className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-600">{t(uiLanguage, "common.loading")}</p>
               ) : notifications.length === 0 ? (
