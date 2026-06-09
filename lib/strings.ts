@@ -101,7 +101,7 @@ export const translations = {
       accessCodePlaceholder: "Enter code here - optional",
       accessCodeHelp: "Optional. Leave this blank if you don't have a code.",
       accessCodeSignupHelp: "Optional. Use this only if you received a special invite, Super Link, or access code.",
-      freePlayerSignupIntro: "Create a free Player account to join FIFA 2026 Predictions.",
+      freePlayerSignupIntro: "Create a free Player account to start your predictions.",
       accessCodeRequired: "Enter the access code from your group organizer to create your account.",
       accountExistsSignInToJoin: "That email already has an account. Sign in with the same code to join the group.",
       accountExistsAlreadyInGroup: "That email already has an account and is already in this group. Sign in to keep playing.",

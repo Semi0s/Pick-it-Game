@@ -556,7 +556,7 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <AppLanguageProvider activeLanguage={activeLanguage} setActiveLanguage={setActiveLanguage}>
       <div
-        className="app-shell min-h-screen overflow-x-clip bg-white text-gray-950"
+        className="app-shell min-h-screen min-h-[100dvh] overflow-x-clip bg-white text-gray-950"
         style={
           {
             ...(isOnboardingExperience ? { "--app-shell-padding-bottom": "0px" } : {}),
