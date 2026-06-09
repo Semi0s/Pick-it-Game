@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction, type TouchEvent, type WheelEvent } from "react";
-import { CalendarDays, Trophy, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction, type TouchEvent, type WheelEvent } from "react";
+import { X } from "lucide-react";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
+import { SidePicksIcon } from "@/components/SidePicksIcon";
 import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
 import { DashboardCommandCenter } from "@/components/dashboard/DashboardCommandCenter";
 import { DashboardHero } from "@/components/dashboard/DashboardHero";
@@ -1035,8 +1036,8 @@ export function DashboardOverview({
 
       <section>
         <DashboardLinkCard
-          href="/trophies"
-          icon={Trophy}
+          href="/last-chance-picks"
+          icon={SidePicksIcon}
           title={t(displayLanguage, "dashboard.additionalTrophies")}
           copy={t(displayLanguage, "dashboard.additionalTrophiesCopy")}
         />
@@ -1107,7 +1108,7 @@ export function DashboardOverview({
 
 type DashboardLinkCardProps = {
   href: string;
-  icon: typeof CalendarDays;
+  icon: (props: { className?: string; "aria-hidden"?: boolean }) => ReactNode;
   title: string;
   copy: string;
 };
@@ -1118,7 +1119,7 @@ function DashboardLinkCard({ href, icon: Icon, title, copy }: DashboardLinkCardP
       href={href}
       className="ui-card flex w-full flex-col p-4 transition-colors hover:border-accent hover:bg-accent-light"
     >
-      <Icon aria-hidden className="h-5 w-5 text-accent-dark" />
+      <Icon aria-hidden className="h-10 w-10 text-accent-dark" />
       <h3 className="mt-4 text-lg font-black">{title}</h3>
       <p className="mt-1 text-sm leading-6 text-gray-600">{copy}</p>
     </Link>

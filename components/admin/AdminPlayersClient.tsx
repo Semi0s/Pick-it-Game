@@ -17,6 +17,7 @@ import {
   resetUserAccess,
   updateLeaderboardFeatureSettingAction,
   updatePublicSignupSettingAction,
+  updateUserCommercialTierAction,
   updateUserDisplayNameAction,
   upsertManagerLimitsAction,
   type DemotionCleanupOption,
@@ -55,7 +56,7 @@ import {
 
 const FILTERS = [
   { value: "all", label: "All players" },
-  { value: "manager", label: "Managers" },
+  { value: "manager", label: "Organizers" },
   { value: "attention", label: "Needs attention" },
   { value: "pending", label: "Pending signup or confirmation" }
 ] as const;
@@ -639,26 +640,32 @@ export function AdminPlayersClient() {
             filterValue={filterValue}
             onFilterChange={(value) => setFilterValue(value as (typeof FILTERS)[number]["value"])}
             filters={FILTERS.map((filter) => ({ ...filter }))}
-            className="sticky top-20 z-10 shadow-sm"
+            className="md:sticky md:top-20 md:z-10 md:shadow-sm"
             trailing={
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <SignupDateFilterControl
-                  mode={signupDateFilterMode}
-                  value={signupDateFilterValue}
-                  onModeChange={(mode) => {
-                    setSignupDateFilterMode(mode);
-                    if (mode === "any") {
-                      setSignupDateFilterValue("");
-                    }
-                  }}
-                  onValueChange={setSignupDateFilterValue}
-                  onClear={() => {
-                    setSignupDateFilterMode("any");
+              <SignupDateFilterControl
+                mode={signupDateFilterMode}
+                value={signupDateFilterValue}
+                onModeChange={(mode) => {
+                  setSignupDateFilterMode(mode);
+                  if (mode === "any") {
                     setSignupDateFilterValue("");
-                  }}
-                />
-                {!isLoading ? <ActionButton onClick={() => void refreshPlayers()}>Refresh Auth Status</ActionButton> : null}
-              </div>
+                  }
+                }}
+                onValueChange={setSignupDateFilterValue}
+                onClear={() => {
+                  setSignupDateFilterMode("any");
+                  setSignupDateFilterValue("");
+                }}
+                secondaryAction={!isLoading ? (
+                  <button
+                    type="button"
+                    onClick={() => void refreshPlayers()}
+                    className="min-w-[6rem] flex-1 rounded-md border border-gray-300 bg-white px-3 py-2.5 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light"
+                  >
+                    Refresh
+                  </button>
+                ) : null}
+              />
             }
           />
 
@@ -706,6 +713,23 @@ export function AdminPlayersClient() {
                     });
                   }}
                   onManageManager={() => handleManagerAccess(player)}
+                  onChangeTier={(targetAccessLevel) => {
+                    if (!player.appUserId) {
+                      setMessage({ tone: "error", text: "This row does not have an app user profile to update yet." });
+                      return;
+                    }
+
+                    void withAction(`tier-${player.appUserId}`, async () => {
+                      const result = await updateUserCommercialTierAction({
+                        userId: player.appUserId!,
+                        targetAccessLevel
+                      });
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadPlayers();
+                      }
+                    });
+                  }}
                   onPasswordReset={() => void handleResetUserAccess(player)}
                   onSendNudge={() => {
                     void withAction(`nudge-${player.email}`, async () => {
@@ -843,25 +867,27 @@ function SignupDateFilterControl({
   value,
   onModeChange,
   onValueChange,
-  onClear
+  onClear,
+  secondaryAction
 }: {
   mode: SignupDateFilterMode;
   value: string;
   onModeChange: (mode: SignupDateFilterMode) => void;
   onValueChange: (value: string) => void;
   onClear: () => void;
+  secondaryAction?: ReactNode;
 }) {
   const isDateDisabled = mode === "any";
   const canClear = mode !== "any" || Boolean(value);
 
   return (
-    <div className="grid gap-2 sm:min-w-[23rem] sm:grid-cols-[minmax(0,11rem)_minmax(0,10rem)_auto] sm:items-end">
+    <div className="grid min-w-0 grid-cols-2 items-end gap-2 sm:min-w-[22rem] sm:grid-cols-[minmax(0,11rem)_minmax(0,9rem)_auto]">
       <label className="block">
-        <span className="text-sm font-bold text-gray-800">Signup date</span>
+        <span className="text-xs font-bold uppercase tracking-wide text-gray-700">Signup date</span>
         <select
           value={mode}
           onChange={(event) => onModeChange(event.target.value as SignupDateFilterMode)}
-          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+          className="mt-1.5 w-full rounded-md border border-gray-300 bg-white px-2.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
         >
           {SIGNUP_DATE_FILTERS.map((filter) => (
             <option key={filter.value} value={filter.value}>
@@ -871,23 +897,26 @@ function SignupDateFilterControl({
         </select>
       </label>
       <label className="block">
-        <span className="text-sm font-bold text-gray-800">Date</span>
+        <span className="text-xs font-bold uppercase tracking-wide text-gray-700">Date</span>
         <input
           type="date"
           value={value}
           disabled={isDateDisabled}
           onChange={(event) => onValueChange(event.target.value)}
-          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+          className="mt-1.5 w-full rounded-md border border-gray-300 bg-white px-2.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
         />
       </label>
-      <button
-        type="button"
-        onClick={onClear}
-        disabled={!canClear}
-        className="rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
-      >
-        Clear
-      </button>
+      <div className="col-span-2 flex min-w-0 gap-2 sm:col-span-1">
+        <button
+          type="button"
+          onClick={onClear}
+          disabled={!canClear}
+          className="min-w-[5rem] flex-1 rounded-md border border-gray-300 bg-white px-3 py-2.5 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+        >
+          Clear
+        </button>
+        {secondaryAction}
+      </div>
     </div>
   );
 }
@@ -980,7 +1009,8 @@ function PlayerSummaryCard({
   onNotify,
   onReload,
   setManagerEditor,
-  onSaveManagerLimits
+  onSaveManagerLimits,
+  onChangeTier
 }: {
   player: AdminPlayerHealthRow;
   activeManagerEditor: {
@@ -1000,6 +1030,7 @@ function PlayerSummaryCard({
   onOpenDelete: () => void;
   onNotify: (tone: "success" | "error", text: string) => void;
   onReload: () => Promise<void>;
+  onChangeTier: (targetAccessLevel: AccessLevel) => void;
   setManagerEditor: Dispatch<
     SetStateAction<{
       userId: string;
@@ -1030,7 +1061,12 @@ function PlayerSummaryCard({
   const [demotionReason, setDemotionReason] = useState("");
   const [demotionConfirmationValue, setDemotionConfirmationValue] = useState("");
   const [cleanupSelections, setCleanupSelections] = useState<Partial<Record<DemotionCleanupOption, boolean>>>({});
+  const [quickTierMessage, setQuickTierMessage] = useState<string | null>(null);
   const showDemotionTools = player.roleLabel !== "admin" && player.accessLevel !== "player" && Boolean(player.appUserId);
+  const quickTierOptions = useMemo(
+    () => ADMIN_ASSIGNABLE_ACCESS_LEVELS.filter((accessLevel) => accessLevel !== "super_admin"),
+    []
+  );
 
   useEffect(() => {
     if (!demotionOptions.length) {
@@ -1132,6 +1168,54 @@ function PlayerSummaryCard({
             <ManagementDatum label="Delivery" value={formatDeliveryState(player)} />
             <ManagementDatum label="Warnings" value={player.troubleshootingNotes.length > 0 ? `${player.troubleshootingNotes.length} notes` : "Clear"} />
           </ManagementGrid>
+
+          <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(11rem,15rem)] sm:items-end">
+              <div>
+                <p className="text-sm font-black text-gray-950">Tier access</p>
+                <p className="mt-1 text-sm font-semibold text-gray-600">
+                  Promote organizers here. Lower tiers open the guarded review below.
+                </p>
+              </div>
+              <label className="block">
+                <span className="text-xs font-bold uppercase tracking-wide text-gray-700">Change tier</span>
+                <select
+                  value={player.roleLabel === "admin" ? "super_admin" : player.accessLevel}
+                  disabled={!player.appUserId || activeActionKey === `tier-${player.appUserId}` || player.roleLabel === "admin"}
+                  onChange={(event) => {
+                    const targetAccessLevel = event.target.value as AccessLevel;
+                    setQuickTierMessage(null);
+
+                    if (targetAccessLevel === player.accessLevel) {
+                      return;
+                    }
+
+                    if (compareAccessLevels(targetAccessLevel, player.accessLevel) < 0) {
+                      setDemotionTargetAccessLevel(targetAccessLevel);
+                      setIsDemotionPanelOpen(true);
+                      setQuickTierMessage("Review impact below before lowering this user's tier.");
+                      return;
+                    }
+
+                    onChangeTier(targetAccessLevel);
+                  }}
+                  className="mt-1.5 w-full rounded-md border border-gray-300 bg-white px-3 py-2.5 text-sm font-bold text-gray-900 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                >
+                  {player.roleLabel === "admin" ? <option value="super_admin">Super Admin</option> : null}
+                  {quickTierOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {getAccessLevelDisplayLabel(option)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {quickTierMessage ? (
+              <p className="mt-2 rounded-md border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-800">
+                {quickTierMessage}
+              </p>
+            ) : null}
+          </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
             {player.appUserId ? (

@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import type { ComponentType } from "react";
 import { Flag, Trophy, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
+import { SidePicksIcon } from "@/components/SidePicksIcon";
 import { fetchAdminCounts, type AdminCounts } from "@/lib/admin-data";
 
 export function AdminHomeClient() {
@@ -32,7 +34,7 @@ export function AdminHomeClient() {
 
 type AdminCardProps = {
   href: string;
-  icon: typeof Trophy;
+  icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   title: string;
   copy: string;
 };
@@ -42,6 +44,7 @@ export function AdminToolsSection() {
     <section className="grid gap-3 sm:grid-cols-2">
       <AdminCard href="/admin/players" icon={UsersRound} title="Players" copy="Manage invites and review auth state." />
       <AdminCard href="/admin/matches" icon={Trophy} title="Matches" copy="Enter scores and winners." />
+      <AdminCard href="/admin/side-picks" icon={SidePicksIcon} title="Side Picks" copy="Manage late-entry picks, eligibility, and scoring." />
       <AdminCard href="/admin/reports" icon={Flag} title="Reports" copy="Review player safety reports." />
     </section>
   );

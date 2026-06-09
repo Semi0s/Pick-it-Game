@@ -204,10 +204,12 @@ export function LoginForm({
         return;
       }
 
-      if (mode === "signup" && accessCode.trim() && normalizedMessage.includes("already has an account")) {
+      if (mode === "signup" && isExistingAccountSignupMessage(result.message)) {
         setMode("login");
         setNotice(
-          normalizedMessage.includes("already in this group")
+          !accessCode.trim()
+            ? t(uiLanguage, "auth.accountExistsSignInToRestore")
+            : normalizedMessage.includes("already in this group")
             ? t(uiLanguage, "auth.accountExistsAlreadyInGroup")
             : t(uiLanguage, "auth.accountExistsSignInToJoin")
         );
@@ -554,6 +556,16 @@ function isConfirmationRequiredMessage(message: string) {
     (normalizedMessage.includes("before signing in") ||
       normalizedMessage.includes("confirmation") ||
       normalizedMessage.includes("not confirmed"))
+  );
+}
+
+function isExistingAccountSignupMessage(message: string) {
+  const normalizedMessage = message.toLowerCase();
+  return (
+    normalizedMessage.includes("already has an account") ||
+    normalizedMessage.includes("already registered") ||
+    normalizedMessage.includes("already been registered") ||
+    normalizedMessage.includes("already has account state")
   );
 }
 
