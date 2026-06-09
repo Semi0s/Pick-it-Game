@@ -203,6 +203,7 @@ create table public.app_settings (
   key text primary key,
   boolean_value boolean not null default false,
   integer_value integer,
+  text_value text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -476,7 +477,18 @@ create table public.group_members (
   user_id uuid not null references public.users(id) on delete cascade,
   role public.group_member_role not null default 'member',
   join_source text not null default 'direct'
-    check (join_source in ('direct', 'manager_code', 'manager_invite', 'captain_pass', 'captain_private_code', 'captain_private_invite')),
+    check (join_source in (
+      'direct',
+      'public_signup',
+      'access_code',
+      'invite_link',
+      'super_link',
+      'manager_code',
+      'manager_invite',
+      'captain_pass',
+      'captain_private_code',
+      'captain_private_invite'
+    )),
   joined_invite_id uuid,
   joined_at timestamptz not null default now(),
   unique (group_id, user_id)
@@ -1986,8 +1998,9 @@ begin
       auth_user_id,
       'member'::public.group_member_role,
       case
+        when coalesce(v_access_code_row.code_type, 'standard') = 'super_link' then 'super_link'
         when v_target_group_kind = 'captain_private' then 'captain_private_code'
-        else 'manager_code'
+        else 'access_code'
       end
     )
     on conflict (group_id, user_id) do nothing;
@@ -2020,6 +2033,8 @@ declare
   access_code_row public.access_codes%rowtype;
   derived_name text;
   raw_access_code text;
+  public_signup_enabled boolean := false;
+  public_signup_default_tier text := 'player';
   target_group_kind text;
   debug_step text := 'start';
 begin
@@ -2071,6 +2086,45 @@ begin
     insert into public.users (id, name, email, preferred_language, role, needs_profile_setup)
     values (new.id, derived_name, new.email, coalesce(nullif(trim(group_invite_row.language), ''), 'en'), 'player', true)
     on conflict (id) do nothing;
+    return new;
+  end if;
+
+  if raw_access_code is null then
+    debug_step := 'public_signup_settings';
+    select coalesce(app_settings.boolean_value, false)
+    into public_signup_enabled
+    from public.app_settings
+    where app_settings.key = 'public_player_signup_enabled';
+
+    if not coalesce(public_signup_enabled, false) then
+      raise exception 'PUBLIC_SIGNUP_DISABLED';
+    end if;
+
+    select coalesce(nullif(trim(app_settings.text_value), ''), 'player')
+    into public_signup_default_tier
+    from public.app_settings
+    where app_settings.key = 'public_signup_default_tier';
+
+    if public_signup_default_tier <> 'player' then
+      public_signup_default_tier := 'player';
+    end if;
+
+    debug_step := 'derive_public_signup_name';
+    derived_name := split_part(new.email, '@', 1);
+
+    debug_step := 'insert_user_public_signup';
+    insert into public.users (id, name, email, preferred_language, role, plan_tier, needs_profile_setup)
+    values (
+      new.id,
+      derived_name,
+      new.email,
+      coalesce(nullif(trim(new.raw_user_meta_data ->> 'language'), ''), 'en'),
+      'player'::public.user_role,
+      public_signup_default_tier,
+      true
+    )
+    on conflict (id) do nothing;
+
     return new;
   end if;
 
@@ -2129,8 +2183,9 @@ begin
       new.id,
       'member'::public.group_member_role,
       case
+        when coalesce(access_code_row.code_type, 'standard') = 'super_link' then 'super_link'
         when target_group_kind = 'captain_private' then 'captain_private_code'
-        else 'manager_code'
+        else 'access_code'
       end
     )
     on conflict (group_id, user_id) do nothing;
@@ -2219,16 +2274,31 @@ create trigger set_side_pick_entries_updated_at
 before update on public.side_pick_entries
 for each row execute function public.set_updated_at();
 
-insert into public.app_settings (key, boolean_value, integer_value)
+insert into public.app_settings (key, boolean_value, integer_value, text_value)
 values
-  ('daily_winner_enabled', false, null),
-  ('perfect_pick_enabled', false, null),
-  ('leaderboard_activity_enabled', false, null),
-  ('max_joined_groups_per_player', false, 10),
-  ('knockout_auto_seed_attempted', false, null),
-  ('knockout_auto_seeded', false, null),
-  ('knockout_manual_seeded', false, null)
+  ('daily_winner_enabled', false, null, null),
+  ('perfect_pick_enabled', false, null, null),
+  ('leaderboard_activity_enabled', false, null, null),
+  ('max_joined_groups_per_player', false, 10, null),
+  ('knockout_auto_seed_attempted', false, null, null),
+  ('knockout_auto_seeded', false, null, null),
+  ('knockout_manual_seeded', false, null, null),
+  ('public_player_signup_enabled', true, null, null),
+  ('public_signup_default_group_id', false, null, null),
+  ('public_signup_default_tier', false, null, 'player')
 on conflict (key) do nothing;
+
+update public.app_settings
+set text_value = (
+      select groups.id::text
+      from public.groups
+      where groups.name = 'FIFA 2026 Predictions'
+      order by groups.created_at asc
+      limit 1
+    ),
+    updated_at = now()
+where key = 'public_signup_default_group_id'
+  and text_value is null;
 
 alter table public.invites enable row level security;
 alter table public.users enable row level security;

@@ -12,9 +12,14 @@ import {
   type CanonicalKnockoutStage
 } from "@/lib/match-stage";
 import {
+  buildRoundOf32MatchIdLookup,
   buildUserProjectedRoundOf32,
   type ProjectedMatchScoreSource
 } from "@/lib/knockout-seeding";
+import {
+  buildProjectedRoundOf32SlotLabelMap,
+  type ProjectedRoundOf32SlotLabels
+} from "@/lib/projected-r32-slot-labels";
 import { loadProjectedRoundOf32FromPreferredSource } from "@/lib/projected-knockout-source";
 import { isMatchLockedAt } from "@/lib/scoring-engine";
 import type {
@@ -100,6 +105,7 @@ type ProjectedBracketContext = {
   projectedSeeds: ReturnType<typeof buildUserProjectedRoundOf32>;
   projectedSourceByMatchId: Map<string, { home: ProjectedMatchScoreSource; away: ProjectedMatchScoreSource }>;
   projectedTeamByMatchId: Map<string, { homeTeamId: string | null; awayTeamId: string | null }>;
+  projectedSlotLabelByMatchId: Map<string, ProjectedRoundOf32SlotLabels>;
   predictions: BracketPrediction[];
 };
 
@@ -182,6 +188,8 @@ export type KnockoutBracketMatchView = {
   awaySourceMatchId: string | null;
   homeSourceLabel: string | null;
   awaySourceLabel: string | null;
+  projectedHomeSourceLabel: string | null;
+  projectedAwaySourceLabel: string | null;
   homeTeam: BracketTeamOption | null;
   awayTeam: BracketTeamOption | null;
   homeScore: number | null;
@@ -698,7 +706,8 @@ export async function fetchProjectedKnockoutBracketPreview(
     {
       mode: "projected",
       projectedSourceByMatchId: projectedContext.projectedSourceByMatchId,
-      projectedTeamByMatchId: projectedContext.projectedTeamByMatchId
+      projectedTeamByMatchId: projectedContext.projectedTeamByMatchId,
+      projectedSlotLabelByMatchId: projectedContext.projectedSlotLabelByMatchId
     }
   );
 
@@ -1426,21 +1435,6 @@ async function loadProjectedBracketContext(
   if (knockoutError) throw knockoutError;
   if (teamError) throw teamError;
 
-  const projectedSeeds = projectedSourceState.projectedSeeds;
-
-  const projectedSourceByMatchId = new Map(
-    projectedSeeds.matches.map((match) => [
-      match.matchId,
-      { home: match.home.resolutionSource, away: match.away.resolutionSource }
-    ])
-  );
-  const projectedTeamByMatchId = new Map(
-    projectedSeeds.matches.map((match) => [
-      match.matchId,
-      { homeTeamId: match.home.teamId, awayTeamId: match.away.teamId }
-    ])
-  );
-
   const knockoutMatches = ((knockoutRows ?? []) as MatchRow[])
     .filter((match) => isKnockoutStage(match.stage))
     .sort((left, right) => {
@@ -1451,6 +1445,30 @@ async function loadProjectedBracketContext(
 
       return left.kickoff_time.localeCompare(right.kickoff_time);
     });
+  const projectedSeeds = projectedSourceState.projectedSeeds;
+  const storedRoundOf32MatchIdByOfficialId = buildRoundOf32MatchIdLookup(knockoutMatches);
+  const projectedSlotLabelByMatchId = buildProjectedRoundOf32SlotLabelMap(projectedSeeds.matches, knockoutMatches);
+
+  const projectedSourceByMatchId = new Map<string, { home: ProjectedMatchScoreSource; away: ProjectedMatchScoreSource }>();
+  const projectedTeamByMatchId = new Map<string, { homeTeamId: string | null; awayTeamId: string | null }>();
+  for (const match of projectedSeeds.matches) {
+    const matchIds = [match.matchId];
+    const storedMatchId = storedRoundOf32MatchIdByOfficialId.get(match.matchId);
+    if (storedMatchId && storedMatchId !== match.matchId) {
+      matchIds.push(storedMatchId);
+    }
+
+    for (const matchId of matchIds) {
+      projectedSourceByMatchId.set(matchId, {
+        home: match.home.resolutionSource,
+        away: match.away.resolutionSource
+      });
+      projectedTeamByMatchId.set(matchId, {
+        homeTeamId: match.home.teamId,
+        awayTeamId: match.away.teamId
+      });
+    }
+  }
 
   const teamsById = new Map<string, BracketTeamOption>(
     ((teamRows ?? []) as TeamRow[]).map((team) => [
@@ -1473,6 +1491,7 @@ async function loadProjectedBracketContext(
     projectedSeeds,
     projectedSourceByMatchId,
     projectedTeamByMatchId,
+    projectedSlotLabelByMatchId,
     predictions: projectedPredictionRows.map(mapBracketPredictionRow)
   };
 }
@@ -1533,6 +1552,7 @@ function buildKnockoutBracketStages(
     mode?: "official" | "projected";
     projectedSourceByMatchId?: Map<string, { home: ProjectedMatchScoreSource; away: ProjectedMatchScoreSource }>;
     projectedTeamByMatchId?: Map<string, { homeTeamId: string | null; awayTeamId: string | null }>;
+    projectedSlotLabelByMatchId?: Map<string, ProjectedRoundOf32SlotLabels>;
   } = {}
 ): KnockoutBracketStageView[] {
   const mode = options.mode ?? "official";
@@ -1585,6 +1605,9 @@ function buildKnockoutBracketStages(
         ? predictedWinnerTeamId
         : null;
     const projectedSources = options.projectedSourceByMatchId?.get(match.id);
+    const projectedSlotLabels = mode === "projected" && stage === "r32"
+      ? options.projectedSlotLabelByMatchId?.get(match.id) ?? null
+      : null;
     const matchIsLocked = isLocked || isKnockoutMatchLocked(match);
 
     const currentStageMatches = stagesById.get(stage) ?? [];
@@ -1601,6 +1624,8 @@ function buildKnockoutBracketStages(
       awaySourceMatchId: awaySource?.id ?? null,
       homeSourceLabel: getMatchSlotLabel(match.home_source, homeSource),
       awaySourceLabel: getMatchSlotLabel(match.away_source, awaySource),
+      projectedHomeSourceLabel: projectedSlotLabels?.home ?? null,
+      projectedAwaySourceLabel: projectedSlotLabels?.away ?? null,
       homeTeam: availableTeams.homeTeam,
       awayTeam: availableTeams.awayTeam,
       homeScore: match.home_score ?? null,

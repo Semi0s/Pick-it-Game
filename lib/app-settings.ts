@@ -1,6 +1,10 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isMissingColumnError, isMissingRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 
+export const PUBLIC_PLAYER_SIGNUP_ENABLED_KEY = "public_player_signup_enabled";
+export const PUBLIC_SIGNUP_DEFAULT_GROUP_ID_KEY = "public_signup_default_group_id";
+export const PUBLIC_SIGNUP_DEFAULT_TIER_KEY = "public_signup_default_tier";
+
 export const LEADERBOARD_FEATURE_SETTING_KEYS = [
   "daily_winner_enabled",
   "perfect_pick_enabled",
@@ -14,6 +18,7 @@ type AppSettingRow = {
   key: string;
   boolean_value: boolean | null;
   integer_value?: number | null;
+  text_value?: string | null;
 };
 
 export type LeaderboardFeatureSettings = Record<LeaderboardFeatureSettingKey, boolean>;
@@ -127,6 +132,43 @@ export async function updateBooleanAppSetting(
   }
 
   return fetchBooleanAppSetting(key, enabled);
+}
+
+export async function fetchTextAppSetting(
+  key: string,
+  defaultValue: string | null = null
+): Promise<string | null> {
+  const adminSupabase = createAdminClient();
+  const result = await adminSupabase
+    .from("app_settings")
+    .select("key,text_value")
+    .eq("key", key)
+    .maybeSingle();
+
+  if (!result.error) {
+    const row = result.data as AppSettingRow | null;
+    return row?.text_value ?? defaultValue;
+  }
+
+  if (isMissingColumnError(result.error.message, "app_settings", "text_value")) {
+    warnOptionalFeatureOnce(
+      `app-settings-missing-text:${key}`,
+      `App setting ${key} is loading without text_value support; defaulting to ${defaultValue ?? "null"}.`,
+      result.error.message
+    );
+    return defaultValue;
+  }
+
+  if (isMissingAppSettingsTableError(result.error.message)) {
+    warnOptionalFeatureOnce(
+      `app-settings-missing:${key}:text`,
+      `App setting ${key} is unavailable; defaulting to ${defaultValue ?? "null"}.`,
+      result.error.message
+    );
+    return defaultValue;
+  }
+
+  throw new Error(result.error.message);
 }
 
 export async function fetchIntegerAppSetting(

@@ -185,11 +185,6 @@ export function LoginForm({
       return;
     }
 
-    if (mode === "signup" && !emailBoundInviteFlow && !promoManagerCode && !accessCode.trim()) {
-      setError(t(uiLanguage, "auth.accessCodeRequired"));
-      return;
-    }
-
     setIsSubmitting(true);
     const result = await authenticateWithEmail(mode, email, password, {
       nextPath,
@@ -449,6 +444,12 @@ export function LoginForm({
         ) : null}
       </label>
 
+      {mode === "signup" && !emailBoundInviteFlow && !promoManagerCode ? (
+        <p className="rounded-[0.9rem] border border-accent-light bg-accent-light/30 px-3 py-2 text-sm font-semibold leading-6 text-gray-700">
+          {t(uiLanguage, "auth.freePlayerSignupIntro")}
+        </p>
+      ) : null}
+
       <label className="block">
         <span className="text-sm font-semibold text-gray-800">{t(uiLanguage, "auth.password")}</span>
         <input
@@ -466,26 +467,24 @@ export function LoginForm({
         <div className="block">
           <div className="flex items-center justify-between gap-3">
             <label htmlFor="auth-access-code" className="text-sm font-semibold text-gray-800">
-              {t(uiLanguage, mode === "login" ? "auth.accessCodeOptional" : "auth.accessCode")}
+              {t(uiLanguage, "auth.accessCodeOptional")}
             </label>
-            {mode === "login" ? (
-              <button
-                type="button"
-                onClick={() => setIsAccessCodeOpen((current) => !current)}
-                aria-expanded={isAccessCodeOpen}
-                aria-controls="auth-access-code-panel"
-                className="inline-flex items-center gap-1 px-0 py-0 text-[10px] font-semibold uppercase tracking-wide text-gray-700 transition hover:text-accent-dark"
-              >
-                {isAccessCodeOpen ? (
-                  <ChevronUp aria-hidden className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronDown aria-hidden className="h-3.5 w-3.5" />
-                )}
-                {t(uiLanguage, isAccessCodeOpen ? "common.less" : "common.more")}
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => setIsAccessCodeOpen((current) => !current)}
+              aria-expanded={isAccessCodeOpen}
+              aria-controls="auth-access-code-panel"
+              className="inline-flex items-center gap-1 px-0 py-0 text-[10px] font-semibold uppercase tracking-wide text-gray-700 transition hover:text-accent-dark"
+            >
+              {isAccessCodeOpen ? (
+                <ChevronUp aria-hidden className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown aria-hidden className="h-3.5 w-3.5" />
+              )}
+              {t(uiLanguage, isAccessCodeOpen ? "common.less" : "common.more")}
+            </button>
           </div>
-          {mode !== "login" || isAccessCodeOpen ? (
+          {isAccessCodeOpen ? (
             <div id="auth-access-code-panel">
               <input
                 id="auth-access-code"

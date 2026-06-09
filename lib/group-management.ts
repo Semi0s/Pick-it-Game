@@ -14,6 +14,10 @@ export type GroupInviteIntent = (typeof GROUP_INVITE_INTENTS)[number];
 
 export const GROUP_JOIN_SOURCES = [
   "direct",
+  "public_signup",
+  "access_code",
+  "invite_link",
+  "super_link",
   "manager_code",
   "manager_invite",
   "captain_pass",
@@ -80,6 +84,14 @@ export function getGroupAccessModeLabel(mode: GroupAccessMode) {
 
 export function getGroupJoinSourceLabel(source: GroupJoinSource) {
   switch (source) {
+    case "public_signup":
+      return "Public signup";
+    case "access_code":
+      return "Access code";
+    case "invite_link":
+      return "Invite link";
+    case "super_link":
+      return "Super Link";
     case "manager_code":
       return "Manager code";
     case "manager_invite":

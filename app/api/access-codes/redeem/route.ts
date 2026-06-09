@@ -269,7 +269,12 @@ async function redeemAccessCodeWithAdminFallback(
     }
 
     if (code.group_id && grantsGroupMembership && !alreadyMember) {
-      await insertGroupMembershipFromAccessCode(adminSupabase, code.group_id, user.id);
+      await insertGroupMembershipFromAccessCode(
+        adminSupabase,
+        code.group_id,
+        user.id,
+        isSuperLink ? "super_link" : "access_code"
+      );
     }
 
     await applyAccessCodePlanTierGrant(adminSupabase, user.id, grantsPlanTier);
@@ -385,13 +390,14 @@ async function applyAccessCodePlanTierGrant(
 async function insertGroupMembershipFromAccessCode(
   adminSupabase: AdminSupabaseClient,
   groupId: string,
-  userId: string
+  userId: string,
+  joinSource: "access_code" | "super_link"
 ) {
   const { error } = await adminSupabase.from("group_members").insert({
     group_id: groupId,
     user_id: userId,
     role: "member",
-    join_source: "manager_code"
+    join_source: joinSource
   });
 
   if (!error || error.code === "23505") {

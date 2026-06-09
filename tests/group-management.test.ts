@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  getGroupJoinSourceLabel,
   getRemainingCaptainsPassAllowance,
+  normalizeGroupJoinSource,
   parseAllowedEmailInput
 } from "../lib/group-management.ts";
 
@@ -59,4 +61,12 @@ test("getRemainingCaptainsPassAllowance is limited by both allowance and availab
     }),
     0
   );
+});
+
+test("group join source labels cover public signup and special invite flows", () => {
+  assert.equal(getGroupJoinSourceLabel(normalizeGroupJoinSource("public_signup")), "Public signup");
+  assert.equal(getGroupJoinSourceLabel(normalizeGroupJoinSource("access_code")), "Access code");
+  assert.equal(getGroupJoinSourceLabel(normalizeGroupJoinSource("invite_link")), "Invite link");
+  assert.equal(getGroupJoinSourceLabel(normalizeGroupJoinSource("super_link")), "Super Link");
+  assert.equal(getGroupJoinSourceLabel(normalizeGroupJoinSource("unknown")), "Direct");
 });
