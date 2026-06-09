@@ -1,6 +1,10 @@
 import "server-only";
 
 import {
+  SIDE_PICKS_TRIPTYCH_PREVIEW_ENABLED_KEY,
+  fetchBooleanAppSetting
+} from "@/lib/app-settings";
+import {
   filterMatchesByTeamIds,
   getGroupStageSaveStatus,
   getPredictionProgress,
@@ -18,6 +22,7 @@ import { getGroupMatches, teams as demoTeams } from "@/lib/mock-data";
 import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
 import { loadProjectedRoundOf32FromPreferredSource } from "@/lib/projected-knockout-source";
 import { isMissingColumnError, isMissingRelationError } from "@/lib/schema-safety";
+import { fetchSidePicksDashboardPreviewProgress, fetchSidePicksDashboardProgress } from "@/lib/side-picks-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { fetchTournamentEntrySettings } from "@/lib/tournament-entry";
@@ -37,6 +42,7 @@ type TeamRow = {
 
 type UserRow = {
   total_points: number | null;
+  role?: string | null;
 };
 
 type UserSettingsRow = {
@@ -93,7 +99,10 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     tournamentEntrySettings,
     latestGroupSeedUpdateResult,
     latestThirdPlaceUpdateResult,
-    projectedRoundOf32Result
+    projectedRoundOf32Result,
+    sidePicksProgressResult,
+    sidePicksPreviewEnabledResult,
+    sidePicksPreviewProgressResult
   ] = await Promise.all([
     adminSupabase
       .from("teams")
@@ -104,7 +113,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       .from("matches")
       .select("id,stage,status,kickoff_time,home_team_id,away_team_id,home_source,away_source,home_score,away_score")
       .order("kickoff_time", { ascending: true }),
-    adminSupabase.from("users").select("total_points").eq("id", userId).maybeSingle(),
+    adminSupabase.from("users").select("total_points,role").eq("id", userId).maybeSingle(),
     adminSupabase.from("group_members").select("group_id,role").eq("user_id", userId),
     adminSupabase.from("groups").select("id").eq("owner_user_id", userId),
     fetchUserLightSeedBuilderSnapshot(adminSupabase, userId).catch(() => null),
@@ -129,7 +138,10 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       .eq("user_id", userId)
       .order("updated_at", { ascending: false })
       .limit(1),
-    loadProjectedRoundOf32FromPreferredSource(adminSupabase, userId).catch(() => null)
+    loadProjectedRoundOf32FromPreferredSource(adminSupabase, userId).catch(() => null),
+    fetchSidePicksDashboardProgress(adminSupabase, userId).catch(() => null),
+    fetchBooleanAppSetting(SIDE_PICKS_TRIPTYCH_PREVIEW_ENABLED_KEY, false).catch(() => false),
+    fetchSidePicksDashboardPreviewProgress(adminSupabase, userId).catch(() => null)
   ]);
 
   const teams = ((teamsResult.data as TeamRow[] | null) ?? []).length
@@ -156,6 +168,9 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         away_score: match.awayScore ?? null
       }));
   const profile = (userResult.data as UserRow | null) ?? null;
+  const sidePicksDisplayProgress =
+    sidePicksProgressResult ??
+    (profile?.role === "admin" && sidePicksPreviewEnabledResult ? sidePicksPreviewProgressResult : null);
   const memberships = ((groupMembershipResult.data as GroupMemberRow[] | null) ?? []);
   const ownedGroups = ((ownedGroupsResult.data as OwnedGroupRow[] | null) ?? []);
   const snapshot = snapshotResult as LightSeedBuilderSnapshot | null;
@@ -281,7 +296,15 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     .filter((match) => normalizeKnockoutStage(match.stage) === "final")
     .some((match) => savedKnockoutPredictions.includes(match.id));
 
-  const progressBase = isKnockoutActive
+  const progressBase = sidePicksDisplayProgress
+    ? getPredictionProgress({
+        phase: "last_chance",
+        completedPickCount: sidePicksDisplayProgress.completedPicks,
+        totalPickCount: sidePicksDisplayProgress.totalPicks,
+        deadlineAt: sidePicksDisplayProgress.lockAt,
+        isLocked: sidePicksDisplayProgress.isLocked
+      })
+    : isKnockoutActive
     ? getPredictionProgress({
         phase: "knockout_stage",
         savedPredictionCount: savedKnockoutPredictions.length,

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Network, Sparkles, SquareCheckBig, Trophy } from "lucide-react";
+import { Network, Sparkles, SquareCheckBig } from "lucide-react";
+import { SidePicksIcon } from "@/components/SidePicksIcon";
 
 export const DASHBOARD_AUTO_PICK_LABEL_COPY = {
   en: "Auto Pick Next Match",
@@ -23,13 +24,13 @@ export const DASHBOARD_ACTION_COPY = {
     myPicks: "My Picks",
     myNextPick: "My Next Pick",
     myKnockoutPicks: "My Knockout Picks",
-    mySidePicks: "My Side Picks"
+    mySidePicks: "Side Picks"
   },
   es: {
     myPicks: "Mis Picks",
     myNextPick: "Mi Próximo Pick",
     myKnockoutPicks: "Picks Knockout",
-    mySidePicks: "Picks Extra"
+    mySidePicks: "Side Picks"
   }
 } as const;
 
@@ -86,10 +87,10 @@ export function DashboardHeroActionGrid({
           <span className="text-center leading-tight normal-case tracking-normal text-[11px]">{knockoutLabel}</span>
         </Link>
         <Link
-          href="/trophies"
+          href="/last-chance-picks"
           className="inline-flex min-h-[76px] min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-3 text-[10px] font-bold uppercase tracking-wide text-gray-800 transition hover:border-accent hover:bg-accent-light"
         >
-          <Trophy aria-hidden className="h-5 w-5 shrink-0 text-accent-dark" />
+          <SidePicksIcon className="h-6 w-6 text-accent-dark" />
           <span className="text-center leading-tight normal-case tracking-normal text-[11px]">{sidePicksLabel}</span>
         </Link>
       </div>

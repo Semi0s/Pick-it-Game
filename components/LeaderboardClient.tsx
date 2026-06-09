@@ -46,10 +46,12 @@ const DEFAULT_SWITCHER_STATE = {
 };
 
 const DEFAULT_LEADERBOARD_PHASE: LeaderboardPhase = "group_phase";
-const LEADERBOARD_PHASE_RAIL_ITEMS: Array<{ value: LeaderboardPhase; disabled?: boolean }> = [
+type LeaderboardPhaseRailValue = LeaderboardPhase | "side_picks";
+const LEADERBOARD_PHASE_RAIL_ITEMS: Array<{ value: LeaderboardPhaseRailValue; disabled?: boolean }> = [
+  { value: "global_top10" },
   { value: "group_phase" },
   { value: "knockout_phase", disabled: true },
-  { value: "global_top10" }
+  { value: "side_picks" }
 ];
 
 type LeaderboardSubselectionState = {
@@ -77,6 +79,10 @@ type PhaseNavItem = {
 
 function getAvailableLeaderboardPhase(phase?: LeaderboardPhase | null): LeaderboardPhase {
   return phase === "knockout_phase" ? DEFAULT_LEADERBOARD_PHASE : phase ?? DEFAULT_LEADERBOARD_PHASE;
+}
+
+function isLeaderboardPhase(value: LeaderboardPhaseRailValue): value is LeaderboardPhase {
+  return value === "group_phase" || value === "knockout_phase" || value === "side_picks" || value === "global_top10";
 }
 
 const DEFAULT_SUBSELECTION_STATE: LeaderboardSubselectionState = {
@@ -240,6 +246,13 @@ function getLeaderboardScoreDisplay(profile: LeaderboardListItem, activePhase: L
     };
   }
 
+  if (activePhase === "side_picks") {
+    return {
+      scoreLabel: "LC",
+      scoreValue
+    };
+  }
+
   return {
     scoreLabel: "Pts",
     scoreValue
@@ -253,6 +266,10 @@ function getLeaderboardNumericScore(profile: LeaderboardListItem, activePhase: L
 
   if (activePhase === "knockout_phase") {
     return profile.knockoutPhasePoints ?? 0;
+  }
+
+  if (activePhase === "side_picks") {
+    return profile.sidePickPoints ?? 0;
   }
 
   return profile.globalTopTenPoints ?? profile.totalPoints ?? 0;
@@ -423,7 +440,7 @@ export function LeaderboardClient() {
       const queryManagerId = searchParams.get("managerId");
       if (queryPhase || queryView || queryGroupId || queryManagerId) {
         setHasExplicitSwitcherPreference(true);
-        if (queryPhase === "knockout_phase" || queryPhase === "global_top10" || queryPhase === "group_phase") {
+        if (queryPhase === "knockout_phase" || queryPhase === "global_top10" || queryPhase === "side_picks" || queryPhase === "group_phase") {
           setActivePhase(getAvailableLeaderboardPhase(queryPhase));
         }
         if (queryView) {
@@ -961,7 +978,9 @@ export function LeaderboardClient() {
         ? t(uiLanguage, "leaderboard.groupStage")
         : activePhase === "knockout_phase"
           ? t(uiLanguage, "leaderboard.knockoutStage")
-          : t(uiLanguage, "leaderboard.globalTop10")),
+          : activePhase === "side_picks"
+            ? t(uiLanguage, "dashboard.additionalTrophies")
+            : t(uiLanguage, "leaderboard.globalTop10")),
     [activePhase, activePhaseNavKey, phaseNavItems, uiLanguage]
   );
   const groupedPhaseNavItems = useMemo(() => {
@@ -1000,6 +1019,10 @@ export function LeaderboardClient() {
 
     if ((activeView === "managed_groups" || activeView === "my_groups") && selectedGroupLabel) {
       return selectedGroupLabel;
+    }
+
+    if (activePhase === "side_picks") {
+      return "Side Picks leaderboard";
     }
 
     return activePhase === "group_phase" ? t(uiLanguage, "leaderboard.groupStageLeaderboard") : t(uiLanguage, "leaderboard.knockoutStageLeaderboard");
@@ -1707,6 +1730,16 @@ export function LeaderboardClient() {
             </p>
           ) : null}
 
+          {!isLoading && !error && activePhase === "side_picks" && users.length === 0 ? (
+            <div className="rounded-[1.15rem] border border-accent-light bg-accent-light/35 px-4 py-4 text-sm font-semibold leading-6 text-accent-dark">
+              <p className="font-black text-gray-950">No Side Picks scores yet.</p>
+              <p>Make your Side Picks, then scores will appear here after Super Admin recomputes this separate leaderboard.</p>
+              <Link href="/side-picks" className="mt-3 inline-flex rounded-xl bg-accent px-4 py-2 text-sm font-black text-accent-text">
+                Make Side Picks
+              </Link>
+            </div>
+          ) : null}
+
           {users.map((profile, index) => {
             const { scoreLabel, scoreValue } = getLeaderboardScoreDisplay(profile, activePhase);
 
@@ -1958,12 +1991,12 @@ export function LeaderboardClient() {
               key={phase.value}
               type="button"
               onClick={() => {
-                if (!phase.disabled) {
+                if (!phase.disabled && isLeaderboardPhase(phase.value)) {
                   handleSelectPhase(phase.value);
                 }
               }}
               data-choice-key={phase.disabled ? undefined : phase.value}
-              data-choice-active={getAvailableLeaderboardPhase(activePhase) === phase.value ? "true" : "false"}
+              data-choice-active={isLeaderboardPhase(phase.value) && getAvailableLeaderboardPhase(activePhase) === phase.value ? "true" : "false"}
               disabled={phase.disabled}
               aria-disabled={phase.disabled ? "true" : undefined}
               className={`shrink-0 ${LEADERBOARD_COCKPIT_BUTTON_CLASS} ${
@@ -1978,7 +2011,9 @@ export function LeaderboardClient() {
                 ? t(uiLanguage, "leaderboard.groupStage")
                 : phase.value === "knockout_phase"
                   ? t(uiLanguage, "leaderboard.knockoutStage")
-                  : t(uiLanguage, "leaderboard.global")}
+                  : phase.value === "side_picks"
+                    ? t(uiLanguage, "dashboard.additionalTrophies")
+                    : t(uiLanguage, "leaderboard.global")}
             </button>
           ))}
         </LeaderboardChoiceRail>
@@ -2118,7 +2153,12 @@ function getPhaseViewTabs(
   const nextTabs: Array<{ value: LeaderboardSwitcherView; label: string }> = [
     {
       value: "global",
-      label: activePhase === "group_phase" ? t(language, "leaderboard.groupStage") : t(language, "leaderboard.knockoutStage")
+      label:
+        activePhase === "group_phase"
+          ? t(language, "leaderboard.groupStage")
+          : activePhase === "side_picks"
+            ? t(language, "dashboard.additionalTrophies")
+            : t(language, "leaderboard.knockoutStage")
     }
   ];
   if (switcher.managedGroups.length > 0 && switcher.tabs.some((tab) => tab.value === "managed_groups")) {
@@ -2148,7 +2188,18 @@ function getPhaseNavItems(
     ];
   }
 
-  const items: PhaseNavItem[] = [];
+  const items: PhaseNavItem[] = [
+    {
+      key: "global",
+      label:
+        activePhase === "group_phase"
+          ? t(language, "leaderboard.groupStage")
+          : activePhase === "side_picks"
+            ? t(language, "dashboard.additionalTrophies")
+            : t(language, "leaderboard.knockoutStage"),
+      view: "global"
+    }
+  ];
 
   const seenGroupIds = new Set<string>();
 

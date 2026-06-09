@@ -4,6 +4,7 @@ import { isMissingColumnError, isMissingRelationError, warnOptionalFeatureOnce }
 export const PUBLIC_PLAYER_SIGNUP_ENABLED_KEY = "public_player_signup_enabled";
 export const PUBLIC_SIGNUP_DEFAULT_GROUP_ID_KEY = "public_signup_default_group_id";
 export const PUBLIC_SIGNUP_DEFAULT_TIER_KEY = "public_signup_default_tier";
+export const SIDE_PICKS_TRIPTYCH_PREVIEW_ENABLED_KEY = "side_picks_triptych_preview_enabled";
 
 export const LEADERBOARD_FEATURE_SETTING_KEYS = [
   "daily_winner_enabled",

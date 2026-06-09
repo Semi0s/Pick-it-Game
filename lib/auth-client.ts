@@ -1671,6 +1671,41 @@ async function signUpWithInviteContext(
         }
       };
     }
+
+    const publicSignupValidationResponse = await fetch("/api/auth/public-signup/validate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ email })
+    });
+
+    const publicSignupValidation = await parseJsonResponse<
+      | { ok: true; existingAccount: boolean; message?: string | null }
+      | { ok: false; message?: string }
+    >(publicSignupValidationResponse, "Could not verify free Player signup right now.", "public Player signup validation");
+
+    if (!publicSignupValidationResponse.ok || !publicSignupValidation.ok) {
+      return {
+        data: { user: null, session: null },
+        error: {
+          message: publicSignupValidation.ok
+            ? "Could not verify free Player signup right now."
+            : publicSignupValidation.message ?? "Could not verify free Player signup right now."
+        }
+      };
+    }
+
+    if (publicSignupValidation.existingAccount) {
+      return {
+        data: { user: null, session: null },
+        error: {
+          message:
+            publicSignupValidation.message ??
+            "That email already has account state in PICK-IT. Sign in or reset your password."
+        }
+      };
+    }
   }
 
   if (trimmedAccessCode) {

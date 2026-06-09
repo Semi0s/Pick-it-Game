@@ -4,6 +4,7 @@ import Link from "next/link";
 import { BellRing, ChevronDown, ChevronUp, Clock3, Moon, SunMedium } from "lucide-react";
 import { Component, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type MouseEvent, type ReactNode, type TouchEvent } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
+import { SidePicksIcon } from "@/components/SidePicksIcon";
 import {
   getDeadlineUrgency,
   type DashboardCommandCenterSummary,
@@ -295,16 +296,23 @@ function ProgressPanel({
   const percentage = progress.totalUnits > 0 ? Math.round((progress.completedUnits / progress.totalUnits) * 100) : 0;
   const isCompleteForDisplay = progress.isComplete || percentage >= 100;
   const tone = getProgressDisplayTone(progress, nowMs, isCompleteForDisplay);
-  const statusLabel = getProgressStatusLabel(progress, language, nowMs);
+  const isLastChanceProgress = progress.phase === "last_chance";
+  const statusLabel = isLastChanceProgress ? progress.deadlineLabel : getProgressStatusLabel(progress, language, nowMs);
   const shouldShowGroupStageNotSaved =
     progress.phase === "group_stage" && (Boolean(progress.needsSave) || hasUnsavedGroupStageDraft);
-  const progressHref = progress.phase === "knockout_stage"
+  const progressHref = progress.phase === "last_chance"
+    ? "/last-chance-picks"
+    : progress.phase === "knockout_stage"
     ? "/knockout"
     : shouldShowGroupStageNotSaved
       ? "/bracket-builder#group-stage-commit"
       : "/bracket-builder#group-stage-picks";
   const progressLabel =
-    progress.phase === "group_stage" ? t(language, "dashboard.groupStage") : progress.label;
+    progress.phase === "last_chance"
+      ? "SIDE PICKS"
+      : progress.phase === "group_stage"
+        ? t(language, "dashboard.groupStage")
+        : progress.label;
   const shouldShowScoringLens = Boolean(scoringLens);
   const isScoringLensOpen = leftPanelViewState.isScoringLensOpen;
   const isShowingScoringLens = isScoringLensOpen && Boolean(scoringLens);
@@ -403,16 +411,22 @@ function ProgressPanel({
             </div>
           ) : (
             <div className={`absolute inset-x-0 top-0 ${contentViewportBottomClass} flex flex-col items-center justify-center text-center`}>
-              <DigitalWatchRing percentage={percentage} tone={tone} theme={theme} />
-              {shouldShowGroupStageNotSaved ? <NotSavedMicroLabel language={language} theme={theme} /> : null}
-              <div className={`${shouldShowGroupStageNotSaved ? "mt-0 space-y-0.5" : "-mt-0.5 space-y-0.5"}`}>
-                <p className={`max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{progressLabel}</p>
-                <p className={`max-w-full truncate font-semibold uppercase tracking-[0.1em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] ${getToneMetaTextClasses(tone, isCompleteForDisplay, progress.isLocked, theme)}`}>
-                  <span className="triptych-micro-copy">
-                  {statusLabel}
-                  </span>
-                </p>
-              </div>
+              {isLastChanceProgress ? (
+                <LastChanceTriptychContent progress={progress} theme={theme} />
+              ) : (
+                <>
+                  <DigitalWatchRing percentage={percentage} tone={tone} theme={theme} />
+                  {shouldShowGroupStageNotSaved ? <NotSavedMicroLabel language={language} theme={theme} /> : null}
+                  <div className={`${shouldShowGroupStageNotSaved ? "mt-0 space-y-0.5" : "-mt-0.5 space-y-0.5"}`}>
+                    <p className={`max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{progressLabel}</p>
+                    <p className={`max-w-full truncate font-semibold uppercase tracking-[0.1em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] ${getToneMetaTextClasses(tone, isCompleteForDisplay, progress.isLocked, theme)}`}>
+                      <span className="triptych-micro-copy">
+                      {statusLabel}
+                      </span>
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -437,6 +451,59 @@ function NotSavedMicroLabel({ language, theme }: { language?: string | null; the
     <p className={`triptych-not-saved-blink -mt-0.5 max-w-full truncate text-center font-semibold uppercase tracking-[0.1em] ${theme === "dark" ? "text-red-200" : "text-red-700"}`}>
       <span className="triptych-micro-copy">{t(language, "dashboard.notSaved")}</span>
     </p>
+  );
+}
+
+function LastChanceTriptychContent({
+  progress,
+  theme
+}: {
+  progress: DashboardCommandCenterSummary["progress"];
+  theme: TriptychTheme;
+}) {
+  const total = Math.max(progress.totalUnits, 6);
+  const completed = Math.min(Math.max(progress.completedUnits, 0), total);
+  const dotCount = Math.max(total, 8);
+  const dotRadius = 27;
+
+  return (
+    <div className="flex h-full min-w-0 flex-col items-center justify-center gap-1 px-1 py-2 text-center">
+      <p className={`max-w-full truncate text-[8px] font-black uppercase tracking-[0.1em] ${getPrimaryTextClasses(theme)}`}>
+        SIDE PICKS
+      </p>
+      <div className="relative my-1 h-[4.4rem] w-[4.4rem]" aria-label={`${completed} of ${dotCount} Side Picks complete`}>
+        <div className={`absolute inset-[1.05rem] flex items-center justify-center rounded-full border ${
+          theme === "dark" ? "border-white/15 bg-white/5" : "border-gray-200 bg-white"
+        }`}>
+          <SidePicksIcon className={`h-7 w-7 ${theme === "dark" ? "text-white" : "text-accent-dark"}`} />
+        </div>
+        {Array.from({ length: dotCount }).map((_, index) => {
+          const isFilled = index < completed;
+          return (
+            <span
+              key={index}
+              aria-hidden
+              style={{
+                left: `calc(50% + ${Math.cos((index / dotCount) * Math.PI * 2 - Math.PI / 2) * dotRadius}px)`,
+                top: `calc(50% + ${Math.sin((index / dotCount) * Math.PI * 2 - Math.PI / 2) * dotRadius}px)`
+              }}
+              className={`h-2.5 w-2.5 rounded-full border ${
+                isFilled
+                  ? theme === "dark"
+                    ? "border-[color:var(--triptych-dark-accent-text)] bg-[color:var(--triptych-dark-accent-text)]"
+                    : "border-accent bg-accent"
+                  : theme === "dark"
+                    ? "border-white/35 bg-white/5"
+                    : "border-gray-300 bg-white"
+              } absolute -translate-x-1/2 -translate-y-1/2`}
+            />
+          );
+        })}
+      </div>
+      <p className={`triptych-micro-copy max-w-full truncate font-black uppercase tracking-[0.1em] ${getToneMetaTextClasses(progress.urgencyTone, progress.isComplete, progress.isLocked, theme)}`}>
+        {progress.isLocked ? "Locked" : progress.deadlineLabel}
+      </p>
+    </div>
   );
 }
 

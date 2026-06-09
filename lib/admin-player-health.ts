@@ -265,21 +265,23 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         value.authUser?.email?.split("@")[0] ??
         "Unknown user";
       const roleLabel = value.appUser?.role ?? value.invite?.role ?? "player";
-      const accessLevel = resolveTierAccess({
+      const managerLimits = health.appUserId
+        ? (() => {
+            const row = managerLimitsByUserId.get(health.appUserId);
+            return row
+              ? {
+                  maxGroups: row.max_groups,
+                  maxMembersPerGroup: row.max_members_per_group
+                }
+              : null;
+          })()
+        : null;
+      const tierAccess = resolveTierAccess({
         role: value.appUser?.role === "admin" ? "admin" : "player",
         planTier: value.appUser?.planTier ?? null,
-        managerLimits: health.appUserId
-          ? (() => {
-              const row = managerLimitsByUserId.get(health.appUserId);
-              return row
-                ? {
-                    maxGroups: row.max_groups,
-                    maxMembersPerGroup: row.max_members_per_group
-                  }
-                : null;
-            })()
-          : null
-      }).accessLevel;
+        managerLimits
+      });
+      const accessLevel = tierAccess.accessLevel;
       const inviteDeliveryState = deriveInviteDeliveryState(value.invite);
 
       return {
@@ -298,11 +300,9 @@ export async function fetchAdminPlayerHealthRows(): Promise<AdminPlayerHealthRow
         appUserId: health.appUserId,
         authUserId: health.authUserId,
         userStatus: value.appUser?.status ?? null,
-        isManager: Boolean(health.appUserId && managerLimitsByUserId.has(health.appUserId)),
-        maxGroups: health.appUserId ? (managerLimitsByUserId.get(health.appUserId)?.max_groups ?? null) : null,
-        maxMembersPerGroup: health.appUserId
-          ? (managerLimitsByUserId.get(health.appUserId)?.max_members_per_group ?? null)
-          : null,
+        isManager: accessLevel !== "player",
+        maxGroups: tierAccess.limits.maxGroups,
+        maxMembersPerGroup: tierAccess.limits.maxMembersPerGroup,
         currentGroupsUsed: health.appUserId ? (groupUsageByUserId.get(health.appUserId)?.currentGroupsUsed ?? 0) : 0,
         currentMembersUsed: health.appUserId ? (groupUsageByUserId.get(health.appUserId)?.currentMembersUsed ?? 0) : 0,
         createdAt: value.appUser?.createdAt ?? health.authCreatedAt ?? null,

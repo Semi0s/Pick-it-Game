@@ -192,6 +192,16 @@ create table public.side_picks (
   updated_at timestamptz not null default now()
 );
 
+create table public.tournament_players (
+  id text primary key,
+  full_name text not null,
+  team_id text references public.teams(id) on delete set null,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint tournament_players_full_name_nonempty_chk check (length(trim(full_name)) > 0)
+);
+
 create table public.leaderboard_entries (
   user_id uuid primary key references public.users(id) on delete cascade,
   total_points integer not null default 0,
@@ -273,6 +283,9 @@ create index user_best_third_rankings_user_rank_idx
 create index side_pick_definitions_package_idx
   on public.side_pick_definitions (package_id, sort_order);
 
+create index side_pick_packages_active_lock_idx
+  on public.side_pick_packages (active, lock_at);
+
 create index side_pick_entries_group_user_idx
   on public.side_pick_entries (group_id, user_id);
 
@@ -281,6 +294,15 @@ create index side_pick_scores_group_scope_idx
 
 create index side_pick_scores_user_scope_idx
   on public.side_pick_scores (user_id, scoring_scope);
+
+create index tournament_players_team_idx
+  on public.tournament_players (team_id, active);
+
+create index side_pick_entries_selected_player_idx
+  on public.side_pick_entries (selected_player_id);
+
+create index side_pick_definitions_official_player_idx
+  on public.side_pick_definitions (official_player_id);
 
 create index group_bonus_scores_group_scope_idx
   on public.group_bonus_scores (group_id, scoring_scope);
@@ -735,6 +757,7 @@ create table public.side_pick_packages (
   description text not null default '',
   scoring_scope text not null check (scoring_scope in ('standard', 'group_custom')),
   active boolean not null default true,
+  lock_at timestamptz,
   created_by_user_id uuid references public.users(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -746,11 +769,18 @@ create table public.side_pick_definitions (
   key text not null,
   label text not null,
   description text not null default '',
-  response_kind text not null check (response_kind in ('team', 'text')),
+  response_kind text not null check (response_kind in ('team', 'text', 'player')),
   scoring_scope text not null check (scoring_scope in ('standard', 'group_custom')),
   point_value integer not null default 0,
   sort_order integer not null default 0,
   active boolean not null default true,
+  eligible_team_ids text[] not null default '{}',
+  metadata jsonb not null default '{}'::jsonb,
+  official_player_id text references public.tournament_players(id) on delete set null,
+  official_result_source_url text,
+  official_result_source_label text,
+  official_result_confirmed_at timestamptz,
+  official_result_confirmed_by_user_id uuid references public.users(id) on delete set null,
   created_by_user_id uuid references public.users(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -825,6 +855,7 @@ create table public.side_pick_entries (
   definition_id uuid not null references public.side_pick_definitions(id) on delete cascade,
   user_id uuid not null references public.users(id) on delete cascade,
   selected_team_id text references public.teams(id) on delete set null,
+  selected_player_id text references public.tournament_players(id) on delete set null,
   selected_text text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -2274,6 +2305,10 @@ create trigger set_side_pick_entries_updated_at
 before update on public.side_pick_entries
 for each row execute function public.set_updated_at();
 
+create trigger set_tournament_players_updated_at
+before update on public.tournament_players
+for each row execute function public.set_updated_at();
+
 insert into public.app_settings (key, boolean_value, integer_value, text_value)
 values
   ('daily_winner_enabled', false, null, null),
@@ -2317,6 +2352,7 @@ alter table public.user_best_third_rankings enable row level security;
 alter table public.user_group_projection_sources enable row level security;
 alter table public.side_pick_entries enable row level security;
 alter table public.side_pick_scores enable row level security;
+alter table public.tournament_players enable row level security;
 alter table public.group_bonus_scores enable row level security;
 alter table public.leaderboard_entries enable row level security;
 alter table public.app_settings enable row level security;
@@ -2581,6 +2617,17 @@ create policy "Authenticated users can read side pick scores"
 on public.side_pick_scores for select
 to authenticated
 using (true);
+
+create policy "Authenticated users can read tournament players"
+on public.tournament_players for select
+to authenticated
+using (auth.uid() is not null);
+
+create policy "Admins manage tournament players"
+on public.tournament_players for all
+to authenticated
+using (public.is_admin())
+with check (public.is_admin());
 
 create policy "Authenticated users can read group bonus scores"
 on public.group_bonus_scores for select
@@ -3486,6 +3533,7 @@ revoke all on public.user_best_third_rankings from anon, authenticated, public;
 revoke all on public.user_group_projection_sources from anon, authenticated, public;
 revoke all on public.side_pick_entries from anon, authenticated, public;
 revoke all on public.side_pick_scores from anon, authenticated, public;
+revoke all on public.tournament_players from anon, authenticated, public;
 revoke all on public.group_bonus_scores from anon, authenticated, public;
 revoke all on public.organizations from anon, authenticated, public;
 revoke all on public.organization_branding from anon, authenticated, public;
@@ -3526,6 +3574,7 @@ grant select on public.side_pick_definitions to authenticated;
 grant select on public.group_rulesets to authenticated;
 grant select, insert, update, delete on public.side_pick_entries to authenticated;
 grant select on public.side_pick_scores to authenticated;
+grant select on public.tournament_players to authenticated;
 grant select on public.group_bonus_scores to authenticated;
 grant select, insert, update, delete on public.organizations to authenticated;
 grant select, insert, update, delete on public.organization_branding to authenticated;
@@ -3567,6 +3616,7 @@ grant select, insert, update, delete on public.user_best_third_rankings to servi
 grant select, insert, update, delete on public.user_group_projection_sources to service_role;
 grant select, insert, update, delete on public.side_pick_entries to service_role;
 grant select, insert, update, delete on public.side_pick_scores to service_role;
+grant select, insert, update, delete on public.tournament_players to service_role;
 grant select, insert, update, delete on public.group_bonus_scores to service_role;
 grant select, insert, update, delete on public.organizations to service_role;
 grant select, insert, update, delete on public.organization_branding to service_role;

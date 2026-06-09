@@ -24,6 +24,7 @@
   --app-header-padding-top: calc(env(safe-area-inset-top, 0px) + 14px);
   --app-header-padding-bottom: 8px;
   --app-header-sticky-offset: calc(var(--app-header-padding-top) + var(--app-header-content-height) + var(--app-header-padding-bottom));
+  --app-shell-padding-bottom: calc(5.75rem + env(safe-area-inset-bottom, 0px));
   --app-sticky-rail-gap: 1.5rem;
   --triptych-micro-scale: 1.2;
   --mini-table-micro-scale: 1.2;
@@ -83,6 +84,12 @@
     --app-header-content-height: 50px;
     --app-header-padding-top: calc(env(safe-area-inset-top, 0px) + 30px);
     --app-header-padding-bottom: 16px;
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --app-shell-padding-bottom: 0px;
   }
 }
 
@@ -363,9 +370,14 @@ select {
       padding: 0.5rem 0.25rem;
     }
 
-    .bottom-nav-dock .bottom-nav-dock-item svg {
-      height: 1.5rem;
-      width: 1.5rem;
+    .bottom-nav-dock .bottom-nav-icon {
+      height: 1.8rem;
+      width: 1.8rem;
+    }
+
+    .bottom-nav-dock .bottom-nav-icon-bumped {
+      height: 2.25rem;
+      width: 2.25rem;
     }
 
     .bottom-nav-dock .bottom-nav-dock-label {

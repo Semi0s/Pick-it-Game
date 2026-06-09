@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Flag, Images, Trophy, UsersRound } from "lucide-react";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
+import { SidePicksIcon } from "@/components/SidePicksIcon";
 import type { AdminCounts } from "@/lib/admin-data";
 
 type DashboardAdminPanelProps = {
@@ -11,7 +13,7 @@ type DashboardAdminPanelProps = {
   isSuperAdmin: boolean;
 };
 
-export function DashboardAdminPanel({ adminError }: DashboardAdminPanelProps) {
+export function DashboardAdminPanel({ adminError, isSuperAdmin }: DashboardAdminPanelProps) {
   return (
     <section className="space-y-3 rounded-lg border border-accent-light bg-accent-light/40 p-4">
       <div>
@@ -24,6 +26,7 @@ export function DashboardAdminPanel({ adminError }: DashboardAdminPanelProps) {
         <DashboardAdminButton href="/admin/matches" icon={Trophy} label="Matches" />
         <DashboardAdminButton href="/admin/media" icon={Images} label="Media" />
         <DashboardAdminButton href="/admin/reports" icon={Flag} label="Reports" />
+        {isSuperAdmin ? <DashboardAdminButton href="/admin/side-picks" icon={SidePicksIcon} label="Side Picks" /> : null}
       </div>
     </section>
   );
@@ -35,7 +38,7 @@ function DashboardAdminButton({
   label
 }: {
   href: string;
-  icon: typeof Trophy;
+  icon: (props: { className?: string; "aria-hidden"?: boolean }) => ReactNode;
   label: string;
 }) {
   return (

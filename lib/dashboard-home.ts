@@ -1,3 +1,5 @@
+import { SIDE_PICK_PUBLIC_NAME, formatLastChanceDeadlineLabel } from "./side-picks.ts";
+
 export type DashboardUrgencyTone = "green" | "orange" | "red" | "neutral";
 
 export type DashboardPerformanceSummary = {
@@ -39,7 +41,7 @@ export type DashboardReminderSummary = {
 };
 
 export type DashboardProgressSummary = {
-  phase: "group_stage" | "knockout_stage";
+  phase: "group_stage" | "knockout_stage" | "last_chance";
   label: string;
   completedUnits: number;
   totalUnits: number;
@@ -373,6 +375,14 @@ export function getPredictionProgress(
         now?: number;
         isLive?: boolean;
       }
+    | {
+        phase: "last_chance";
+        completedPickCount: number;
+        totalPickCount: number;
+        deadlineAt: string | null;
+        now?: number;
+        isLocked?: boolean;
+      }
 ): DashboardProgressSummary {
   if (input.phase === "group_stage") {
     const totalGroups = Math.max(input.totalGroups, 0);
@@ -439,6 +449,29 @@ export function getPredictionProgress(
       hasUncommittedChanges: Boolean(input.hasUncommittedChanges),
       lastCommittedAt: input.lastCommittedAt ?? null,
       lastChangedAt: input.lastChangedAt ?? null
+    };
+  }
+
+  if (input.phase === "last_chance") {
+    const totalUnits = Math.max(input.totalPickCount, 0);
+    const completedUnits = Math.min(Math.max(input.completedPickCount, 0), totalUnits);
+    const isComplete = totalUnits > 0 && completedUnits >= totalUnits;
+    const isLocked =
+      Boolean(input.isLocked) ||
+      Boolean(input.deadlineAt && new Date(input.deadlineAt).getTime() <= (input.now ?? Date.now()));
+
+    return {
+      phase: "last_chance",
+      label: SIDE_PICK_PUBLIC_NAME,
+      completedUnits,
+      totalUnits,
+      headline: isComplete ? `${SIDE_PICK_PUBLIC_NAME} saved.` : `Make your ${SIDE_PICK_PUBLIC_NAME}.`,
+      detail: "Make extra tournament predictions.",
+      deadlineAt: input.deadlineAt,
+      deadlineLabel: isLocked ? "Locked" : formatLastChanceDeadlineLabel(input.deadlineAt),
+      urgencyTone: getDeadlineUrgency(input.deadlineAt, input.now),
+      isComplete,
+      isLocked
     };
   }
 

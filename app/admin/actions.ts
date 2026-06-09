@@ -682,6 +682,11 @@ export type DeactivateOrganizerAccessInput = {
 };
 
 export type DeactivateOrganizerAccessResult = ResetUserAccessResult;
+export type UpdateUserCommercialTierInput = {
+  userId: string;
+  targetAccessLevel: AccessLevel;
+};
+export type UpdateUserCommercialTierResult = ResetUserAccessResult;
 
 export type FetchAdminPlayerHealthResult =
   | {
@@ -2005,6 +2010,152 @@ export async function getUserDemotionImpactAction(
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not inspect the impact of that demotion."
+    };
+  }
+}
+
+export async function updateUserCommercialTierAction(
+  input: UpdateUserCommercialTierInput
+): Promise<UpdateUserCommercialTierResult> {
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  const trimmedUserId = input.userId.trim();
+  const targetAccessLevel = normalizeAccessLevel(input.targetAccessLevel);
+
+  if (!trimmedUserId) {
+    return { ok: false, message: "A valid user is required." };
+  }
+
+  if (!targetAccessLevel || targetAccessLevel === "super_admin") {
+    return { ok: false, message: "Choose a commercial tier. Super Admin is not assigned from the Users quick tier control." };
+  }
+
+  const targetPlanTier = normalizeCommercialTier(targetAccessLevel);
+  if (!targetPlanTier) {
+    return { ok: false, message: "Choose a valid commercial tier." };
+  }
+
+  const adminSupabase = createAdminClient();
+
+  try {
+    const { data: existingUser, error: existingUserError } = await adminSupabase
+      .from("users")
+      .select("id,email,name,preferred_language,role,plan_tier")
+      .eq("id", trimmedUserId)
+      .maybeSingle();
+
+    if (existingUserError) {
+      return { ok: false, message: existingUserError.message };
+    }
+
+    if (!existingUser) {
+      return { ok: false, message: "That user was not found." };
+    }
+
+    const existingUserRow = existingUser as {
+      id: string;
+      email?: string | null;
+      name?: string | null;
+      preferred_language?: string | null;
+      role?: UserRole | null;
+      plan_tier?: string | null;
+    };
+    const { data: existingInvite, error: inviteLookupError } = existingUserRow.email
+      ? await fetchInviteLookup(adminSupabase, existingUserRow.email)
+      : { data: null, error: null };
+
+    if (inviteLookupError) {
+      return { ok: false, message: inviteLookupError.message };
+    }
+
+    const currentAccessLevel =
+      normalizeAccessLevel(existingUserRow.role === "admin" ? "super_admin" : existingUserRow.plan_tier ?? "player") ?? "player";
+
+    if (existingUserRow.id === adminCheck.userId && currentAccessLevel !== targetAccessLevel) {
+      return { ok: false, message: "Use a different super admin account before changing your own access level here." };
+    }
+
+    if (currentAccessLevel === "super_admin") {
+      return { ok: false, message: "Super Admin access cannot be changed from the Users quick tier control." };
+    }
+
+    if (compareAccessLevels(targetAccessLevel, currentAccessLevel) < 0) {
+      return {
+        ok: false,
+        message: `Use the Demote / Remove Access review before lowering ${existingUserRow.email ?? "this user"} from ${getAccessLevelDisplayLabel(currentAccessLevel)} to ${getAccessLevelDisplayLabel(targetAccessLevel)}.`
+      };
+    }
+
+    if (currentAccessLevel === targetAccessLevel) {
+      return { ok: true, message: `${existingUserRow.email ?? "This user"} already has ${getAccessLevelDisplayLabel(targetAccessLevel)} access.` };
+    }
+
+    const { error: updateUserError } = await adminSupabase
+      .from("users")
+      .update({
+        role: "player" as UserRole,
+        plan_tier: targetPlanTier,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", existingUserRow.id);
+
+    if (updateUserError) {
+      return { ok: false, message: updateUserError.message };
+    }
+
+    if (existingUserRow.email) {
+      const inviteUpsertResult = await upsertInviteRow(adminSupabase, {
+        email: existingUserRow.email,
+        displayName: existingUserRow.name?.trim() || existingUserRow.email,
+        language: normalizeLanguage(existingUserRow.preferred_language),
+        role: "player",
+        planTier: targetPlanTier,
+        status: "accepted",
+        lastError: null,
+        preserveAcceptedAt: (existingInvite as InviteLookupRow | null)?.accepted_at ?? new Date().toISOString()
+      });
+
+      if (!inviteUpsertResult.ok) {
+        return { ok: false, message: inviteUpsertResult.message };
+      }
+    }
+
+    await writeAdminQuickTierChangeAuditLog(adminSupabase, {
+      actorUserId: adminCheck.userId,
+      targetUserId: existingUserRow.id,
+      targetEmail: existingUserRow.email ?? "unknown",
+      previousRole: (existingUserRow.role ?? "player") as UserRole,
+      previousPlanTier: normalizeCommercialTier(existingUserRow.plan_tier ?? null),
+      previousAccessLevel: currentAccessLevel,
+      newPlanTier: targetPlanTier,
+      newAccessLevel: targetAccessLevel
+    });
+
+    console.info("[admin-player-quick-tier-updated]", {
+      actorUserId: adminCheck.userId,
+      targetUserId: existingUserRow.id,
+      email: existingUserRow.email,
+      previousAccessLevel: currentAccessLevel,
+      nextAccessLevel: targetAccessLevel
+    });
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/invites");
+    revalidatePath("/admin/players");
+    revalidatePath("/my-groups");
+    revalidatePath("/dashboard");
+
+    return {
+      ok: true,
+      message: `${existingUserRow.name?.trim() || existingUserRow.email || "User"} is now ${getAccessLevelDisplayLabel(targetAccessLevel)}.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update that user's tier."
     };
   }
 }
@@ -6999,6 +7150,51 @@ async function writeAdminAccessChangeAuditLog(
     console.warn("Could not write admin access change audit log because the table is missing.", {
       targetUserId: input.targetUserId,
       action: input.action
+    });
+    return;
+  }
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function writeAdminQuickTierChangeAuditLog(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  input: {
+    actorUserId: string;
+    targetUserId: string;
+    targetEmail: string;
+    previousRole: UserRole;
+    previousPlanTier: CommercialTier | null;
+    previousAccessLevel: AccessLevel;
+    newPlanTier: CommercialTier;
+    newAccessLevel: AccessLevel;
+  }
+) {
+  const { error } = await adminSupabase.from("admin_access_change_audit_log").insert({
+    actor_user_id: input.actorUserId,
+    target_user_id: input.targetUserId,
+    target_email: input.targetEmail,
+    action: "quick_tier_change",
+    previous_role: input.previousRole,
+    previous_plan_tier: input.previousPlanTier,
+    previous_access_level: input.previousAccessLevel,
+    new_role: "player" as UserRole,
+    new_plan_tier: input.newPlanTier,
+    new_access_level: input.newAccessLevel,
+    impact_summary: {
+      source: "admin_users_quick_tier_control",
+      note: "Upward commercial tier change. Downward changes use impact-checked demotion workflow."
+    },
+    cleanup_actions_taken: [],
+    cleanup_counts: {},
+    reason: "Super Admin quick tier change from Users tab."
+  });
+
+  if (isMissingRelationError(error?.message ?? "", "public.admin_access_change_audit_log")) {
+    console.warn("Could not write admin quick tier change audit log because the table is missing.", {
+      targetUserId: input.targetUserId
     });
     return;
   }

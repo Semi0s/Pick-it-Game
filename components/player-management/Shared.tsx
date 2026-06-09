@@ -678,22 +678,22 @@ export function ManagementToolbar({
   className?: string;
 }) {
   return (
-    <div className={`ui-card grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_220px_auto] md:items-end ${className ?? ""}`}>
-      <label className="block">
-        <span className="text-sm font-bold text-gray-800">Search</span>
+    <div className={`ui-card grid gap-2 p-3 sm:grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[220px_auto] lg:items-end ${className ?? ""}`}>
+      <label className="block sm:col-span-2">
+        <span className="text-xs font-bold uppercase tracking-wide text-gray-700">Search</span>
         <input
           value={searchValue}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder="Search by name or email"
-          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+          className="mt-1.5 w-full rounded-md border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light sm:text-base"
         />
       </label>
-      <label className="block">
-        <span className="text-sm font-bold text-gray-800">Filter</span>
+      <label className="min-w-0">
+        <span className="text-xs font-bold uppercase tracking-wide text-gray-700">Filter</span>
         <select
           value={filterValue}
           onChange={(event) => onFilterChange(event.target.value)}
-          className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+          className="mt-1.5 w-full rounded-md border border-gray-300 bg-white px-2.5 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-light sm:px-3 sm:text-base"
         >
           {filters.map((filter) => (
             <option key={filter.value} value={filter.value}>
@@ -702,7 +702,7 @@ export function ManagementToolbar({
           ))}
         </select>
       </label>
-      <div className="md:justify-self-end">{trailing}</div>
+      {trailing ? <div className="min-w-0 sm:justify-self-end">{trailing}</div> : null}
     </div>
   );
 }

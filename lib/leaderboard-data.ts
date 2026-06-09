@@ -122,13 +122,14 @@ export type LeaderboardListItem = UserProfile & {
   groupPhasePoints?: number | null;
   knockoutPhasePoints?: number | null;
   globalTopTenPoints?: number | null;
+  sidePickPoints?: number | null;
   groupStrategyPoints?: number | null;
   knockoutGlobalPoints?: number | null;
   globalChallengePoints?: number | null;
 };
 
 export type LeaderboardSwitcherView = "global" | "my_groups" | "managed_groups" | "groups" | "teams" | "managers";
-export type LeaderboardPhase = "group_phase" | "knockout_phase" | "global_top10";
+export type LeaderboardPhase = "group_phase" | "knockout_phase" | "side_picks" | "global_top10";
 
 export type LeaderboardSwitcherOption = {
   id: string;
@@ -688,7 +689,9 @@ async function fetchGlobalLeaderboardRows(
           ? groupPhasePoints
           : phase === "knockout_phase"
             ? knockoutPhasePoints
-            : groupPhasePoints + knockoutPhasePoints + standardSidePickPoints;
+            : phase === "side_picks"
+              ? standardSidePickPoints
+              : groupPhasePoints + knockoutPhasePoints + standardSidePickPoints;
       return {
         user_id: user.id,
         total_points: totalPoints
@@ -718,6 +721,7 @@ async function fetchGlobalLeaderboardRows(
         groupCustomPoints: 0,
         groupPhasePoints: groupPhaseSummary?.points ?? 0,
         knockoutPhasePoints,
+        sidePickPoints: standardSidePickPoints,
         globalTopTenPoints: (groupPhaseSummary?.points ?? 0) + knockoutPhasePoints + standardSidePickPoints,
         groupStrategyPoints: summary?.groupStrategy.points ?? null,
         knockoutGlobalPoints: summary?.knockout.points ?? null,
@@ -776,7 +780,9 @@ async function fetchGroupLeaderboardRows(
           ? groupPhasePoints
           : phase === "knockout_phase"
             ? knockoutPhasePoints
-            : groupPhasePoints + knockoutPhasePoints + standardSidePickPoints;
+            : phase === "side_picks"
+              ? standardSidePickPoints
+              : groupPhasePoints + knockoutPhasePoints + standardSidePickPoints;
       return {
         user_id: userId,
         standard_points: phasePoints,
@@ -825,6 +831,7 @@ async function fetchGroupLeaderboardRows(
         groupCustomPoints: entry.group_custom_points,
         groupPhasePoints: groupPhaseSummaries.get(entry.user_id)?.points ?? 0,
         knockoutPhasePoints: knockoutPointsByUserId.get(entry.user_id) ?? 0,
+        sidePickPoints: standardSidePickTotals.get(entry.user_id) ?? 0,
         globalTopTenPoints:
           (groupPhaseSummaries.get(entry.user_id)?.points ?? 0) +
           (knockoutPointsByUserId.get(entry.user_id) ?? 0) +
@@ -1485,7 +1492,7 @@ async function fetchKnockoutPointsByUserIds(
 }
 
 function normalizeLeaderboardPhase(value?: string | null): LeaderboardPhase {
-  return value === "global_top10" ? value : "group_phase";
+  return value === "global_top10" || value === "side_picks" ? value : "group_phase";
 }
 
 function resolveAllowedView(
