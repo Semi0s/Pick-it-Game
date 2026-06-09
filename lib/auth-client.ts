@@ -165,15 +165,6 @@ export async function authenticateWithEmail(
   password: string,
   options?: AuthOptions
 ): Promise<AuthResult> {
-  if (
-    mode === "signup" &&
-    options?.flow !== "invite" &&
-    !options?.promoManagerCode?.trim() &&
-    !options?.accessCode?.trim()
-  ) {
-    return { ok: false, message: "Enter the access code from your group organizer to create your account." };
-  }
-
   if (!hasSupabaseConfig()) {
     const result = mode === "login" ? demoSignIn(email, password) : demoSignUp(email, password);
     return result.ok ? { ok: true, user: result.user } : result;
@@ -205,7 +196,8 @@ export async function authenticateWithEmail(
           signupRedirectUrl,
           options?.accessCode,
           options?.promoManagerCode,
-          options?.language
+          options?.language,
+          options?.flow === "invite"
         );
 
   if (response.error) {
@@ -246,7 +238,7 @@ export async function authenticateWithEmail(
     return {
       ok: true,
       needsEmailConfirmation: true,
-      message: "Check your email to confirm your account, then sign in."
+      message: "Check your email to confirm your account. Once confirmed, you’ll join FIFA 2026 Predictions as a Player."
     };
   }
 
@@ -1638,7 +1630,8 @@ async function signUpWithInviteContext(
   signupRedirectUrl: string,
   accessCode?: string,
   promoManagerCode?: string,
-  language?: string
+  language?: string,
+  isInviteFlow = false
 ) {
   const trimmedAccessCode = accessCode?.trim() ?? "";
   const trimmedPromoManagerCode = promoManagerCode?.trim() ?? "";
@@ -1655,6 +1648,29 @@ async function signUpWithInviteContext(
       data: { user: null, session: null },
       error: { message: "Use either an access code or a promo manager invite code, not both." }
     };
+  }
+
+  if (!trimmedAccessCode && !trimmedPromoManagerCode && !isInviteFlow) {
+    const publicSignupResponse = await fetch("/api/auth/public-signup-status", {
+      method: "GET",
+      cache: "no-store"
+    });
+
+    const publicSignupStatus = await parseJsonResponse<
+      | { ok: true; enabled: boolean; defaultGroupName?: string; defaultTier?: string; message?: string }
+      | { ok: false; enabled?: boolean; message?: string }
+    >(publicSignupResponse, "Could not verify free Player signup right now.", "public Player signup status");
+
+    if (!publicSignupResponse.ok || !publicSignupStatus.ok || !publicSignupStatus.enabled) {
+      return {
+        data: { user: null, session: null },
+        error: {
+          message: publicSignupStatus.ok
+            ? publicSignupStatus.message ?? "Public Player signup is temporarily disabled."
+            : publicSignupStatus.message ?? "Could not verify free Player signup right now."
+        }
+      };
+    }
   }
 
   if (trimmedAccessCode) {

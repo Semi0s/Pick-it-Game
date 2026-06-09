@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getEffectiveGroupSeatLimit } from "@/lib/group-tier-limits";
 import { ensureUserCanJoinAnotherGroup } from "@/lib/group-membership-limits";
 import { normalizeGroupInviteIntent, type GroupInviteIntent } from "@/lib/group-management";
+import { ensurePublicPlayerDefaultGroupMembership } from "@/lib/public-player-signup";
 
 type AuthUserForReconciliation = {
   id: string;
@@ -51,6 +52,7 @@ export type InviteReconciliationResult = {
   profileCreated: boolean;
   appInviteAccepted: boolean;
   groupInvitesAccepted: number;
+  publicSignupDefaultJoined: boolean;
   notes: string[];
 };
 
@@ -65,6 +67,7 @@ export async function reconcileInvitesForAuthUser(user: AuthUserForReconciliatio
       profileCreated: false,
       appInviteAccepted: false,
       groupInvitesAccepted: 0,
+      publicSignupDefaultJoined: false,
       notes
     };
   }
@@ -77,6 +80,7 @@ export async function reconcileInvitesForAuthUser(user: AuthUserForReconciliatio
       profileCreated: false,
       appInviteAccepted: false,
       groupInvitesAccepted: 0,
+      publicSignupDefaultJoined: false,
       notes
     };
   }
@@ -236,7 +240,8 @@ export async function reconcileInvitesForAuthUser(user: AuthUserForReconciliatio
       const { error: membershipInsertError } = await adminSupabase.from("group_members").insert({
         group_id: invite.group_id,
         user_id: user.id,
-        role: "member"
+        role: "member",
+        join_source: "invite_link"
       });
 
       if (membershipInsertError) {
@@ -264,12 +269,27 @@ export async function reconcileInvitesForAuthUser(user: AuthUserForReconciliatio
     notes.push(`Accepted ${groupInvitesAccepted} pending group invite${groupInvitesAccepted === 1 ? "" : "s"}.`);
   }
 
+  const { count: accessCodeRedemptionCount, error: accessCodeRedemptionError } = await adminSupabase
+    .from("access_code_redemptions")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id);
+
+  if (accessCodeRedemptionError) {
+    throw new Error(accessCodeRedemptionError.message);
+  }
+
+  let publicSignupDefaultJoined = false;
+  if (!appInvite && groupInvitesAccepted === 0 && (accessCodeRedemptionCount ?? 0) === 0) {
+    publicSignupDefaultJoined = await ensurePublicPlayerDefaultGroupMembership(adminSupabase, user.id, notes);
+  }
+
   return {
     ok: true,
     normalizedEmail,
     profileCreated,
     appInviteAccepted,
     groupInvitesAccepted,
+    publicSignupDefaultJoined,
     notes
   };
 }

@@ -2818,8 +2818,23 @@ function formatTeamToken(team: BracketTeamOption | null): MatchContextChip | nul
 
 function buildMatchContextChips(match: KnockoutBracketMatchView, language: SupportedLanguage) {
   if (match.viewMode === "projected") {
+    const projectedHomeSourceLabel = match.projectedHomeSourceLabel ?? match.homeSourceLabel;
+    const projectedAwaySourceLabel = match.projectedAwaySourceLabel ?? match.awaySourceLabel;
+    const projectedHomeSourceChip = projectedHomeSourceLabel
+      ? formatRoundOf32PlaceholderLabel(projectedHomeSourceLabel, language)
+      : null;
+    const projectedAwaySourceChip = projectedAwaySourceLabel
+      ? formatRoundOf32PlaceholderLabel(projectedAwaySourceLabel, language)
+      : null;
+
+    if (match.stage === "r32") {
+      return {
+        left: projectedHomeSourceChip,
+        right: projectedAwaySourceChip
+      };
+    }
+
     const shouldHideProjectedReferences =
-      match.stage !== "r32" &&
       match.status !== "final" &&
       Boolean(match.seededHomeTeam && match.seededAwayTeam);
 
@@ -2827,11 +2842,11 @@ function buildMatchContextChips(match: KnockoutBracketMatchView, language: Suppo
       left: shouldHideProjectedReferences
         ? null
         : formatTeamToken(match.seededHomeTeam) ??
-          (match.homeSourceLabel ? formatRoundOf32PlaceholderLabel(match.homeSourceLabel, language) : null),
+          projectedHomeSourceChip,
       right: shouldHideProjectedReferences
         ? null
         : formatTeamToken(match.seededAwayTeam) ??
-          (match.awaySourceLabel ? formatRoundOf32PlaceholderLabel(match.awaySourceLabel, language) : null)
+          projectedAwaySourceChip
     };
   }
 

@@ -4,8 +4,11 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import {
+  PUBLIC_PLAYER_SIGNUP_ENABLED_KEY,
+  fetchBooleanAppSetting,
   fetchIntegerAppSetting,
   fetchLeaderboardFeatureSettings,
+  updateBooleanAppSetting,
   updateIntegerAppSetting,
   updateLeaderboardFeatureSetting,
   type LeaderboardFeatureSettingKey,
@@ -703,6 +706,16 @@ export type FetchLeaderboardFeatureSettingsResult =
       message: string;
     };
 export type UpdateLeaderboardFeatureSettingResult = ResetUserAccessResult;
+export type FetchPublicSignupSettingResult =
+  | {
+      ok: true;
+      enabled: boolean;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+export type UpdatePublicSignupSettingResult = ResetUserAccessResult;
 export type FetchRequiredLegalDocumentResult =
   | {
       ok: true;
@@ -2205,6 +2218,45 @@ export async function updateLeaderboardFeatureSettingAction(
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not update leaderboard feature settings."
+    };
+  }
+}
+
+export async function fetchPublicSignupSettingAction(): Promise<FetchPublicSignupSettingResult> {
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  try {
+    const enabled = await fetchBooleanAppSetting(PUBLIC_PLAYER_SIGNUP_ENABLED_KEY, true);
+    return { ok: true, enabled };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load public signup settings."
+    };
+  }
+}
+
+export async function updatePublicSignupSettingAction(enabled: boolean): Promise<UpdatePublicSignupSettingResult> {
+  const adminCheck = await assertCurrentUserIsSuperAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  try {
+    await updateBooleanAppSetting(PUBLIC_PLAYER_SIGNUP_ENABLED_KEY, enabled);
+    revalidatePath("/login");
+    revalidatePath("/admin/players");
+    return {
+      ok: true,
+      message: `Public Player signup ${enabled ? "enabled" : "disabled"}.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update public signup settings."
     };
   }
 }

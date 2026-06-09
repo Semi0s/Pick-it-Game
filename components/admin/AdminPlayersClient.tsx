@@ -7,6 +7,7 @@ import {
   deleteUserAndStartOverAction,
   fetchAdminPlayerHealthAction,
   fetchLeaderboardFeatureSettingsAction,
+  fetchPublicSignupSettingAction,
   getUserDemotionImpactAction,
   fetchRequiredLegalDocumentAction,
   forceLegalReacceptanceAction,
@@ -15,6 +16,7 @@ import {
   resetOnboardingStateAction,
   resetUserAccess,
   updateLeaderboardFeatureSettingAction,
+  updatePublicSignupSettingAction,
   updateUserDisplayNameAction,
   upsertManagerLimitsAction,
   type DemotionCleanupOption,
@@ -72,6 +74,7 @@ type AdminManagementTab = "setup" | "users" | "groups";
 export function AdminPlayersClient() {
   const [players, setPlayers] = useState<AdminPlayerHealthRow[]>([]);
   const [leaderboardSettings, setLeaderboardSettings] = useState<LeaderboardFeatureSettings | null>(null);
+  const [publicSignupEnabled, setPublicSignupEnabled] = useState<boolean | null>(null);
   const [legalDocument, setLegalDocument] = useState<LegalDocument | null>(null);
   const [systemReadiness, setSystemReadiness] = useState<SystemReadinessReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -136,6 +139,16 @@ export function AdminPlayersClient() {
     setLeaderboardSettings(result.settings);
   }
 
+  async function loadPublicSignupSetting() {
+    const result = await fetchPublicSignupSettingAction();
+    if (!result.ok) {
+      setMessage({ tone: "error", text: result.message });
+      return;
+    }
+
+    setPublicSignupEnabled(result.enabled);
+  }
+
   const loadLegalDocument = useCallback(async (language = legalEditor.language) => {
     const result = await fetchRequiredLegalDocumentAction(legalEditor.documentType, language);
     if (!result.ok) {
@@ -174,7 +187,7 @@ export function AdminPlayersClient() {
   }
 
   useEffect(() => {
-    Promise.all([loadPlayers(), loadLeaderboardSettings(), loadLegalDocument(), loadSystemReadiness()]).finally(() =>
+    Promise.all([loadPlayers(), loadLeaderboardSettings(), loadPublicSignupSetting(), loadLegalDocument(), loadSystemReadiness()]).finally(() =>
       setIsLoading(false)
     );
   }, [loadLegalDocument]);
@@ -234,7 +247,7 @@ export function AdminPlayersClient() {
   async function refreshPlayers() {
     setMessage(null);
     setIsLoading(true);
-    await Promise.all([loadPlayers(), loadLeaderboardSettings(), loadLegalDocument(), loadSystemReadiness()]);
+    await Promise.all([loadPlayers(), loadLeaderboardSettings(), loadPublicSignupSetting(), loadLegalDocument(), loadSystemReadiness()]);
     setIsLoading(false);
   }
 
@@ -495,6 +508,46 @@ export function AdminPlayersClient() {
               >
                 {activeActionKey === "force-legal-reacceptance" ? "Updating..." : "Require everyone to accept this version"}
               </ActionButton>
+            </div>
+          </AdminToolCard>
+
+          <AdminToolCard
+            title="Public Player signup"
+            storageKey="admin-players:public-player-signup:v1"
+            badge={<ManagementBadge label="signup mode" tone={publicSignupEnabled ? "success" : "warning"} />}
+          >
+            <div className="rounded-lg border border-gray-200 bg-white p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-base font-black text-gray-950">Free Player accounts</p>
+                  <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">
+                    When enabled, verified no-code signups create Player accounts and join FIFA 2026 Predictions. Invite links,
+                    Super Links, and access codes still take priority for special groups or tiers.
+                  </p>
+                  <p className="mt-2 text-xs font-bold uppercase tracking-[0.14em] text-gray-500">
+                    Default tier: Player · Default group: FIFA 2026 Predictions
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextEnabled = !(publicSignupEnabled ?? true);
+                    void withAction("public-player-signup", async () => {
+                      const result = await updatePublicSignupSettingAction(nextEnabled);
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadPublicSignupSetting();
+                      }
+                    });
+                  }}
+                  disabled={activeActionKey === "public-player-signup" || publicSignupEnabled === null}
+                  className={`rounded-md px-3 py-2 text-sm font-bold ${
+                    publicSignupEnabled ? "bg-accent text-white" : "bg-gray-100 text-gray-700"
+                  } disabled:opacity-60`}
+                >
+                  {activeActionKey === "public-player-signup" ? "Saving..." : publicSignupEnabled ? "On" : "Off"}
+                </button>
+              </div>
             </div>
           </AdminToolCard>
 
