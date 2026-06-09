@@ -17,6 +17,7 @@ import {
   type ProjectedMatchScoreSource
 } from "@/lib/knockout-seeding";
 import {
+  buildCanonicalRoundOf32SlotLabelMap,
   buildProjectedRoundOf32SlotLabelMap,
   type ProjectedRoundOf32SlotLabels
 } from "@/lib/projected-r32-slot-labels";
@@ -1558,6 +1559,7 @@ function buildKnockoutBracketStages(
   const mode = options.mode ?? "official";
   const stagesById = new Map<CanonicalKnockoutStage, KnockoutBracketMatchView[]>();
   const previousMatchesByNextMatchId = buildPreviousMatchesByNextMatchId(matches);
+  const canonicalRoundOf32SlotLabelByMatchId = buildCanonicalRoundOf32SlotLabelMap(matches);
 
   for (const match of matches) {
     const stage = normalizeKnockoutStage(match.stage);
@@ -1608,6 +1610,7 @@ function buildKnockoutBracketStages(
     const projectedSlotLabels = mode === "projected" && stage === "r32"
       ? options.projectedSlotLabelByMatchId?.get(match.id) ?? null
       : null;
+    const canonicalRoundOf32SlotLabels = stage === "r32" ? canonicalRoundOf32SlotLabelByMatchId.get(match.id) ?? null : null;
     const matchIsLocked = isLocked || isKnockoutMatchLocked(match);
 
     const currentStageMatches = stagesById.get(stage) ?? [];
@@ -1622,8 +1625,8 @@ function buildKnockoutBracketStages(
       seededAwayTeam: match.away_team_id ? teamsById.get(match.away_team_id) ?? null : null,
       homeSourceMatchId: homeSource?.id ?? null,
       awaySourceMatchId: awaySource?.id ?? null,
-      homeSourceLabel: getMatchSlotLabel(match.home_source, homeSource),
-      awaySourceLabel: getMatchSlotLabel(match.away_source, awaySource),
+      homeSourceLabel: canonicalRoundOf32SlotLabels?.home ?? getMatchSlotLabel(match.home_source, homeSource),
+      awaySourceLabel: canonicalRoundOf32SlotLabels?.away ?? getMatchSlotLabel(match.away_source, awaySource),
       projectedHomeSourceLabel: projectedSlotLabels?.home ?? null,
       projectedAwaySourceLabel: projectedSlotLabels?.away ?? null,
       homeTeam: availableTeams.homeTeam,
