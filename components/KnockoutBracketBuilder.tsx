@@ -1018,10 +1018,16 @@ function ProjectedAndOfficialRoundView({
     };
   }, [pairs, refreshMeasurements]);
 
-  const snapStageBias = (currentBias: number) => {
-    const snappedRatio = snapTargets.reduce((closest, candidate) =>
-      Math.abs(candidate - currentBias) < Math.abs(closest - currentBias) ? candidate : closest
-    );
+  const snapStageBias = (currentBias: number, startBias?: number) => {
+    const directionalSnapThreshold = 0.085;
+    const snappedRatio =
+      typeof startBias === "number" && Math.abs(currentBias - startBias) >= directionalSnapThreshold
+        ? currentBias > startBias
+          ? 1
+          : 0
+        : snapTargets.reduce((closest, candidate) =>
+            Math.abs(candidate - currentBias) < Math.abs(closest - currentBias) ? candidate : closest
+          );
     setCommittedBias(snappedRatio);
     setCompareViewState({
       hasInteracted: true,
@@ -1061,10 +1067,18 @@ function ProjectedAndOfficialRoundView({
     const deltaX = currentX - start.x;
     const deltaY = currentY - start.y;
     if (!gestureIntentRef.current) {
-      if (Math.abs(deltaX) < 4 && Math.abs(deltaY) < 4) {
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+      if (absX < 3 && absY < 3) {
         return { intent: null, active: true as const };
       }
-      gestureIntentRef.current = Math.abs(deltaX) > Math.abs(deltaY) ? "horizontal" : "vertical";
+      if (absX >= 5 && absX > absY * 0.7) {
+        gestureIntentRef.current = "horizontal";
+      } else if (absY >= 6 && absY > absX * 1.15) {
+        gestureIntentRef.current = "vertical";
+      } else {
+        return { intent: null, active: true as const };
+      }
     }
 
     if (gestureIntentRef.current !== "horizontal") {
@@ -1101,7 +1115,7 @@ function ProjectedAndOfficialRoundView({
       return;
     }
 
-    snapStageBias(dragBias ?? start.bias);
+    snapStageBias(dragBias ?? start.bias, start.bias);
   }
 
   function handlePointerStart(slotKey: string, event: React.PointerEvent<HTMLDivElement>) {

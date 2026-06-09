@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Flag } from "lucide-react";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { ReportBlockDialog, type ReportTargetOption } from "@/components/ReportBlockDialog";
@@ -104,7 +103,7 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
           </div>
         </div>
         {profile ? (
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-4">
             <Link
               href="/leaderboard"
               className="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 sm:w-auto"
@@ -115,10 +114,9 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
               <button
                 type="button"
                 onClick={() => setIsReportDialogOpen(true)}
-                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-bold text-gray-800 transition hover:border-accent hover:bg-accent-light hover:text-accent-dark sm:w-auto"
+                className="mt-3 block text-xs font-bold text-gray-500 underline-offset-2 transition hover:text-accent-dark hover:underline"
               >
-                <Flag className="h-4 w-4" aria-hidden />
-                Report / block
+                Report or block this player
               </button>
             ) : null}
           </div>

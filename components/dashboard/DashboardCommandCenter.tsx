@@ -315,8 +315,8 @@ function ProgressPanel({
         : progress.label;
   const shouldShowScoringLens = Boolean(scoringLens);
   const isScoringLensOpen = leftPanelViewState.isScoringLensOpen;
-  const isShowingScoringLens = isScoringLensOpen && Boolean(scoringLens);
-  const contentViewportBottomClass = shouldShowScoringLens ? "bottom-7" : "bottom-0";
+  const isShowingScoringLens = isScoringLensOpen && shouldShowScoringLens;
+  const contentViewportBottomClass = shouldShowScoringLens && !isLastChanceProgress ? "bottom-7" : "bottom-0";
 
   useEffect(() => {
     return () => {
@@ -386,7 +386,7 @@ function ProgressPanel({
       theme={theme}
       className="transition-colors hover:border-accent/35 hover:shadow-[0_12px_26px_rgba(38,28,20,0.08),0_1px_2px_rgba(38,28,20,0.04)]"
     >
-      {!isShowingScoringLens ? (
+      {!isShowingScoringLens && !isLastChanceProgress ? (
         <div className="absolute right-[-8px] top-[-8px] z-20">
           <UrgencyIconChip tone={tone} isComplete={isCompleteForDisplay} language={language} theme={theme} />
         </div>
@@ -464,18 +464,34 @@ function LastChanceTriptychContent({
   const total = Math.max(progress.totalUnits, 6);
   const completed = Math.min(Math.max(progress.completedUnits, 0), total);
   const dotCount = Math.max(total, 8);
-  const dotRadius = 27;
+  const dotRadius = 33;
 
   return (
     <div className="flex h-full min-w-0 flex-col items-center justify-center gap-1 px-1 py-2 text-center">
       <p className={`max-w-full truncate text-[8px] font-black uppercase tracking-[0.1em] ${getPrimaryTextClasses(theme)}`}>
         SIDE PICKS
       </p>
-      <div className="relative my-1 h-[4.4rem] w-[4.4rem]" aria-label={`${completed} of ${dotCount} Side Picks complete`}>
-        <div className={`absolute inset-[1.05rem] flex items-center justify-center rounded-full border ${
-          theme === "dark" ? "border-white/15 bg-white/5" : "border-gray-200 bg-white"
-        }`}>
-          <SidePicksIcon className={`h-7 w-7 ${theme === "dark" ? "text-white" : "text-accent-dark"}`} />
+      <div className="relative my-1 h-[5.2rem] w-[5.2rem]" aria-label={`${completed} of ${dotCount} Side Picks complete`}>
+        <svg
+          aria-hidden
+          viewBox="0 0 100 100"
+          className={`absolute inset-0 ${
+            theme === "dark" ? "text-white/60" : "text-gray-400/80"
+          }`}
+        >
+          <circle
+            cx="50"
+            cy="50"
+            r="39"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1"
+            strokeDasharray="1.2 5"
+            strokeLinecap="round"
+          />
+        </svg>
+        <div className="absolute inset-[0.72rem] flex items-center justify-center">
+          <SidePicksIcon className="h-10 w-10 text-[color:var(--warning)]" />
         </div>
         {Array.from({ length: dotCount }).map((_, index) => {
           const isFilled = index < completed;
@@ -487,7 +503,7 @@ function LastChanceTriptychContent({
                 left: `calc(50% + ${Math.cos((index / dotCount) * Math.PI * 2 - Math.PI / 2) * dotRadius}px)`,
                 top: `calc(50% + ${Math.sin((index / dotCount) * Math.PI * 2 - Math.PI / 2) * dotRadius}px)`
               }}
-              className={`h-2.5 w-2.5 rounded-full border ${
+              className={`absolute z-[1] h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full border ${
                 isFilled
                   ? theme === "dark"
                     ? "border-[color:var(--triptych-dark-accent-text)] bg-[color:var(--triptych-dark-accent-text)]"
@@ -495,12 +511,12 @@ function LastChanceTriptychContent({
                   : theme === "dark"
                     ? "border-white/35 bg-white/5"
                     : "border-gray-300 bg-white"
-              } absolute -translate-x-1/2 -translate-y-1/2`}
+              }`}
             />
           );
         })}
       </div>
-      <p className={`triptych-micro-copy max-w-full truncate font-black uppercase tracking-[0.1em] ${getToneMetaTextClasses(progress.urgencyTone, progress.isComplete, progress.isLocked, theme)}`}>
+      <p className={`triptych-micro-copy max-w-full truncate font-black uppercase tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
         {progress.isLocked ? "Locked" : progress.deadlineLabel}
       </p>
     </div>
@@ -845,7 +861,7 @@ function TriptychPanelViewCue({
 }) {
   return (
     <div
-      className={`absolute inset-x-1 bottom-[-3px] z-20 flex items-end justify-center text-[12px] leading-none ${theme === "dark" ? "text-white/40" : "text-slate-400/80"}`}
+      className={`absolute inset-x-1 bottom-[-6px] z-20 flex items-end justify-center text-[15px] leading-none ${theme === "dark" ? "text-white/50" : "text-slate-500/90"}`}
     >
       <button
         type="button"
@@ -855,12 +871,12 @@ function TriptychPanelViewCue({
         onClick={onToggle}
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
-        className="flex h-7 w-8 items-end justify-center rounded-full pb-0.5 transition-colors hover:text-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+        className="flex h-9 w-10 items-end justify-center rounded-full pb-0.5 transition-colors hover:text-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
       >
         {isOpen ? (
-          <ChevronDown aria-hidden className="h-3 w-3" strokeWidth={2.25} />
+          <ChevronDown aria-hidden className="h-4 w-4" strokeWidth={2.4} />
         ) : (
-          <ChevronUp aria-hidden className="h-3 w-3" strokeWidth={2.25} />
+          <ChevronUp aria-hidden className="h-4 w-4" strokeWidth={2.4} />
         )}
       </button>
     </div>

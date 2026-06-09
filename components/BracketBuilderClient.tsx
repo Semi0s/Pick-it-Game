@@ -1751,21 +1751,29 @@ export function BracketBuilderClient({
 
     setIsThirdPlaceListOpen(true);
     hasAppliedThirdPlaceListDefaultRef.current = true;
+    showAppToast({
+      tone: "tip",
+      text: t(language, "bracket.pickThirdPlaceQualifiers", {
+        count: formatNumber(requiredThirdPlaceQualifierCount, language)
+      })
+    });
 
     window.requestAnimationFrame(() => {
-      const target = thirdPlaceSectionRef.current;
-      if (!target) {
-        return;
-      }
+      window.requestAnimationFrame(() => {
+        const target = thirdPlaceSectionRef.current;
+        if (!target) {
+          return;
+        }
 
-      const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      target.focus({ preventScroll: true });
-      target.scrollIntoView({
-        block: "start",
-        behavior: prefersReducedMotion ? "auto" : "smooth"
+        const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        target.focus({ preventScroll: true });
+        target.scrollIntoView({
+          block: "start",
+          behavior: prefersReducedMotion ? "auto" : "smooth"
+        });
       });
     });
-  }, [hasInteracted, isThirdPlacePhase, setIsThirdPlaceListOpen]);
+  }, [hasInteracted, isThirdPlacePhase, language, requiredThirdPlaceQualifierCount, setIsThirdPlaceListOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -2859,7 +2867,10 @@ export function BracketBuilderClient({
   function getBoundedGroupSwipeOffset(deltaX: number) {
     const isPullingPastStart = deltaX > 0 && activeGroupIndex === 0;
     const isPullingPastEnd = deltaX < 0 && activeGroupIndex === sortedGroupNames.length - 1;
-    const resistedDelta = isPullingPastStart || isPullingPastEnd ? deltaX * 0.28 : deltaX;
+    const resistedDelta = isPullingPastStart || isPullingPastEnd ? deltaX * 0.14 : deltaX;
+    if (isPullingPastStart || isPullingPastEnd) {
+      return Math.max(-42, Math.min(42, resistedDelta));
+    }
     return Math.max(-118, Math.min(118, resistedDelta));
   }
 
@@ -4446,7 +4457,7 @@ export function BracketBuilderClient({
 	          <div
 	            ref={thirdPlaceSectionRef}
 	            tabIndex={-1}
-	            className={`scroll-mt-[calc(var(--app-header-height)+0.75rem)] rounded-[1.15rem] border bg-white px-3 py-3 shadow-sm focus:outline-none ${
+	            className={`scroll-mt-[calc(var(--app-header-height)+0.75rem)] rounded-[1.15rem] border bg-white px-3 py-3 shadow-sm transition-[border-color,box-shadow,opacity,transform] duration-300 ease-out focus:outline-none ${
                 shouldHighlightThirdPlaceCard
                   ? "border-accent-dark ring-1 ring-accent-dark/35"
                   : "border-gray-200"
