@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
 
 async function handleMatchCronRequest(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
-  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\\s+/i, "").trim() ?? "";
+  const bearerToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
 
   if (!cronSecret || bearerToken !== cronSecret) {
     return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
