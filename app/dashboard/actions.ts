@@ -5,6 +5,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchBooleanAppSetting, updateBooleanAppSetting } from "@/lib/app-settings";
 import { resolveAppUpdatesAdminAccess } from "@/lib/dashboard-updates";
+import {
+  fetchTournamentTransitionSettings,
+  resolveTournamentTransitionSettings,
+  saveTournamentTransitionSettings,
+  type DashboardTriptychViewKey,
+  type TournamentModality,
+  type TournamentTransitionSettings
+} from "@/lib/tournament-transition";
 import type {
   AppUpdate,
   AppUpdateCardTone,
@@ -99,6 +107,16 @@ export type DeleteArchivedAppUpdatesResult =
 export type MarkAppUpdateReadResult = UpsertAppUpdateResult;
 export type UpdateDashboardUpdatesForceOpenResult = UpsertAppUpdateResult;
 export type UpdateDashboardUpdatesEnabledResult = UpsertAppUpdateResult;
+export type FetchTournamentTransitionSettingsResult =
+  | {
+      ok: true;
+      settings: TournamentTransitionSettings;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+export type UpdateTournamentTransitionSettingsResult = UpsertAppUpdateResult;
 
 export async function fetchLandingUpdatesAction(): Promise<FetchLandingUpdatesResult> {
   const supabase = await createServerSupabaseClient();
@@ -262,6 +280,65 @@ export async function updateDashboardUpdatesEnabledAction(
   return {
     ok: true,
     message: enabled ? "Updates card is live for users again." : "Updates card is now hidden from users."
+  };
+}
+
+export async function fetchTournamentTransitionSettingsAction(): Promise<FetchTournamentTransitionSettingsResult> {
+  const currentUser = await requireSuperAdmin();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  try {
+    const settings = await fetchTournamentTransitionSettings();
+    return {
+      ok: true,
+      settings
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load tournament transition settings."
+    };
+  }
+}
+
+export async function updateTournamentTransitionSettingsAction(input: {
+  modality: TournamentModality;
+  dashboardMessage: {
+    active: boolean;
+    title: string;
+    body: string;
+    dismissible: boolean;
+  };
+  sessionBehavior: {
+    startEachSessionOnDashboard: boolean;
+    showReturnToDashboardIndicator: boolean;
+  };
+  leftTriptych: {
+    primaryView: DashboardTriptychViewKey;
+    secondaryView: DashboardTriptychViewKey;
+  };
+}): Promise<UpdateTournamentTransitionSettingsResult> {
+  const currentUser = await requireSuperAdmin();
+  if (!currentUser.ok) {
+    return currentUser;
+  }
+
+  try {
+    const settings = resolveTournamentTransitionSettings(input);
+    await saveTournamentTransitionSettings(settings);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not save tournament transition settings."
+    };
+  }
+
+  revalidateTournamentTransitionPaths();
+  return {
+    ok: true,
+    message: "Tournament transition settings saved."
   };
 }
 
@@ -468,6 +545,15 @@ function normalizeDateTimeInput(value: string) {
 function revalidateAppUpdatePaths() {
   revalidatePath("/dashboard");
   revalidatePath("/");
+}
+
+function revalidateTournamentTransitionPaths() {
+  revalidateAppUpdatePaths();
+  revalidatePath("/start-playing");
+  revalidatePath("/bracket-builder");
+  revalidatePath("/knockout");
+  revalidatePath("/leaderboard");
+  revalidatePath("/my-groups");
 }
 
 async function requireAuthenticatedUser(): Promise<{ ok: true; userId: string } | { ok: false; message: string }> {

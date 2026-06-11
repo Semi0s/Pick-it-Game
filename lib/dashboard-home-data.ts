@@ -302,7 +302,29 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     .filter((match) => normalizeKnockoutStage(match.stage) === "final")
     .some((match) => savedKnockoutPredictions.includes(match.id));
 
-  const progressBase = sidePicksDisplayProgress
+  const groupStageProgress = getPredictionProgress({
+    phase: "group_stage",
+    completedGroups: completedGroupCount,
+    totalGroups,
+    selectedThirdPlaceCount,
+    requiredThirdPlaceCount: requiredThirdPlaceQualifierCount,
+    deadlineAt: GROUP_PHASE_START_AT,
+    needsSave: groupStageSaveStatus.needsSave,
+    hasUncommittedChanges: groupStageSaveStatus.hasMeaningfulChangesAfterCommit,
+    lastCommittedAt: groupStageCommittedAt,
+    lastChangedAt: latestGroupStageChangedAt,
+    projectedRoundOf32ResolvedSideCount,
+    projectedRoundOf32ExpectedSideCount
+  });
+  const knockoutProgress = getPredictionProgress({
+    phase: "knockout_stage",
+    savedPredictionCount: savedKnockoutPredictions.length,
+    totalPredictionCount: officialKnockoutMatches.length,
+    hasFinalPrediction,
+    deadlineAt: nextKnockoutDeadline,
+    isLive: dashboardMatches.some((match) => match.status === "live" && normalizeKnockoutStage(match.stage) !== null)
+  });
+  const sidePicksProgress = sidePicksDisplayProgress
     ? getPredictionProgress({
         phase: "last_chance",
         completedPickCount: sidePicksDisplayProgress.completedPicks,
@@ -310,29 +332,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         deadlineAt: sidePicksDisplayProgress.lockAt,
         isLocked: sidePicksDisplayProgress.isLocked
       })
-    : isKnockoutActive
-    ? getPredictionProgress({
-        phase: "knockout_stage",
-        savedPredictionCount: savedKnockoutPredictions.length,
-        totalPredictionCount: officialKnockoutMatches.length,
-        hasFinalPrediction,
-        deadlineAt: nextKnockoutDeadline,
-        isLive: dashboardMatches.some((match) => match.status === "live" && normalizeKnockoutStage(match.stage) !== null)
-      })
-    : getPredictionProgress({
-        phase: "group_stage",
-        completedGroups: completedGroupCount,
-        totalGroups,
-        selectedThirdPlaceCount,
-        requiredThirdPlaceCount: requiredThirdPlaceQualifierCount,
-        deadlineAt: GROUP_PHASE_START_AT,
-        needsSave: groupStageSaveStatus.needsSave,
-        hasUncommittedChanges: groupStageSaveStatus.hasMeaningfulChangesAfterCommit,
-        lastCommittedAt: groupStageCommittedAt,
-        lastChangedAt: latestGroupStageChangedAt,
-        projectedRoundOf32ResolvedSideCount,
-        projectedRoundOf32ExpectedSideCount
-      });
+    : null;
+  const progressBase = sidePicksProgress ?? (isKnockoutActive ? knockoutProgress : groupStageProgress);
   const progress = {
     ...progressBase,
     hasCompletedBracketOnce: groupStageSaveStatus.hasCommittedEntry
@@ -340,6 +341,14 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
 
   return {
     progress,
+    progressViews: {
+      group_stage_progress: {
+        ...groupStageProgress,
+        hasCompletedBracketOnce: groupStageSaveStatus.hasCommittedEntry
+      },
+      knockout_progress: knockoutProgress,
+      side_picks_progress: sidePicksProgress
+    },
     performance: {
       globalPoints: profile?.total_points ?? globalRankResult.totalPoints ?? null,
       globalRank: globalRankResult.rank,
@@ -382,6 +391,24 @@ function buildFallbackDashboardCommandCenter(): DashboardCommandCenterSummary {
       requiredThirdPlaceCount: 8,
       deadlineAt: GROUP_PHASE_START_AT
     }),
+    progressViews: {
+      group_stage_progress: getPredictionProgress({
+        phase: "group_stage",
+        completedGroups: 0,
+        totalGroups: 12,
+        selectedThirdPlaceCount: 0,
+        requiredThirdPlaceCount: 8,
+        deadlineAt: GROUP_PHASE_START_AT
+      }),
+      knockout_progress: getPredictionProgress({
+        phase: "knockout_stage",
+        savedPredictionCount: 0,
+        totalPredictionCount: 16,
+        hasFinalPrediction: false,
+        deadlineAt: null
+      }),
+      side_picks_progress: null
+    },
     performance: {
       globalPoints: null,
       globalRank: null,

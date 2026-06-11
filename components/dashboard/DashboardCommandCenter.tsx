@@ -26,12 +26,15 @@ import { formatDate, formatNumber, formatTime } from "@/lib/i18n-format";
 import type { DashboardScoringHistoryPoint } from "@/lib/leaderboard-movement";
 import { useSessionViewState } from "@/lib/session-view-state";
 import { t } from "@/lib/strings";
+import type { DashboardTriptychViewKey } from "@/lib/tournament-transition-helpers";
 
 type DashboardCommandCenterProps = {
   summary: DashboardCommandCenterSummary;
   initialLightSeedSnapshot?: LightSeedBuilderSnapshot | null;
   userId?: string | null;
   language?: string | null;
+  primaryView?: DashboardTriptychViewKey | null;
+  secondaryView?: DashboardTriptychViewKey | null;
 };
 
 type TriptychTheme = "light" | "dark";
@@ -72,12 +75,14 @@ const TRIPTYCH_SCORING_PREVIEW_POINTS = [
   { label: "Final", saved: 94, actual: 104 }
 ];
 
+type TriptychProgressViewKey = Exclude<DashboardTriptychViewKey, "score_movement">;
+
 type TriptychLeftPanelViewState = {
-  isScoringLensOpen: boolean;
+  activeView: DashboardTriptychViewKey | null;
 };
 
 const DEFAULT_TRIPTYCH_LEFT_PANEL_VIEW_STATE: TriptychLeftPanelViewState = {
-  isScoringLensOpen: false
+  activeView: null
 };
 
 type ScoringLensErrorBoundaryProps = {
@@ -127,11 +132,26 @@ function validateTriptychLeftPanelViewState(value: unknown): TriptychLeftPanelVi
 
   const candidate = value as Partial<TriptychLeftPanelViewState>;
   return {
-    isScoringLensOpen: Boolean(candidate.isScoringLensOpen)
+    activeView:
+      typeof candidate.activeView === "string" && (
+        candidate.activeView === "score_movement" ||
+        candidate.activeView === "group_stage_progress" ||
+        candidate.activeView === "side_picks_progress" ||
+        candidate.activeView === "knockout_progress"
+      )
+        ? candidate.activeView
+        : null
   };
 }
 
-export function DashboardCommandCenter({ summary, initialLightSeedSnapshot, userId, language }: DashboardCommandCenterProps) {
+export function DashboardCommandCenter({
+  summary,
+  initialLightSeedSnapshot,
+  userId,
+  language,
+  primaryView,
+  secondaryView
+}: DashboardCommandCenterProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [triptychTheme, setTriptychTheme] = useState<TriptychTheme>("light");
   const [darkAccentStyle, setDarkAccentStyle] = useState<CSSProperties>(FALLBACK_TRIPTYCH_DARK_ACCENT_STYLE);
@@ -246,6 +266,7 @@ export function DashboardCommandCenter({ summary, initialLightSeedSnapshot, user
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <ProgressPanel
           progress={summary.progress}
+          progressViews={summary.progressViews}
           scoring={summary.scoring}
           nowMs={nowMs}
           language={language}
@@ -253,6 +274,8 @@ export function DashboardCommandCenter({ summary, initialLightSeedSnapshot, user
           theme={triptychTheme}
           hasUnsavedGroupStageDraft={hasUnsavedGroupStageDraft}
           scoringLens={scoringLens}
+          primaryView={primaryView}
+          secondaryView={secondaryView}
         />
         <PerformancePanel
           performance={summary.performance}
@@ -268,15 +291,19 @@ export function DashboardCommandCenter({ summary, initialLightSeedSnapshot, user
 
 function ProgressPanel({
   progress,
+  progressViews,
   scoring,
   nowMs,
   language,
   userId,
   theme,
   hasUnsavedGroupStageDraft = false,
-  scoringLens
+  scoringLens,
+  primaryView,
+  secondaryView
 }: {
   progress: DashboardCommandCenterSummary["progress"];
+  progressViews: DashboardCommandCenterSummary["progressViews"];
   scoring: DashboardCommandCenterSummary["scoring"];
   nowMs: number;
   language?: string | null;
@@ -284,6 +311,8 @@ function ProgressPanel({
   theme: TriptychTheme;
   hasUnsavedGroupStageDraft?: boolean;
   scoringLens?: TriptychScoringLens | null;
+  primaryView?: DashboardTriptychViewKey | null;
+  secondaryView?: DashboardTriptychViewKey | null;
 }) {
   const [leftPanelViewState, setLeftPanelViewState] = useSessionViewState<TriptychLeftPanelViewState>({
     key: "dashboard-triptych-left-panel",
@@ -296,31 +325,63 @@ function ProgressPanel({
   const scenarioImpactSwipeClickResetTimeoutRef = useRef<number | null>(null);
   const [isScoringDetailOpen, setIsScoringDetailOpen] = useState(false);
   const scoringLensContentId = useId();
-  const percentage = progress.totalUnits > 0 ? Math.round((progress.completedUnits / progress.totalUnits) * 100) : 0;
-  const isCompleteForDisplay = progress.isComplete || percentage >= 100;
-  const tone = getProgressDisplayTone(progress, nowMs, isCompleteForDisplay);
-  const isLastChanceProgress = progress.phase === "last_chance";
-  const statusLabel = isLastChanceProgress ? progress.deadlineLabel : getProgressStatusLabel(progress, language, nowMs);
+  const resolvedViewConfig = useMemo(
+    () =>
+      resolveTriptychLeftPanelViews({
+        progress,
+        progressViews,
+        scoringLens,
+        primaryView,
+        secondaryView
+      }),
+    [primaryView, progress, progressViews, scoringLens, secondaryView]
+  );
+  const activeView = leftPanelViewState.activeView ?? resolvedViewConfig.primaryView;
+  const displayedView =
+    activeView === resolvedViewConfig.secondaryView ? resolvedViewConfig.secondaryView : resolvedViewConfig.primaryView;
+  const alternateView =
+    displayedView === resolvedViewConfig.primaryView
+      ? resolvedViewConfig.secondaryView
+      : resolvedViewConfig.primaryView;
+  const displayedProgress =
+    displayedView === "score_movement"
+      ? null
+      : progressViews[displayedView] ?? (displayedView === "group_stage_progress" ? progress : null);
+  const percentage =
+    displayedProgress && displayedProgress.totalUnits > 0
+      ? Math.round((displayedProgress.completedUnits / displayedProgress.totalUnits) * 100)
+      : 0;
+  const isCompleteForDisplay = displayedProgress ? displayedProgress.isComplete || percentage >= 100 : false;
+  const tone = displayedProgress
+    ? getProgressDisplayTone(displayedProgress, nowMs, isCompleteForDisplay)
+    : getProgressDisplayTone(progress, nowMs, progress.isComplete);
+  const isLastChanceProgress = displayedProgress?.phase === "last_chance";
+  const statusLabel = displayedProgress
+    ? isLastChanceProgress
+      ? displayedProgress.deadlineLabel
+      : getProgressStatusLabel(displayedProgress, language, nowMs)
+    : t(language, "leaderboard.points");
   const shouldShowGroupStageNotSaved =
-    progress.phase === "group_stage" && (Boolean(progress.needsSave) || hasUnsavedGroupStageDraft);
-  const progressHref = progress.phase === "last_chance"
-    ? "/last-chance-picks"
-    : progress.phase === "knockout_stage"
-    ? "/knockout"
-    : shouldShowGroupStageNotSaved
-      ? "/bracket-builder#group-stage-commit"
-      : "/bracket-builder#group-stage-picks";
-  const progressLabel =
-    progress.phase === "last_chance"
+    displayedProgress?.phase === "group_stage" && (Boolean(displayedProgress.needsSave) || hasUnsavedGroupStageDraft);
+  const progressHref = displayedProgress
+    ? displayedProgress.phase === "last_chance"
+      ? "/last-chance-picks"
+      : displayedProgress.phase === "knockout_stage"
+        ? "/knockout"
+        : shouldShowGroupStageNotSaved
+          ? "/bracket-builder#group-stage-commit"
+          : "/bracket-builder#group-stage-picks"
+    : "/dashboard";
+  const progressLabel = displayedProgress
+    ? displayedProgress.phase === "last_chance"
       ? "SIDE PICKS"
-      : progress.phase === "group_stage"
+      : displayedProgress.phase === "group_stage"
         ? t(language, "dashboard.groupStage")
-        : progress.label;
-  const shouldShowScoringLens = Boolean(scoringLens);
-  const isScoringLensOpen = leftPanelViewState.isScoringLensOpen;
-  const isShowingScoringLens = isScoringLensOpen && shouldShowScoringLens;
+        : displayedProgress.label
+    : getTriptychViewLabel("score_movement", language);
+  const isShowingScoringLens = displayedView === "score_movement";
   const canOpenScoringDetail = isShowingScoringLens && scoringLens?.mode === "post_lock";
-  const contentViewportBottomClass = shouldShowScoringLens && !isLastChanceProgress ? "bottom-7" : "bottom-0";
+  const contentViewportBottomClass = alternateView && !isLastChanceProgress ? "bottom-7" : "bottom-0";
 
   useEffect(() => {
     if (!isScoringDetailOpen) {
@@ -348,7 +409,13 @@ function ProgressPanel({
   }, []);
 
   function toggleScoringLensPeek() {
-    setLeftPanelViewState((current) => ({ ...current, isScoringLensOpen: !current.isScoringLensOpen }));
+    setLeftPanelViewState((current) => ({
+      ...current,
+      activeView:
+        (current.activeView ?? resolvedViewConfig.primaryView) === resolvedViewConfig.secondaryView
+          ? resolvedViewConfig.primaryView
+          : resolvedViewConfig.secondaryView
+    }));
   }
 
   function blockNextScenarioImpactClick() {
@@ -386,9 +453,9 @@ function ProgressPanel({
 
     blockNextScenarioImpactClick();
     if (deltaY < 0) {
-      setLeftPanelViewState((current) => ({ ...current, isScoringLensOpen: true }));
+      setLeftPanelViewState((current) => ({ ...current, activeView: resolvedViewConfig.secondaryView }));
     } else {
-      setLeftPanelViewState((current) => ({ ...current, isScoringLensOpen: false }));
+      setLeftPanelViewState((current) => ({ ...current, activeView: resolvedViewConfig.primaryView }));
     }
   }
 
@@ -414,8 +481,8 @@ function ProgressPanel({
         </div>
       ) : (
         <div className={`absolute inset-x-0 top-0 ${contentViewportBottomClass} flex flex-col items-center justify-center text-center`}>
-          {isLastChanceProgress ? (
-            <LastChanceTriptychContent progress={progress} theme={theme} />
+          {displayedProgress && isLastChanceProgress ? (
+            <LastChanceTriptychContent progress={displayedProgress} theme={theme} />
           ) : (
             <>
               <DigitalWatchRing percentage={percentage} tone={tone} theme={theme} />
@@ -459,23 +526,23 @@ function ProgressPanel({
         <Link
           href={progressHref}
           aria-label={`${progressLabel}: ${statusLabel}`}
-          onClickCapture={shouldShowScoringLens ? handleProgressLinkClickCapture : undefined}
-          onTouchStart={shouldShowScoringLens ? handleScenarioImpactTouchStart : undefined}
-          onTouchEnd={shouldShowScoringLens ? handleScenarioImpactTouchEnd : undefined}
+          onClickCapture={alternateView ? handleProgressLinkClickCapture : undefined}
+          onTouchStart={alternateView ? handleScenarioImpactTouchStart : undefined}
+          onTouchEnd={alternateView ? handleScenarioImpactTouchEnd : undefined}
           className="flex h-full w-full min-w-0 items-center justify-center rounded-[1rem] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
         >
           {panelContent}
         </Link>
       )}
-      {shouldShowScoringLens ? (
+      {alternateView ? (
         <TriptychPanelViewCue
-          isOpen={isScoringLensOpen}
+          isOpen={displayedView === resolvedViewConfig.secondaryView}
           onToggle={toggleScoringLensPeek}
           onTouchStart={handleScenarioImpactTouchStart}
           onTouchEnd={handleScenarioImpactTouchEnd}
           contentId={scoringLensContentId}
-          language={language}
           theme={theme}
+          label={getTriptychViewLabel(alternateView, language)}
         />
       ) : null}
       {scoringLens?.mode === "post_lock" && isScoringDetailOpen ? (
@@ -1070,31 +1137,32 @@ function TriptychPanelViewCue({
   onTouchStart,
   onTouchEnd,
   contentId,
-  language,
-  theme
+  theme,
+  label
 }: {
   isOpen: boolean;
   onToggle: () => void;
   onTouchStart: (event: TouchEvent<HTMLButtonElement>) => void;
   onTouchEnd: (event: TouchEvent<HTMLButtonElement>) => void;
   contentId: string;
-  language?: string | null;
   theme: TriptychTheme;
+  label: string;
 }) {
   return (
     <div
-      className={`absolute inset-x-1 bottom-[-6px] z-20 flex items-end justify-center text-[15px] leading-none ${theme === "dark" ? "text-white/50" : "text-slate-500/90"}`}
+      className={`absolute inset-x-1 bottom-[-7px] z-20 flex items-end justify-center text-[15px] leading-none ${theme === "dark" ? "text-white/55" : "text-slate-500/90"}`}
     >
       <button
         type="button"
         aria-expanded={isOpen}
         aria-controls={contentId}
-        aria-label={t(language, isOpen ? "dashboard.hideScoringLens" : "dashboard.showScoringLens")}
+        aria-label={label}
         onClick={onToggle}
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
-        className="flex h-9 w-10 items-end justify-center rounded-full pb-0.5 transition-colors hover:text-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+        className="inline-flex h-10 items-end gap-1 rounded-full px-2 pb-0.5 transition-colors hover:text-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
       >
+        <span className="triptych-micro-copy font-black uppercase tracking-[0.12em]">{label}</span>
         {isOpen ? (
           <ChevronDown aria-hidden className="h-4 w-4" strokeWidth={2.4} />
         ) : (
@@ -1520,6 +1588,116 @@ function DigitalWatchRing({
       </div>
     </div>
   );
+}
+
+function resolveTriptychLeftPanelViews({
+  progress,
+  progressViews,
+  scoringLens,
+  primaryView,
+  secondaryView
+}: {
+  progress: DashboardCommandCenterSummary["progress"];
+  progressViews: DashboardCommandCenterSummary["progressViews"];
+  scoringLens: TriptychScoringLens | null | undefined;
+  primaryView?: DashboardTriptychViewKey | null;
+  secondaryView?: DashboardTriptychViewKey | null;
+}) {
+  const fallbackPrimary = getProgressPhaseViewKey(progress.phase);
+  const resolvedPrimary = resolveTriptychDisplayView({
+    requestedView: primaryView,
+    fallbackView: fallbackPrimary,
+    progress,
+    progressViews,
+    scoringLens
+  });
+  const resolvedSecondary = resolveTriptychDisplayView({
+    requestedView: secondaryView,
+    fallbackView: resolvedPrimary === "score_movement" ? fallbackPrimary : "score_movement",
+    progress,
+    progressViews,
+    scoringLens,
+    disallowedView: resolvedPrimary
+  });
+
+  return {
+    primaryView: resolvedPrimary,
+    secondaryView: resolvedSecondary === resolvedPrimary ? null : resolvedSecondary
+  };
+}
+
+function resolveTriptychDisplayView({
+  requestedView,
+  fallbackView,
+  progress,
+  progressViews,
+  scoringLens,
+  disallowedView
+}: {
+  requestedView?: DashboardTriptychViewKey | null;
+  fallbackView: DashboardTriptychViewKey;
+  progress: DashboardCommandCenterSummary["progress"];
+  progressViews: DashboardCommandCenterSummary["progressViews"];
+  scoringLens: TriptychScoringLens | null | undefined;
+  disallowedView?: DashboardTriptychViewKey | null;
+}): DashboardTriptychViewKey {
+  const requested = requestedView ?? fallbackView;
+  const candidates = [
+    requested,
+    fallbackView,
+    "score_movement",
+    "group_stage_progress",
+    "knockout_progress",
+    "side_picks_progress"
+  ] as DashboardTriptychViewKey[];
+
+  return (
+    candidates.find((candidate) => candidate !== disallowedView && isTriptychViewAvailable(candidate, progress, progressViews, scoringLens)) ??
+    "group_stage_progress"
+  );
+}
+
+function isTriptychViewAvailable(
+  view: DashboardTriptychViewKey,
+  progress: DashboardCommandCenterSummary["progress"],
+  progressViews: DashboardCommandCenterSummary["progressViews"],
+  scoringLens: TriptychScoringLens | null | undefined
+) {
+  if (view === "score_movement") {
+    return Boolean(scoringLens);
+  }
+
+  if (view === "group_stage_progress") {
+    return Boolean(progressViews.group_stage_progress ?? progress);
+  }
+
+  return Boolean(progressViews[view]);
+}
+
+function getProgressPhaseViewKey(phase: DashboardCommandCenterSummary["progress"]["phase"]): TriptychProgressViewKey {
+  switch (phase) {
+    case "knockout_stage":
+      return "knockout_progress";
+    case "last_chance":
+      return "side_picks_progress";
+    case "group_stage":
+    default:
+      return "group_stage_progress";
+  }
+}
+
+function getTriptychViewLabel(view: DashboardTriptychViewKey, language?: string | null) {
+  switch (view) {
+    case "group_stage_progress":
+      return t(language, "dashboard.groupStage");
+    case "knockout_progress":
+      return t(language, "dashboard.knockoutPicks");
+    case "side_picks_progress":
+      return "Side Picks";
+    case "score_movement":
+    default:
+      return t(language, "leaderboard.points");
+  }
 }
 
 function MetricRow({

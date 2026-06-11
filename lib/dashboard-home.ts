@@ -1,5 +1,6 @@
 import type { DashboardScoringMovementSummary } from "./leaderboard-movement.ts";
 import { SIDE_PICK_PUBLIC_NAME, formatLastChanceDeadlineLabel } from "./side-picks.ts";
+import type { DashboardTriptychViewKey } from "./tournament-transition-helpers.ts";
 
 export type DashboardUrgencyTone = "green" | "orange" | "red" | "neutral";
 
@@ -62,6 +63,7 @@ export type DashboardProgressSummary = {
 
 export type DashboardCommandCenterSummary = {
   progress: DashboardProgressSummary;
+  progressViews: Record<Exclude<DashboardTriptychViewKey, "score_movement">, DashboardProgressSummary | null>;
   performance: DashboardPerformanceSummary;
   scoring: DashboardScoringMovementSummary;
   reminder: DashboardReminderSummary;
