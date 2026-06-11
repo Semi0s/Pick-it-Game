@@ -3,6 +3,8 @@ import "server-only";
 import { redirect } from "next/navigation";
 import { REQUIRED_LAUNCH_ONBOARDING_VERSION, shouldRequireLaunchOnboarding } from "@/lib/launch-onboarding";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchTournamentTransitionSettings } from "@/lib/tournament-transition";
+import { shouldSkipLegacyLaunchOnboarding } from "@/lib/tournament-transition-helpers";
 
 type AdminSupabaseClient = ReturnType<typeof createAdminClient>;
 
@@ -15,6 +17,11 @@ export async function redirectIfLaunchOnboardingRequired({
 }: {
   userId: string;
 }): Promise<void> {
+  const tournamentTransitionSettings = await fetchTournamentTransitionSettings().catch(() => null);
+  if (tournamentTransitionSettings && shouldSkipLegacyLaunchOnboarding(tournamentTransitionSettings.modality)) {
+    return;
+  }
+
   const state = await fetchLaunchOnboardingGateState(createAdminClient(), userId);
   if (!state.supported) {
     return;

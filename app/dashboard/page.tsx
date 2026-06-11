@@ -8,6 +8,7 @@ import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate
 import { fetchUserLightSeedBuilderSnapshot, type LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
+import { fetchTournamentTransitionSettings } from "@/lib/tournament-transition";
 
 export default async function DashboardPage() {
   const supabase = await createServerSupabaseClient();
@@ -32,6 +33,7 @@ export default async function DashboardPage() {
   const lightSeedSnapshot: LightSeedBuilderSnapshot | null = user
     ? await fetchUserLightSeedBuilderSnapshot(createAdminClient(), user.id).catch(() => null)
     : null;
+  const tournamentTransitionSettings = await fetchTournamentTransitionSettings().catch(() => null);
 
   return (
     <AppShell>
@@ -50,6 +52,35 @@ export default async function DashboardPage() {
             urgencyTone: "neutral",
             isComplete: false,
             isLocked: false
+          },
+          progressViews: {
+            group_stage_progress: {
+              phase: "group_stage",
+              label: "Group picks",
+              completedUnits: 0,
+              totalUnits: 12,
+              headline: "Keep ranking the groups.",
+              detail: "0 of 12 groups complete",
+              deadlineAt: null,
+              deadlineLabel: "Deadline coming soon",
+              urgencyTone: "neutral",
+              isComplete: false,
+              isLocked: false
+            },
+            knockout_progress: {
+              phase: "knockout_stage",
+              label: "Knockout",
+              completedUnits: 0,
+              totalUnits: 16,
+              headline: "Knockout picks open next.",
+              detail: "0 of 16 knockout matches saved",
+              deadlineAt: null,
+              deadlineLabel: "Deadline coming soon",
+              urgencyTone: "neutral",
+              isComplete: false,
+              isLocked: false
+            },
+            side_picks_progress: null
           },
           performance: {
             globalPoints: null,
@@ -85,6 +116,7 @@ export default async function DashboardPage() {
           dashboardUiResetEpoch: groupAccessResult.dashboardUiResetEpoch
         } : null}
         initialLightSeedSnapshot={lightSeedSnapshot}
+        tournamentTransitionSettings={tournamentTransitionSettings}
       />
     </AppShell>
   );

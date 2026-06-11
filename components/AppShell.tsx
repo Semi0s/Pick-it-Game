@@ -25,6 +25,11 @@ import {
 import { getAccessLevel, shouldShowAccessBadge } from "@/lib/access-levels";
 import { compareAccessLevels, normalizeAccessLevel, type AccessLevel } from "@/lib/tier-access";
 import { getStartupReadinessSummary, type SystemReadinessReport } from "@/lib/system-readiness";
+import {
+  shouldForceDashboardStartThisSession,
+  shouldShowReturnToDashboardIndicator,
+  type TournamentTransitionSettings
+} from "@/lib/tournament-transition-helpers";
 import { ADMIN_UI_RESET_SIGNAL_STORAGE_KEY } from "@/lib/ui-storage-keys";
 import { parseJsonResponse } from "@/lib/fetch-json";
 import { createClient } from "@/lib/supabase/client";
@@ -44,6 +49,7 @@ const DEFAULT_TOAST_DURATION_MS = 4200;
 const TIP_TOAST_DURATION_MS = 6200;
 const ERROR_TOAST_DURATION_MS = 7600;
 const ACCESS_LEVEL_WELCOME_STORAGE_PREFIX = "pickit:last-seen-access-level";
+const DASHBOARD_SESSION_LANDING_STORAGE_PREFIX = "pickit:dashboard-session-landing";
 const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
   en: "English",
   es: "Español",
@@ -165,6 +171,7 @@ export function AppShell({ children }: AppShellProps) {
   const [pendingCelebrationQueue, setPendingCelebrationQueue] = useState<PendingTrophyCelebration[]>([]);
   const [activeCelebration, setActiveCelebration] = useState<PendingTrophyCelebration | null>(null);
   const [readinessBanner, setReadinessBanner] = useState<string | null>(null);
+  const [tournamentTransitionSettings, setTournamentTransitionSettings] = useState<TournamentTransitionSettings | null>(null);
   const [toasts, setToasts] = useState<Array<{
     id: string;
     tone: AppToastTone;
@@ -321,6 +328,44 @@ export function AppShell({ children }: AppShellProps) {
   }, [isLoading, router, user]);
 
   useEffect(() => {
+    if (isLoading || !user || user.needsLegalAcceptance || user.needsProfileSetup) {
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadTournamentTransitionSettings = async () => {
+      try {
+        const response = await fetch("/api/tournament-transition", {
+          method: "GET",
+          credentials: "same-origin",
+          cache: "no-store"
+        });
+        const result = await parseJsonResponse<
+          | { ok: true; settings: TournamentTransitionSettings }
+          | { ok: false; message?: string }
+        >(response, "Could not load tournament transition settings.", "tournament transition settings");
+
+        if (!isMounted || !response.ok || !result.ok) {
+          return;
+        }
+
+        setTournamentTransitionSettings(result.settings);
+      } catch {
+        if (isMounted) {
+          setTournamentTransitionSettings(null);
+        }
+      }
+    };
+
+    void loadTournamentTransitionSettings();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isLoading, user, user?.id, user?.needsLegalAcceptance, user?.needsProfileSetup]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || isLoading || !user?.id) {
       return;
     }
@@ -366,6 +411,40 @@ export function AppShell({ children }: AppShellProps) {
       router.replace("/profile-setup");
     }
   }, [isLoading, router, user]);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      isLoading ||
+      !user?.id ||
+      !tournamentTransitionSettings
+    ) {
+      return;
+    }
+
+    const sessionKey = [
+      DASHBOARD_SESSION_LANDING_STORAGE_PREFIX,
+      user.id,
+      tournamentTransitionSettings.modality
+    ].join(":");
+
+    try {
+      if (pathname === "/dashboard") {
+        window.sessionStorage.setItem(sessionKey, "1");
+        return;
+      }
+
+      const hasSeenSessionLanding = window.sessionStorage.getItem(sessionKey) === "1";
+      if (!shouldForceDashboardStartThisSession({ pathname, hasSeenSessionLanding, settings: tournamentTransitionSettings })) {
+        return;
+      }
+
+      window.sessionStorage.setItem(sessionKey, "1");
+      router.replace("/dashboard");
+    } catch {
+      router.replace("/dashboard");
+    }
+  }, [isLoading, pathname, router, tournamentTransitionSettings, user]);
 
   useEffect(() => {
     if (!activeCelebration && pendingCelebrationQueue.length > 0) {
@@ -553,6 +632,13 @@ export function AppShell({ children }: AppShellProps) {
     );
   }
 
+  const showReturnToDashboardIndicator =
+    Boolean(user) &&
+    shouldShowReturnToDashboardIndicator({
+      pathname,
+      settings: tournamentTransitionSettings
+    });
+
   return (
     <AppLanguageProvider activeLanguage={activeLanguage} setActiveLanguage={setActiveLanguage}>
       <div
@@ -694,6 +780,17 @@ export function AppShell({ children }: AppShellProps) {
         {readinessBanner ? (
           <div className="mb-4 rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
             {readinessBanner}
+          </div>
+        ) : null}
+        {showReturnToDashboardIndicator ? (
+          <div className="mb-4 flex justify-end">
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-[0.12em] text-gray-700 shadow-sm transition hover:border-accent hover:bg-accent-light hover:text-accent-dark"
+            >
+              <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-full bg-accent" />
+              <span>{t(displayLanguage, "dashboard.title")}</span>
+            </Link>
           </div>
         ) : null}
         {children}

@@ -34,6 +34,7 @@ import { ADMIN_ASSIGNABLE_ACCESS_LEVELS, compareAccessLevels, getAccessLevelDisp
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { AdminGroupsSection } from "@/components/admin/AdminGroupsClient";
 import { AdminInvitesSection, formatDate } from "@/components/admin/AdminInvitesClient";
+import { AdminTournamentTransitionManager } from "@/components/admin/AdminTournamentTransitionManager";
 import { AdminUpdatesManager } from "@/components/admin/AdminUpdatesManager";
 import { Avatar } from "@/components/Avatar";
 import { TierIconBadge } from "@/components/TierIconBadge";
@@ -366,6 +367,14 @@ export function AdminPlayersClient() {
             badge={<ManagementBadge label="updates" tone="neutral" />}
           >
             <AdminUpdatesManager embedded />
+          </AdminToolCard>
+
+          <AdminToolCard
+            title="Tournament transition"
+            storageKey="admin-players:tournament-transition:v1"
+            badge={<ManagementBadge label="live mode" tone="accent" />}
+          >
+            <AdminTournamentTransitionManager />
           </AdminToolCard>
 
           <AdminToolCard

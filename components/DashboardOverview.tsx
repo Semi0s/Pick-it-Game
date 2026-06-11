@@ -46,6 +46,10 @@ import { useAppLanguage } from "@/lib/app-language";
 import { formatNumber } from "@/lib/i18n-format";
 import { t } from "@/lib/strings";
 import { dismissCurrentUserMessageId } from "@/lib/auth-client";
+import {
+  buildTournamentTransitionMessageId,
+  type TournamentTransitionSettings
+} from "@/lib/tournament-transition-helpers";
 import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
@@ -117,7 +121,8 @@ export function DashboardOverview({
   initialGlobalChallengeSummary,
   initialCommandCenterSummary,
   initialGroupAccess,
-  initialLightSeedSnapshot
+  initialLightSeedSnapshot,
+  tournamentTransitionSettings
 }: {
   initialGlobalChallengeSummary?: {
     groupStrategy: { points: number | null; maxPoints: number; status: string };
@@ -134,6 +139,7 @@ export function DashboardOverview({
     dashboardUiResetEpoch: number;
   } | null;
   initialLightSeedSnapshot?: LightSeedBuilderSnapshot | null;
+  tournamentTransitionSettings?: TournamentTransitionSettings | null;
 }) {
   const router = useRouter();
   const { user, isLoading: isCurrentUserLoading } = useCurrentUser();
@@ -151,6 +157,9 @@ export function DashboardOverview({
   const [inviteEntryValue, setInviteEntryValue] = useState("");
   const [inviteEntryError, setInviteEntryError] = useState<string | null>(null);
   const [showDashboardLogoHint, setShowDashboardLogoHint] = useState(false);
+  const [showTournamentTransitionMessage, setShowTournamentTransitionMessage] = useState(
+    Boolean(tournamentTransitionSettings?.dashboardMessage.active)
+  );
   const [dashboardViewState, setDashboardViewState, dashboardViewStateMeta] = useSessionViewState<DashboardViewState>({
     key: "dashboard",
     userId: currentUserId,
@@ -160,6 +169,9 @@ export function DashboardOverview({
   const selectedStandingsGroup = dashboardViewState.selectedStandingsGroup;
   const isStandingsOpen = dashboardViewState.isStandingsOpen;
   const isHowToPlayOpen = dashboardViewState.isHowToPlayOpen;
+  const tournamentTransitionMessageId = tournamentTransitionSettings
+    ? buildTournamentTransitionMessageId(tournamentTransitionSettings)
+    : null;
   const setSelectedStandingsGroup = useCallback(
     (nextValue: SetStateAction<string>) => {
       setDashboardViewState((current) => ({
@@ -627,6 +639,47 @@ export function DashboardOverview({
     user?.dismissedMessageIds
   ]);
 
+  useEffect(() => {
+    const messageStorageKey = getDashboardHomeMessageStorageKey({
+      userId: currentUserId,
+      isUserLoading: isCurrentUserLoading
+    });
+
+    if (
+      typeof window === "undefined" ||
+      !messageStorageKey ||
+      !tournamentTransitionSettings?.dashboardMessage.active ||
+      !tournamentTransitionMessageId
+    ) {
+      setShowTournamentTransitionMessage(Boolean(tournamentTransitionSettings?.dashboardMessage.active));
+      return;
+    }
+
+    if (!tournamentTransitionSettings.dashboardMessage.dismissible) {
+      setShowTournamentTransitionMessage(true);
+      return;
+    }
+
+    try {
+      const dismissedIds = Array.from(
+        new Set([
+          ...parseDismissedMessageIds(window.localStorage.getItem(messageStorageKey)),
+          ...(user?.dismissedMessageIds ?? [])
+        ])
+      );
+      setShowTournamentTransitionMessage(!isMessageDismissed(dismissedIds, tournamentTransitionMessageId));
+    } catch {
+      setShowTournamentTransitionMessage(true);
+    }
+  }, [
+    currentUserId,
+    isCurrentUserLoading,
+    tournamentTransitionMessageId,
+    tournamentTransitionSettings?.dashboardMessage.active,
+    tournamentTransitionSettings?.dashboardMessage.dismissible,
+    user?.dismissedMessageIds
+  ]);
+
   const dismissDashboardLogoHint = useCallback(() => {
     const messageStorageKey = getDashboardHomeMessageStorageKey({
       userId: currentUserId,
@@ -649,6 +702,30 @@ export function DashboardOverview({
 
     setShowDashboardLogoHint(false);
   }, [currentUserId, dashboardLogoHintMessageId, isCurrentUserLoading]);
+
+  const dismissTournamentTransitionMessage = useCallback(() => {
+    const messageStorageKey = getDashboardHomeMessageStorageKey({
+      userId: currentUserId,
+      isUserLoading: isCurrentUserLoading
+    });
+    if (!messageStorageKey || !tournamentTransitionMessageId) {
+      setShowTournamentTransitionMessage(false);
+      return;
+    }
+
+    try {
+      const dismissedIds = parseDismissedMessageIds(window.localStorage.getItem(messageStorageKey));
+      const nextDismissedIds = dismissMessageId(dismissedIds, tournamentTransitionMessageId);
+      window.localStorage.setItem(messageStorageKey, serializeDismissedMessageIds(nextDismissedIds));
+      if (currentUserId) {
+        void dismissCurrentUserMessageId(tournamentTransitionMessageId);
+      }
+    } catch (error) {
+      console.warn("Could not persist tournament transition dismissal state.", error);
+    }
+
+    setShowTournamentTransitionMessage(false);
+  }, [currentUserId, isCurrentUserLoading, tournamentTransitionMessageId]);
 
   function getStandingsSwipeTravelDistance() {
     if (typeof window === "undefined") {
@@ -873,6 +950,34 @@ export function DashboardOverview({
         preferredLanguage={user?.preferredLanguage ?? null}
       />
 
+      {tournamentTransitionSettings?.dashboardMessage.active && showTournamentTransitionMessage ? (
+        <section className="rounded-[1.15rem] border border-accent-light bg-accent-light/25 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">
+                {t(displayLanguage, "dashboard.title")}
+              </p>
+              <h2 className="mt-2 text-xl font-black text-gray-950">
+                {tournamentTransitionSettings.dashboardMessage.title}
+              </h2>
+              <p className="mt-2 text-sm font-semibold leading-6 text-gray-700">
+                {tournamentTransitionSettings.dashboardMessage.body}
+              </p>
+            </div>
+            {tournamentTransitionSettings.dashboardMessage.dismissible ? (
+              <button
+                type="button"
+                onClick={dismissTournamentTransitionMessage}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-300 bg-white text-gray-500 transition hover:border-accent hover:text-accent-dark"
+                aria-label="Dismiss dashboard transition message"
+              >
+                <X aria-hidden className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       <AppUpdatesCard />
 
       {initialGlobalChallengeSummary && !shouldHideStrategyModeForLaunch() ? (
@@ -955,6 +1060,8 @@ export function DashboardOverview({
           initialLightSeedSnapshot={initialLightSeedSnapshot}
           userId={currentUserId}
           language={displayLanguage}
+          primaryView={tournamentTransitionSettings?.leftTriptych.primaryView}
+          secondaryView={tournamentTransitionSettings?.leftTriptych.secondaryView}
         />
       </div>
 
