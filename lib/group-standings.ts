@@ -102,6 +102,22 @@ export function shouldUseOfficialGroupStandingsOrder(
   });
 }
 
+export function shouldPreferPredictedStandingsOrder(input: {
+  hasTournamentStarted: boolean;
+  hasPredictionForGroup: boolean;
+  hasFinalizedResultInGroup: boolean;
+}) {
+  if (!input.hasPredictionForGroup) {
+    return false;
+  }
+
+  if (!input.hasTournamentStarted) {
+    return true;
+  }
+
+  return !input.hasFinalizedResultInGroup;
+}
+
 export function buildFinalGroupStandings(matches: MatchWithTeams[], groupName: string) {
   const normalizedGroupName = normalizeGroupKey(groupName);
   const groupMatches = matches.filter(
