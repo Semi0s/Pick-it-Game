@@ -59,6 +59,18 @@ export default async function DashboardPage() {
             totalGroups: 0,
             totalPlayers: 0
           },
+          scoring: {
+            currentPoints: null,
+            currentRank: null,
+            previousPoints: null,
+            previousRank: null,
+            pointsChange: null,
+            rankChange: null,
+            latestSnapshotAt: null,
+            previousSnapshotAt: null,
+            comparisonMode: "none",
+            history: []
+          },
           reminder: {
             followedTeamCount: 0,
             nextMatch: null,
