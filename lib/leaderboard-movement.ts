@@ -1,13 +1,14 @@
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "./supabase/admin.ts";
+import {
+  buildDashboardScoringMovementSummary,
+  createEmptyDashboardScoringMovementSummary,
+  type DashboardScoringHistoryPoint,
+  type DashboardScoringMovementSummary,
+  type LeaderboardSnapshotHistoryRow,
+  normalizeLeaderboardSnapshotHistory
+} from "./leaderboard-movement-helpers.ts";
 
-type LeaderboardSnapshotRow = {
-  match_id: string;
-  user_id: string;
-  group_id?: string | null;
-  rank: number;
-  total_points: number;
-  created_at: string;
-};
+type LeaderboardSnapshotRow = LeaderboardSnapshotHistoryRow;
 
 export type GlobalLeaderboardRankMovement = {
   user_id: string;
@@ -21,10 +22,38 @@ export type GlobalLeaderboardRankMovement = {
 
 export type GroupLeaderboardRankMovement = GlobalLeaderboardRankMovement;
 
+export type { DashboardScoringHistoryPoint, DashboardScoringMovementSummary };
+
 export async function fetchGlobalLeaderboardRankMovement(
   matchId: string
 ): Promise<GlobalLeaderboardRankMovement[]> {
   return fetchScopedLeaderboardRankMovement({ scopeType: "global", matchId });
+}
+
+export async function fetchGlobalDashboardScoringMovementSummary(
+  userId: string,
+  options?: { limit?: number }
+): Promise<DashboardScoringMovementSummary> {
+  const adminSupabase = createAdminClient();
+  const trimmedUserId = userId.trim();
+  if (!trimmedUserId) {
+    return createEmptyDashboardScoringMovementSummary();
+  }
+
+  const { data, error } = await adminSupabase
+    .from("leaderboard_snapshots")
+    .select("match_id,user_id,scope_type,group_id,rank,total_points,created_at")
+    .eq("scope_type", "global")
+    .eq("user_id", trimmedUserId)
+    .is("group_id", null)
+    .order("created_at", { ascending: false })
+    .limit(Math.max(1, options?.limit ?? 24));
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return buildDashboardScoringMovementSummary((data as LeaderboardSnapshotRow[] | null) ?? []);
 }
 
 export async function fetchGroupLeaderboardRankMovement(
@@ -171,3 +200,5 @@ async function fetchScopedLeaderboardRankMovement({
     };
   });
 }
+
+export { buildDashboardScoringMovementSummary, createEmptyDashboardScoringMovementSummary, normalizeLeaderboardSnapshotHistory };

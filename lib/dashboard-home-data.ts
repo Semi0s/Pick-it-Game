@@ -17,6 +17,10 @@ import {
 import { normalizeGroupKey } from "@/lib/group-standings";
 import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
 import { fetchGlobalLeaderboardRankSummaryForUser } from "@/lib/leaderboard-data";
+import {
+  createEmptyDashboardScoringMovementSummary,
+  fetchGlobalDashboardScoringMovementSummary
+} from "@/lib/leaderboard-movement";
 import { EXPECTED_KNOCKOUT_MATCH_COUNTS, isRoundOf32Stage, normalizeKnockoutStage } from "@/lib/match-stage";
 import { getGroupMatches, teams as demoTeams } from "@/lib/mock-data";
 import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
@@ -94,6 +98,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     snapshotResult,
     knockoutPredictionsResult,
     globalRankResult,
+    scoringMovementResult,
     userSettingsResult,
     totalPlayersResult,
     tournamentEntrySettings,
@@ -123,6 +128,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       totalPlayers: 0,
       totalPoints: null
     })),
+    fetchGlobalDashboardScoringMovementSummary(userId).catch(() => createEmptyDashboardScoringMovementSummary()),
     adminSupabase.from("user_settings").select("followed_team_ids").eq("user_id", userId).maybeSingle(),
     adminSupabase.from("users").select("id", { count: "exact", head: true }),
     fetchTournamentEntrySettings(adminSupabase, userId).catch(() => null),
@@ -342,6 +348,15 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       totalGroups: visibleGroupIds.length,
       totalPlayers: totalPlayersResult.count ?? globalRankResult.totalPlayers ?? 0
     },
+    scoring: {
+      ...scoringMovementResult,
+      currentPoints:
+        scoringMovementResult.currentPoints ??
+        profile?.total_points ??
+        globalRankResult.totalPoints ??
+        null,
+      currentRank: scoringMovementResult.currentRank ?? globalRankResult.rank ?? null
+    },
     reminder: {
       followedTeamCount: followedTeamIds.length,
       nextMatch: reminderNextMatch,
@@ -375,6 +390,7 @@ function buildFallbackDashboardCommandCenter(): DashboardCommandCenterSummary {
       totalGroups: 0,
       totalPlayers: 0
     },
+    scoring: createEmptyDashboardScoringMovementSummary(),
     reminder: {
       followedTeamCount: 0,
       nextMatch: null,
