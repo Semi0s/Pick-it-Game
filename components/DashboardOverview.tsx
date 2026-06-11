@@ -28,6 +28,7 @@ import {
   getGroupShortLabel,
   normalizeGroupKey,
   resolvePreferredStandingsGroupSelection,
+  shouldPreferPredictedStandingsOrder,
   shouldUseOfficialGroupStandingsOrder
 } from "@/lib/group-standings";
 import { orderRowsByPredictionSlots } from "@/lib/group-stage-mini-table-order";
@@ -489,12 +490,20 @@ export function DashboardOverview({
     const groupTeamsForProbability = rows
       .map((row) => allGroupTeamsById.get(row.teamId))
       .filter((team): team is PickProbabilityTeam => Boolean(team));
+    const groupMatchesForStandings = groupMatches.filter(
+      (match) => normalizeGroupKey(match.groupName) === resolvedStandingsGroup
+    );
     const remainingMatches = groupMatches
       .filter((match) => normalizeGroupKey(match.groupName) === resolvedStandingsGroup && match.status !== "final")
       .map((match) => ({ status: match.status }));
     const groupIsFinal = rows.length > 0 && rows.every((row) => row.played >= 3);
     const hasPredictionForGroup = rows.some((row) => predictedPlacementByTeamId.has(row.teamId));
-    const shouldUsePredictionOrder = !hasGroupStageStarted && hasPredictionForGroup;
+    const hasFinalizedResultInGroup = groupMatchesForStandings.some((match) => match.status === "final");
+    const shouldUsePredictionOrder = shouldPreferPredictedStandingsOrder({
+      hasTournamentStarted: hasGroupStageStarted,
+      hasPredictionForGroup,
+      hasFinalizedResultInGroup
+    });
     const displayRows = shouldUsePredictionOrder
       ? orderRowsByPredictionSlots(rows, predictedPlacementByTeamId)
       : rows.map((row, index) => ({ row, displayRank: row.rank || index + 1 }));

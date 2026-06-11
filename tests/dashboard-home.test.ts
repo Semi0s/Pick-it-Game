@@ -28,7 +28,10 @@ import {
   mergeProbabilityRowTeamIds,
   shouldShowMiniTablePickProbability
 } from "../lib/group-pick-probability.ts";
-import { shouldUseOfficialGroupStandingsOrder } from "../lib/group-standings.ts";
+import {
+  shouldPreferPredictedStandingsOrder,
+  shouldUseOfficialGroupStandingsOrder
+} from "../lib/group-standings.ts";
 
 const BASE_NOW = Date.UTC(2026, 4, 23, 12, 0, 0);
 
@@ -97,6 +100,39 @@ test("deadline urgency turns red the day before and day of", () => {
 
 test("deadline urgency stays red for live events", () => {
   assert.equal(getDeadlineUrgency(null, BASE_NOW, { isLive: true }), "red");
+});
+
+test("predicted standings order stays active before tournament start", () => {
+  assert.equal(
+    shouldPreferPredictedStandingsOrder({
+      hasTournamentStarted: false,
+      hasPredictionForGroup: true,
+      hasFinalizedResultInGroup: false
+    }),
+    true
+  );
+});
+
+test("predicted standings order stays active for unresolved groups after tournament start", () => {
+  assert.equal(
+    shouldPreferPredictedStandingsOrder({
+      hasTournamentStarted: true,
+      hasPredictionForGroup: true,
+      hasFinalizedResultInGroup: false
+    }),
+    true
+  );
+});
+
+test("actual standings order wins once a group has finalized results", () => {
+  assert.equal(
+    shouldPreferPredictedStandingsOrder({
+      hasTournamentStarted: true,
+      hasPredictionForGroup: true,
+      hasFinalizedResultInGroup: true
+    }),
+    false
+  );
 });
 
 test("group-stage prediction progress handles empty, partial, and complete states", () => {
