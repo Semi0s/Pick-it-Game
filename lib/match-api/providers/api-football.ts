@@ -36,9 +36,17 @@ export async function fetchApiFootballMatches({
   }
 
   const baseUrl = process.env.MATCH_API_BASE_URL?.trim() || "https://v3.football.api-sports.io";
+  const leagueId = process.env.MATCH_API_LEAGUE_ID?.trim() ?? "";
+  const season = process.env.MATCH_API_SEASON?.trim() ?? "";
   const requestUrl = new URL("/fixtures", baseUrl);
   requestUrl.searchParams.set("from", startDate);
   requestUrl.searchParams.set("to", endDate);
+  if (leagueId) {
+    requestUrl.searchParams.set("league", leagueId);
+  }
+  if (season) {
+    requestUrl.searchParams.set("season", season);
+  }
 
   const response = await fetch(requestUrl.toString(), {
     headers: {
@@ -57,6 +65,8 @@ export async function fetchApiFootballMatches({
     startDate,
     endDate,
     baseUrl,
+    leagueId: leagueId || null,
+    season: season || null,
     requestUrl: requestUrl.toString(),
     fixtureCount: rawRows.length,
     sampleFixtureIds: rawRows.slice(0, 3).map((row) => row.fixture?.id ?? null)
