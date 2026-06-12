@@ -6422,6 +6422,8 @@ function formatLeaderboardFeatureSettingLabel(key: LeaderboardFeatureSettingKey)
       return "Leaderboard activity";
     case "leaderboard_comments_enabled":
       return "Leaderboard comments";
+    case "projected_leaderboard_enabled":
+      return "Projected leaderboard";
     default:
       return "Leaderboard feature";
   }

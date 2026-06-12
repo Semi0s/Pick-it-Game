@@ -570,7 +570,7 @@ export function AdminPlayersClient() {
               <p className="text-sm font-semibold text-gray-600">
                 These switches control what appears on the live leaderboard. All features stay off until you turn them on.
               </p>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <LeaderboardSettingToggle
                   label="Daily Winner"
                   description="Show the top scorer or tied scorers for the current day."
@@ -628,6 +628,22 @@ export function AdminPlayersClient() {
                   onToggle={(enabled) => {
                     void withAction(`leaderboard-setting-leaderboard_comments_enabled`, async () => {
                       const result = await updateLeaderboardFeatureSettingAction("leaderboard_comments_enabled", enabled);
+                      setMessage({ tone: result.ok ? "success" : "error", text: result.message });
+                      if (result.ok) {
+                        await loadLeaderboardSettings();
+                      }
+                    });
+                  }}
+                />
+                <LeaderboardSettingToggle
+                  label="Projected"
+                  description="Show a separate projected leaderboard during live group play without changing official totals."
+                  settingKey="projected_leaderboard_enabled"
+                  settings={leaderboardSettings}
+                  activeActionKey={activeActionKey}
+                  onToggle={(enabled) => {
+                    void withAction(`leaderboard-setting-projected_leaderboard_enabled`, async () => {
+                      const result = await updateLeaderboardFeatureSettingAction("projected_leaderboard_enabled", enabled);
                       setMessage({ tone: result.ok ? "success" : "error", text: result.message });
                       if (result.ok) {
                         await loadLeaderboardSettings();

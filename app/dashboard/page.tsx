@@ -92,6 +92,7 @@ export default async function DashboardPage() {
           },
           scoring: {
             mode: "empty",
+            scoreKind: "official",
             score: {
               currentPoints: null,
               currentRank: null,

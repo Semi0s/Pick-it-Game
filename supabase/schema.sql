@@ -626,6 +626,21 @@ create table public.leaderboard_snapshots (
   )
 );
 
+create table public.projected_leaderboard_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  projection_key text not null,
+  scope_type text not null check (scope_type in ('global', 'group')),
+  group_id uuid references public.groups(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  rank integer not null,
+  projected_points double precision not null default 0,
+  created_at timestamptz not null default now(),
+  constraint projected_leaderboard_snapshots_scope_group_chk check (
+    (scope_type = 'global' and group_id is null)
+    or (scope_type = 'group' and group_id is not null)
+  )
+);
+
 create table public.leaderboard_events (
   id uuid primary key default gen_random_uuid(),
   event_type text not null check (
@@ -1051,6 +1066,17 @@ create unique index leaderboard_snapshots_global_match_user_unique_idx
 
 create unique index leaderboard_snapshots_group_match_user_unique_idx
   on public.leaderboard_snapshots (group_id, match_id, user_id)
+  where scope_type = 'group';
+
+create index projected_leaderboard_snapshots_scope_group_created_idx
+  on public.projected_leaderboard_snapshots (scope_type, group_id, created_at desc);
+
+create unique index projected_leaderboard_snapshots_global_projection_user_unique_idx
+  on public.projected_leaderboard_snapshots (projection_key, user_id)
+  where scope_type = 'global' and group_id is null;
+
+create unique index projected_leaderboard_snapshots_group_projection_user_unique_idx
+  on public.projected_leaderboard_snapshots (group_id, projection_key, user_id)
   where scope_type = 'group';
 
 create index leaderboard_events_match_idx
@@ -2313,6 +2339,7 @@ insert into public.app_settings (key, boolean_value, integer_value, text_value)
 values
   ('daily_winner_enabled', false, null, null),
   ('perfect_pick_enabled', false, null, null),
+  ('projected_leaderboard_enabled', true, null, null),
   ('leaderboard_activity_enabled', false, null, null),
   ('max_joined_groups_per_player', false, 10, null),
   ('knockout_auto_seed_attempted', false, null, null),
@@ -3479,6 +3506,7 @@ revoke all on public.admin_access_change_audit_log from anon, authenticated, pub
 revoke all on public.admin_reset_audit_log from anon, authenticated, public;
 revoke all on public.prediction_scores from anon, authenticated, public;
 revoke all on public.leaderboard_snapshots from anon, authenticated, public;
+revoke all on public.projected_leaderboard_snapshots from anon, authenticated, public;
 
 grant select, insert, update, delete on public.email_jobs to service_role;
 grant select, insert, update, delete on public.match_events to service_role;
@@ -3496,6 +3524,7 @@ grant select, insert, update, delete on public.admin_access_change_audit_log to 
 grant select, insert, update, delete on public.admin_reset_audit_log to service_role;
 grant select, insert, update, delete on public.prediction_scores to service_role;
 grant select, insert, update, delete on public.leaderboard_snapshots to service_role;
+grant select, insert, update, delete on public.projected_leaderboard_snapshots to service_role;
 
 revoke all on public.invites from anon, authenticated, public;
 revoke all on public.teams from anon, authenticated, public;

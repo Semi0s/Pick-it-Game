@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { LeaderboardPhase, LeaderboardSwitcherView } from "@/lib/leaderboard-data";
+import type { LeaderboardMode, LeaderboardPhase, LeaderboardSwitcherView } from "@/lib/leaderboard-data";
 import { fetchLeaderboardPageData } from "@/lib/leaderboard-data";
 
 export async function GET(request: Request) {
@@ -7,6 +7,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const leaderboardData = await fetchLeaderboardPageData({
       phase: (url.searchParams.get("phase") as LeaderboardPhase | null) ?? undefined,
+      mode: (url.searchParams.get("mode") as LeaderboardMode | null) ?? undefined,
       view: (url.searchParams.get("view") as LeaderboardSwitcherView | null) ?? undefined,
       groupId: url.searchParams.get("groupId") ?? undefined,
       managerId: url.searchParams.get("managerId") ?? undefined
