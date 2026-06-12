@@ -45,6 +45,8 @@ type TriptychScoringTrackPoint = {
   pacePoints: number | null;
 };
 
+type PicksInPlayChartPoint = DashboardPicksInPlaySummary["history"][number];
+
 type TriptychScoringLens =
   | {
       mode: "empty";
@@ -130,6 +132,42 @@ function validateTriptychLeftPanelViewState(value: unknown): TriptychLeftPanelVi
         ? candidate.activeView
         : null
   };
+}
+
+function buildDisplayScoringChartData(points: TriptychScoringTrackPoint[]): TriptychScoringTrackPoint[] {
+  if (points.length !== 1) {
+    return points;
+  }
+
+  const firstPoint = points[0];
+  return [
+    {
+      checkpointId: `${firstPoint.checkpointId}-start`,
+      label: "",
+      actualPoints: 0,
+      pacePoints:
+        typeof firstPoint.pacePoints === "number" && firstPoint.pacePoints > 0 ? 0 : firstPoint.pacePoints
+    },
+    firstPoint
+  ];
+}
+
+function buildDisplayPicksInPlayChartData(points: PicksInPlayChartPoint[]): PicksInPlayChartPoint[] {
+  if (points.length !== 1) {
+    return points;
+  }
+
+  const firstPoint = points[0];
+  return [
+    {
+      dateKey: `${firstPoint.dateKey}-start`,
+      label: "",
+      inPlayCount: 0,
+      finalCount: 0,
+      todayCount: 0
+    },
+    firstPoint
+  ];
 }
 
 export function DashboardCommandCenter({
@@ -666,7 +704,7 @@ function TriptychScoringOutlookContent({
         {scoringLens.points.length === 0 ? null : (
           <div className="mt-1 flex w-full flex-col items-center gap-0.5">
             <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
-              <CompactMetric label={isProjected ? "Projected pts" : t(language, "leaderboard.points")} value={formatPoints(scoringLens.movement.currentPoints, language)} theme={theme} />
+              <CompactMetric label={isProjected ? "Proj pts" : t(language, "leaderboard.points")} value={formatPoints(scoringLens.movement.currentPoints, language)} theme={theme} />
               <CompactMetric label={t(language, "leaderboard.rank")} value={formatRank(scoringLens.movement.currentRank, language)} theme={theme} />
             </div>
             <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
@@ -726,23 +764,7 @@ function TriptychScoringSparkline({
     () => points.filter((point) => Number.isFinite(point.actualPoints)),
     [points]
   );
-  const displayChartData = useMemo(() => {
-    if (chartData.length !== 1) {
-      return chartData;
-    }
-
-    const firstPoint = chartData[0];
-    return [
-      {
-        checkpointId: `${firstPoint.checkpointId}-start`,
-        label: "",
-        actualPoints: 0,
-        pacePoints:
-          typeof firstPoint.pacePoints === "number" && firstPoint.pacePoints > 0 ? 0 : firstPoint.pacePoints
-      },
-      firstPoint
-    ];
-  }, [chartData]);
+  const displayChartData = useMemo(() => buildDisplayScoringChartData(chartData), [chartData]);
   const singlePointDot = useMemo(
     () =>
       chartData.length === 1
@@ -860,15 +882,16 @@ function TriptychPicksInPlayChart({
   const finalStroke = theme === "dark" ? "#fbbf24" : "#d97706";
   const todayStroke = theme === "dark" ? "rgba(226, 232, 240, 0.55)" : "rgba(71, 85, 105, 0.55)";
   const chartData = activity.history;
+  const displayChartData = useMemo(() => buildDisplayPicksInPlayChartData(chartData), [chartData]);
   const yDomain = useMemo<[number, number]>(() => {
-    const values = chartData.flatMap((point) => [point.inPlayCount, point.finalCount, point.todayCount]);
+    const values = displayChartData.flatMap((point) => [point.inPlayCount, point.finalCount, point.todayCount]);
     if (values.length === 0) {
       return [0, 1];
     }
 
     const max = Math.max(...values, 1);
     return [0, max + 1];
-  }, [chartData]);
+  }, [displayChartData]);
 
   if (chartData.length === 0) {
     return (
@@ -883,7 +906,7 @@ function TriptychPicksInPlayChart({
   return (
     <div className="triptych-scoring-chart relative mt-0.5">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData} margin={{ top: 8, right: 6, bottom: 0, left: -2 }}>
+        <LineChart data={displayChartData} margin={{ top: 8, right: 6, bottom: 0, left: -2 }}>
           <CartesianGrid stroke={gridStroke} strokeWidth={0.7} strokeDasharray="1 5" />
           <XAxis
             dataKey="label"
@@ -989,15 +1012,16 @@ function DashboardScoreMovementDetailSheet({
   const chartData = useMemo(
     () =>
       score.history.map((point) => ({
-        id: point.matchId,
+        checkpointId: point.matchId,
         label: formatScoringChartLabel(point.createdAt, language),
         actualPoints: point.totalPoints,
         pacePoints: point.pacePoints
       })),
     [language, score.history]
   );
+  const displayChartData = useMemo(() => buildDisplayScoringChartData(chartData), [chartData]);
   const yDomain = useMemo<[number, number]>(() => {
-    const values = chartData.flatMap((point) =>
+    const values = displayChartData.flatMap((point) =>
       [point.actualPoints, point.pacePoints].filter((value): value is number => typeof value === "number")
     );
     if (values.length === 0) {
@@ -1009,7 +1033,7 @@ function DashboardScoreMovementDetailSheet({
     const spread = Math.max(1, max - min);
     const padding = Math.max(2, Math.round(spread * 0.14));
     return [Math.max(0, min - padding), max + padding];
-  }, [chartData]);
+  }, [displayChartData]);
 
   return (
     <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-4 sm:items-center sm:px-5 sm:pb-4">
@@ -1061,7 +1085,7 @@ function DashboardScoreMovementDetailSheet({
             ) : (
               <div className="h-48 sm:h-56" aria-label={t(language, "dashboard.scoringPreviewAria")}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 10, right: 12, bottom: 2, left: 0 }}>
+                  <LineChart data={displayChartData} margin={{ top: 10, right: 12, bottom: 2, left: 0 }}>
                     <CartesianGrid
                       stroke={theme === "dark" ? "rgba(226,232,240,0.18)" : "rgba(100,116,139,0.14)"}
                       strokeDasharray="2 5"
@@ -1136,14 +1160,15 @@ function DashboardPicksInPlayDetailSheet({
   onClose: () => void;
 }) {
   const chartData = activity.history;
+  const displayChartData = useMemo(() => buildDisplayPicksInPlayChartData(chartData), [chartData]);
   const yDomain = useMemo<[number, number]>(() => {
-    const values = chartData.flatMap((point) => [point.inPlayCount, point.finalCount, point.todayCount]);
+    const values = displayChartData.flatMap((point) => [point.inPlayCount, point.finalCount, point.todayCount]);
     if (values.length === 0) {
       return [0, 1];
     }
 
     return [0, Math.max(...values, 1) + 1];
-  }, [chartData]);
+  }, [displayChartData]);
 
   return (
     <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-4 sm:items-center sm:px-5 sm:pb-4">
@@ -1193,7 +1218,7 @@ function DashboardPicksInPlayDetailSheet({
             ) : (
               <div className="h-48 sm:h-56" aria-label={t(language, "dashboard.picksInPlay")}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 10, right: 12, bottom: 2, left: 0 }}>
+                  <LineChart data={displayChartData} margin={{ top: 10, right: 12, bottom: 2, left: 0 }}>
                     <CartesianGrid
                       stroke={theme === "dark" ? "rgba(226,232,240,0.18)" : "rgba(100,116,139,0.14)"}
                       strokeDasharray="2 5"
