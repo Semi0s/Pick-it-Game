@@ -480,7 +480,7 @@ export const translations = {
       recentMoments: { one: "{count} recent moment", other: "{count} recent moments" },
       noScoresYet: "No scores yet",
       globalTop10Waiting: "Everyone starts tied at 0. The Global Top 10 player list appears once scoring starts.",
-      knockoutLeaderboardComingSoon: "Knockout and Side Picks leaderboards open later in the tournament.",
+      knockoutLeaderboardComingSoon: "Knockout Picks leaderboards open June 28.",
       morePlayersJoining: { one: "+{count} more player", other: "+{count} more players" },
       playersBackingTeam: { one: "{count} player backing {teamName}", other: "{count} players backing {teamName}" },
       whosNumberOne: "WHO'S #1",
