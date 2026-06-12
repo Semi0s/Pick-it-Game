@@ -63,6 +63,7 @@ export type DashboardPicksInPlaySummary = {
 
 export type DashboardMovementSummary = {
   mode: DashboardMovementMode;
+  scoreKind: "official" | "projected";
   score: DashboardScoringMovementSummary;
   activity: DashboardPicksInPlaySummary | null;
 };
@@ -245,6 +246,7 @@ export function createEmptyDashboardPicksInPlaySummary(): DashboardPicksInPlaySu
 export function createEmptyDashboardMovementSummary(): DashboardMovementSummary {
   return {
     mode: "empty",
+    scoreKind: "official",
     score: {
       currentPoints: null,
       currentRank: null,
@@ -357,14 +359,7 @@ export function resolveDashboardMovementMode(input: {
   score: DashboardScoringMovementSummary;
   activity: DashboardPicksInPlaySummary | null;
 }): DashboardMovementMode {
-  const hasMeaningfulScoreMovement =
-    (input.score.currentPoints ?? 0) > 0 ||
-    input.score.history.some(
-      (point) =>
-        point.totalPoints > 0 ||
-        (point.pointsDelta ?? 0) !== 0 ||
-        (point.rankDelta ?? 0) !== 0
-    );
+  const hasMeaningfulScoreMovement = hasMeaningfulScoreHistory(input.score);
 
   if (hasMeaningfulScoreMovement) {
     return "score_movement";
@@ -386,6 +381,18 @@ export function resolveDashboardMovementMode(input: {
   }
 
   return "empty";
+}
+
+export function hasMeaningfulScoreHistory(score: DashboardScoringMovementSummary): boolean {
+  return (
+    (score.currentPoints ?? 0) > 0 ||
+    score.history.some(
+      (point) =>
+        point.totalPoints > 0 ||
+        (point.pointsDelta ?? 0) !== 0 ||
+        (point.rankDelta ?? 0) !== 0
+    )
+  );
 }
 
 export function getDeadlineLabel(

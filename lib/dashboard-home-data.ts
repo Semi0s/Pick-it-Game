@@ -24,6 +24,11 @@ import {
   createEmptyDashboardScoringMovementSummary,
   fetchGlobalDashboardScoringMovementSummary
 } from "@/lib/leaderboard-movement";
+import {
+  PROJECTED_LEADERBOARD_ENABLED_KEY,
+  fetchProjectedDashboardScoringMovementSummary
+} from "@/lib/projected-leaderboard";
+import { selectDashboardProjectedScoreSummary } from "@/lib/projected-leaderboard-mode";
 import { EXPECTED_KNOCKOUT_MATCH_COUNTS, isRoundOf32Stage, normalizeKnockoutStage } from "@/lib/match-stage";
 import { getGroupMatches, teams as demoTeams } from "@/lib/mock-data";
 import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
@@ -37,7 +42,7 @@ import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { fetchUserLightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { getRequiredThirdPlaceQualifierCount } from "@/lib/knockout-seeding";
 import { fetchUserBracketPredictions } from "@/lib/bracket-predictions";
-import type { MatchStage, MatchStatus } from "@/lib/types";
+import type { BracketPrediction, MatchStage, MatchStatus } from "@/lib/types";
 
 type TeamRow = {
   id: string;
@@ -102,6 +107,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     knockoutPredictionsResult,
     globalRankResult,
     scoringMovementResult,
+    projectedScoringMovementResult,
+    projectedLeaderboardEnabledResult,
     userSettingsResult,
     totalPlayersResult,
     tournamentEntrySettings,
@@ -132,6 +139,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       totalPoints: null
     })),
     fetchGlobalDashboardScoringMovementSummary(userId).catch(() => createEmptyDashboardScoringMovementSummary()),
+    fetchProjectedDashboardScoringMovementSummary(userId).catch(() => createEmptyDashboardScoringMovementSummary()),
+    fetchBooleanAppSetting(PROJECTED_LEADERBOARD_ENABLED_KEY, true).catch(() => true),
     adminSupabase.from("user_settings").select("followed_team_ids").eq("user_id", userId).maybeSingle(),
     adminSupabase.from("users").select("id", { count: "exact", head: true }),
     fetchTournamentEntrySettings(adminSupabase, userId).catch(() => null),
@@ -183,7 +192,9 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
   const memberships = ((groupMembershipResult.data as GroupMemberRow[] | null) ?? []);
   const ownedGroups = ((ownedGroupsResult.data as OwnedGroupRow[] | null) ?? []);
   const snapshot = snapshotResult as LightSeedBuilderSnapshot | null;
-  const savedKnockoutPredictions = Array.from(new Set((knockoutPredictionsResult ?? []).map((prediction) => prediction.matchId)));
+  const savedKnockoutPredictions = Array.from(
+    new Set(((knockoutPredictionsResult ?? []) as BracketPrediction[]).map((prediction) => prediction.matchId))
+  );
 
   const teamById = new Map(
     teams.map((team) => [team.id, team])
@@ -346,6 +357,20 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     ...progressBase,
     hasCompletedBracketOnce: groupStageSaveStatus.hasCommittedEntry
   };
+  const officialScoreSummary = {
+    ...scoringMovementResult,
+    currentPoints:
+      scoringMovementResult.currentPoints ??
+      profile?.total_points ??
+      globalRankResult.totalPoints ??
+      null,
+    currentRank: scoringMovementResult.currentRank ?? globalRankResult.rank ?? null
+  };
+  const { score: effectiveScoreSummary, scoreKind } = selectDashboardProjectedScoreSummary({
+    official: officialScoreSummary,
+    projected: projectedScoringMovementResult,
+    projectedLeaderboardEnabled: projectedLeaderboardEnabledResult
+  });
 
   return {
     progress,
@@ -367,26 +392,11 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     },
     scoring: {
       mode: resolveDashboardMovementMode({
-        score: {
-          ...scoringMovementResult,
-          currentPoints:
-            scoringMovementResult.currentPoints ??
-            profile?.total_points ??
-            globalRankResult.totalPoints ??
-            null,
-          currentRank: scoringMovementResult.currentRank ?? globalRankResult.rank ?? null
-        },
+        score: effectiveScoreSummary,
         activity: picksInPlayActivity
       }),
-      score: {
-        ...scoringMovementResult,
-        currentPoints:
-          scoringMovementResult.currentPoints ??
-          profile?.total_points ??
-          globalRankResult.totalPoints ??
-          null,
-        currentRank: scoringMovementResult.currentRank ?? globalRankResult.rank ?? null
-      },
+      scoreKind,
+      score: effectiveScoreSummary,
       activity: picksInPlayActivity
     },
     reminder: {

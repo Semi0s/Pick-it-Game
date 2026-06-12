@@ -17,6 +17,13 @@ import {
 } from "@/lib/leaderboard-highlights";
 import { fetchGlobalChallengeSummaries } from "@/lib/global-challenge-data";
 import { fetchGroupPhaseSummaries } from "@/lib/group-phase-data";
+import {
+  fetchProjectedGroupPhaseSummaries,
+  fetchProjectedLeaderboardRankMovement,
+  persistProjectedLeaderboardSnapshots,
+  type ProjectedGroupPhaseUserSummary
+} from "@/lib/projected-leaderboard";
+import { shouldUseProjectedLeaderboardMode } from "@/lib/projected-leaderboard-mode";
 import { isMissingAnyRelationError, isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { assignDeterministicRanks, compareLeaderboardEntries } from "@/lib/scoring-engine";
 import { hasOrganizerAccess, normalizeCommercialTier, resolveAccessLevel, type AccessLevel } from "@/lib/tier-access";
@@ -116,6 +123,7 @@ export type LeaderboardListItem = UserProfile & {
   rank: number;
   rankDelta: number | null;
   pointsDelta: number | null;
+  projectedPoints?: number | null;
   hasPerfectPickHighlight: boolean;
   standardPoints?: number;
   groupCustomPoints?: number;
@@ -130,6 +138,7 @@ export type LeaderboardListItem = UserProfile & {
 
 export type LeaderboardSwitcherView = "global" | "my_groups" | "managed_groups" | "groups" | "teams" | "managers";
 export type LeaderboardPhase = "group_phase" | "knockout_phase" | "side_picks" | "global_top10";
+export type LeaderboardMode = "official" | "projected";
 
 export type LeaderboardSwitcherOption = {
   id: string;
@@ -169,6 +178,7 @@ export type LeaderboardPageData = {
   activityFeed: LeaderboardActivityItem[];
   settings: LeaderboardFeatureSettings;
   phase: LeaderboardPhase;
+  mode: LeaderboardMode;
   currentUserRank: number | null;
   globalLeaderboardTotalPlayers: number;
 };
@@ -206,6 +216,7 @@ export type TeamStandingItem = {
 
 export type LeaderboardPageRequest = {
   phase?: LeaderboardPhase;
+  mode?: LeaderboardMode;
   view?: LeaderboardSwitcherView;
   groupId?: string;
   managerId?: string;
@@ -241,6 +252,7 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
       activityFeed: [],
       settings: await fetchLeaderboardFeatureSettings(),
       phase,
+      mode: "official",
       currentUserRank: null,
       globalLeaderboardTotalPlayers: demoUsers.length,
       switcher: {
@@ -259,6 +271,14 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
 
   const [settings, switcher] = await Promise.all([fetchLeaderboardFeatureSettings(), fetchLeaderboardSwitcherContext()]);
   const activeView = resolveAllowedView(request?.view, switcher);
+  const mode = shouldUseProjectedLeaderboardMode({
+    requestedMode: request?.mode,
+    projectedLeaderboardEnabled: settings.projected_leaderboard_enabled,
+    phase,
+    view: activeView
+  })
+    ? "projected"
+    : "official";
   const selectedGroupId = resolveAllowedGroupId(request?.groupId, switcher, activeView);
   const groupStandingIds = switcher.groups.map((group) => group.id);
   const groupStandingsPromise = activeView === "groups"
@@ -271,12 +291,12 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
   const teamStandingsPromise = activeView === "teams" ? fetchTeamStandings() : Promise.resolve([]);
   const leaderboardPromise =
     activeView === "global"
-      ? fetchGlobalLeaderboardRows(phase, settings.perfect_pick_enabled)
+      ? fetchGlobalLeaderboardRows(phase, settings.perfect_pick_enabled, mode)
       : selectedGroupId
-        ? fetchGroupLeaderboardRows(selectedGroupId, phase, settings.perfect_pick_enabled)
+        ? fetchGroupLeaderboardRows(selectedGroupId, phase, settings.perfect_pick_enabled, mode)
         : Promise.resolve([]);
   const dailyWinnersPromise =
-    settings.daily_winner_enabled
+    settings.daily_winner_enabled && mode === "official"
       ? activeView === "global"
         ? fetchDailyWinners()
         : selectedGroupId
@@ -304,11 +324,11 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
       ? rawLeaderboard.slice(0, hasGlobalTopTenScoringStarted ? 10 : 30)
       : rawLeaderboard;
   const commentsEnabledForActivity =
-    settings.leaderboard_comments_enabled && selectedGroupId
+    settings.leaderboard_comments_enabled && selectedGroupId && mode === "official"
       ? await areLeaderboardCommentsEnabledForScope("group", selectedGroupId)
       : false;
   const activityFeed =
-    settings.leaderboard_activity_enabled
+    settings.leaderboard_activity_enabled && mode === "official"
       ? activeView === "global"
         ? await fetchRecentGlobalLeaderboardActivity({
             includeDailyWinner: settings.daily_winner_enabled,
@@ -337,6 +357,7 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
     activityFeed: settings.leaderboard_activity_enabled ? activityFeed : [],
     settings,
     phase,
+    mode,
     currentUserRank,
     globalLeaderboardTotalPlayers,
     switcher
@@ -643,7 +664,8 @@ async function fetchTeamStandings(): Promise<TeamStandingItem[]> {
 
 async function fetchGlobalLeaderboardRows(
   phase: LeaderboardPhase,
-  perfectPickEnabled: boolean
+  perfectPickEnabled: boolean,
+  mode: LeaderboardMode = "official"
 ): Promise<LeaderboardListItem[]> {
   const adminSupabase = createAdminClient();
   const { data: usersData, error: usersError } = await adminSupabase
@@ -664,6 +686,7 @@ async function fetchGlobalLeaderboardRows(
   const [
     globalChallengeSummaries,
     groupPhaseSummaries,
+    projectedGroupPhaseResult,
     knockoutPointsByUserId,
     standardSidePickTotals,
     perfectPickUserIds,
@@ -672,6 +695,9 @@ async function fetchGlobalLeaderboardRows(
   ] = await Promise.all([
     fetchGlobalChallengeSummaries(userIds),
     fetchGroupPhaseSummaries(userIds),
+    mode === "projected" && phase === "group_phase"
+      ? fetchProjectedGroupPhaseSummaries(userIds)
+      : Promise.resolve({ summaries: new Map<string, ProjectedGroupPhaseUserSummary>(), projectionKey: null }),
     fetchKnockoutPointsByUserIds(adminSupabase, userIds),
     fetchStandardSidePickTotalsByUser(adminSupabase),
     perfectPickEnabled ? fetchPerfectPickUserIdsForLatestFinalizedMatch() : Promise.resolve(new Set<string>()),
@@ -682,11 +708,14 @@ async function fetchGlobalLeaderboardRows(
   const rankedEntries = users
     .map((user) => {
       const groupPhasePoints = groupPhaseSummaries.get(user.id)?.points ?? 0;
+      const projectedGroupPhasePoints = projectedGroupPhaseResult.summaries.get(user.id)?.projectedPoints ?? groupPhasePoints;
       const knockoutPhasePoints = knockoutPointsByUserId.get(user.id) ?? 0;
       const standardSidePickPoints = standardSidePickTotals.get(user.id) ?? 0;
       const totalPoints =
         phase === "group_phase"
-          ? groupPhasePoints
+          ? mode === "projected"
+            ? projectedGroupPhasePoints
+            : groupPhasePoints
           : phase === "knockout_phase"
             ? knockoutPhasePoints
             : phase === "side_picks"
@@ -700,6 +729,24 @@ async function fetchGlobalLeaderboardRows(
     .sort(compareLeaderboardEntries);
 
   const ranks = assignRanks(rankedEntries);
+  if (mode === "projected" && phase === "group_phase") {
+    await persistProjectedLeaderboardSnapshots({
+      scopeType: "global",
+      projectionKey: projectedGroupPhaseResult.projectionKey,
+      rankedEntries: ranks
+    });
+  }
+  const movementByUserId =
+    mode === "projected" && phase === "group_phase"
+      ? new Map(
+          (
+            await fetchProjectedLeaderboardRankMovement({
+              scopeType: "global",
+              projectionKey: projectedGroupPhaseResult.projectionKey
+            })
+          ).map((row) => [row.user_id, { rankDelta: row.rank_delta, pointsDelta: row.points_delta }] as const)
+        )
+      : new Map<string, { rankDelta: number | null; pointsDelta: number | null }>();
 
   return ranks
     .map((entry) => {
@@ -710,8 +757,13 @@ async function fetchGlobalLeaderboardRows(
 
       const summary = globalChallengeSummaries.get(entry.user_id) ?? null;
       const groupPhaseSummary = groupPhaseSummaries.get(entry.user_id) ?? null;
+      const projectedGroupPhasePoints = projectedGroupPhaseResult.summaries.get(entry.user_id)?.projectedPoints ?? null;
       const knockoutPhasePoints = knockoutPointsByUserId.get(entry.user_id) ?? 0;
       const standardSidePickPoints = standardSidePickTotals.get(entry.user_id) ?? 0;
+      const movement = movementByUserId.get(entry.user_id) ?? { rankDelta: null, pointsDelta: null };
+      const displayedGroupPhasePoints = mode === "projected" && phase === "group_phase"
+        ? projectedGroupPhasePoints ?? 0
+        : groupPhaseSummary?.points ?? 0;
 
       return {
         ...mapUserRow(joinedUser, visualThemeIdsByUserId.get(entry.user_id) ?? null),
@@ -719,7 +771,8 @@ async function fetchGlobalLeaderboardRows(
         totalPoints: entry.total_points,
         standardPoints: entry.total_points,
         groupCustomPoints: 0,
-        groupPhasePoints: groupPhaseSummary?.points ?? 0,
+        groupPhasePoints: displayedGroupPhasePoints,
+        projectedPoints: projectedGroupPhasePoints,
         knockoutPhasePoints,
         sidePickPoints: standardSidePickPoints,
         globalTopTenPoints: (groupPhaseSummary?.points ?? 0) + knockoutPhasePoints + standardSidePickPoints,
@@ -727,8 +780,8 @@ async function fetchGlobalLeaderboardRows(
         knockoutGlobalPoints: summary?.knockout.points ?? null,
         globalChallengePoints: summary?.totalPoints ?? null,
         rank: entry.rank,
-        rankDelta: null,
-        pointsDelta: null,
+        rankDelta: movement.rankDelta,
+        pointsDelta: movement.pointsDelta,
         hasPerfectPickHighlight: perfectPickUserIds.has(entry.user_id)
       };
     })
@@ -738,7 +791,8 @@ async function fetchGlobalLeaderboardRows(
 async function fetchGroupLeaderboardRows(
   groupId: string,
   phase: LeaderboardPhase,
-  perfectPickEnabled: boolean
+  perfectPickEnabled: boolean,
+  mode: LeaderboardMode = "official"
 ): Promise<LeaderboardListItem[]> {
   const adminSupabase = createAdminClient();
   const { data: memberships, error: membershipsError } = await adminSupabase
@@ -758,9 +812,12 @@ async function fetchGroupLeaderboardRows(
     return [];
   }
 
-  const [groupCustomTotals, groupPhaseSummaries, knockoutPointsByUserId, standardSidePickTotals] = await Promise.all([
+  const [groupCustomTotals, groupPhaseSummaries, projectedGroupPhaseResult, knockoutPointsByUserId, standardSidePickTotals] = await Promise.all([
     fetchGroupCustomScoreTotals(adminSupabase, [groupId]),
     fetchGroupPhaseSummaries(memberUserIds),
+    mode === "projected" && phase === "group_phase"
+      ? fetchProjectedGroupPhaseSummaries(memberUserIds)
+      : Promise.resolve({ summaries: new Map<string, ProjectedGroupPhaseUserSummary>(), projectionKey: null }),
     fetchKnockoutPointsByUserIds(adminSupabase, memberUserIds),
     fetchStandardSidePickTotalsByUser(adminSupabase)
   ]);
@@ -773,11 +830,14 @@ async function fetchGroupLeaderboardRows(
   }> = memberUserIds
     .map((userId) => {
       const groupPhasePoints = groupPhaseSummaries.get(userId)?.points ?? 0;
+      const projectedGroupPhasePoints = projectedGroupPhaseResult.summaries.get(userId)?.projectedPoints ?? groupPhasePoints;
       const knockoutPhasePoints = knockoutPointsByUserId.get(userId) ?? 0;
       const standardSidePickPoints = standardSidePickTotals.get(userId) ?? 0;
       const phasePoints =
         phase === "group_phase"
-          ? groupPhasePoints
+          ? mode === "projected"
+            ? projectedGroupPhasePoints
+            : groupPhasePoints
           : phase === "knockout_phase"
             ? knockoutPhasePoints
             : phase === "side_picks"
@@ -793,13 +853,30 @@ async function fetchGroupLeaderboardRows(
     .sort(compareLeaderboardEntries);
 
   const rankedEntries = assignRanks(groupLeaderboardEntries);
-  const latestMatchId = await fetchLatestSnapshotMatchId(adminSupabase, { scopeType: "group", groupId });
+  if (mode === "projected" && phase === "group_phase") {
+    await persistProjectedLeaderboardSnapshots({
+      scopeType: "group",
+      groupId,
+      projectionKey: projectedGroupPhaseResult.projectionKey,
+      rankedEntries
+    });
+  }
+  const latestMatchId =
+    mode === "projected" && phase === "group_phase"
+      ? projectedGroupPhaseResult.projectionKey
+      : await fetchLatestSnapshotMatchId(adminSupabase, { scopeType: "group", groupId });
   const [usersById, movementByUserId, perfectPickUserIds, trophiesByUserId, visualThemeIdsByUserId] = await Promise.all([
     fetchUsersByIds(adminSupabase, rankedEntries.map((entry) => entry.user_id)),
     latestMatchId
       ? Promise.resolve(
           new Map(
-            (await fetchGroupLeaderboardRankMovement(latestMatchId, groupId)).map((row) => [
+            ((mode === "projected" && phase === "group_phase"
+              ? await fetchProjectedLeaderboardRankMovement({
+                  scopeType: "group",
+                  groupId,
+                  projectionKey: latestMatchId
+                })
+              : await fetchGroupLeaderboardRankMovement(latestMatchId, groupId))).map((row) => [
               row.user_id,
               { rankDelta: row.rank_delta, pointsDelta: row.points_delta }
             ])
@@ -829,7 +906,11 @@ async function fetchGroupLeaderboardRows(
         totalPoints: entry.total_points,
         standardPoints: entry.standard_points,
         groupCustomPoints: entry.group_custom_points,
-        groupPhasePoints: groupPhaseSummaries.get(entry.user_id)?.points ?? 0,
+        groupPhasePoints:
+          mode === "projected" && phase === "group_phase"
+            ? projectedGroupPhaseResult.summaries.get(entry.user_id)?.projectedPoints ?? 0
+            : groupPhaseSummaries.get(entry.user_id)?.points ?? 0,
+        projectedPoints: projectedGroupPhaseResult.summaries.get(entry.user_id)?.projectedPoints ?? null,
         knockoutPhasePoints: knockoutPointsByUserId.get(entry.user_id) ?? 0,
         sidePickPoints: standardSidePickTotals.get(entry.user_id) ?? 0,
         globalTopTenPoints:

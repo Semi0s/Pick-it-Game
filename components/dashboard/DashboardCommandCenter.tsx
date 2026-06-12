@@ -55,6 +55,7 @@ type TriptychScoringLens =
     }
   | {
       mode: "score_movement";
+      scoreKind: DashboardMovementSummary["scoreKind"];
       movement: DashboardMovementSummary["score"];
       points: TriptychScoringTrackPoint[];
     };
@@ -652,6 +653,7 @@ function TriptychScoringOutlookContent({
   theme: TriptychTheme;
 }) {
   if (scoringLens.mode === "score_movement") {
+    const isProjected = scoringLens.scoreKind === "projected";
     const ariaLabel = t(language, "dashboard.scoringTrackAria", {
       points: formatPoints(scoringLens.movement.currentPoints, language),
       rank: formatRank(scoringLens.movement.currentRank, language)
@@ -662,12 +664,12 @@ function TriptychScoringOutlookContent({
         className="flex h-full w-full min-w-0 translate-y-1 flex-col items-center justify-center px-1 pb-1 text-center"
         aria-label={ariaLabel}
       >
-        <ScoringLensTitle label={t(language, "dashboard.scoringDetailTitle")} theme={theme} />
+        <ScoringLensTitle label={isProjected ? "Projected" : t(language, "dashboard.scoringDetailTitle")} theme={theme} />
         <TriptychScoringSparkline points={scoringLens.points} language={language} theme={theme} />
         {scoringLens.points.length === 0 ? null : (
           <div className="mt-1 flex w-full flex-col items-center gap-0.5">
             <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
-              <CompactMetric label={t(language, "leaderboard.points")} value={formatPoints(scoringLens.movement.currentPoints, language)} theme={theme} />
+              <CompactMetric label={isProjected ? "Projected pts" : t(language, "leaderboard.points")} value={formatPoints(scoringLens.movement.currentPoints, language)} theme={theme} />
               <CompactMetric label={t(language, "leaderboard.rank")} value={formatRank(scoringLens.movement.currentRank, language)} theme={theme} />
             </div>
             <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
@@ -970,6 +972,7 @@ function DashboardScoringDetailSheet({
   return (
     <DashboardScoreMovementDetailSheet
       score={scoring.score}
+      scoreKind={scoring.scoreKind}
       language={language}
       theme={theme}
       onClose={onClose}
@@ -979,15 +982,18 @@ function DashboardScoringDetailSheet({
 
 function DashboardScoreMovementDetailSheet({
   score,
+  scoreKind,
   language,
   theme,
   onClose
 }: {
   score: DashboardMovementSummary["score"];
+  scoreKind: DashboardMovementSummary["scoreKind"];
   language?: string | null;
   theme: TriptychTheme;
   onClose: () => void;
 }) {
+  const isProjected = scoreKind === "projected";
   const chartData = useMemo(
     () =>
       score.history.map((point) => ({
@@ -1019,7 +1025,7 @@ function DashboardScoreMovementDetailSheet({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={t(language, "dashboard.scoringDetailTitle")}
+        aria-label={isProjected ? "Projected movement" : t(language, "dashboard.scoringDetailTitle")}
         className={`relative flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-[1.5rem] border shadow-2xl ${
           theme === "dark" ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-950"
         }`}
@@ -1027,9 +1033,9 @@ function DashboardScoreMovementDetailSheet({
         <div className={`flex items-center justify-between border-b px-4 py-3 sm:px-5 ${theme === "dark" ? "border-white/10" : "border-slate-200"}`}>
           <div>
             <p className={`text-[11px] font-black uppercase tracking-[0.14em] ${getMutedTextClasses(theme)}`}>
-              {t(language, "dashboard.scoringTrack")}
+              {isProjected ? "Projected" : t(language, "dashboard.scoringTrack")}
             </p>
-            <h2 className="text-xl font-black tracking-[-0.04em]">{t(language, "dashboard.scoringDetailTitle")}</h2>
+            <h2 className="text-xl font-black tracking-[-0.04em]">{isProjected ? "Projected movement" : t(language, "dashboard.scoringDetailTitle")}</h2>
           </div>
           <button
             type="button"
@@ -1045,7 +1051,7 @@ function DashboardScoreMovementDetailSheet({
 
         <div className="overflow-y-auto px-4 pb-4 pt-4 sm:px-5">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <DetailMetricCard label={t(language, "leaderboard.points")} value={formatPoints(score.currentPoints, language)} theme={theme} />
+            <DetailMetricCard label={isProjected ? "Projected pts" : t(language, "leaderboard.points")} value={formatPoints(score.currentPoints, language)} theme={theme} />
             <DetailMetricCard label={t(language, "leaderboard.rank")} value={formatRank(score.currentRank, language)} theme={theme} />
             <DetailMetricCard label={t(language, "dashboard.todayShort")} value={formatSignedMetric(score.pointsChange, language)} theme={theme} />
             <DetailMetricCard label="+/-" value={formatSignedMetric(score.rankChange, language)} theme={theme} />
@@ -1111,7 +1117,7 @@ function DashboardScoreMovementDetailSheet({
 
           {chartData.length === 0 ? null : (
             <p className={`mt-3 text-xs font-semibold ${getMutedTextClasses(theme)}`}>
-              {t(language, "dashboard.scoringPaceHint")}
+              {isProjected ? "Projected uses current group tables and your picks." : t(language, "dashboard.scoringPaceHint")}
             </p>
           )}
 
@@ -2135,6 +2141,7 @@ function getTriptychScoringLens({
   if (scoring.mode === "score_movement") {
     return {
       mode: "score_movement",
+      scoreKind: scoring.scoreKind,
       movement: scoring.score,
       points: getScoringTrackPoints(scoring.score.history)
     };

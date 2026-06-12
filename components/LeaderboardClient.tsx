@@ -22,6 +22,7 @@ import { parseJsonResponse } from "@/lib/fetch-json";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
   GroupStandingItem,
+  LeaderboardMode,
   LeaderboardPhase,
   LeaderboardGroupNavItem,
   LeaderboardListItem,
@@ -46,6 +47,7 @@ const DEFAULT_SWITCHER_STATE = {
 };
 
 const DEFAULT_LEADERBOARD_PHASE: LeaderboardPhase = "group_phase";
+const DEFAULT_LEADERBOARD_MODE: LeaderboardMode = "official";
 type LeaderboardPhaseRailValue = LeaderboardPhase | "side_picks";
 const LEADERBOARD_PHASE_RAIL_ITEMS: Array<{ value: LeaderboardPhaseRailValue; disabled?: boolean }> = [
   { value: "global_top10" },
@@ -229,12 +231,12 @@ function LeaderboardPlayerRow({
   );
 }
 
-function getLeaderboardScoreDisplay(profile: LeaderboardListItem, activePhase: LeaderboardPhase) {
+function getLeaderboardScoreDisplay(profile: LeaderboardListItem, activePhase: LeaderboardPhase, mode: LeaderboardMode) {
   const scoreValue = getLeaderboardNumericScore(profile, activePhase);
 
   if (activePhase === "group_phase") {
     return {
-      scoreLabel: "Pts",
+      scoreLabel: mode === "projected" ? "Projected pts" : "Pts",
       scoreValue
     };
   }
@@ -322,11 +324,13 @@ export function LeaderboardClient() {
   const [activityFeed, setActivityFeed] = useState<LeaderboardActivityItem[]>([]);
   const [globalLeaderboardTotalPlayers, setGlobalLeaderboardTotalPlayers] = useState(0);
   const [activePhase, setActivePhase] = useState<LeaderboardPhase>(DEFAULT_LEADERBOARD_PHASE);
+  const [activeMode, setActiveMode] = useState<LeaderboardMode>(DEFAULT_LEADERBOARD_MODE);
   const [activeView, setActiveView] = useState<LeaderboardSwitcherView>(DEFAULT_SWITCHER_STATE.activeView);
   const [selectedGroupId, setSelectedGroupId] = useState(DEFAULT_SWITCHER_STATE.selectedGroupId);
   const [selectedManagerId, setSelectedManagerId] = useState(DEFAULT_SWITCHER_STATE.selectedManagerId);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [projectedEnabled, setProjectedEnabled] = useState(true);
   const [activeReactionKey, setActiveReactionKey] = useState<string | null>(null);
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
@@ -395,6 +399,7 @@ export function LeaderboardClient() {
   const requestUrl = useMemo(() => {
     const params = new URLSearchParams();
     params.set("phase", getAvailableLeaderboardPhase(activePhase));
+    params.set("mode", activeMode);
     params.set("view", activeView);
     if (selectedGroupId) {
       params.set("groupId", selectedGroupId);
@@ -404,7 +409,7 @@ export function LeaderboardClient() {
     }
 
     return `/api/leaderboard?${params.toString()}`;
-  }, [activePhase, activeView, selectedGroupId, selectedManagerId]);
+  }, [activeMode, activePhase, activeView, selectedGroupId, selectedManagerId]);
   const dailyWinnerDismissOwnerKey = user?.id ?? "anonymous";
 
   const loadManagedAwardGroup = useCallback(async () => {
@@ -435,13 +440,17 @@ export function LeaderboardClient() {
       }
 
       const queryPhase = searchParams.get("phase");
+      const queryMode = searchParams.get("mode");
       const queryView = searchParams.get("view");
       const queryGroupId = searchParams.get("groupId");
       const queryManagerId = searchParams.get("managerId");
-      if (queryPhase || queryView || queryGroupId || queryManagerId) {
+      if (queryPhase || queryMode || queryView || queryGroupId || queryManagerId) {
         setHasExplicitSwitcherPreference(true);
         if (queryPhase === "knockout_phase" || queryPhase === "global_top10" || queryPhase === "side_picks" || queryPhase === "group_phase") {
           setActivePhase(getAvailableLeaderboardPhase(queryPhase));
+        }
+        if (queryMode === "official" || queryMode === "projected") {
+          setActiveMode(queryMode);
         }
         if (queryView) {
           setActiveView(queryView as LeaderboardSwitcherView);
@@ -472,6 +481,7 @@ export function LeaderboardClient() {
         setHasExplicitSwitcherPreference(false);
         setRememberedViewByPhase({});
         setActivePhase(DEFAULT_LEADERBOARD_PHASE);
+        setActiveMode(DEFAULT_LEADERBOARD_MODE);
         setActiveView(DEFAULT_SWITCHER_STATE.activeView);
         setSelectedGroupId(DEFAULT_SWITCHER_STATE.selectedGroupId);
         setSelectedManagerId(DEFAULT_SWITCHER_STATE.selectedManagerId);
@@ -644,6 +654,8 @@ export function LeaderboardClient() {
           setActivityFeed(result.activityFeed);
           setGlobalLeaderboardTotalPlayers(result.globalLeaderboardTotalPlayers);
           setActivePhase(getAvailableLeaderboardPhase(result.phase));
+          setActiveMode(result.mode ?? DEFAULT_LEADERBOARD_MODE);
+          setProjectedEnabled(result.settings.projected_leaderboard_enabled ?? true);
           setError(null);
           hasLoadedLeaderboardRef.current = true;
           setIsLoading(false);
@@ -1074,6 +1086,10 @@ export function LeaderboardClient() {
   const shouldShowGlobalTopTenWaitingCard =
     isGlobalTopTenPlayerView && !isLoading && !error && users.length > 0 && !hasGlobalTopTenScoringStarted;
   const shouldRenderLeaderboardRows = (isGlobalView || isGroupView) && !shouldShowGlobalTopTenWaitingCard;
+  const canShowProjectedMode =
+    projectedEnabled &&
+    activePhase === "group_phase" &&
+    (activeView === "global" || activeView === "my_groups" || activeView === "managed_groups");
   const canAwardManagedTrophies =
     activeView === "managed_groups" &&
     hasDirectorAccess(switcher?.accessLevel ?? "player") &&
@@ -1647,7 +1663,14 @@ export function LeaderboardClient() {
               />
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-start justify-between gap-3">
-                  <h3 className="min-w-0 truncate text-base font-black text-gray-950">{leaderboardTitle}</h3>
+                  <div className="min-w-0">
+                    <h3 className="min-w-0 truncate text-base font-black text-gray-950">{leaderboardTitle}</h3>
+                    {activeMode === "projected" ? (
+                      <p className="mt-1 text-[11px] font-semibold text-gray-500">
+                        Projected ranks estimate where picks stand using current group tables.
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="flex shrink-0 items-center gap-2">
                     {user ? (
                       <SafetyButton onClick={() => openSafetyReport()} />
@@ -1678,7 +1701,14 @@ export function LeaderboardClient() {
             </div>
           ) : (
             <div className="flex items-start justify-between gap-2 px-1 pt-1">
-              <h3 className="text-base font-black text-gray-950">{leaderboardTitle}</h3>
+              <div>
+                <h3 className="text-base font-black text-gray-950">{leaderboardTitle}</h3>
+                {activeMode === "projected" ? (
+                  <p className="mt-1 text-[11px] font-semibold text-gray-500">
+                    Projected ranks estimate where picks stand using current group tables.
+                  </p>
+                ) : null}
+              </div>
               {user ? <SafetyButton onClick={() => openSafetyReport()} /> : null}
             </div>
           )}
@@ -1741,7 +1771,7 @@ export function LeaderboardClient() {
           ) : null}
 
           {users.map((profile, index) => {
-            const { scoreLabel, scoreValue } = getLeaderboardScoreDisplay(profile, activePhase);
+            const { scoreLabel, scoreValue } = getLeaderboardScoreDisplay(profile, activePhase, activeMode);
 
             return (
               <LeaderboardPlayerRow
@@ -2021,6 +2051,25 @@ export function LeaderboardClient() {
         <p className="mx-auto max-w-[22rem] text-center text-[11px] font-semibold leading-4 text-gray-500">
           {t(uiLanguage, "leaderboard.knockoutLeaderboardComingSoon")}
         </p>
+
+        {canShowProjectedMode ? (
+          <div className="mx-auto flex w-fit items-center gap-1 rounded-full border border-gray-200 bg-white p-1 shadow-sm">
+            {(["official", "projected"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setActiveMode(mode)}
+                className={`rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.12em] transition ${
+                  activeMode === mode
+                    ? "bg-accent text-accent-text"
+                    : "text-gray-600 hover:bg-gray-100"
+                }`}
+              >
+                {mode === "official" ? "Official" : "Projected"}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         {shouldShowPhaseNavMenu ? (
           <div className="relative mx-auto w-[87%]">

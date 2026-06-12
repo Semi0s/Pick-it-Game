@@ -10,7 +10,8 @@ export const LEADERBOARD_FEATURE_SETTING_KEYS = [
   "daily_winner_enabled",
   "perfect_pick_enabled",
   "leaderboard_activity_enabled",
-  "leaderboard_comments_enabled"
+  "leaderboard_comments_enabled",
+  "projected_leaderboard_enabled"
 ] as const;
 
 export type LeaderboardFeatureSettingKey = (typeof LEADERBOARD_FEATURE_SETTING_KEYS)[number];
@@ -28,7 +29,8 @@ export const DEFAULT_LEADERBOARD_FEATURE_SETTINGS: LeaderboardFeatureSettings = 
   daily_winner_enabled: false,
   perfect_pick_enabled: false,
   leaderboard_activity_enabled: false,
-  leaderboard_comments_enabled: false
+  leaderboard_comments_enabled: false,
+  projected_leaderboard_enabled: true
 };
 
 export async function fetchLeaderboardFeatureSettings(): Promise<LeaderboardFeatureSettings> {
