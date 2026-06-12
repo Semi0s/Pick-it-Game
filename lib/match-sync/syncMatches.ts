@@ -99,6 +99,29 @@ export async function syncMatches(): Promise<SyncMatchesResult> {
   let skippedUnresolvedTeams = 0;
   let skippedUnmatched = 0;
   let errors = 0;
+  const unresolvedTeamSamples: Array<{
+    externalId: string;
+    homeTeamName: string;
+    awayTeamName: string;
+    resolvedHomeTeamId: string | null;
+    resolvedAwayTeamId: string | null;
+  }> = [];
+  const unmatchedSamples: Array<{
+    externalId: string;
+    homeTeamName: string;
+    awayTeamName: string;
+    homeTeamId: string;
+    awayTeamId: string;
+    kickoffAt: string;
+  }> = [];
+
+  console.info("[match-sync] Starting sync window.", {
+    startDate,
+    endDate,
+    externalMatchCount: externalMatches.length,
+    internalMatchCount: internalMatches.length,
+    teamCount: teamRows.length
+  });
 
   for (const externalMatch of externalMatches) {
     try {
@@ -107,6 +130,15 @@ export async function syncMatches(): Promise<SyncMatchesResult> {
 
       if (!homeTeamId || !awayTeamId) {
         skippedUnresolvedTeams += 1;
+        if (unresolvedTeamSamples.length < 5) {
+          unresolvedTeamSamples.push({
+            externalId: externalMatch.external_id,
+            homeTeamName: externalMatch.home_team_name,
+            awayTeamName: externalMatch.away_team_name,
+            resolvedHomeTeamId: homeTeamId,
+            resolvedAwayTeamId: awayTeamId
+          });
+        }
         continue;
       }
 
@@ -119,6 +151,16 @@ export async function syncMatches(): Promise<SyncMatchesResult> {
 
       if (!internalMatch) {
         skippedUnmatched += 1;
+        if (unmatchedSamples.length < 5) {
+          unmatchedSamples.push({
+            externalId: externalMatch.external_id,
+            homeTeamName: externalMatch.home_team_name,
+            awayTeamName: externalMatch.away_team_name,
+            homeTeamId,
+            awayTeamId,
+            kickoffAt: externalMatch.kickoff_at
+          });
+        }
         continue;
       }
 
@@ -200,7 +242,11 @@ export async function syncMatches(): Promise<SyncMatchesResult> {
     latestSyncedAt
   };
 
-  console.info("[match-sync] Sync completed.", summary);
+  console.info("[match-sync] Sync completed.", {
+    ...summary,
+    unresolvedTeamSamples,
+    unmatchedSamples
+  });
 
   return summary;
 }

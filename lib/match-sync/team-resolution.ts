@@ -8,7 +8,21 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   usa: "united states",
   usmnt: "united states",
   mexico: "mexico",
-  ecu: "ecuador"
+  ecu: "ecuador",
+  "south korea": "korea republic",
+  "korea south": "korea republic",
+  "republic of korea": "korea republic",
+  "czech republic": "czechia",
+  iran: "ir iran",
+  "iran ir": "ir iran",
+  "cape verde": "cabo verde",
+  "cape verde islands": "cabo verde",
+  "saudi arabia": "saudi arabia",
+  "bosnia and herzegovina": "bosnia herzegovina",
+  "cote d ivoire": "cote d ivoire",
+  turkey: "turkiye",
+  "dr congo": "congo dr",
+  "south africa": "south africa"
 };
 
 export function resolveTeamIdByName(name: string, teams: TeamRow[]) {
