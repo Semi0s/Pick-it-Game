@@ -11,11 +11,15 @@ export function shouldUseProjectedLeaderboardMode(input: {
   phase?: LeaderboardPhase | null;
   view?: LeaderboardSwitcherView | null;
 }): boolean {
+  const supportsProjectedView =
+    (input.phase === "group_phase" &&
+      (input.view === "global" || input.view === "my_groups" || input.view === "managed_groups")) ||
+    (input.phase === "global_top10" && input.view === "global");
+
   return Boolean(
     input.requestedMode === "projected" &&
       input.projectedLeaderboardEnabled &&
-      (input.phase === "group_phase" || input.phase === "global_top10") &&
-      input.view === "global"
+      supportsProjectedView
   );
 }
 

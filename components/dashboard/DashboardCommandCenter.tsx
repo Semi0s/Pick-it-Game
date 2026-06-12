@@ -726,6 +726,23 @@ function TriptychScoringSparkline({
     () => points.filter((point) => Number.isFinite(point.actualPoints)),
     [points]
   );
+  const displayChartData = useMemo(() => {
+    if (chartData.length !== 1) {
+      return chartData;
+    }
+
+    const firstPoint = chartData[0];
+    return [
+      {
+        checkpointId: `${firstPoint.checkpointId}-start`,
+        label: "",
+        actualPoints: 0,
+        pacePoints:
+          typeof firstPoint.pacePoints === "number" && firstPoint.pacePoints > 0 ? 0 : firstPoint.pacePoints
+      },
+      firstPoint
+    ];
+  }, [chartData]);
   const singlePointDot = useMemo(
     () =>
       chartData.length === 1
@@ -749,7 +766,7 @@ function TriptychScoringSparkline({
     [chartData.length, theme]
   );
   const yDomain = useMemo<[number, number]>(() => {
-    const values = chartData.flatMap((point) =>
+    const values = displayChartData.flatMap((point) =>
       [point.actualPoints, point.pacePoints].filter((value): value is number => typeof value === "number")
     );
     if (values.length === 0) {
@@ -761,7 +778,7 @@ function TriptychScoringSparkline({
     const spread = Math.max(1, max - min);
     const padding = Math.max(2, Math.round(spread * 0.12));
     return [Math.max(0, min - padding), max + padding];
-  }, [chartData]);
+  }, [displayChartData]);
 
   if (chartData.length === 0) {
     return (
@@ -782,7 +799,7 @@ function TriptychScoringSparkline({
         {t(language, "dashboard.scoringAxisPoints")}
       </span>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData} margin={{ top: 8, right: 6, bottom: 0, left: -2 }}>
+        <LineChart data={displayChartData} margin={{ top: 8, right: 6, bottom: 0, left: -2 }}>
           <CartesianGrid stroke={gridStroke} strokeWidth={0.7} strokeDasharray="1 5" />
           <XAxis
             dataKey="label"
