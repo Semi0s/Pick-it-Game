@@ -451,7 +451,7 @@ function PlayerSelect({
       </datalist>
       {players.length === 0 ? (
         <p className="text-xs font-semibold leading-5 text-gray-500">
-          Super Admin needs to add tournament players before this pick can be selected.
+          come back soon to finish this Side Pick
         </p>
       ) : null}
     </div>

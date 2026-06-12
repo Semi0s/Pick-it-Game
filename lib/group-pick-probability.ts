@@ -65,11 +65,8 @@ export function shouldShowMiniTablePickProbability({
   predictedPlace?: PickProbabilityPlace | null;
   isSelectedThirdPlaceQualifier?: boolean;
 }) {
-  return (
-    predictedPlace === 1 ||
-    predictedPlace === 2 ||
-    (predictedPlace === 3 && Boolean(isSelectedThirdPlaceQualifier))
-  );
+  void isSelectedThirdPlaceQualifier;
+  return predictedPlace === 1 || predictedPlace === 2;
 }
 
 export function getThirdPlaceCandidatePoolFromGroupRankings<TTeam extends PickProbabilityTeam>(

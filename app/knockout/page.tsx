@@ -1,4 +1,5 @@
 import { KnockoutBracketBuilder } from "@/components/KnockoutBracketBuilder";
+import { KnockoutBracketReference } from "@/components/KnockoutBracketReference";
 import { AppShell } from "@/components/AppShell";
 import { ManagementIntro } from "@/components/player-management/Shared";
 import {
@@ -8,6 +9,7 @@ import {
 } from "@/lib/bracket-predictions";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
 import { normalizeLanguage } from "@/lib/i18n";
+import { getKnockoutReferenceBracketView } from "@/lib/knockout-reference";
 import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
 import { t } from "@/lib/strings";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
@@ -62,6 +64,10 @@ export default async function KnockoutPage() {
   const shouldShowLockedProjected = Boolean(projectedChallengeView && projectedChallengeView.isLocked && !isOfficialSeeded);
   const shouldShowOfficialBracket = Boolean(officialBracketView && isOfficialSeeded);
   const showingProjectedChallengeOnly = shouldShowEditableProjected || shouldShowLockedProjected;
+  const referenceBracketView = getKnockoutReferenceBracketView({
+    projectedChallengeView,
+    projectedComparisonView
+  });
   const introTitleKey = showingProjectedChallengeOnly || !isOfficialSeeded
     ? "knockout.waitingOnQualifiers"
     : "knockout.predictScoresForWinner";
@@ -102,6 +108,13 @@ export default async function KnockoutPage() {
         statusChipPlacement="top-right"
         collapseBodyWhenClosed
       />
+
+      {user ? (
+        <KnockoutBracketReference
+          referenceView={referenceBracketView}
+          language={language}
+        />
+      ) : null}
 
       {primaryBracketView ? (
         <div className="-mx-4 mt-5 sm:mx-0">

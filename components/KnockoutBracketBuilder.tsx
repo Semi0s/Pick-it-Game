@@ -25,6 +25,8 @@ type KnockoutBracketBuilderProps = {
   projectedComparisonView?: KnockoutBracketEditorView | null;
   userId?: string | null;
   language?: string | null;
+  viewStateKey?: string;
+  stickyRailTopOffset?: string;
 };
 
 type BracketSlideView = {
@@ -84,7 +86,14 @@ function kt(language: SupportedLanguage, key: string, params?: TranslationParams
   return t(language, `knockout.${key}`, params);
 }
 
-export function KnockoutBracketBuilder({ initialView, projectedComparisonView = null, userId = null, language }: KnockoutBracketBuilderProps) {
+export function KnockoutBracketBuilder({
+  initialView,
+  projectedComparisonView = null,
+  userId = null,
+  language,
+  viewStateKey = "knockout",
+  stickyRailTopOffset = "calc(var(--app-header-sticky-offset, var(--app-header-height, 72px)) + var(--app-sticky-rail-gap, 1.5rem))"
+}: KnockoutBracketBuilderProps) {
   const { activeLanguage } = useAppLanguage();
   const uiLanguage = normalizeLanguage(activeLanguage ?? language);
   const searchParams = useSearchParams();
@@ -102,7 +111,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     affectedCount: number;
   } | null>(null);
   const [knockoutViewState, setKnockoutViewState] = useSessionViewState<KnockoutViewState>({
-    key: "knockout",
+    key: viewStateKey,
     userId,
     defaultValue: DEFAULT_KNOCKOUT_VIEW_STATE,
     validate: validateKnockoutViewState
@@ -304,7 +313,7 @@ export function KnockoutBracketBuilder({ initialView, projectedComparisonView = 
     <section className="space-y-3">
       <div
         className="compact-landscape-sticky-rail sticky z-[14] w-full !overflow-visible rounded-lg !rounded-t-none bg-white px-3 py-1.5 shadow-[0_12px_22px_-18px_rgba(15,23,42,0.45)] sm:border sm:border-gray-200 sm:px-4"
-        style={{ top: "calc(var(--app-header-sticky-offset, var(--app-header-height, 72px)) + var(--app-sticky-rail-gap, 1.5rem))" }}
+        style={{ top: stickyRailTopOffset }}
       >
         <KnockoutPhaseChoiceRail
           showControls={slides.length > 1}

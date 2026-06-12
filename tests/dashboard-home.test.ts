@@ -740,7 +740,7 @@ test("third-place mini standings use the full candidate pool for canonical advan
   assert.equal(viaThirdPick.compactLabel, `${viaThirdPick.probability}% via 3rd`);
 });
 
-test("mini standings probability only appears for meaningful qualifying picks", () => {
+test("mini standings probability only appears for saved top-two picks", () => {
   assert.equal(
     shouldShowMiniTablePickProbability({
       predictedPlace: 1
@@ -758,7 +758,7 @@ test("mini standings probability only appears for meaningful qualifying picks", 
       predictedPlace: 3,
       isSelectedThirdPlaceQualifier: true
     }),
-    true
+    false
   );
   assert.equal(
     shouldShowMiniTablePickProbability({
