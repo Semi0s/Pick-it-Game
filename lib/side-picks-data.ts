@@ -153,7 +153,7 @@ export async function fetchSidePicksDashboardProgress(
   userId: string
 ): Promise<SidePicksDashboardProgress | null> {
   const config = await fetchSidePicksConfig(adminSupabase);
-  if (!config.package || !config.group || !config.isEnabled || config.definitions.length === 0) {
+  if (!config.package || !config.group || config.definitions.length === 0) {
     return null;
   }
 

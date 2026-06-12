@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildDashboardPicksInPlaySummary,
+  createEmptyDashboardPicksInPlaySummary,
   dismissMessageId,
   filterMatchesByTeamIds,
   formatCountdown,
+  resolveDashboardMovementMode,
   getDashboardHomeMessageStorageKey,
   getDeadlineUrgency,
   getGroupStageSaveStatus,
@@ -18,6 +21,7 @@ import {
   serializeDismissedMessageIds,
   type DashboardMatchSummary
 } from "../lib/dashboard-home.ts";
+import { createEmptyDashboardScoringMovementSummary } from "../lib/leaderboard-movement-helpers.ts";
 import {
   getAdvanceTotalProbability,
   getAdvanceViaThirdProbabilityResult,
@@ -41,6 +45,7 @@ function createMatch(overrides: Partial<DashboardMatchSummary> = {}): DashboardM
     stage: overrides.stage ?? "group",
     status: overrides.status ?? "scheduled",
     kickoffTime: overrides.kickoffTime ?? new Date(BASE_NOW + 60 * 60 * 1000).toISOString(),
+    groupLabel: overrides.groupLabel ?? null,
     homeTeamId: overrides.homeTeamId ?? "usa",
     awayTeamId: overrides.awayTeamId ?? "can",
     homeTeamName: overrides.homeTeamName ?? "Team A",
@@ -283,6 +288,146 @@ test("group-stage save status only marks finalized brackets with later saved cha
     }).needsSave,
     true
   );
+});
+
+test("flat zero score history chooses picks in play when relevant matches are active", () => {
+  const score = {
+    ...createEmptyDashboardScoringMovementSummary(),
+    history: [
+      {
+        matchId: "g-1",
+        createdAt: "2026-06-11T19:00:00.000Z",
+        totalPoints: 0,
+        pacePoints: 0,
+        rank: 120,
+        pointsDelta: null,
+        rankDelta: null,
+        paceDelta: 0
+      }
+    ]
+  };
+  const activity = buildDashboardPicksInPlaySummary({
+    matches: [
+      createMatch({
+        id: "g-1",
+        groupLabel: "Group A",
+        status: "final",
+        kickoffTime: "2026-06-11T18:00:00.000Z"
+      })
+    ],
+    relevantGroupKeys: ["Group A"],
+    now: Date.parse("2026-06-11T22:00:00.000Z")
+  });
+
+  assert.equal(resolveDashboardMovementMode({ score, activity }), "picks_in_play");
+});
+
+test("non-zero score history chooses score movement", () => {
+  const score = {
+    ...createEmptyDashboardScoringMovementSummary(),
+    currentPoints: 4,
+    history: [
+      {
+        matchId: "g-1",
+        createdAt: "2026-06-11T19:00:00.000Z",
+        totalPoints: 4,
+        pacePoints: 2,
+        rank: 120,
+        pointsDelta: null,
+        rankDelta: null,
+        paceDelta: 2
+      }
+    ]
+  };
+
+  assert.equal(
+    resolveDashboardMovementMode({
+      score,
+      activity: createEmptyDashboardPicksInPlaySummary()
+    }),
+    "score_movement"
+  );
+});
+
+test("changing score history chooses score movement even before non-zero totals", () => {
+  const score = {
+    ...createEmptyDashboardScoringMovementSummary(),
+    history: [
+      {
+        matchId: "g-1",
+        createdAt: "2026-06-11T19:00:00.000Z",
+        totalPoints: 0,
+        pacePoints: 0,
+        rank: 120,
+        pointsDelta: null,
+        rankDelta: null,
+        paceDelta: 0
+      },
+      {
+        matchId: "g-2",
+        createdAt: "2026-06-12T19:00:00.000Z",
+        totalPoints: 0,
+        pacePoints: 0,
+        rank: 118,
+        pointsDelta: 0,
+        rankDelta: 2,
+        paceDelta: 0
+      }
+    ]
+  };
+
+  assert.equal(
+    resolveDashboardMovementMode({
+      score,
+      activity: createEmptyDashboardPicksInPlaySummary()
+    }),
+    "score_movement"
+  );
+});
+
+test("no picks or matches chooses empty movement mode", () => {
+  assert.equal(
+    resolveDashboardMovementMode({
+      score: createEmptyDashboardScoringMovementSummary(),
+      activity: createEmptyDashboardPicksInPlaySummary()
+    }),
+    "empty"
+  );
+});
+
+test("picks in play summary builds daily activity history and next relevant match", () => {
+  const activity = buildDashboardPicksInPlaySummary({
+    matches: [
+      createMatch({
+        id: "g-1",
+        groupLabel: "Group A",
+        status: "final",
+        kickoffTime: "2026-06-11T18:00:00.000Z"
+      }),
+      createMatch({
+        id: "g-2",
+        groupLabel: "Group A",
+        status: "scheduled",
+        kickoffTime: "2026-06-12T18:00:00.000Z"
+      }),
+      createMatch({
+        id: "g-3",
+        groupLabel: "Group B",
+        status: "scheduled",
+        kickoffTime: "2026-06-12T20:00:00.000Z"
+      })
+    ],
+    relevantGroupKeys: ["Group A"],
+    now: Date.parse("2026-06-12T12:00:00.000Z")
+  });
+
+  assert.equal(activity.activePickCount, 1);
+  assert.equal(activity.finalizedMatchCount, 1);
+  assert.equal(activity.todayRelevantMatchCount, 1);
+  assert.equal(activity.nextRelevantMatch?.id, "g-2");
+  assert.equal(activity.history.length, 2);
+  assert.equal(activity.history[0]?.finalCount, 1);
+  assert.equal(activity.history[1]?.todayCount, 1);
 });
 
 test("knockout prediction progress handles no predictions, partial predictions, and completion", () => {

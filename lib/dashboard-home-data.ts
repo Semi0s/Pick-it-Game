@@ -5,12 +5,15 @@ import {
   fetchBooleanAppSetting
 } from "@/lib/app-settings";
 import {
+  buildDashboardPicksInPlaySummary,
+  createEmptyDashboardMovementSummary,
   filterMatchesByTeamIds,
   getGroupStageSaveStatus,
   getPredictionProgress,
   getLiveMatches,
   getNextMatch,
   getUpcomingMatches,
+  resolveDashboardMovementMode,
   type DashboardCommandCenterSummary,
   type DashboardMatchSummary
 } from "@/lib/dashboard-home";
@@ -223,6 +226,11 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
   const savedGroupNames = new Set(
     (snapshot?.groupRankings ?? []).map((ranking) => normalizeGroupKey(ranking.groupName) ?? ranking.groupName)
   );
+  const picksInPlayActivity = buildDashboardPicksInPlaySummary({
+    matches: dashboardMatches,
+    relevantGroupKeys: savedGroupNames,
+    now: Date.now()
+  });
   const topTwoCompletionStatus = getGroupTopTwoCompletionStatus({
     groupNames,
     rankings: snapshot?.groupRankings ?? [],
@@ -333,7 +341,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         isLocked: sidePicksDisplayProgress.isLocked
       })
     : null;
-  const progressBase = sidePicksProgress ?? (isKnockoutActive ? knockoutProgress : groupStageProgress);
+  const progressBase = isKnockoutActive ? knockoutProgress : groupStageProgress;
   const progress = {
     ...progressBase,
     hasCompletedBracketOnce: groupStageSaveStatus.hasCommittedEntry
@@ -358,13 +366,28 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       totalPlayers: totalPlayersResult.count ?? globalRankResult.totalPlayers ?? 0
     },
     scoring: {
-      ...scoringMovementResult,
-      currentPoints:
-        scoringMovementResult.currentPoints ??
-        profile?.total_points ??
-        globalRankResult.totalPoints ??
-        null,
-      currentRank: scoringMovementResult.currentRank ?? globalRankResult.rank ?? null
+      mode: resolveDashboardMovementMode({
+        score: {
+          ...scoringMovementResult,
+          currentPoints:
+            scoringMovementResult.currentPoints ??
+            profile?.total_points ??
+            globalRankResult.totalPoints ??
+            null,
+          currentRank: scoringMovementResult.currentRank ?? globalRankResult.rank ?? null
+        },
+        activity: picksInPlayActivity
+      }),
+      score: {
+        ...scoringMovementResult,
+        currentPoints:
+          scoringMovementResult.currentPoints ??
+          profile?.total_points ??
+          globalRankResult.totalPoints ??
+          null,
+        currentRank: scoringMovementResult.currentRank ?? globalRankResult.rank ?? null
+      },
+      activity: picksInPlayActivity
     },
     reminder: {
       followedTeamCount: followedTeamIds.length,
@@ -417,7 +440,7 @@ function buildFallbackDashboardCommandCenter(): DashboardCommandCenterSummary {
       totalGroups: 0,
       totalPlayers: 0
     },
-    scoring: createEmptyDashboardScoringMovementSummary(),
+    scoring: createEmptyDashboardMovementSummary(),
     reminder: {
       followedTeamCount: 0,
       nextMatch: null,

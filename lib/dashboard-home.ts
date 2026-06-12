@@ -1,4 +1,5 @@
 import type { DashboardScoringMovementSummary } from "./leaderboard-movement.ts";
+import { normalizeGroupKey } from "./group-standings.ts";
 import { SIDE_PICK_PUBLIC_NAME, formatLastChanceDeadlineLabel } from "./side-picks.ts";
 import type { DashboardTriptychViewKey } from "./tournament-transition-helpers.ts";
 
@@ -42,6 +43,30 @@ export type DashboardReminderSummary = {
   liveMatches: DashboardMatchSummary[];
 };
 
+export type DashboardMovementMode = "score_movement" | "picks_in_play" | "empty";
+
+export type DashboardPicksInPlayPoint = {
+  dateKey: string;
+  label: string;
+  inPlayCount: number;
+  finalCount: number;
+  todayCount: number;
+};
+
+export type DashboardPicksInPlaySummary = {
+  activePickCount: number;
+  finalizedMatchCount: number;
+  todayRelevantMatchCount: number;
+  nextRelevantMatch: DashboardMatchSummary | null;
+  history: DashboardPicksInPlayPoint[];
+};
+
+export type DashboardMovementSummary = {
+  mode: DashboardMovementMode;
+  score: DashboardScoringMovementSummary;
+  activity: DashboardPicksInPlaySummary | null;
+};
+
 export type DashboardProgressSummary = {
   phase: "group_stage" | "knockout_stage" | "last_chance";
   label: string;
@@ -65,7 +90,7 @@ export type DashboardCommandCenterSummary = {
   progress: DashboardProgressSummary;
   progressViews: Record<Exclude<DashboardTriptychViewKey, "score_movement">, DashboardProgressSummary | null>;
   performance: DashboardPerformanceSummary;
-  scoring: DashboardScoringMovementSummary;
+  scoring: DashboardMovementSummary;
   reminder: DashboardReminderSummary;
 };
 
@@ -205,6 +230,162 @@ export function getGroupStageSaveStatus(input: {
     hasMeaningfulChangesAfterCommit,
     needsSave: hasCommittedEntry && hasMeaningfulChangesAfterCommit
   };
+}
+
+export function createEmptyDashboardPicksInPlaySummary(): DashboardPicksInPlaySummary {
+  return {
+    activePickCount: 0,
+    finalizedMatchCount: 0,
+    todayRelevantMatchCount: 0,
+    nextRelevantMatch: null,
+    history: []
+  };
+}
+
+export function createEmptyDashboardMovementSummary(): DashboardMovementSummary {
+  return {
+    mode: "empty",
+    score: {
+      currentPoints: null,
+      currentRank: null,
+      currentPacePoints: null,
+      previousPoints: null,
+      previousRank: null,
+      previousPacePoints: null,
+      pointsChange: null,
+      rankChange: null,
+      deltaFromPace: null,
+      latestSnapshotAt: null,
+      previousSnapshotAt: null,
+      comparisonMode: "none",
+      history: []
+    },
+    activity: null
+  };
+}
+
+export function buildDashboardPicksInPlaySummary(input: {
+  matches: DashboardMatchSummary[];
+  relevantGroupKeys: Iterable<string>;
+  now?: number;
+}): DashboardPicksInPlaySummary {
+  const relevantGroupKeys = new Set(
+    Array.from(input.relevantGroupKeys)
+      .map((value) => normalizeGroupKey(value) ?? value)
+      .filter((value): value is string => Boolean(value))
+  );
+
+  if (relevantGroupKeys.size === 0) {
+    return createEmptyDashboardPicksInPlaySummary();
+  }
+
+  const nowMs = input.now ?? Date.now();
+  const todayKey = new Date(nowMs).toISOString().slice(0, 10);
+  const relevantMatches = input.matches
+    .filter((match) => {
+      const normalizedGroup = normalizeGroupKey(match.groupLabel ?? null) ?? match.groupLabel ?? null;
+      return Boolean(normalizedGroup && relevantGroupKeys.has(normalizedGroup));
+    })
+    .sort(
+      (left, right) =>
+        new Date(left.kickoffTime ?? 0).getTime() - new Date(right.kickoffTime ?? 0).getTime()
+    );
+
+  if (relevantMatches.length === 0) {
+    return createEmptyDashboardPicksInPlaySummary();
+  }
+
+  const historyByDay = new Map<string, { started: number; finalized: number; today: number }>();
+  let cumulativeInPlay = 0;
+  let cumulativeFinal = 0;
+  let todayRelevantMatchCount = 0;
+  let nextRelevantMatch: DashboardMatchSummary | null = null;
+
+  for (const match of relevantMatches) {
+    const kickoffTime = match.kickoffTime;
+    const dateKey = kickoffTime?.slice(0, 10) ?? todayKey;
+    const bucket = historyByDay.get(dateKey) ?? { started: 0, finalized: 0, today: 0 };
+    bucket.today += 1;
+    historyByDay.set(dateKey, bucket);
+
+    if (dateKey === todayKey) {
+      todayRelevantMatchCount += 1;
+    }
+
+    const kickoffMs = kickoffTime ? new Date(kickoffTime).getTime() : Number.POSITIVE_INFINITY;
+    const hasStarted = match.status !== "scheduled" || kickoffMs <= nowMs;
+    if (hasStarted) {
+      bucket.started += 1;
+      cumulativeInPlay += 1;
+    }
+    if (match.status === "final") {
+      bucket.finalized += 1;
+      cumulativeFinal += 1;
+    }
+
+    if (!nextRelevantMatch && match.status === "scheduled" && kickoffMs > nowMs) {
+      nextRelevantMatch = match;
+    }
+  }
+
+  let runningInPlay = 0;
+  let runningFinal = 0;
+  const history = Array.from(historyByDay.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([dateKey, totals]) => {
+      runningInPlay += totals.started;
+      runningFinal += totals.finalized;
+      return {
+        dateKey,
+        label: formatMovementDateKey(dateKey),
+        inPlayCount: runningInPlay,
+        finalCount: runningFinal,
+        todayCount: totals.today
+      };
+    });
+
+  return {
+    activePickCount: cumulativeInPlay,
+    finalizedMatchCount: cumulativeFinal,
+    todayRelevantMatchCount,
+    nextRelevantMatch,
+    history
+  };
+}
+
+export function resolveDashboardMovementMode(input: {
+  score: DashboardScoringMovementSummary;
+  activity: DashboardPicksInPlaySummary | null;
+}): DashboardMovementMode {
+  const hasMeaningfulScoreMovement =
+    (input.score.currentPoints ?? 0) > 0 ||
+    input.score.history.some(
+      (point) =>
+        point.totalPoints > 0 ||
+        (point.pointsDelta ?? 0) !== 0 ||
+        (point.rankDelta ?? 0) !== 0
+    );
+
+  if (hasMeaningfulScoreMovement) {
+    return "score_movement";
+  }
+
+  const activity = input.activity;
+  const hasMeaningfulActivity = Boolean(
+    activity &&
+      (activity.activePickCount > 0 ||
+        activity.finalizedMatchCount > 0 ||
+        activity.todayRelevantMatchCount > 0 ||
+        activity.history.some(
+          (point) => point.inPlayCount > 0 || point.finalCount > 0 || point.todayCount > 0
+        ))
+  );
+
+  if (hasMeaningfulActivity) {
+    return "picks_in_play";
+  }
+
+  return "empty";
 }
 
 export function getDeadlineLabel(
@@ -522,4 +703,11 @@ function formatTimeLabel(value: string) {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(value));
+}
+
+function formatMovementDateKey(dateKey: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric"
+  }).format(new Date(`${dateKey}T00:00:00.000Z`));
 }

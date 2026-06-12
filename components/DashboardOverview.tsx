@@ -1066,7 +1066,6 @@ export function DashboardOverview({
       <div className="pb-2">
         <DashboardCommandCenter
           summary={initialCommandCenterSummary}
-          initialLightSeedSnapshot={initialLightSeedSnapshot}
           userId={currentUserId}
           language={displayLanguage}
           primaryView={tournamentTransitionSettings?.leftTriptych.primaryView}

@@ -7,21 +7,16 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } fro
 import { SidePicksIcon } from "@/components/SidePicksIcon";
 import {
   getDeadlineUrgency,
+  type DashboardMovementSummary,
+  type DashboardPicksInPlaySummary,
   type DashboardCommandCenterSummary,
   type DashboardMatchSummary,
   type DashboardUrgencyTone
 } from "@/lib/dashboard-home";
 import {
   GROUP_STAGE_UNSAVED_DRAFT_STORAGE_KEY,
-  hasCurrentUnsavedGroupStageDraft,
-  parseUnsavedGroupStageDraft
+  hasCurrentUnsavedGroupStageDraft
 } from "@/lib/group-stage-unsaved-draft";
-import {
-  calculateScenarioImpactFromSeedDraft,
-  formatSignedScenarioDelta,
-  type ScenarioImpactSummary
-} from "@/lib/group-stage-scenario-impact";
-import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { formatDate, formatNumber, formatTime } from "@/lib/i18n-format";
 import type { DashboardScoringHistoryPoint } from "@/lib/leaderboard-movement";
 import { useSessionViewState } from "@/lib/session-view-state";
@@ -30,7 +25,6 @@ import type { DashboardTriptychViewKey } from "@/lib/tournament-transition-helpe
 
 type DashboardCommandCenterProps = {
   summary: DashboardCommandCenterSummary;
-  initialLightSeedSnapshot?: LightSeedBuilderSnapshot | null;
   userId?: string | null;
   language?: string | null;
   primaryView?: DashboardTriptychViewKey | null;
@@ -53,29 +47,21 @@ type TriptychScoringTrackPoint = {
 
 type TriptychScoringLens =
   | {
-      mode: "pre_lock";
-      expectedDelta: number | null;
-      betterThanSavedPct: number | null;
+      mode: "empty";
     }
   | {
-      mode: "post_lock";
-      movement: DashboardCommandCenterSummary["scoring"];
+      mode: "picks_in_play";
+      activity: DashboardPicksInPlaySummary;
+    }
+  | {
+      mode: "score_movement";
+      movement: DashboardMovementSummary["score"];
       points: TriptychScoringTrackPoint[];
     };
 
 const DASHBOARD_TRIPTYCH_THEME_STORAGE_KEY = "pickit:dashboard-triptych-theme";
 const FALLBACK_TRIPTYCH_DARK_ACCENT_STYLE = getTriptychDarkAccentStyle({ r: 159, g: 229, b: 143 });
 const SCENARIO_IMPACT_SWIPE_THRESHOLD_PX = 36;
-const DEFAULT_THIRD_PLACE_QUALIFIER_COUNT = 8;
-const TRIPTYCH_SCORING_PREVIEW_POINTS = [
-  { label: "Lock", saved: 0, actual: 0 },
-  { label: "Groups", saved: 18, actual: 12 },
-  { label: "R16", saved: 39, actual: 34 },
-  { label: "QF", saved: 58, actual: 64 },
-  { label: "SF", saved: 76, actual: 70 },
-  { label: "Final", saved: 94, actual: 104 }
-];
-
 type TriptychProgressViewKey = Exclude<DashboardTriptychViewKey, "score_movement">;
 
 type TriptychLeftPanelViewState = {
@@ -147,7 +133,6 @@ function validateTriptychLeftPanelViewState(value: unknown): TriptychLeftPanelVi
 
 export function DashboardCommandCenter({
   summary,
-  initialLightSeedSnapshot,
   userId,
   language,
   primaryView,
@@ -157,7 +142,6 @@ export function DashboardCommandCenter({
   const [triptychTheme, setTriptychTheme] = useState<TriptychTheme>("light");
   const [darkAccentStyle, setDarkAccentStyle] = useState<CSSProperties>(FALLBACK_TRIPTYCH_DARK_ACCENT_STYLE);
   const [hasUnsavedGroupStageDraft, setHasUnsavedGroupStageDraft] = useState(false);
-  const [scenarioImpact, setScenarioImpact] = useState<ScenarioImpactSummary | null>(null);
   const triptychRef = useRef<HTMLElement | null>(null);
   const darkAccentSignatureRef = useRef("");
 
@@ -178,15 +162,7 @@ export function DashboardCommandCenter({
       const hasCurrentDraft = hasCurrentUnsavedGroupStageDraft(rawDraft, {
         lastCommittedAt: savedThroughAt
       });
-      const draft = hasCurrentDraft ? parseUnsavedGroupStageDraft(rawDraft) : null;
       setHasUnsavedGroupStageDraft(hasCurrentDraft);
-      setScenarioImpact(
-        calculateScenarioImpactFromSeedDraft({
-          savedSnapshot: initialLightSeedSnapshot,
-          draft,
-          requiredThirdPlaceCount: DEFAULT_THIRD_PLACE_QUALIFIER_COUNT
-        })
-      );
     };
 
     syncUnsavedDraftState();
@@ -198,7 +174,7 @@ export function DashboardCommandCenter({
       window.removeEventListener("pageshow", syncUnsavedDraftState);
       window.removeEventListener("storage", syncUnsavedDraftState);
     };
-  }, [initialLightSeedSnapshot, summary.progress.lastChangedAt, summary.progress.lastCommittedAt]);
+  }, [summary.progress.lastChangedAt, summary.progress.lastCommittedAt]);
 
   useEffect(() => {
     try {
@@ -250,11 +226,9 @@ export function DashboardCommandCenter({
   const scoringLens = useMemo(
     () =>
       getTriptychScoringLens({
-        progress: summary.progress,
-        scoring: summary.scoring,
-        scenarioImpact
+        scoring: summary.scoring
       }),
-    [scenarioImpact, summary.progress, summary.scoring]
+    [summary.scoring]
   );
 
   return (
@@ -381,7 +355,9 @@ function ProgressPanel({
         : displayedProgress.label
     : getTriptychViewLabel("score_movement", language);
   const isShowingScoringLens = displayedView === "score_movement";
-  const canOpenScoringDetail = isShowingScoringLens && scoringLens?.mode === "post_lock";
+  const canOpenScoringDetail =
+    isShowingScoringLens &&
+    Boolean(scoringLens && (scoringLens.mode === "score_movement" || scoringLens.mode === "picks_in_play"));
   const contentViewportBottomClass = alternateView && !isLastChanceProgress ? "bottom-7" : "bottom-0";
 
   useEffect(() => {
@@ -522,6 +498,14 @@ function ProgressPanel({
         >
           {panelContent}
         </button>
+      ) : isShowingScoringLens ? (
+        <div
+          role="status"
+          aria-label={t(language, "dashboard.picksActivateAsMatchesBegin")}
+          className="flex h-full w-full min-w-0 items-center justify-center rounded-[1rem]"
+        >
+          {panelContent}
+        </div>
       ) : (
         <Link
           href={progressHref}
@@ -545,9 +529,10 @@ function ProgressPanel({
           label={getTriptychViewLabel(alternateView, language)}
         />
       ) : null}
-      {scoringLens?.mode === "post_lock" && isScoringDetailOpen ? (
+      {scoringLens && isScoringDetailOpen ? (
         <DashboardScoringDetailSheet
           scoring={scoring}
+          scoringLens={scoringLens}
           language={language}
           theme={theme}
           onClose={() => setIsScoringDetailOpen(false)}
@@ -648,10 +633,10 @@ function ScoringLensFallback({
     <div
       className="flex h-full min-w-0 items-center justify-center px-1 text-center"
       role="status"
-      aria-label={t(language, "dashboard.scoringWaitingToStart")}
+      aria-label={t(language, "dashboard.picksActivateAsMatchesBegin")}
     >
       <span className={`triptych-micro-copy font-semibold uppercase tracking-[0.12em] ${getMutedTextClasses(theme)}`}>
-        {t(language, "dashboard.scoringWaitingToStart")}
+        {t(language, "dashboard.picksActivateAsMatchesBegin")}
       </span>
     </div>
   );
@@ -666,7 +651,7 @@ function TriptychScoringOutlookContent({
   language?: string | null;
   theme: TriptychTheme;
 }) {
-  if (scoringLens.mode === "post_lock") {
+  if (scoringLens.mode === "score_movement") {
     const ariaLabel = t(language, "dashboard.scoringTrackAria", {
       points: formatPoints(scoringLens.movement.currentPoints, language),
       rank: formatRank(scoringLens.movement.currentRank, language)
@@ -677,7 +662,7 @@ function TriptychScoringOutlookContent({
         className="flex h-full w-full min-w-0 translate-y-1 flex-col items-center justify-center px-1 pb-1 text-center"
         aria-label={ariaLabel}
       >
-        <ScoringLensTitle label={t(language, "dashboard.scoringTrack")} theme={theme} />
+        <ScoringLensTitle label={t(language, "dashboard.scoringDetailTitle")} theme={theme} />
         <TriptychScoringSparkline points={scoringLens.points} language={language} theme={theme} />
         {scoringLens.points.length === 0 ? null : (
           <div className="mt-1 flex w-full flex-col items-center gap-0.5">
@@ -695,28 +680,35 @@ function TriptychScoringOutlookContent({
     );
   }
 
-  const outlookLabel =
-    scoringLens.expectedDelta === null || scoringLens.betterThanSavedPct === null
-      ? null
-      : t(language, "dashboard.scoringExpectedBetter", {
-          delta: formatSignedScenarioDelta(scoringLens.expectedDelta),
-          percent: scoringLens.betterThanSavedPct
-        });
+  if (scoringLens.mode === "picks_in_play") {
+    const activity = scoringLens.activity;
+    return (
+      <div
+        className="flex h-full w-full min-w-0 translate-y-1 flex-col items-center justify-center px-1 pb-1 text-center"
+        aria-label={t(language, "dashboard.picksInPlay")}
+      >
+        <ScoringLensTitle label={t(language, "dashboard.picksInPlay")} theme={theme} />
+        <TriptychPicksInPlayChart activity={activity} language={language} theme={theme} />
+        <div className="mt-1 flex w-full flex-col items-center gap-0.5">
+          <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
+            <CompactMetric label={t(language, "dashboard.inPlayShort")} value={formatNumber(activity.activePickCount, language)} theme={theme} />
+            <CompactMetric label={t(language, "dashboard.finalShort")} value={formatNumber(activity.finalizedMatchCount, language)} theme={theme} />
+          </div>
+          <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
+            <CompactMetric label={t(language, "dashboard.todayShort")} value={formatNumber(activity.todayRelevantMatchCount, language)} theme={theme} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
       className="flex h-full w-full min-w-0 translate-y-1 flex-col items-center justify-center px-0 pb-0 pt-0 text-center"
-      aria-label={t(language, "dashboard.scoringOutlookAria", {
-        label: outlookLabel ?? t(language, "dashboard.scoringWaitingToStart")
-      })}
+      aria-label={t(language, "dashboard.picksActivateAsMatchesBegin")}
     >
-      {outlookLabel ? (
-        <p className={`mt-1 max-w-full truncate text-[12px] font-black leading-tight tracking-[-0.03em] sm:text-[13px] ${getPrimaryTextClasses(theme)}`}>
-          {outlookLabel}
-        </p>
-      ) : null}
-      <TriptychScoringPreviewChart language={language} theme={theme} />
-      <ScoringTrackKey language={language} theme={theme} mode="preview" />
+      <ScoringLensTitle label={t(language, "dashboard.picksInPlay")} theme={theme} />
+      <ScoringLensFallback language={language} theme={theme} />
     </div>
   );
 }
@@ -859,26 +851,152 @@ function TriptychScoringSparkline({
   );
 }
 
+function TriptychPicksInPlayChart({
+  activity,
+  language,
+  theme
+}: {
+  activity: DashboardPicksInPlaySummary;
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
+  const gridStroke = theme === "dark" ? "rgba(226, 232, 240, 0.16)" : "rgba(100, 116, 139, 0.16)";
+  const tickFill = theme === "dark" ? "rgba(226, 232, 240, 0.62)" : "rgba(71, 85, 105, 0.62)";
+  const inPlayStroke = theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)";
+  const finalStroke = theme === "dark" ? "#fbbf24" : "#d97706";
+  const todayStroke = theme === "dark" ? "rgba(226, 232, 240, 0.55)" : "rgba(71, 85, 105, 0.55)";
+  const chartData = activity.history;
+  const yDomain = useMemo<[number, number]>(() => {
+    const values = chartData.flatMap((point) => [point.inPlayCount, point.finalCount, point.todayCount]);
+    if (values.length === 0) {
+      return [0, 1];
+    }
+
+    const max = Math.max(...values, 1);
+    return [0, max + 1];
+  }, [chartData]);
+
+  if (chartData.length === 0) {
+    return (
+      <div className="triptych-scoring-chart relative mt-0.5 flex items-center justify-center">
+        <span className={`triptych-micro-copy font-semibold uppercase tracking-[0.12em] ${getMutedTextClasses(theme)}`}>
+          {t(language, "dashboard.picksActivateAsMatchesBegin")}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="triptych-scoring-chart relative mt-0.5">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={chartData} margin={{ top: 8, right: 6, bottom: 0, left: -2 }}>
+          <CartesianGrid stroke={gridStroke} strokeWidth={0.7} strokeDasharray="1 5" />
+          <XAxis
+            dataKey="label"
+            height={12}
+            interval="preserveStartEnd"
+            minTickGap={10}
+            padding={{ left: 12, right: 12 }}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: tickFill, fontSize: 6, fontWeight: 600 }}
+          />
+          <YAxis
+            width={14}
+            domain={yDomain}
+            tickCount={3}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: tickFill, fontSize: 6, fontWeight: 600 }}
+          />
+          <Line
+            type="monotone"
+            dataKey="todayCount"
+            stroke={todayStroke}
+            strokeWidth={1}
+            strokeDasharray="2 3"
+            dot={false}
+            activeDot={false}
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="finalCount"
+            stroke={finalStroke}
+            strokeWidth={1.15}
+            dot={false}
+            activeDot={false}
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="inPlayCount"
+            stroke={inPlayStroke}
+            strokeWidth={1.45}
+            dot={chartData.length === 1 ? { r: 2.4, strokeWidth: 0, fill: inPlayStroke } : false}
+            activeDot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function DashboardScoringDetailSheet({
   scoring,
+  scoringLens,
   language,
   theme,
   onClose
 }: {
-  scoring: DashboardCommandCenterSummary["scoring"];
+  scoring: DashboardMovementSummary;
+  scoringLens: TriptychScoringLens;
+  language?: string | null;
+  theme: TriptychTheme;
+  onClose: () => void;
+}) {
+  if (scoringLens.mode === "picks_in_play") {
+    return (
+      <DashboardPicksInPlayDetailSheet
+        activity={scoringLens.activity}
+        language={language}
+        theme={theme}
+        onClose={onClose}
+      />
+    );
+  }
+
+  return (
+    <DashboardScoreMovementDetailSheet
+      score={scoring.score}
+      language={language}
+      theme={theme}
+      onClose={onClose}
+    />
+  );
+}
+
+function DashboardScoreMovementDetailSheet({
+  score,
+  language,
+  theme,
+  onClose
+}: {
+  score: DashboardMovementSummary["score"];
   language?: string | null;
   theme: TriptychTheme;
   onClose: () => void;
 }) {
   const chartData = useMemo(
     () =>
-      scoring.history.map((point) => ({
+      score.history.map((point) => ({
         id: point.matchId,
         label: formatScoringChartLabel(point.createdAt, language),
         actualPoints: point.totalPoints,
         pacePoints: point.pacePoints
       })),
-    [language, scoring.history]
+    [language, score.history]
   );
   const yDomain = useMemo<[number, number]>(() => {
     const values = chartData.flatMap((point) =>
@@ -927,12 +1045,12 @@ function DashboardScoringDetailSheet({
 
         <div className="overflow-y-auto px-4 pb-4 pt-4 sm:px-5">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <DetailMetricCard label={t(language, "leaderboard.points")} value={formatPoints(scoring.currentPoints, language)} theme={theme} />
-            <DetailMetricCard label={t(language, "leaderboard.rank")} value={formatRank(scoring.currentRank, language)} theme={theme} />
-            <DetailMetricCard label={t(language, "dashboard.todayShort")} value={formatSignedMetric(scoring.pointsChange, language)} theme={theme} />
-            <DetailMetricCard label="+/-" value={formatSignedMetric(scoring.rankChange, language)} theme={theme} />
-            <DetailMetricCard label={t(language, "dashboard.scoringPaceShort")} value={formatPoints(scoring.currentPacePoints, language)} theme={theme} />
-            <DetailMetricCard label={t(language, "dashboard.scoringVsPaceShort")} value={formatSignedMetric(scoring.deltaFromPace, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "leaderboard.points")} value={formatPoints(score.currentPoints, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "leaderboard.rank")} value={formatRank(score.currentRank, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.todayShort")} value={formatSignedMetric(score.pointsChange, language)} theme={theme} />
+            <DetailMetricCard label="+/-" value={formatSignedMetric(score.rankChange, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.scoringPaceShort")} value={formatPoints(score.currentPacePoints, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.scoringVsPaceShort")} value={formatSignedMetric(score.deltaFromPace, language)} theme={theme} />
           </div>
 
           <div className={`mt-4 rounded-[1.25rem] border px-3 py-3 sm:px-4 ${theme === "dark" ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-slate-50/70"}`}>
@@ -998,10 +1116,153 @@ function DashboardScoringDetailSheet({
           )}
 
           <div className="mt-4 space-y-2">
-            {scoring.history.length === 0 ? null : scoring.history.slice().reverse().map((point) => (
+            {score.history.length === 0 ? null : score.history.slice().reverse().map((point) => (
               <ScoringTimelineRow key={`${point.matchId}-${point.createdAt}`} point={point} language={language} theme={theme} />
             ))}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashboardPicksInPlayDetailSheet({
+  activity,
+  language,
+  theme,
+  onClose
+}: {
+  activity: DashboardPicksInPlaySummary;
+  language?: string | null;
+  theme: TriptychTheme;
+  onClose: () => void;
+}) {
+  const chartData = activity.history;
+  const yDomain = useMemo<[number, number]>(() => {
+    const values = chartData.flatMap((point) => [point.inPlayCount, point.finalCount, point.todayCount]);
+    if (values.length === 0) {
+      return [0, 1];
+    }
+
+    return [0, Math.max(...values, 1) + 1];
+  }, [chartData]);
+
+  return (
+    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-4 sm:items-center sm:px-5 sm:pb-4">
+      <button type="button" aria-label={t(language, "common.close")} onClick={onClose} className="absolute inset-0" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={t(language, "dashboard.picksInPlay")}
+        className={`relative flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-[1.5rem] border shadow-2xl ${
+          theme === "dark" ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-950"
+        }`}
+      >
+        <div className={`flex items-center justify-between border-b px-4 py-3 sm:px-5 ${theme === "dark" ? "border-white/10" : "border-slate-200"}`}>
+          <div>
+            <p className={`text-[11px] font-black uppercase tracking-[0.14em] ${getMutedTextClasses(theme)}`}>
+              {t(language, "dashboard.picksInPlay")}
+            </p>
+            <h2 className="text-xl font-black tracking-[-0.04em]">{t(language, "dashboard.picksInPlay")}</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t(language, "common.close")}
+            className={`inline-flex h-10 w-10 items-center justify-center rounded-full border ${
+              theme === "dark" ? "border-white/15 bg-white/5 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
+            }`}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto px-4 pb-4 pt-4 sm:px-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <DetailMetricCard label={t(language, "dashboard.inPlayShort")} value={formatNumber(activity.activePickCount, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.finalShort")} value={formatNumber(activity.finalizedMatchCount, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.todayShort")} value={formatNumber(activity.todayRelevantMatchCount, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.nextRelevantShort")} value={activity.nextRelevantMatch ? formatShortMatchLabel(activity.nextRelevantMatch) : "—"} theme={theme} />
+          </div>
+
+          <div className={`mt-4 rounded-[1.25rem] border px-3 py-3 sm:px-4 ${theme === "dark" ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-slate-50/70"}`}>
+            {chartData.length === 0 ? (
+              <div className="flex h-48 items-center justify-center text-center">
+                <span className={`text-sm font-semibold ${getMutedTextClasses(theme)}`}>
+                  {t(language, "dashboard.picksActivateAsMatchesBegin")}
+                </span>
+              </div>
+            ) : (
+              <div className="h-48 sm:h-56" aria-label={t(language, "dashboard.picksInPlay")}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 10, right: 12, bottom: 2, left: 0 }}>
+                    <CartesianGrid
+                      stroke={theme === "dark" ? "rgba(226,232,240,0.18)" : "rgba(100,116,139,0.14)"}
+                      strokeDasharray="2 5"
+                      strokeWidth={0.8}
+                    />
+                    <XAxis
+                      dataKey="label"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: theme === "dark" ? "rgba(226,232,240,0.62)" : "rgba(71,85,105,0.72)", fontSize: 10, fontWeight: 600 }}
+                      minTickGap={16}
+                    />
+                    <YAxis
+                      domain={yDomain}
+                      width={22}
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: theme === "dark" ? "rgba(226,232,240,0.62)" : "rgba(71,85,105,0.72)", fontSize: 10, fontWeight: 600 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="todayCount"
+                      stroke={theme === "dark" ? "rgba(226,232,240,0.55)" : "rgba(71,85,105,0.55)"}
+                      strokeWidth={1.2}
+                      strokeDasharray="2 4"
+                      dot={false}
+                      activeDot={false}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="finalCount"
+                      stroke={theme === "dark" ? "#fbbf24" : "#d97706"}
+                      strokeWidth={1.6}
+                      dot={{ r: 2.1, strokeWidth: 0, fill: theme === "dark" ? "#fbbf24" : "#d97706" }}
+                      activeDot={{ r: 3.2 }}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="inPlayCount"
+                      stroke={theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)"}
+                      strokeWidth={2}
+                      dot={{ r: 2.25, strokeWidth: 0, fill: theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)" }}
+                      activeDot={{ r: 3.5 }}
+                      isAnimationActive={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          <p className={`mt-3 text-xs font-semibold ${getMutedTextClasses(theme)}`}>
+            {t(language, "dashboard.scoresAppearAfterCheckpoints")}
+          </p>
+
+          {activity.nextRelevantMatch ? (
+            <div className={`mt-4 rounded-[1rem] border px-3 py-2 ${theme === "dark" ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-white"}`}>
+              <p className={`triptych-micro-copy font-semibold uppercase tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
+                {t(language, "dashboard.nextRelevantMatch")}
+              </p>
+              <p className={`mt-1 text-sm font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>
+                {formatMatchSummary(activity.nextRelevantMatch, language)}
+              </p>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -1080,118 +1341,6 @@ function ScoringTimelineRow({
         </div>
       </div>
     </div>
-  );
-}
-
-function TriptychScoringPreviewChart({
-  language,
-  theme
-}: {
-  language?: string | null;
-  theme: TriptychTheme;
-}) {
-  const savedStroke = theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)";
-  const actualStroke = theme === "dark" ? "#fbbf24" : "#d97706";
-  const axisStroke = theme === "dark" ? "rgba(226, 232, 240, 0.28)" : "rgba(100, 116, 139, 0.26)";
-  const gridStroke = theme === "dark" ? "rgba(226, 232, 240, 0.24)" : "rgba(100, 116, 139, 0.24)";
-  const tickFill = theme === "dark" ? "rgba(226, 232, 240, 0.58)" : "rgba(71, 85, 105, 0.58)";
-  const waitingClasses = theme === "dark" ? "text-red-200" : "text-red-700";
-  return (
-    <div
-      className="triptych-scoring-preview-chart relative mt-1"
-      aria-label={t(language, "dashboard.scoringPreviewAria")}
-    >
-      <span
-        aria-hidden
-        className={`pointer-events-none absolute left-0 top-0 z-10 text-[6px] font-semibold uppercase leading-none tracking-[0.08em] ${getMutedTextClasses(theme)}`}
-      >
-        {t(language, "dashboard.scoringAxisPoints")}
-      </span>
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={TRIPTYCH_SCORING_PREVIEW_POINTS} margin={{ top: 10, right: 6, bottom: 0, left: -2 }}>
-          <CartesianGrid stroke={gridStroke} strokeWidth={0.75} strokeDasharray="1 5" />
-          <XAxis
-            dataKey="label"
-            height={12}
-            interval="preserveStartEnd"
-            minTickGap={8}
-            padding={{ left: 12, right: 12 }}
-            axisLine={{ stroke: axisStroke, strokeWidth: 0.75 }}
-            tickLine={false}
-            tick={{ fill: tickFill, fontSize: 6, fontWeight: 600 }}
-          />
-          <YAxis
-            width={14}
-            domain={[0, 110]}
-            ticks={[0, 50, 100]}
-            axisLine={{ stroke: axisStroke, strokeWidth: 0.75 }}
-            tickLine={false}
-            tick={{ fill: tickFill, fontSize: 6, fontWeight: 600 }}
-          />
-          <Line
-            type="monotone"
-            dataKey="saved"
-            stroke={savedStroke}
-            strokeWidth={1.45}
-            dot={false}
-            activeDot={false}
-            isAnimationActive={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="actual"
-            stroke={actualStroke}
-            strokeWidth={1.45}
-            dot={false}
-            activeDot={false}
-            isAnimationActive={false}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-      <span
-        aria-hidden
-        className={`pointer-events-none absolute inset-x-0 top-1/2 z-20 -translate-y-1/2 text-center text-[9px] font-black uppercase leading-none tracking-[0.12em] ${waitingClasses}`}
-      >
-          {t(language, "dashboard.scoringWaitingToStart")}
-      </span>
-    </div>
-  );
-}
-
-function ScoringTrackKey({
-  language,
-  theme,
-  mode = "track"
-}: {
-  language?: string | null;
-  theme: TriptychTheme;
-  mode?: "track" | "preview";
-}) {
-  const firstLabel = mode === "preview"
-    ? t(language, "dashboard.scoringSavedShort")
-    : t(language, "dashboard.scoringPaceShort");
-
-  return (
-    <p className={`mt-1 inline-flex max-w-full flex-col items-start justify-center gap-1 overflow-visible py-0.5 font-semibold uppercase tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
-      <span className="inline-flex items-center gap-1 leading-[1.15]">
-        <span
-          aria-hidden
-          className="h-1.5 w-1.5 rounded-full"
-          style={{ background: theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)" }}
-        />
-        <span className="triptych-micro-copy">{firstLabel}</span>
-      </span>
-      <span className="inline-flex items-center gap-1 leading-[1.15]">
-        <span
-          aria-hidden
-          className="h-1.5 w-1.5 rounded-full"
-          style={{ background: theme === "dark" ? "#fbbf24" : "#d97706" }}
-        />
-        <span className="triptych-micro-copy">
-          {t(language, "dashboard.scoringActualShort")}
-        </span>
-      </span>
-    </p>
   );
 }
 
@@ -1979,63 +2128,28 @@ function getStackedScoringTitleParts(label: string) {
 }
 
 function getTriptychScoringLens({
-  progress,
-  scoring,
-  scenarioImpact
+  scoring
 }: {
-  progress: DashboardCommandCenterSummary["progress"];
   scoring: DashboardCommandCenterSummary["scoring"];
-  scenarioImpact: ScenarioImpactSummary | null;
 }): TriptychScoringLens | null {
-  if (!progress.hasCompletedBracketOnce) {
-    return null;
-  }
-
-  const isPastDeadline = progress.deadlineAt
-    ? new Date(progress.deadlineAt).getTime() <= Date.now()
-    : false;
-  const isPostLock =
-    progress.phase === "knockout_stage" ||
-    progress.isLocked ||
-    isPastDeadline;
-
-  if (isPostLock) {
+  if (scoring.mode === "score_movement") {
     return {
-      mode: "post_lock",
-      movement: scoring,
-      points: getScoringTrackPoints(scoring.history)
+      mode: "score_movement",
+      movement: scoring.score,
+      points: getScoringTrackPoints(scoring.score.history)
     };
   }
 
-  if (
-    !scenarioImpact ||
-    (scenarioImpact.affectedPickCount === 0 && scenarioImpact.openThirdPlaceSlots === 0)
-  ) {
+  if (scoring.mode === "picks_in_play" && scoring.activity) {
     return {
-      mode: "pre_lock",
-      expectedDelta: null,
-      betterThanSavedPct: null
+      mode: "picks_in_play",
+      activity: scoring.activity
     };
   }
-
-  // TODO: Replace this deterministic estimate with simulation-derived expected
-  // delta and better-than-saved percentage when scoring snapshots are available.
-  const expectedDelta = Math.round((scenarioImpact.riskDelta + scenarioImpact.upsideDelta) / 2);
-  const betterThanSavedPct = clampNumeric(
-    50 + scenarioImpact.affectedPickCount * 6 - scenarioImpact.openThirdPlaceSlots * 10,
-    51,
-    86
-  );
 
   return {
-    mode: "pre_lock",
-    expectedDelta,
-    betterThanSavedPct
+    mode: "empty"
   };
-}
-
-function clampNumeric(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
 }
 
 function getScoringTrackPoints(history: DashboardScoringHistoryPoint[]): TriptychScoringTrackPoint[] {
@@ -2480,6 +2594,19 @@ function formatSignedMetric(value: number | null, language?: string | null) {
 
   const absolute = formatNumber(Math.abs(value), language);
   return `${value > 0 ? "+" : "-"}${absolute}`;
+}
+
+function formatShortMatchLabel(match: DashboardMatchSummary) {
+  return `${match.homeTeamShortName} v ${match.awayTeamShortName}`;
+}
+
+function formatMatchSummary(match: DashboardMatchSummary, language?: string | null) {
+  const date = match.kickoffTime
+    ? `${formatDate(match.kickoffTime, language, { month: "short", day: "numeric" })} ${formatShortTime(match.kickoffTime, language)}`
+    : "";
+  return date
+    ? `${match.homeTeamName} v ${match.awayTeamName} · ${date}`
+    : `${match.homeTeamName} v ${match.awayTeamName}`;
 }
 
 function formatCompactScoringLabel(value: string) {
