@@ -36,7 +36,11 @@ export async function fetchApiFootballMatches({
   }
 
   const baseUrl = process.env.MATCH_API_BASE_URL?.trim() || "https://v3.football.api-sports.io";
-  const response = await fetch(`${baseUrl}/fixtures?from=${startDate}&to=${endDate}`, {
+  const requestUrl = new URL("/fixtures", baseUrl);
+  requestUrl.searchParams.set("from", startDate);
+  requestUrl.searchParams.set("to", endDate);
+
+  const response = await fetch(requestUrl.toString(), {
     headers: {
       "x-apisports-key": apiKey
     },
@@ -53,7 +57,9 @@ export async function fetchApiFootballMatches({
     startDate,
     endDate,
     baseUrl,
-    fixtureCount: rawRows.length
+    requestUrl: requestUrl.toString(),
+    fixtureCount: rawRows.length,
+    sampleFixtureIds: rawRows.slice(0, 3).map((row) => row.fixture?.id ?? null)
   });
 
   return rawRows
