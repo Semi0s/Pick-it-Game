@@ -91,19 +91,23 @@ export default async function DashboardPage() {
             totalPlayers: 0
           },
           scoring: {
-            currentPoints: null,
-            currentRank: null,
-            currentPacePoints: null,
-            previousPoints: null,
-            previousRank: null,
-            previousPacePoints: null,
-            pointsChange: null,
-            rankChange: null,
-            deltaFromPace: null,
-            latestSnapshotAt: null,
-            previousSnapshotAt: null,
-            comparisonMode: "none",
-            history: []
+            mode: "empty",
+            score: {
+              currentPoints: null,
+              currentRank: null,
+              currentPacePoints: null,
+              previousPoints: null,
+              previousRank: null,
+              previousPacePoints: null,
+              pointsChange: null,
+              rankChange: null,
+              deltaFromPace: null,
+              latestSnapshotAt: null,
+              previousSnapshotAt: null,
+              comparisonMode: "none",
+              history: []
+            },
+            activity: null
           },
           reminder: {
             followedTeamCount: 0,

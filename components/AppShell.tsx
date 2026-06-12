@@ -869,7 +869,9 @@ export function AppShell({ children }: AppShellProps) {
                     src={item.iconSrc}
                     className={`bottom-nav-icon ${item.dockIconClass} ${isActive ? "text-accent-light" : ""}`}
                   />
-                  <span className="bottom-nav-dock-label truncate text-center leading-tight">{item.label}</span>
+                  <span className="bottom-nav-dock-label block max-w-full text-center leading-tight whitespace-normal">
+                    {item.label}
+                  </span>
                 </Link>
               );
             })}
