@@ -24,6 +24,14 @@ export async function fetchMatchesByDate({
   const apiKey = process.env.MATCH_API_KEY?.trim() ?? "";
 
   if (!syncEnabled || !provider || !apiKey) {
+    console.info("[match-api] Match sync skipped before provider request.", {
+      syncEnabled,
+      hasProvider: Boolean(provider),
+      provider: provider || null,
+      hasApiKey: Boolean(apiKey),
+      startDate,
+      endDate
+    });
     return [];
   }
 
