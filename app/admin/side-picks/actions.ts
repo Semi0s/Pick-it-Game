@@ -182,15 +182,19 @@ export async function updateAdminSidePickOfficialPlayerResultAction(input: {
       ...input,
       confirmedByUserId: admin.userId
     });
+    const summary = input.playerId ? await recomputeSidePickScores() : null;
 
     revalidatePath("/admin/side-picks");
     revalidatePath("/side-picks");
     revalidatePath("/last-chance-picks");
     revalidatePath("/leaderboard");
+    revalidatePath("/dashboard");
 
     return {
       ok: true as const,
-      message: "Official Side Pick result saved.",
+      message: summary
+        ? `Official Side Pick result saved and scoring recomputed for ${summary.usersScored} users.`
+        : "Official Side Pick result saved.",
       data
     };
   } catch (error) {

@@ -53,7 +53,42 @@ export async function fetchGlobalDashboardScoringMovementSummary(
     throw new Error(error.message);
   }
 
-  return buildDashboardScoringMovementSummary((data as LeaderboardSnapshotRow[] | null) ?? []);
+  const userRows = (data as LeaderboardSnapshotRow[] | null) ?? [];
+  if (userRows.length === 0) {
+    return createEmptyDashboardScoringMovementSummary();
+  }
+
+  const matchIds = Array.from(new Set(userRows.map((row) => row.match_id).filter(Boolean)));
+  const paceByMatchId = new Map<string, number>();
+
+  if (matchIds.length > 0) {
+    const { data: paceRows, error: paceError } = await adminSupabase
+      .from("leaderboard_snapshots")
+      .select("match_id,total_points")
+      .eq("scope_type", "global")
+      .is("group_id", null)
+      .in("match_id", matchIds);
+
+    if (paceError) {
+      throw new Error(paceError.message);
+    }
+
+    const paceAccumulator = new Map<string, { totalPoints: number; totalRows: number }>();
+    for (const row of (paceRows as Pick<LeaderboardSnapshotRow, "match_id" | "total_points">[] | null) ?? []) {
+      const current = paceAccumulator.get(row.match_id) ?? { totalPoints: 0, totalRows: 0 };
+      current.totalPoints += row.total_points;
+      current.totalRows += 1;
+      paceAccumulator.set(row.match_id, current);
+    }
+
+    for (const [matchId, totals] of paceAccumulator.entries()) {
+      if (totals.totalRows > 0) {
+        paceByMatchId.set(matchId, totals.totalPoints / totals.totalRows);
+      }
+    }
+  }
+
+  return buildDashboardScoringMovementSummary(userRows, paceByMatchId);
 }
 
 export async function fetchGroupLeaderboardRankMovement(

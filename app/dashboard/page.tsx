@@ -93,10 +93,13 @@ export default async function DashboardPage() {
           scoring: {
             currentPoints: null,
             currentRank: null,
+            currentPacePoints: null,
             previousPoints: null,
             previousRank: null,
+            previousPacePoints: null,
             pointsChange: null,
             rankChange: null,
+            deltaFromPace: null,
             latestSnapshotAt: null,
             previousSnapshotAt: null,
             comparisonMode: "none",

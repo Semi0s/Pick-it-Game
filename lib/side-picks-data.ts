@@ -6,6 +6,7 @@ import {
   SIDE_PICK_DEFINITION_KEYS,
   SIDE_PICK_PACKAGE_KEY,
   SIDE_PICK_PUBLIC_NAME,
+  deriveConsensusPlayerAwardSuggestions,
   deriveLastChanceLockAtFromSchedule,
   getSidePicksCompletionCount,
   getDefaultDarkHorseEligibleTeamIds,
@@ -17,6 +18,7 @@ import {
   serializeSemifinalistPickValue,
   type SidePickDefinitionKey,
   type SidePickPlayerDefinitionKey,
+  type SidePickOfficialPlayerSuggestion,
   type SidePickScheduleMatch,
   type SidePickScoringMatch,
   type SidePicksSubmission
@@ -94,6 +96,7 @@ export type SidePicksConfig = {
   lockAt: string | null;
   suggestedLockAt: string;
   suggestedLockSource: "official_schedule" | "manual_default";
+  officialPlayerSuggestions: Partial<Record<SidePickPlayerDefinitionKey, SidePickOfficialPlayerSuggestion>>;
 };
 
 export type SidePicksPageData = SidePicksConfig & {
@@ -233,7 +236,13 @@ export async function fetchSidePicksConfig(adminSupabase: AdminSupabase): Promis
     isLocked: isSidePicksLocked(lockAt),
     lockAt,
     suggestedLockAt: suggestedLock.lockAt,
-    suggestedLockSource: suggestedLock.source
+    suggestedLockSource: suggestedLock.source,
+    officialPlayerSuggestions: packageRow && group
+      ? await fetchOfficialPlayerSuggestions(adminSupabase, {
+          groupId: group.id,
+          definitions
+        })
+      : {}
   };
 }
 
@@ -267,7 +276,8 @@ export async function ensureSidePicksV1Package(adminSupabase: AdminSupabase): Pr
       isLocked: false,
       lockAt: suggestedLock.lockAt,
       suggestedLockAt: suggestedLock.lockAt,
-      suggestedLockSource: suggestedLock.source
+      suggestedLockSource: suggestedLock.source,
+      officialPlayerSuggestions: {}
     };
   }
 
@@ -720,6 +730,59 @@ async function fetchTournamentPlayers(
           }
         : null
     };
+  });
+}
+
+async function fetchOfficialPlayerSuggestions(
+  adminSupabase: AdminSupabase,
+  input: {
+    groupId: string;
+    definitions: SidePickDefinitionRow[];
+  }
+): Promise<Partial<Record<SidePickPlayerDefinitionKey, SidePickOfficialPlayerSuggestion>>> {
+  const playerDefinitions = input.definitions.filter(
+    (definition): definition is SidePickDefinitionRow & { key: SidePickPlayerDefinitionKey } =>
+      definition.key === "golden_boot" || definition.key === "golden_ball"
+  );
+
+  if (playerDefinitions.length === 0) {
+    return {};
+  }
+
+  const [entriesResult, players] = await Promise.all([
+    adminSupabase
+      .from("side_pick_entries")
+      .select("definition_id,selected_player_id")
+      .eq("group_id", input.groupId)
+      .in("definition_id", playerDefinitions.map((definition) => definition.id)),
+    fetchTournamentPlayers(adminSupabase)
+  ]);
+
+  if (entriesResult.error) {
+    throw new Error(entriesResult.error.message);
+  }
+
+  const keyByDefinitionId = new Map(playerDefinitions.map((definition) => [definition.id, definition.key]));
+  const entries = (((entriesResult.data as Array<{
+    definition_id: string;
+    selected_player_id?: string | null;
+  }> | null) ?? [])).flatMap((row) => {
+    const key = keyByDefinitionId.get(row.definition_id);
+    return key
+      ? [{
+          key,
+          selectedPlayerId: row.selected_player_id ?? null
+        }]
+      : [];
+  });
+
+  return deriveConsensusPlayerAwardSuggestions({
+    entries,
+    players: players.map((player) => ({
+      id: player.id,
+      fullName: player.full_name,
+      teamName: player.team?.short_name ?? player.team?.name ?? null
+    }))
   });
 }
 

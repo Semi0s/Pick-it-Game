@@ -13,7 +13,12 @@ import {
 import { SidePicksIcon } from "@/components/SidePicksIcon";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { showAppToast } from "@/lib/app-toast";
-import { SIDE_PICK_PUBLIC_NAME, formatLastChanceDeadlineLabel, type SidePickPlayerDefinitionKey } from "@/lib/side-picks";
+import {
+  SIDE_PICK_PUBLIC_NAME,
+  formatLastChanceDeadlineLabel,
+  type SidePickOfficialPlayerSuggestion,
+  type SidePickPlayerDefinitionKey
+} from "@/lib/side-picks";
 import type {
   SidePickAuditSummary,
   SidePickDefinitionRow,
@@ -297,6 +302,7 @@ export function AdminSidePicksClient() {
         />
         <OfficialPlayerResultsCard
           definitions={[goldenBootDefinition, goldenBallDefinition].filter((definition): definition is SidePickDefinitionRow => Boolean(definition))}
+          suggestions={data.officialPlayerSuggestions}
           players={data.tournamentPlayers.filter((player) => player.active)}
           isPending={isPending}
           onSave={saveOfficialPlayerResult}
@@ -467,11 +473,13 @@ function TournamentPlayersCard({
 
 function OfficialPlayerResultsCard({
   definitions,
+  suggestions,
   players,
   isPending,
   onSave
 }: {
   definitions: SidePickDefinitionRow[];
+  suggestions: Partial<Record<SidePickPlayerDefinitionKey, SidePickOfficialPlayerSuggestion>>;
   players: TournamentPlayerRow[];
   isPending: boolean;
   onSave: (input: {
@@ -492,6 +500,7 @@ function OfficialPlayerResultsCard({
           <OfficialPlayerResultForm
             key={definition.key}
             definition={definition}
+            suggestion={suggestions[definition.key as SidePickPlayerDefinitionKey] ?? null}
             players={players}
             isPending={isPending}
             onSave={onSave}
@@ -504,11 +513,13 @@ function OfficialPlayerResultsCard({
 
 function OfficialPlayerResultForm({
   definition,
+  suggestion,
   players,
   isPending,
   onSave
 }: {
   definition: SidePickDefinitionRow;
+  suggestion: SidePickOfficialPlayerSuggestion | null;
   players: TournamentPlayerRow[];
   isPending: boolean;
   onSave: (input: {
@@ -518,23 +529,39 @@ function OfficialPlayerResultForm({
     sourceLabel: string | null;
   }) => void;
 }) {
-  const [playerId, setPlayerId] = useState(definition.official_player_id ?? "");
+  const [playerId, setPlayerId] = useState(definition.official_player_id ?? suggestion?.playerId ?? "");
   const [sourceUrl, setSourceUrl] = useState(definition.official_result_source_url ?? "");
   const [sourceLabel, setSourceLabel] = useState(definition.official_result_source_label ?? "");
 
   useEffect(() => {
-    setPlayerId(definition.official_player_id ?? "");
+    setPlayerId(definition.official_player_id ?? suggestion?.playerId ?? "");
     setSourceUrl(definition.official_result_source_url ?? "");
     setSourceLabel(definition.official_result_source_label ?? "");
   }, [
     definition.official_player_id,
     definition.official_result_source_url,
-    definition.official_result_source_label
+    definition.official_result_source_label,
+    suggestion?.playerId
   ]);
 
   return (
     <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
       <p className="text-sm font-black text-gray-950">{definition.label}</p>
+      {suggestion ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="text-xs font-bold text-gray-600">
+            Suggested from player picks: {suggestion.playerLabel} · {suggestion.pickCount}/{suggestion.totalPicks}
+          </p>
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() => setPlayerId(suggestion.playerId)}
+            className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-black text-gray-700 hover:border-accent hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Use suggestion
+          </button>
+        </div>
+      ) : null}
       <div className="mt-2 grid gap-2">
         <select
           value={playerId}

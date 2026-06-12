@@ -47,7 +47,8 @@ type RgbColor = {
 type TriptychScoringTrackPoint = {
   checkpointId: string;
   label: string;
-  points: number;
+  actualPoints: number;
+  pacePoints: number | null;
 };
 
 type TriptychScoringLens =
@@ -488,7 +489,6 @@ function ProgressPanel({
               <DigitalWatchRing percentage={percentage} tone={tone} theme={theme} />
               {shouldShowGroupStageNotSaved ? <NotSavedMicroLabel language={language} theme={theme} /> : null}
               <div className={`${shouldShowGroupStageNotSaved ? "mt-0 space-y-0.5" : "-mt-0.5 space-y-0.5"}`}>
-                <p className={`max-w-full truncate text-center text-[9px] font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{progressLabel}</p>
                 <p className={`max-w-full truncate font-semibold uppercase tracking-[0.1em] [-webkit-text-size-adjust:100%] [text-size-adjust:100%] ${getToneMetaTextClasses(tone, isCompleteForDisplay, progress.isLocked, theme)}`}>
                   <span className="triptych-micro-copy">
                   {statusLabel}
@@ -579,6 +579,9 @@ function LastChanceTriptychContent({
 
   return (
     <div className="flex h-full min-w-0 flex-col items-center justify-center gap-1 px-1 py-2 text-center">
+      <p className={`max-w-full truncate text-[8px] font-black uppercase tracking-[0.1em] ${getToneMetaTextClasses(progress.urgencyTone, progress.isComplete, progress.isLocked, theme)}`}>
+        <span className="triptych-micro-copy">{progress.deadlineLabel}</span>
+      </p>
       <p className={`max-w-full truncate text-[8px] font-black uppercase tracking-[0.1em] ${getPrimaryTextClasses(theme)}`}>
         SIDE PICKS
       </p>
@@ -751,11 +754,35 @@ function TriptychScoringSparkline({
   const tickFill = theme === "dark" ? "rgba(226, 232, 240, 0.62)" : "rgba(71, 85, 105, 0.62)";
   const lineStroke = theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)";
   const chartData = useMemo(
-    () => points.filter((point) => Number.isFinite(point.points)),
+    () => points.filter((point) => Number.isFinite(point.actualPoints)),
     [points]
   );
+  const singlePointDot = useMemo(
+    () =>
+      chartData.length === 1
+        ? {
+            r: 2.4,
+            strokeWidth: 0,
+            fill: lineStroke
+          }
+        : false,
+    [chartData.length, lineStroke]
+  );
+  const singlePointPaceDot = useMemo(
+    () =>
+      chartData.length === 1
+        ? {
+            r: 2.2,
+            strokeWidth: 0,
+            fill: theme === "dark" ? "#fbbf24" : "#d97706"
+          }
+        : false,
+    [chartData.length, theme]
+  );
   const yDomain = useMemo<[number, number]>(() => {
-    const values = chartData.map((point) => point.points);
+    const values = chartData.flatMap((point) =>
+      [point.actualPoints, point.pacePoints].filter((value): value is number => typeof value === "number")
+    );
     if (values.length === 0) {
       return [0, 1];
     }
@@ -808,10 +835,21 @@ function TriptychScoringSparkline({
           />
           <Line
             type="monotone"
-            dataKey="points"
+            dataKey="pacePoints"
+            stroke={theme === "dark" ? "#fbbf24" : "#d97706"}
+            strokeWidth={1.15}
+            strokeDasharray="3 3"
+            dot={singlePointPaceDot}
+            activeDot={false}
+            connectNulls
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="actualPoints"
             stroke={lineStroke}
             strokeWidth={1.45}
-            dot={false}
+            dot={singlePointDot}
             activeDot={false}
             isAnimationActive={false}
           />
@@ -837,12 +875,15 @@ function DashboardScoringDetailSheet({
       scoring.history.map((point) => ({
         id: point.matchId,
         label: formatScoringChartLabel(point.createdAt, language),
-        points: point.totalPoints
+        actualPoints: point.totalPoints,
+        pacePoints: point.pacePoints
       })),
     [language, scoring.history]
   );
   const yDomain = useMemo<[number, number]>(() => {
-    const values = chartData.map((point) => point.points);
+    const values = chartData.flatMap((point) =>
+      [point.actualPoints, point.pacePoints].filter((value): value is number => typeof value === "number")
+    );
     if (values.length === 0) {
       return [0, 1];
     }
@@ -885,11 +926,13 @@ function DashboardScoringDetailSheet({
         </div>
 
         <div className="overflow-y-auto px-4 pb-4 pt-4 sm:px-5">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <DetailMetricCard label={t(language, "leaderboard.points")} value={formatPoints(scoring.currentPoints, language)} theme={theme} />
             <DetailMetricCard label={t(language, "leaderboard.rank")} value={formatRank(scoring.currentRank, language)} theme={theme} />
             <DetailMetricCard label={t(language, "dashboard.todayShort")} value={formatSignedMetric(scoring.pointsChange, language)} theme={theme} />
             <DetailMetricCard label="+/-" value={formatSignedMetric(scoring.rankChange, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.scoringPaceShort")} value={formatPoints(scoring.currentPacePoints, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.scoringVsPaceShort")} value={formatSignedMetric(scoring.deltaFromPace, language)} theme={theme} />
           </div>
 
           <div className={`mt-4 rounded-[1.25rem] border px-3 py-3 sm:px-4 ${theme === "dark" ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-slate-50/70"}`}>
@@ -924,7 +967,18 @@ function DashboardScoringDetailSheet({
                     />
                     <Line
                       type="monotone"
-                      dataKey="points"
+                      dataKey="pacePoints"
+                      stroke={theme === "dark" ? "#fbbf24" : "#d97706"}
+                      strokeWidth={1.6}
+                      strokeDasharray="4 4"
+                      dot={{ r: 2.1, strokeWidth: 0, fill: theme === "dark" ? "#fbbf24" : "#d97706" }}
+                      activeDot={{ r: 3.2 }}
+                      connectNulls
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="actualPoints"
                       stroke={theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)"}
                       strokeWidth={2}
                       dot={{ r: 2.25, strokeWidth: 0, fill: theme === "dark" ? "var(--triptych-dark-accent-text)" : "var(--app-accent)" }}
@@ -936,6 +990,12 @@ function DashboardScoringDetailSheet({
               </div>
             )}
           </div>
+
+          {chartData.length === 0 ? null : (
+            <p className={`mt-3 text-xs font-semibold ${getMutedTextClasses(theme)}`}>
+              {t(language, "dashboard.scoringPaceHint")}
+            </p>
+          )}
 
           <div className="mt-4 space-y-2">
             {scoring.history.length === 0 ? null : scoring.history.slice().reverse().map((point) => (
@@ -1011,8 +1071,12 @@ function ScoringTimelineRow({
           <p className={`text-sm font-black ${getPrimaryTextClasses(theme)}`}>{formatNumber(point.rank, language)}</p>
         </div>
         <div>
+          <p className={`triptych-micro-copy font-semibold uppercase tracking-[0.1em] ${getMutedTextClasses(theme)}`}>{t(language, "dashboard.scoringPaceShort")}</p>
+          <p className={`text-sm font-black ${getPrimaryTextClasses(theme)}`}>{formatPoints(point.pacePoints, language)}</p>
+        </div>
+        <div>
           <p className={`triptych-micro-copy font-semibold uppercase tracking-[0.1em] ${getMutedTextClasses(theme)}`}>+/-</p>
-          <p className={`text-sm font-black ${getPrimaryTextClasses(theme)}`}>{formatSignedMetric(point.pointsDelta, language)}</p>
+          <p className={`text-sm font-black ${getPrimaryTextClasses(theme)}`}>{formatSignedMetric(point.paceDelta, language)}</p>
         </div>
       </div>
     </div>
@@ -1105,7 +1169,7 @@ function ScoringTrackKey({
 }) {
   const firstLabel = mode === "preview"
     ? t(language, "dashboard.scoringSavedShort")
-    : t(language, "dashboard.scoringProjectedShort");
+    : t(language, "dashboard.scoringPaceShort");
 
   return (
     <p className={`mt-1 inline-flex max-w-full flex-col items-start justify-center gap-1 overflow-visible py-0.5 font-semibold uppercase tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
@@ -1162,11 +1226,10 @@ function TriptychPanelViewCue({
         onTouchEnd={onTouchEnd}
         className="inline-flex h-10 items-end gap-1 rounded-full px-2 pb-0.5 transition-colors hover:text-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
       >
-        <span className="triptych-micro-copy font-black uppercase tracking-[0.12em]">{label}</span>
         {isOpen ? (
-          <ChevronDown aria-hidden className="h-4 w-4" strokeWidth={2.4} />
+          <ChevronDown aria-hidden className="h-5 w-5" strokeWidth={2.6} />
         ) : (
-          <ChevronUp aria-hidden className="h-4 w-4" strokeWidth={2.4} />
+          <ChevronUp aria-hidden className="h-5 w-5" strokeWidth={2.6} />
         )}
       </button>
     </div>
@@ -1979,7 +2042,8 @@ function getScoringTrackPoints(history: DashboardScoringHistoryPoint[]): Triptyc
   return history.map((point) => ({
     checkpointId: point.matchId,
     label: formatCompactScoringLabel(point.createdAt),
-    points: point.totalPoints
+    actualPoints: point.totalPoints,
+    pacePoints: point.pacePoints
   }));
 }
 
