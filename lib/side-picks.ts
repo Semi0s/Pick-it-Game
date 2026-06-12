@@ -19,6 +19,18 @@ export const SIDE_PICK_DEFINITION_KEYS = [
 
 export type SidePickDefinitionKey = (typeof SIDE_PICK_DEFINITION_KEYS)[number];
 export type SidePickPlayerDefinitionKey = Extract<SidePickDefinitionKey, "golden_boot" | "golden_ball">;
+export type SidePickConsensusPlayer = {
+  id: string;
+  fullName: string;
+  teamName?: string | null;
+};
+export type SidePickOfficialPlayerSuggestion = {
+  key: SidePickPlayerDefinitionKey;
+  playerId: string;
+  playerLabel: string;
+  pickCount: number;
+  totalPicks: number;
+};
 
 export type SidePicksSubmission = {
   championTeamId: string | null;
@@ -115,6 +127,71 @@ export function normalizeSidePicksSubmission(input: Partial<SidePicksSubmission>
     goldenBootPlayerId: normalizeNullableId(input.goldenBootPlayerId),
     goldenBallPlayerId: normalizeNullableId(input.goldenBallPlayerId)
   };
+}
+
+export function deriveConsensusPlayerAwardSuggestions(input: {
+  entries: Array<{
+    key: SidePickPlayerDefinitionKey;
+    selectedPlayerId: string | null;
+  }>;
+  players: SidePickConsensusPlayer[];
+}): Partial<Record<SidePickPlayerDefinitionKey, SidePickOfficialPlayerSuggestion>> {
+  const playersById = new Map(
+    input.players.map((player) => [
+      player.id,
+      player.teamName ? `${player.fullName} — ${player.teamName}` : player.fullName
+    ])
+  );
+  const suggestions: Partial<Record<SidePickPlayerDefinitionKey, SidePickOfficialPlayerSuggestion>> = {};
+
+  for (const key of ["golden_boot", "golden_ball"] as const) {
+    const votes = input.entries.filter((entry) => entry.key === key && entry.selectedPlayerId);
+    if (votes.length === 0) {
+      continue;
+    }
+
+    const counts = new Map<string, number>();
+    for (const vote of votes) {
+      const playerId = vote.selectedPlayerId;
+      if (!playerId) {
+        continue;
+      }
+
+      counts.set(playerId, (counts.get(playerId) ?? 0) + 1);
+    }
+
+    const ranked = Array.from(counts.entries()).sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+
+      return left[0].localeCompare(right[0]);
+    });
+    const winner = ranked[0];
+    const runnerUp = ranked[1];
+    if (!winner) {
+      continue;
+    }
+
+    if (runnerUp && runnerUp[1] === winner[1]) {
+      continue;
+    }
+
+    const playerLabel = playersById.get(winner[0]);
+    if (!playerLabel) {
+      continue;
+    }
+
+    suggestions[key] = {
+      key,
+      playerId: winner[0],
+      playerLabel,
+      pickCount: winner[1],
+      totalPicks: votes.length
+    };
+  }
+
+  return suggestions;
 }
 
 export function parseSemifinalistPickValue(value: string | null | undefined) {

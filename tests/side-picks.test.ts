@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  deriveConsensusPlayerAwardSuggestions,
   deriveLastChanceLockAtFromSchedule,
   formatLastChanceDeadlineLabel,
   getSidePicksCompletionCount,
@@ -241,6 +242,45 @@ test("Side Picks player award scoring is deterministic across reruns", () => {
   } satisfies Parameters<typeof scoreSidePicks>[0];
 
   assert.deepEqual(scoreSidePicks(input), scoreSidePicks(input));
+});
+
+test("Side Picks can suggest a consensus player award candidate for admin confirmation", () => {
+  const suggestions = deriveConsensusPlayerAwardSuggestions({
+    entries: [
+      { key: "golden_boot", selectedPlayerId: "mbappe" },
+      { key: "golden_boot", selectedPlayerId: "mbappe" },
+      { key: "golden_boot", selectedPlayerId: "vinicius" },
+      { key: "golden_ball", selectedPlayerId: "bellingham" },
+      { key: "golden_ball", selectedPlayerId: "bellingham" },
+      { key: "golden_ball", selectedPlayerId: "bellingham" }
+    ],
+    players: [
+      { id: "mbappe", fullName: "Kylian Mbappe", teamName: "France" },
+      { id: "vinicius", fullName: "Vinicius Junior", teamName: "Brazil" },
+      { id: "bellingham", fullName: "Jude Bellingham", teamName: "England" }
+    ]
+  });
+
+  assert.equal(suggestions.golden_boot?.playerId, "mbappe");
+  assert.equal(suggestions.golden_boot?.pickCount, 2);
+  assert.equal(suggestions.golden_boot?.totalPicks, 3);
+  assert.equal(suggestions.golden_ball?.playerId, "bellingham");
+  assert.equal(suggestions.golden_ball?.playerLabel, "Jude Bellingham — England");
+});
+
+test("Side Picks skip consensus suggestions when the top player is tied", () => {
+  const suggestions = deriveConsensusPlayerAwardSuggestions({
+    entries: [
+      { key: "golden_boot", selectedPlayerId: "a" },
+      { key: "golden_boot", selectedPlayerId: "b" }
+    ],
+    players: [
+      { id: "a", fullName: "Player A", teamName: "A" },
+      { id: "b", fullName: "Player B", teamName: "B" }
+    ]
+  });
+
+  assert.equal(suggestions.golden_boot, undefined);
 });
 
 test("Last-Chance default lock prefers official first third-group-match kickoff", () => {

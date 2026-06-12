@@ -291,9 +291,6 @@ export function AppUpdatesCard() {
               )
             ) : null}
           </div>
-          <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-accent-dark">
-            Don&apos;t forget to check often for the latest news. Especially as the tournament is about to start.
-          </p>
         </>
       ) : null}
     </section>

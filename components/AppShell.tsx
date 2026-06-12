@@ -60,6 +60,7 @@ const EXPLAINER_LANGUAGE_LABELS: Record<ExplainerLanguage, string> = {
 
 const GLOBAL_NAV_ICONS = {
   groupStage: "/images/nav/group-stage.png",
+  sidePicks: "/images/nav/side-picks.png",
   knockout: "/images/nav/knockout.png",
   leaderboards: "/images/nav/leaderboards.png",
   myGroups: "/images/nav/my-groups.png"
@@ -124,10 +125,10 @@ export function AppShell({ children }: AppShellProps) {
   const groupPredictionMode = getConfiguredGroupPredictionMode();
   const navItems = [
     {
-      href: "/bracket-builder",
-      label: copy.myBracket,
-      ariaLabel: copy.myBracket,
-      iconSrc: GLOBAL_NAV_ICONS.groupStage,
+      href: "/side-picks",
+      label: copy.mySidePicks,
+      ariaLabel: copy.mySidePicks,
+      iconSrc: GLOBAL_NAV_ICONS.sidePicks,
       desktopIconClass: "h-10 w-10",
       dockIconClass: "h-[2.1rem] w-[2.1rem]"
     },
