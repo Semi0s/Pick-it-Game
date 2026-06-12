@@ -84,30 +84,19 @@ export async function fetchGroupPhaseSummaries(userIds: string[]): Promise<Map<s
 
   const adminSupabase = createAdminClient();
   const [groupSeedRows, thirdPlaceRows] = await Promise.all([
-    adminSupabase
-      .from("user_group_seed_rankings")
-      .select("user_id,group_name,rank_position,team_id")
-      .in("user_id", uniqueUserIds)
-      .order("user_id", { ascending: true })
-      .order("group_name", { ascending: true })
-      .order("rank_position", { ascending: true }),
-    adminSupabase
-      .from("user_best_third_rankings")
-      .select("user_id,team_id,rank_position")
-      .in("user_id", uniqueUserIds)
-      .order("user_id", { ascending: true })
-      .order("rank_position", { ascending: true })
+    fetchGroupSeedRankingsForUsers(adminSupabase, uniqueUserIds),
+    fetchThirdPlaceRankingsForUsers(adminSupabase, uniqueUserIds)
   ]);
 
   const ladderScores = recomputeGroupPhaseLadderScores({
     userIds: uniqueUserIds,
     actualOutcomes,
     requiredThirdPlaceQualifierCount,
-    groupSeedRankings: ((groupSeedRows.data as GroupSeedRankingRecord[] | null) ?? []).map((row) => ({
+    groupSeedRankings: groupSeedRows.map((row) => ({
       ...row,
       group_name: normalizeGroupKey(row.group_name) ?? row.group_name
     })),
-    thirdPlaceRankings: (thirdPlaceRows.data as ThirdPlaceRankingRecord[] | null) ?? [],
+    thirdPlaceRankings: thirdPlaceRows,
     isScorable
   });
 
@@ -243,4 +232,63 @@ async function fetchMatches(adminSupabase: ReturnType<typeof createAdminClient>)
   }
 
   return (data as MatchRow[] | null) ?? [];
+}
+
+const USER_RANKING_QUERY_BATCH_SIZE = 20;
+
+async function fetchGroupSeedRankingsForUsers(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userIds: string[]
+): Promise<GroupSeedRankingRecord[]> {
+  const rows: GroupSeedRankingRecord[] = [];
+
+  for (const batch of chunkUserIds(userIds)) {
+    const { data, error } = await adminSupabase
+      .from("user_group_seed_rankings")
+      .select("user_id,group_name,rank_position,team_id")
+      .in("user_id", batch)
+      .order("user_id", { ascending: true })
+      .order("group_name", { ascending: true })
+      .order("rank_position", { ascending: true });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    rows.push(...((data as GroupSeedRankingRecord[] | null) ?? []));
+  }
+
+  return rows;
+}
+
+async function fetchThirdPlaceRankingsForUsers(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  userIds: string[]
+): Promise<ThirdPlaceRankingRecord[]> {
+  const rows: ThirdPlaceRankingRecord[] = [];
+
+  for (const batch of chunkUserIds(userIds)) {
+    const { data, error } = await adminSupabase
+      .from("user_best_third_rankings")
+      .select("user_id,team_id,rank_position")
+      .in("user_id", batch)
+      .order("user_id", { ascending: true })
+      .order("rank_position", { ascending: true });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    rows.push(...((data as ThirdPlaceRankingRecord[] | null) ?? []));
+  }
+
+  return rows;
+}
+
+function chunkUserIds(userIds: string[]): string[][] {
+  const chunks: string[][] = [];
+  for (let index = 0; index < userIds.length; index += USER_RANKING_QUERY_BATCH_SIZE) {
+    chunks.push(userIds.slice(index, index + USER_RANKING_QUERY_BATCH_SIZE));
+  }
+  return chunks;
 }
