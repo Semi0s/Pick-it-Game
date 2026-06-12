@@ -517,27 +517,29 @@ export function LoginForm({
         </div>
       ) : null}
 
-      <button
-        type="submit"
-        disabled={isSubmitting || isInvitePreviewLoading}
-        className={`w-full rounded-[0.9rem] px-4 py-3 text-base font-bold text-white shadow-soft ${
-          mode === "signup" ? "bg-orange-500 hover:bg-orange-500/95" : "bg-accent hover:bg-accent/95"
-        }`}
-      >
-        {isSubmitting || isInvitePreviewLoading
-          ? t(uiLanguage, "auth.working")
-          : emailBoundInviteFlow
-            ? mode === "login"
-              ? confirmed
-                ? t(uiLanguage, "auth.signInToFinishJoining")
-                : t(uiLanguage, "auth.signInToJoin")
-              : t(uiLanguage, "auth.createAccountToJoin")
-            : mode === "login"
-              ? accessCode.trim()
-                ? t(uiLanguage, "auth.signInToJoin")
-                : t(uiLanguage, "auth.signIn")
-              : t(uiLanguage, "auth.createAccount")}
-      </button>
+      <div className="sticky bottom-0 -mx-1 mt-1 bg-white/95 px-1 pb-1 pt-3 backdrop-blur supports-[backdrop-filter]:bg-white/85">
+        <button
+          type="submit"
+          disabled={isSubmitting || isInvitePreviewLoading}
+          className={`w-full rounded-[0.9rem] px-4 py-3 text-base font-bold text-white shadow-soft ${
+            mode === "signup" ? "bg-orange-500 hover:bg-orange-500/95" : "bg-accent hover:bg-accent/95"
+          }`}
+        >
+          {isSubmitting || isInvitePreviewLoading
+            ? t(uiLanguage, "auth.working")
+            : emailBoundInviteFlow
+              ? mode === "login"
+                ? confirmed
+                  ? t(uiLanguage, "auth.signInToFinishJoining")
+                  : t(uiLanguage, "auth.signInToJoin")
+                : t(uiLanguage, "auth.createAccountToJoin")
+              : mode === "login"
+                ? accessCode.trim()
+                  ? t(uiLanguage, "auth.signInToJoin")
+                  : t(uiLanguage, "auth.signIn")
+                : t(uiLanguage, "auth.createAccount")}
+        </button>
+      </div>
       {isDemoFallback ? (
         <p className="text-sm leading-6 text-gray-600">
           Supabase env vars are missing, so demo auth is active. Try alex@example.com, jamie@example.com,

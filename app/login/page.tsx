@@ -45,7 +45,7 @@ export default async function LoginPage({
   const inviteToken = flow === "invite" ? nextInviteValue : null;
 
   return (
-    <main className="relative min-h-screen min-h-[100dvh] overflow-hidden bg-neutral-950 px-4 py-6">
+    <main className="relative min-h-screen min-h-[100dvh] overflow-y-auto bg-neutral-950 px-4 py-6">
       <Image
         src="/images/signin-stadium.jpeg"
         alt="Soccer stadium background"
@@ -54,8 +54,8 @@ export default async function LoginPage({
         className="object-cover object-center"
       />
       <div className="absolute inset-0 bg-black/30" aria-hidden />
-      <section className="relative z-10 mx-auto flex min-h-[calc(100vh-3rem)] min-h-[calc(100dvh-3rem)] max-w-[17.85rem] flex-col justify-center">
-        <div className="mb-3 rounded-[1.35rem] border border-white/60 bg-white/90 p-3.5 shadow-2xl shadow-black/25">
+      <section className="auth-shell relative z-10 mx-auto flex min-h-[calc(100vh-3rem)] min-h-[calc(100dvh-3rem)] max-w-[17.85rem] flex-col justify-center">
+        <div className="auth-card mb-3 rounded-[1.35rem] border border-white/60 bg-white/90 p-3.5 shadow-2xl shadow-black/25">
           <div className="mx-auto mb-4 mt-2 max-w-[30rem]">
             <Image
               src="/images/pickit-login-logo.png"

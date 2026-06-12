@@ -681,6 +681,7 @@ async function fetchGlobalLeaderboardRows(
   if (users.length === 0) {
     return [];
   }
+  const usesProjectedGroupPhasePoints = mode === "projected" && (phase === "group_phase" || phase === "global_top10");
 
   const userIds = users.map((user) => user.id);
   const [
@@ -695,7 +696,7 @@ async function fetchGlobalLeaderboardRows(
   ] = await Promise.all([
     fetchGlobalChallengeSummaries(userIds),
     fetchGroupPhaseSummaries(userIds),
-    mode === "projected" && phase === "group_phase"
+    usesProjectedGroupPhasePoints
       ? fetchProjectedGroupPhaseSummaries(userIds)
       : Promise.resolve({ summaries: new Map<string, ProjectedGroupPhaseUserSummary>(), projectionKey: null }),
     fetchKnockoutPointsByUserIds(adminSupabase, userIds),
@@ -713,14 +714,16 @@ async function fetchGlobalLeaderboardRows(
       const standardSidePickPoints = standardSidePickTotals.get(user.id) ?? 0;
       const totalPoints =
         phase === "group_phase"
-          ? mode === "projected"
+          ? usesProjectedGroupPhasePoints
             ? projectedGroupPhasePoints
             : groupPhasePoints
           : phase === "knockout_phase"
             ? knockoutPhasePoints
             : phase === "side_picks"
               ? standardSidePickPoints
-              : groupPhasePoints + knockoutPhasePoints + standardSidePickPoints;
+              : usesProjectedGroupPhasePoints
+                ? projectedGroupPhasePoints + knockoutPhasePoints + standardSidePickPoints
+                : groupPhasePoints + knockoutPhasePoints + standardSidePickPoints;
       return {
         user_id: user.id,
         total_points: totalPoints
@@ -729,7 +732,7 @@ async function fetchGlobalLeaderboardRows(
     .sort(compareLeaderboardEntries);
 
   const ranks = assignRanks(rankedEntries);
-  if (mode === "projected" && phase === "group_phase") {
+  if (usesProjectedGroupPhasePoints) {
     await persistProjectedLeaderboardSnapshots({
       scopeType: "global",
       projectionKey: projectedGroupPhaseResult.projectionKey,
@@ -737,7 +740,7 @@ async function fetchGlobalLeaderboardRows(
     });
   }
   const movementByUserId =
-    mode === "projected" && phase === "group_phase"
+    usesProjectedGroupPhasePoints
       ? new Map(
           (
             await fetchProjectedLeaderboardRankMovement({
@@ -761,7 +764,7 @@ async function fetchGlobalLeaderboardRows(
       const knockoutPhasePoints = knockoutPointsByUserId.get(entry.user_id) ?? 0;
       const standardSidePickPoints = standardSidePickTotals.get(entry.user_id) ?? 0;
       const movement = movementByUserId.get(entry.user_id) ?? { rankDelta: null, pointsDelta: null };
-      const displayedGroupPhasePoints = mode === "projected" && phase === "group_phase"
+      const displayedGroupPhasePoints = usesProjectedGroupPhasePoints
         ? projectedGroupPhasePoints ?? 0
         : groupPhaseSummary?.points ?? 0;
 
@@ -775,7 +778,9 @@ async function fetchGlobalLeaderboardRows(
         projectedPoints: projectedGroupPhasePoints,
         knockoutPhasePoints,
         sidePickPoints: standardSidePickPoints,
-        globalTopTenPoints: (groupPhaseSummary?.points ?? 0) + knockoutPhasePoints + standardSidePickPoints,
+        globalTopTenPoints: usesProjectedGroupPhasePoints
+          ? (projectedGroupPhasePoints ?? 0) + knockoutPhasePoints + standardSidePickPoints
+          : (groupPhaseSummary?.points ?? 0) + knockoutPhasePoints + standardSidePickPoints,
         groupStrategyPoints: summary?.groupStrategy.points ?? null,
         knockoutGlobalPoints: summary?.knockout.points ?? null,
         globalChallengePoints: summary?.totalPoints ?? null,

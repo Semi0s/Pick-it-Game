@@ -858,6 +858,21 @@ body.capacitor-native .bottom-nav-dock {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+.auth-card {
+  max-height: calc(100dvh - 3rem);
+  overflow-y: auto;
+}
+
+body.capacitor-keyboard-open .auth-shell {
+  justify-content: flex-start;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 9rem);
+  padding-top: max(env(safe-area-inset-top, 0px), 0.75rem);
+}
+
+body.capacitor-keyboard-open .auth-card {
+  max-height: none;
+}
+
 @media (orientation: landscape) and (max-height: 520px) and (max-width: 950px) {
   body.capacitor-native .app-shell {
     min-height: 100dvh;

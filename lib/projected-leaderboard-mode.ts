@@ -14,9 +14,8 @@ export function shouldUseProjectedLeaderboardMode(input: {
   return Boolean(
     input.requestedMode === "projected" &&
       input.projectedLeaderboardEnabled &&
-      input.phase === "group_phase" &&
-      input.view !== "groups" &&
-      input.view !== "teams"
+      (input.phase === "group_phase" || input.phase === "global_top10") &&
+      input.view === "global"
   );
 }
 

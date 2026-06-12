@@ -1155,6 +1155,7 @@ export function DashboardOverview({
           icon={SidePicksIcon}
           title={t(displayLanguage, "dashboard.additionalTrophies")}
           copy={t(displayLanguage, "dashboard.additionalTrophiesCopy")}
+          iconClassName="h-10 w-10 -translate-y-[10px] text-accent-dark"
         />
       </section>
 
@@ -1226,15 +1227,16 @@ type DashboardLinkCardProps = {
   icon: (props: { className?: string; "aria-hidden"?: boolean }) => ReactNode;
   title: string;
   copy: string;
+  iconClassName?: string;
 };
 
-function DashboardLinkCard({ href, icon: Icon, title, copy }: DashboardLinkCardProps) {
+function DashboardLinkCard({ href, icon: Icon, title, copy, iconClassName }: DashboardLinkCardProps) {
   return (
     <Link
       href={href}
       className="ui-card flex w-full flex-col p-4 transition-colors hover:border-accent hover:bg-accent-light"
     >
-      <Icon aria-hidden className="h-10 w-10 text-accent-dark" />
+      <Icon aria-hidden className={iconClassName ?? "h-10 w-10 text-accent-dark"} />
       <h3 className="mt-4 text-lg font-black">{title}</h3>
       <p className="mt-1 text-sm leading-6 text-gray-600">{copy}</p>
     </Link>
