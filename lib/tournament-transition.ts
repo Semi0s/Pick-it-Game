@@ -101,23 +101,46 @@ export async function saveTournamentTransitionSettings(
 ): Promise<TournamentTransitionSettings> {
   const resolved = resolveTournamentTransitionSettings(settings);
   const adminSupabase = createAdminClient();
+
+  const buildSettingRow = (
+    key: string,
+    input: {
+      booleanValue?: boolean;
+      textValue?: string | null;
+    }
+  ) => ({
+    key,
+    boolean_value: input.booleanValue ?? false,
+    text_value: input.textValue ?? null
+  });
+
   const { error } = await adminSupabase.from("app_settings").upsert(
     [
-      { key: TOURNAMENT_MODALITY_KEY, text_value: resolved.modality },
-      { key: DASHBOARD_TRANSITION_MESSAGE_ACTIVE_KEY, boolean_value: resolved.dashboardMessage.active },
-      { key: DASHBOARD_TRANSITION_MESSAGE_TITLE_KEY, text_value: resolved.dashboardMessage.title },
-      { key: DASHBOARD_TRANSITION_MESSAGE_BODY_KEY, text_value: resolved.dashboardMessage.body },
-      { key: DASHBOARD_TRANSITION_MESSAGE_DISMISSIBLE_KEY, boolean_value: resolved.dashboardMessage.dismissible },
-      {
-        key: DASHBOARD_TRANSITION_FORCE_DASHBOARD_START_KEY,
-        boolean_value: resolved.sessionBehavior.startEachSessionOnDashboard
-      },
-      {
-        key: DASHBOARD_TRANSITION_RETURN_INDICATOR_KEY,
-        boolean_value: resolved.sessionBehavior.showReturnToDashboardIndicator
-      },
-      { key: DASHBOARD_TRIPTYCH_PRIMARY_VIEW_KEY, text_value: resolved.leftTriptych.primaryView },
-      { key: DASHBOARD_TRIPTYCH_SECONDARY_VIEW_KEY, text_value: resolved.leftTriptych.secondaryView }
+      buildSettingRow(TOURNAMENT_MODALITY_KEY, { textValue: resolved.modality }),
+      buildSettingRow(DASHBOARD_TRANSITION_MESSAGE_ACTIVE_KEY, {
+        booleanValue: resolved.dashboardMessage.active
+      }),
+      buildSettingRow(DASHBOARD_TRANSITION_MESSAGE_TITLE_KEY, {
+        textValue: resolved.dashboardMessage.title
+      }),
+      buildSettingRow(DASHBOARD_TRANSITION_MESSAGE_BODY_KEY, {
+        textValue: resolved.dashboardMessage.body
+      }),
+      buildSettingRow(DASHBOARD_TRANSITION_MESSAGE_DISMISSIBLE_KEY, {
+        booleanValue: resolved.dashboardMessage.dismissible
+      }),
+      buildSettingRow(DASHBOARD_TRANSITION_FORCE_DASHBOARD_START_KEY, {
+        booleanValue: resolved.sessionBehavior.startEachSessionOnDashboard
+      }),
+      buildSettingRow(DASHBOARD_TRANSITION_RETURN_INDICATOR_KEY, {
+        booleanValue: resolved.sessionBehavior.showReturnToDashboardIndicator
+      }),
+      buildSettingRow(DASHBOARD_TRIPTYCH_PRIMARY_VIEW_KEY, {
+        textValue: resolved.leftTriptych.primaryView
+      }),
+      buildSettingRow(DASHBOARD_TRIPTYCH_SECONDARY_VIEW_KEY, {
+        textValue: resolved.leftTriptych.secondaryView
+      })
     ],
     { onConflict: "key" }
   );
