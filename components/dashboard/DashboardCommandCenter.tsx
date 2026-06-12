@@ -564,61 +564,59 @@ function LastChanceTriptychContent({
   const dotRadius = 33;
 
   return (
-    <div className="flex h-full min-w-0 flex-col items-center justify-center gap-1 px-1 py-2 text-center">
-      <p className={`max-w-full truncate text-[8px] font-black uppercase tracking-[0.1em] ${getToneMetaTextClasses(progress.urgencyTone, progress.isComplete, progress.isLocked, theme)}`}>
-        <span className="triptych-micro-copy">{progress.deadlineLabel}</span>
-      </p>
-      <p className={`max-w-full truncate text-[8px] font-black uppercase tracking-[0.1em] ${getPrimaryTextClasses(theme)}`}>
+    <div className="flex h-full min-w-0 flex-col items-center justify-center gap-1 px-1 py-1 text-center">
+      <p className={`max-w-full truncate text-[7px] font-black uppercase tracking-[0.1em] ${getPrimaryTextClasses(theme)}`}>
         SIDE PICKS
       </p>
-      <div className="relative my-1 h-[5.2rem] w-[5.2rem]" aria-label={`${completed} of ${dotCount} Side Picks complete`}>
-        <svg
-          aria-hidden
-          viewBox="0 0 100 100"
-          className={`absolute inset-0 ${
-            theme === "dark" ? "text-white/60" : "text-gray-400/80"
-          }`}
-        >
-          <circle
-            cx="50"
-            cy="50"
-            r="39"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1"
-            strokeDasharray="1.2 5"
-            strokeLinecap="round"
-          />
-        </svg>
-        <div className="absolute inset-[0.72rem] flex items-center justify-center">
-          <SidePicksIcon className="h-10 w-10 text-[color:var(--warning)]" />
-        </div>
-        {Array.from({ length: dotCount }).map((_, index) => {
-          const isFilled = index < completed;
-          return (
-            <span
-              key={index}
+      <div className="relative my-1 flex-1 self-stretch">
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="relative h-[5.2rem] w-[5.2rem]" aria-label={`${completed} of ${dotCount} Side Picks complete`}>
+            <svg
               aria-hidden
-              style={{
-                left: `calc(50% + ${Math.cos((index / dotCount) * Math.PI * 2 - Math.PI / 2) * dotRadius}px)`,
-                top: `calc(50% + ${Math.sin((index / dotCount) * Math.PI * 2 - Math.PI / 2) * dotRadius}px)`
-              }}
-              className={`absolute z-[1] h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full border ${
-                isFilled
-                  ? theme === "dark"
-                    ? "border-[color:var(--triptych-dark-accent-text)] bg-[color:var(--triptych-dark-accent-text)]"
-                    : "border-accent bg-accent"
-                  : theme === "dark"
-                    ? "border-white/35 bg-white/5"
-                    : "border-gray-300 bg-white"
+              viewBox="0 0 100 100"
+              className={`absolute inset-0 ${
+                theme === "dark" ? "text-white/60" : "text-gray-400/80"
               }`}
-            />
-          );
-        })}
+            >
+              <circle
+                cx="50"
+                cy="50"
+                r="39"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1"
+                strokeDasharray="1.2 5"
+                strokeLinecap="round"
+              />
+            </svg>
+            <div className="absolute inset-[0.72rem] flex items-center justify-center">
+              <SidePicksIcon className="h-10 w-10 text-[color:var(--warning)]" />
+            </div>
+            {Array.from({ length: dotCount }).map((_, index) => {
+              const isFilled = index < completed;
+              return (
+                <span
+                  key={index}
+                  aria-hidden
+                  style={{
+                    left: `calc(50% + ${Math.cos((index / dotCount) * Math.PI * 2 - Math.PI / 2) * dotRadius}px)`,
+                    top: `calc(50% + ${Math.sin((index / dotCount) * Math.PI * 2 - Math.PI / 2) * dotRadius}px)`
+                  }}
+                  className={`absolute z-[1] h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full border ${
+                    isFilled
+                      ? theme === "dark"
+                        ? "border-[color:var(--triptych-dark-accent-text)] bg-[color:var(--triptych-dark-accent-text)]"
+                        : "border-accent bg-accent"
+                      : theme === "dark"
+                        ? "border-white/35 bg-white/5"
+                        : "border-gray-300 bg-white"
+                  }`}
+                />
+              );
+            })}
+          </div>
+        </div>
       </div>
-      <p className={`triptych-micro-copy max-w-full truncate font-black uppercase tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
-        {progress.isLocked ? "Locked" : progress.deadlineLabel}
-      </p>
     </div>
   );
 }
@@ -664,7 +662,6 @@ function TriptychScoringOutlookContent({
         className="flex h-full w-full min-w-0 translate-y-1 flex-col items-center justify-center px-1 pb-1 text-center"
         aria-label={ariaLabel}
       >
-        <ScoringLensTitle label={isProjected ? "Projected" : t(language, "dashboard.scoringDetailTitle")} theme={theme} />
         <TriptychScoringSparkline points={scoringLens.points} language={language} theme={theme} />
         {scoringLens.points.length === 0 ? null : (
           <div className="mt-1 flex w-full flex-col items-center gap-0.5">
@@ -689,7 +686,6 @@ function TriptychScoringOutlookContent({
         className="flex h-full w-full min-w-0 translate-y-1 flex-col items-center justify-center px-1 pb-1 text-center"
         aria-label={t(language, "dashboard.picksInPlay")}
       >
-        <ScoringLensTitle label={t(language, "dashboard.picksInPlay")} theme={theme} />
         <TriptychPicksInPlayChart activity={activity} language={language} theme={theme} />
         <div className="mt-1 flex w-full flex-col items-center gap-0.5">
           <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
@@ -709,29 +705,8 @@ function TriptychScoringOutlookContent({
       className="flex h-full w-full min-w-0 translate-y-1 flex-col items-center justify-center px-0 pb-0 pt-0 text-center"
       aria-label={t(language, "dashboard.picksActivateAsMatchesBegin")}
     >
-      <ScoringLensTitle label={t(language, "dashboard.picksInPlay")} theme={theme} />
       <ScoringLensFallback language={language} theme={theme} />
     </div>
-  );
-}
-
-function ScoringLensTitle({
-  label,
-  theme
-}: {
-  label: string;
-  theme: TriptychTheme;
-}) {
-  const titleParts = getStackedScoringTitleParts(label);
-
-  return (
-    <p className={`max-w-full text-center text-[9px] font-black uppercase leading-[0.95] tracking-[0.08em] ${getMutedTextClasses(theme)}`}>
-      {titleParts.map((part, index) => (
-        <span key={`${part}-${index}`} className="block truncate">
-          {part}
-        </span>
-      ))}
-    </p>
   );
 }
 
@@ -2108,29 +2083,6 @@ function getTriptychToggleClasses(theme: TriptychTheme) {
   return theme === "dark"
     ? "[color:var(--triptych-dark-accent-text)] hover:text-white"
     : "text-slate-500 hover:text-accent-dark";
-}
-
-function getStackedScoringTitleParts(label: string) {
-  const trimmedLabel = label.trim();
-  if (!trimmedLabel) {
-    return [label];
-  }
-
-  const spacedParts = trimmedLabel.split(/\s+/).filter(Boolean);
-  if (spacedParts.length === 2) {
-    return spacedParts;
-  }
-
-  if (spacedParts.length > 2) {
-    return [spacedParts.slice(0, -1).join(" "), spacedParts[spacedParts.length - 1]];
-  }
-
-  const hyphenParts = trimmedLabel.split("-").filter(Boolean);
-  if (hyphenParts.length === 2) {
-    return hyphenParts;
-  }
-
-  return [trimmedLabel];
 }
 
 function getTriptychScoringLens({

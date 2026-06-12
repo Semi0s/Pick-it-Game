@@ -1059,8 +1059,8 @@ function validateSidePicksSubmission(input: {
     return `One of your ${SIDE_PICK_PUBLIC_NAME} uses an unknown team.`;
   }
 
-  if (input.picks.semifinalistTeamIds.length !== 4) {
-    return "Pick exactly four Top 4 teams.";
+  if (input.picks.semifinalistTeamIds.length > 4) {
+    return "Pick up to four Top 4 teams.";
   }
 
   if (input.picks.semifinalistTeamIds.some((teamId) => !input.teamIds.has(teamId))) {

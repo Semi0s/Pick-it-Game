@@ -22,7 +22,7 @@ export async function saveSidePicksAction(
     return result;
   }
 
-  revalidatePath("/last-chance-picks");
+  revalidatePath("/side-picks");
   revalidatePath("/dashboard");
 
   return {
