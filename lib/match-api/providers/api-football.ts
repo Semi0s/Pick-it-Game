@@ -28,6 +28,10 @@ export async function fetchApiFootballMatches({
   apiKey: string;
 }): Promise<NormalizedExternalMatch[]> {
   if (!apiKey) {
+    console.info("[match-api] API-Football skipped because no API key was provided.", {
+      startDate,
+      endDate
+    });
     return [];
   }
 
@@ -44,8 +48,15 @@ export async function fetchApiFootballMatches({
   }
 
   const payload = (await response.json()) as { response?: ApiFootballFixtureRow[] | null };
+  const rawRows = (payload.response ?? []) as ApiFootballFixtureRow[];
+  console.info("[match-api] API-Football response received.", {
+    startDate,
+    endDate,
+    baseUrl,
+    fixtureCount: rawRows.length
+  });
 
-  return ((payload.response ?? []) as ApiFootballFixtureRow[])
+  return rawRows
     .map((row) => {
       const externalId = row.fixture?.id != null ? String(row.fixture.id) : "";
       const kickoffAt = row.fixture?.date ?? "";
