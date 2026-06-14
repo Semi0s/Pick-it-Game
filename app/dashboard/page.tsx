@@ -108,6 +108,7 @@ export default async function DashboardPage() {
               comparisonMode: "none",
               history: []
             },
+            projectedOutlook: null,
             activity: null
           },
           reminder: {

@@ -33,6 +33,8 @@ import {
 } from "@/lib/group-standings";
 import { orderRowsByPredictionSlots } from "@/lib/group-stage-mini-table-order";
 import {
+  getAdvanceViaThirdProbabilityResult,
+  getThirdPlaceQualifierProbabilityForTeam,
   getThirdPlaceCandidatePoolFromGroupRankings,
   getPickProbabilityForTeam,
   shouldShowMiniTablePickProbability,
@@ -52,6 +54,7 @@ import {
   type TournamentTransitionSettings
 } from "@/lib/tournament-transition-helpers";
 import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
+import { buildPredictedAdvancementByTeamId } from "@/lib/group-stage-predicted-advancement";
 import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 import { useSessionViewState } from "@/lib/session-view-state";
@@ -446,6 +449,10 @@ export function DashboardOverview({
     }
     return placements;
   }, [initialLightSeedSnapshot]);
+  const predictedAdvancementByTeamId = useMemo(
+    () => buildPredictedAdvancementByTeamId(initialLightSeedSnapshot),
+    [initialLightSeedSnapshot]
+  );
   const predictedThirdPlaceQualifierTeamIds = useMemo(() => {
     const ids = new Set<string>();
     for (const ranking of initialLightSeedSnapshot?.thirdPlaceRankings ?? []) {
@@ -470,6 +477,30 @@ export function DashboardOverview({
       ),
     [allGroupTeamsById, initialLightSeedSnapshot]
   );
+  const thirdPlaceQualificationProbabilityByTeamId = useMemo(() => {
+    const probabilities = new Map<string, ReturnType<typeof getAdvanceViaThirdProbabilityResult>>();
+    for (const teamId of predictedThirdPlaceQualifierTeamIds) {
+      const team = allGroupTeamsById.get(teamId);
+      if (!team) {
+        continue;
+      }
+
+      probabilities.set(
+        teamId,
+        getAdvanceViaThirdProbabilityResult({
+          team,
+          thirdPlacePool: predictedThirdPlaceCandidatePool,
+          thirdPlaceRankingIndex: predictedThirdPlaceRankingIndexByTeamId.get(teamId) ?? null
+        })
+      );
+    }
+    return probabilities;
+  }, [
+    allGroupTeamsById,
+    predictedThirdPlaceCandidatePool,
+    predictedThirdPlaceQualifierTeamIds,
+    predictedThirdPlaceRankingIndexByTeamId
+  ]);
   const hasGroupStageStarted = useMemo(() => shouldUseOfficialGroupStandingsOrder(groupMatches), [groupMatches]);
   const qualifyingThirdPlaceTeamIds = useMemo(() => {
     const ids = new Set<string>();
@@ -510,27 +541,32 @@ export function DashboardOverview({
 
     return displayRows.map(({ row, displayRank }, index) => {
       const predictedPlace = predictedPlacementByTeamId.get(row.teamId) ?? null;
-      const isPredictedQualifier =
-        predictedPlace === 1 ||
-        predictedPlace === 2 ||
-        predictedThirdPlaceQualifierTeamIds.has(row.teamId);
-      const isQualifier = hasGroupStageStarted
+      const predictedAdvancement = predictedAdvancementByTeamId.get(row.teamId);
+      const isPredictedToAdvance = Boolean(predictedAdvancement?.isPredictedToAdvance);
+      const isCurrentlyQualifying = hasGroupStageStarted
         ? index < 2 || (index === 2 && qualifyingThirdPlaceTeamIds.has(row.teamId))
-        : isPredictedQualifier;
+        : isPredictedToAdvance;
       const shouldShowPickProbability = shouldShowMiniTablePickProbability({
         predictedPlace,
         isSelectedThirdPlaceQualifier: predictedThirdPlaceQualifierTeamIds.has(row.teamId)
+      });
+      const thirdPlaceQualifierProbability = getThirdPlaceQualifierProbabilityForTeam({
+        teamId: row.teamId,
+        predictedThirdPlaceQualifierTeamIds,
+        thirdPlaceQualificationProbabilityByTeamId
       });
       return {
         ...row,
         teamCode: row.teamCode ?? row.teamName.slice(0, 3).toUpperCase(),
         rank: displayRank,
         isHomeTeam: Boolean(user?.homeTeamId && row.teamId === user.homeTeamId),
-        isQualifier,
+        isPredictedToAdvance,
+        isQualifier: isCurrentlyQualifying,
         isPossibleQualifier: false,
-        isEliminated: groupIsFinal && !isQualifier,
-        pickProbability: shouldShowPickProbability
-          ? getPickProbabilityForTeam({
+        isEliminated: groupIsFinal && !isCurrentlyQualifying,
+        pickProbability:
+          shouldShowPickProbability && predictedPlace && predictedPlace <= 2
+            ? getPickProbabilityForTeam({
               rows,
               remainingMatches,
               teamId: row.teamId,
@@ -539,19 +575,23 @@ export function DashboardOverview({
               thirdPlacePool: predictedThirdPlaceCandidatePool,
               thirdPlaceRankingIndex: predictedThirdPlaceRankingIndexByTeamId.get(row.teamId) ?? null,
               predictedPlace,
-              isAdvancing: isQualifier
+              isAdvancing: isPredictedToAdvance
             })
-          : null
+            : shouldShowPickProbability
+              ? thirdPlaceQualifierProbability
+              : null
       };
     });
   }, [
     groupMatches,
     allGroupTeamsById,
     hasGroupStageStarted,
+    predictedAdvancementByTeamId,
     predictedPlacementByTeamId,
     predictedThirdPlaceQualifierTeamIds,
     predictedThirdPlaceCandidatePool,
     predictedThirdPlaceRankingIndexByTeamId,
+    thirdPlaceQualificationProbabilityByTeamId,
     qualifyingThirdPlaceTeamIds,
     resolvedStandingsGroup,
     standingsByGroup,

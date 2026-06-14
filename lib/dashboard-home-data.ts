@@ -29,6 +29,13 @@ import {
   fetchProjectedDashboardScoringMovementSummary
 } from "@/lib/projected-leaderboard";
 import { selectDashboardProjectedScoreSummary } from "@/lib/projected-leaderboard-mode";
+import { buildProjectedGroupStandings } from "@/lib/knockout-seeding";
+import {
+  buildProjectionOutlookViewModel,
+  type ProjectedOutlookCurrentStandings,
+  type ProjectedOutlookMatchSummary,
+  type ProjectionCheckpointMatch
+} from "@/lib/projected-outlook";
 import { EXPECTED_KNOCKOUT_MATCH_COUNTS, isRoundOf32Stage, normalizeKnockoutStage } from "@/lib/match-stage";
 import { getGroupMatches, teams as demoTeams } from "@/lib/mock-data";
 import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
@@ -200,6 +207,83 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     teams.map((team) => [team.id, team])
   );
   const dashboardMatches = matches.map((match) => mapDashboardMatch(match, teamById));
+  const projectedCurrentStandings = buildProjectedGroupStandings(
+    matches.map((match) => ({
+      id: match.id,
+      stage: match.stage,
+      groupName: match.home_source ? null : teamById.get(match.home_team_id ?? "")?.group_name ?? teamById.get(match.away_team_id ?? "")?.group_name ?? null,
+      status: match.status,
+      homeTeamId: match.home_team_id ?? null,
+      awayTeamId: match.away_team_id ?? null,
+      homeScore: match.home_score ?? null,
+      awayScore: match.away_score ?? null
+    })),
+    teams.map((team) => ({
+      id: team.id,
+      name: team.name,
+      shortName: team.short_name ?? team.name,
+      groupName: team.group_name ?? "",
+      fifaRank: 999,
+      fifaPoints: null,
+      flagEmoji: team.flag_emoji ?? ""
+    }))
+  );
+  const currentStandings: ProjectedOutlookCurrentStandings = {
+    byGroup: new Map(
+      Array.from(projectedCurrentStandings.entries()).map(([groupName, standings]) => [
+        groupName,
+        standings.rows.map((row) => ({
+          teamId: row.teamId,
+          rank: row.rank,
+          played: row.played,
+          wins: row.wins,
+          draws: row.draws,
+          losses: row.losses,
+          points: row.points,
+          goalsFor: row.goalsFor,
+          goalsAgainst: row.goalsAgainst,
+          goalDifference: row.goalDifference,
+          teamName: row.teamName,
+          teamShortName: row.teamCode ?? row.teamName,
+          teamCode: row.teamCode ?? null,
+          flagEmoji: row.flagEmoji ?? null,
+          groupName
+        }))
+      ])
+    )
+  };
+  const checkpointMatchesById = new Map<string, ProjectionCheckpointMatch>(
+    dashboardMatches.map((match) => [
+      match.id,
+      {
+        id: match.id,
+        kickoffTime: match.kickoffTime,
+        groupLabel: match.groupLabel ?? null,
+        homeTeamName: match.homeTeamName,
+        awayTeamName: match.awayTeamName,
+        homeTeamShortName: match.homeTeamShortName,
+        awayTeamShortName: match.awayTeamShortName,
+        homeTeamFlagEmoji: match.homeTeamFlagEmoji ?? null,
+        awayTeamFlagEmoji: match.awayTeamFlagEmoji ?? null
+      }
+    ])
+  );
+  const upcomingProjectedMatches: ProjectedOutlookMatchSummary[] = dashboardMatches
+    .filter((match) => normalizeGroupKey(match.groupLabel) && match.status !== "final")
+    .map((match) => ({
+      id: match.id,
+      status: match.status,
+      kickoffTime: match.kickoffTime,
+      groupLabel: match.groupLabel ?? null,
+      homeTeamId: match.homeTeamId ?? null,
+      awayTeamId: match.awayTeamId ?? null,
+      homeTeamName: match.homeTeamName,
+      awayTeamName: match.awayTeamName,
+      homeTeamShortName: match.homeTeamShortName,
+      awayTeamShortName: match.awayTeamShortName,
+      homeTeamFlagEmoji: match.homeTeamFlagEmoji ?? null,
+      awayTeamFlagEmoji: match.awayTeamFlagEmoji ?? null
+    }));
   const followedTeamIds = resolveFollowedTeamIds(userSettingsResult.data as UserSettingsRow | null, userSettingsResult.error?.message);
   const reminderMatches = filterMatchesByTeamIds(dashboardMatches, followedTeamIds);
   const reminderLiveMatches = getLiveMatches(reminderMatches, { limit: 2 });
@@ -371,6 +455,31 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     projected: projectedScoringMovementResult,
     projectedLeaderboardEnabled: projectedLeaderboardEnabledResult
   });
+  const projectedOutlook = buildProjectionOutlookViewModel({
+    official: officialScoreSummary,
+    projected: projectedScoringMovementResult,
+    checkpointMatchesById,
+    snapshot,
+    currentStandings,
+    allMatches: dashboardMatches
+      .filter((match) => normalizeGroupKey(match.groupLabel))
+      .map((match) => ({
+        id: match.id,
+        status: match.status,
+        kickoffTime: match.kickoffTime,
+        groupLabel: match.groupLabel ?? null,
+        homeTeamId: match.homeTeamId ?? null,
+        awayTeamId: match.awayTeamId ?? null,
+        homeTeamName: match.homeTeamName,
+        awayTeamName: match.awayTeamName,
+        homeTeamShortName: match.homeTeamShortName,
+        awayTeamShortName: match.awayTeamShortName,
+        homeTeamFlagEmoji: match.homeTeamFlagEmoji ?? null,
+        awayTeamFlagEmoji: match.awayTeamFlagEmoji ?? null
+      })),
+    upcomingMatches: upcomingProjectedMatches,
+    language: null
+  });
 
   return {
     progress,
@@ -397,6 +506,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       }),
       scoreKind,
       score: effectiveScoreSummary,
+      projectedOutlook,
       activity: picksInPlayActivity
     },
     reminder: {

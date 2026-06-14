@@ -65,8 +65,23 @@ export function shouldShowMiniTablePickProbability({
   predictedPlace?: PickProbabilityPlace | null;
   isSelectedThirdPlaceQualifier?: boolean;
 }) {
-  void isSelectedThirdPlaceQualifier;
-  return predictedPlace === 1 || predictedPlace === 2;
+  return predictedPlace === 1 || predictedPlace === 2 || (predictedPlace === 3 && Boolean(isSelectedThirdPlaceQualifier));
+}
+
+export function getThirdPlaceQualifierProbabilityForTeam({
+  teamId,
+  predictedThirdPlaceQualifierTeamIds,
+  thirdPlaceQualificationProbabilityByTeamId
+}: {
+  teamId: string;
+  predictedThirdPlaceQualifierTeamIds: ReadonlySet<string>;
+  thirdPlaceQualificationProbabilityByTeamId: ReadonlyMap<string, PickProbabilityResult>;
+}): PickProbabilityResult | null {
+  if (!predictedThirdPlaceQualifierTeamIds.has(teamId)) {
+    return null;
+  }
+
+  return thirdPlaceQualificationProbabilityByTeamId.get(teamId) ?? null;
 }
 
 export function getThirdPlaceCandidatePoolFromGroupRankings<TTeam extends PickProbabilityTeam>(
@@ -354,13 +369,13 @@ function createPickProbabilityResult({
     mode === "exact_place"
       ? `${percentLabel} for ${targetLabel}`
       : mode === "advance_via_third"
-        ? `${percentLabel} via 3rd`
+        ? `${percentLabel} 3rd-place qual`
         : `${percentLabel} to advance`;
   const compactLabel =
     mode === "exact_place"
       ? `${percentLabel} ${targetLabel}`
       : mode === "advance_via_third"
-        ? `${percentLabel} via 3rd`
+        ? `${percentLabel} 3rd-place qual`
         : `${percentLabel} adv`;
   const ariaLabel =
     normalizedProbability === null
