@@ -922,13 +922,13 @@ export function buildCeilingRiskChartModel(input: {
   }
 
   const futureWedge =
-    typeof currentProjected === "number" &&
+    typeof currentCeiling === "number" &&
     typeof atRiskNext === "number" &&
     atRiskNext > 0
       ? {
-          nowPoints: roundOutlookMetric(currentProjected),
-          bestPoints: roundOutlookMetric(currentProjected),
-          worstPoints: roundOutlookMetric(Math.max(0, currentProjected - atRiskNext))
+          nowPoints: roundOutlookMetric(currentProjected ?? currentCeiling),
+          bestPoints: roundOutlookMetric(currentCeiling),
+          worstPoints: roundOutlookMetric(Math.max(0, currentCeiling - atRiskNext))
         }
       : null;
 
@@ -949,7 +949,7 @@ export function buildCeilingRiskChartModel(input: {
       {
         pointId: bestId,
         title: "Best near-term path",
-        lines: [`Projected holds at ${formatPlainOutlookNumber(futureWedge.bestPoints)}`]
+        lines: [`Ceiling holds at ${formatPlainOutlookNumber(futureWedge.bestPoints)}`]
       }
     );
     addPoint(
@@ -968,7 +968,7 @@ export function buildCeilingRiskChartModel(input: {
         pointId: worstId,
         title: "Risk next",
         lines: [
-          `Projected drops to ${formatPlainOutlookNumber(futureWedge.worstPoints)}`,
+          `Ceiling drops to ${formatPlainOutlookNumber(futureWedge.worstPoints)}`,
           `Swing ${formatPlainOutlookNumber(futureWedge.bestPoints - futureWedge.worstPoints)}`
         ]
       }
