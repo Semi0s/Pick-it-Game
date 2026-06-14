@@ -218,6 +218,77 @@ test("multiple result checkpoints produce ordered projected outlook points with 
   assert.equal(summary.recentMovementRows[0]?.timestampLabel, "");
 });
 
+test("current projection checkpoint is synthesized when persisted projected history is stale", () => {
+  const summary = buildProjectionOutlookViewModel({
+    projected: createScoreSummary({
+      currentPoints: 121.2,
+      currentRank: 4,
+      history: [
+        {
+          matchId: "group:g-02",
+          createdAt: "2026-06-12T06:00:00.000Z",
+          totalPoints: 122.2,
+          rank: 5
+        }
+      ]
+    }),
+    currentProjection: {
+      checkpointId: "group:g-03",
+      createdAt: "2026-06-13T06:00:00.000Z",
+      projectedFinalPoints: 119.4,
+      projectedRank: null
+    },
+    official: createScoreSummary({
+      currentPoints: 18,
+      currentRank: 22,
+      history: [
+        {
+          matchId: "g-02",
+          createdAt: "2026-06-12T06:00:00.000Z",
+          totalPoints: 18,
+          rank: 22
+        }
+      ]
+    }),
+    checkpointMatchesById: new Map([
+      [
+        "g-02",
+        {
+          id: "g-02",
+          kickoffTime: "2026-06-12T06:00:00.000Z",
+          groupLabel: "Group D",
+          homeTeamName: "Germany",
+          awayTeamName: "Ecuador",
+          homeTeamShortName: "GER",
+          awayTeamShortName: "ECU",
+          homeTeamFlagEmoji: "🇩🇪",
+          awayTeamFlagEmoji: "🇪🇨"
+        }
+      ],
+      [
+        "g-03",
+        {
+          id: "g-03",
+          kickoffTime: "2026-06-13T06:00:00.000Z",
+          groupLabel: "Group B",
+          homeTeamName: "Bosnia-Herzegovina",
+          awayTeamName: "Qatar",
+          homeTeamShortName: "BIH",
+          awayTeamShortName: "QAT",
+          homeTeamFlagEmoji: "🇧🇦",
+          awayTeamFlagEmoji: "🇶🇦"
+        }
+      ]
+    ])
+  });
+
+  assert.equal(summary.history.length, 2);
+  assert.equal(summary.history[1]?.checkpointId, "group:g-03");
+  assert.equal(summary.history[1]?.projectedFinalPoints, 119.4);
+  assert.equal(summary.history[1]?.triggerLabel, "After Bosnia-Herzegovina vs Qatar");
+  assert.equal(summary.summary.projectedFinalPoints, 119.4);
+});
+
 test("summary cards expose upside and downside when a trusted range exists", () => {
   const summary = buildProjectionOutlookViewModel({
     projected: createScoreSummary({
@@ -380,7 +451,7 @@ test("projection event labels prefer human-readable match names and compact matc
 
   assert.equal(label.triggerLabel, "After Germany vs Curaçao");
   assert.equal(label.compactLabel, "GER-CUW");
-  assert.match(label.detailTimestampLabel, /Jun 12/);
+  assert.match(label.detailTimestampLabel, /6\/12/);
 });
 
 test("projection event labels fall back safely when no match metadata exists", () => {
@@ -408,7 +479,7 @@ test("ceiling risk graph model creates a future wedge from ceiling and at-risk p
       triggerMatchId: "g-02",
       triggerLabel: "After Germany vs Curaçao",
       compactLabel: "GER-CUW",
-      detailTimestampLabel: "Jun 12, 10:52 PM",
+      detailTimestampLabel: "6/12, 10:52 PM",
       projectedFinalPoints: 121.2,
       projectedRank: 5,
       lockedPoints: 38,
@@ -451,7 +522,7 @@ test("ceiling risk graph model creates a future wedge from ceiling and at-risk p
         compactTitle: "TUR-PAR",
         displayLabel: "🇹🇷 TUR vs 🇵🇾 PAR",
         shortDisplayLabel: "TUR-PAR",
-        kickoffLabel: "Jun 14 · 6:00 PM",
+        kickoffLabel: "6/14 · 6:00 PM",
         pickSummary: "You picked TUR to qualify as 3rd.",
         pointsAtStake: 5,
         helpsLabel: "TUR result",
@@ -472,8 +543,8 @@ test("ceiling risk graph model creates a future wedge from ceiling and at-risk p
   assert.equal(chartModel.graphPoints.some((point) => point.kind === "future_worst"), true);
   assert.equal(chartModel.tooltipsByPointId["future-worst"]?.title, "Risk next");
   assert.equal(chartModel.decisiveMatches[0]?.compactLabel, "🇹🇷 TUR vs 🇵🇾 PAR");
-  assert.equal(chartModel.graphPoints.find((point) => point.kind === "now")?.shortLabel, "Jun 12");
-  assert.equal(chartModel.graphPoints.find((point) => point.kind === "future_best")?.shortLabel, "Jun 14");
+  assert.equal(chartModel.graphPoints.find((point) => point.kind === "now")?.shortLabel, "6/12");
+  assert.equal(chartModel.graphPoints.find((point) => point.kind === "future_best")?.shortLabel, "6/14");
 });
 
 test("ceiling risk graph omits the future wedge when at-risk points are unavailable", () => {
