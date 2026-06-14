@@ -25,6 +25,7 @@ import { createEmptyDashboardScoringMovementSummary } from "../lib/leaderboard-m
 import {
   getAdvanceTotalProbability,
   getAdvanceViaThirdProbabilityResult,
+  getThirdPlaceQualifierProbabilityForTeam,
   getGroupSelectionProbability,
   getPickProbabilityForTeam,
   getThirdPlaceCandidatePoolFromGroupRankings,
@@ -737,10 +738,10 @@ test("third-place mini standings use the full candidate pool for canonical advan
   assert.equal(viaThirdPick.probability, getThirdPlaceSelectionProbability(czechia!, 2, candidatePool));
   assert.equal(viaThirdPick.mode, "advance_via_third");
   assert.equal(viaThirdPick.source, "advance_via_third");
-  assert.equal(viaThirdPick.compactLabel, `${viaThirdPick.probability}% via 3rd`);
+  assert.equal(viaThirdPick.compactLabel, `${viaThirdPick.probability}% 3rd-place qual`);
 });
 
-test("mini standings probability only appears for saved top-two picks", () => {
+test("mini standings probability appears for saved top-two picks and selected third-place qualifiers only", () => {
   assert.equal(
     shouldShowMiniTablePickProbability({
       predictedPlace: 1
@@ -758,7 +759,7 @@ test("mini standings probability only appears for saved top-two picks", () => {
       predictedPlace: 3,
       isSelectedThirdPlaceQualifier: true
     }),
-    false
+    true
   );
   assert.equal(
     shouldShowMiniTablePickProbability({
@@ -779,6 +780,68 @@ test("mini standings probability only appears for saved top-two picks", () => {
     }),
     false
   );
+});
+
+test("third-place qualifier probability helper only returns team-keyed probabilities for selected qualifiers", () => {
+  const teams = [
+    { id: "tur", name: "Türkiye", shortName: "TUR", groupName: "Group D", fifaRank: 22, fifaPoints: 1560, flagEmoji: "🇹🇷" },
+    { id: "qat", name: "Qatar", shortName: "QAT", groupName: "Group B", fifaRank: 55, fifaPoints: 1450, flagEmoji: "🇶🇦" },
+    { id: "civ", name: "Côte d'Ivoire", shortName: "CIV", groupName: "Group E", fifaRank: 34, fifaPoints: 1500, flagEmoji: "🇨🇮" },
+    { id: "gha", name: "Ghana", shortName: "GHA", groupName: "Group L", fifaRank: 74, fifaPoints: 1320, flagEmoji: "🇬🇭" }
+  ];
+  const teamsById = new Map(teams.map((team) => [team.id, team] as const));
+  const candidatePool = teams;
+  const probabilityByTeamId = new Map([
+    [
+      "tur",
+      getAdvanceViaThirdProbabilityResult({
+        team: teamsById.get("tur")!,
+        thirdPlacePool: candidatePool,
+        thirdPlaceRankingIndex: 0
+      })
+    ],
+    [
+      "qat",
+      getAdvanceViaThirdProbabilityResult({
+        team: teamsById.get("qat")!,
+        thirdPlacePool: candidatePool,
+        thirdPlaceRankingIndex: 3
+      })
+    ]
+  ]);
+  const selectedThirdPlaceQualifierTeamIds = new Set(["tur"]);
+
+  const turkeyProbability = getThirdPlaceQualifierProbabilityForTeam({
+    teamId: "tur",
+    predictedThirdPlaceQualifierTeamIds: selectedThirdPlaceQualifierTeamIds,
+    thirdPlaceQualificationProbabilityByTeamId: probabilityByTeamId
+  });
+  const qatarProbability = getThirdPlaceQualifierProbabilityForTeam({
+    teamId: "qat",
+    predictedThirdPlaceQualifierTeamIds: selectedThirdPlaceQualifierTeamIds,
+    thirdPlaceQualificationProbabilityByTeamId: probabilityByTeamId
+  });
+  const bihProbability = getThirdPlaceQualifierProbabilityForTeam({
+    teamId: "bih",
+    predictedThirdPlaceQualifierTeamIds: selectedThirdPlaceQualifierTeamIds,
+    thirdPlaceQualificationProbabilityByTeamId: probabilityByTeamId
+  });
+
+  assert.equal(turkeyProbability?.mode, "advance_via_third");
+  assert.equal(turkeyProbability?.source, "advance_via_third");
+  assert.equal(turkeyProbability?.compactLabel.includes("3rd-place qual"), true);
+  assert.equal(qatarProbability, null);
+  assert.equal(bihProbability, null);
+});
+
+test("third-place qualifier probability helper returns null when the selected team has no team-keyed probability", () => {
+  const probability = getThirdPlaceQualifierProbabilityForTeam({
+    teamId: "tur",
+    predictedThirdPlaceQualifierTeamIds: new Set(["tur"]),
+    thirdPlaceQualificationProbabilityByTeamId: new Map()
+  });
+
+  assert.equal(probability, null);
 });
 
 test("mini standings keep prediction order before kickoff even if scheduled rows have stale scores", () => {

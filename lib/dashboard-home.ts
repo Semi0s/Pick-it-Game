@@ -1,5 +1,6 @@
 import type { DashboardScoringMovementSummary } from "./leaderboard-movement.ts";
 import { normalizeGroupKey } from "./group-standings.ts";
+import type { DashboardProjectedOutlookSummary } from "./projected-outlook.ts";
 import { SIDE_PICK_PUBLIC_NAME, formatLastChanceDeadlineLabel } from "./side-picks.ts";
 import type { DashboardTriptychViewKey } from "./tournament-transition-helpers.ts";
 
@@ -65,6 +66,7 @@ export type DashboardMovementSummary = {
   mode: DashboardMovementMode;
   scoreKind: "official" | "projected";
   score: DashboardScoringMovementSummary;
+  projectedOutlook?: DashboardProjectedOutlookSummary | null;
   activity: DashboardPicksInPlaySummary | null;
 };
 
@@ -262,6 +264,7 @@ export function createEmptyDashboardMovementSummary(): DashboardMovementSummary 
       comparisonMode: "none",
       history: []
     },
+    projectedOutlook: null,
     activity: null
   };
 }

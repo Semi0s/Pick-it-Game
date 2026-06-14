@@ -18,6 +18,7 @@ export type MiniGroupStandingsRow = {
   goalDifference: number;
   points: number;
   isHomeTeam?: boolean;
+  isPredictedToAdvance?: boolean;
   isQualifier?: boolean;
   isPossibleQualifier?: boolean;
   isEliminated?: boolean;
@@ -117,8 +118,9 @@ export function GroupStandingsMiniTable({
           <tbody className="divide-y divide-gray-200">
             {rows.map((row) => {
               const movement = movementByTeamId?.[row.teamId];
+              const isHighlighted = row.isPredictedToAdvance ?? row.isQualifier;
               const rowClassName =
-                row.isQualifier
+                isHighlighted
                   ? "bg-accent-light/25"
                   : row.isPossibleQualifier
                     ? "bg-accent-light/10"

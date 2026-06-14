@@ -351,7 +351,7 @@ export const translations = {
       pickProbabilityAria: "Probability this team finishes in your predicted place: {percent}% for {place}.",
       pickProbabilityToAdvance: "to advance",
       pickProbabilityAdvanceCompact: "adv",
-      pickProbabilityViaThirdCompact: "via 3rd",
+      pickProbabilityViaThirdCompact: "3rd-place qual",
       pickProbabilityExactAria:
         "Pick Probability: {percent} percent probability this team finishes {place}, your predicted place.",
       pickProbabilityAdvanceAria:
@@ -1390,7 +1390,7 @@ export const translations = {
       pickProbabilityAria: "Probabilidad de que este equipo termine en el puesto que predijiste: {percent}% para {place}.",
       pickProbabilityToAdvance: "para avanzar",
       pickProbabilityAdvanceCompact: "adv",
-      pickProbabilityViaThirdCompact: "vía 3.º",
+      pickProbabilityViaThirdCompact: "clasif. 3.º",
       pickProbabilityExactAria:
         "Probabilidad del pick: {percent} por ciento de probabilidad de que este equipo termine {place}, tu puesto predicho.",
       pickProbabilityAdvanceAria:
@@ -2425,7 +2425,7 @@ export const translations = {
       pickProbabilityAria: "Probabilité que cette équipe termine à la place que vous avez prédite : {percent} % pour {place}.",
       pickProbabilityToAdvance: "pour se qualifier",
       pickProbabilityAdvanceCompact: "qualif.",
-      pickProbabilityViaThirdCompact: "via 3e",
+      pickProbabilityViaThirdCompact: "qualif. 3e",
       pickProbabilityExactAria:
         "Probabilité du pick : {percent} pour cent de probabilité que cette équipe termine {place}, votre place prédite.",
       pickProbabilityAdvanceAria:
@@ -3459,7 +3459,7 @@ export const translations = {
       pickProbabilityAria: "Probabilidade de esta equipa terminar na posição que previu: {percent}% para {place}.",
       pickProbabilityToAdvance: "para avançar",
       pickProbabilityAdvanceCompact: "av.",
-      pickProbabilityViaThirdCompact: "via 3.º",
+      pickProbabilityViaThirdCompact: "qual. 3.º",
       pickProbabilityExactAria:
         "Probabilidade do pick: {percent} por cento de probabilidade de esta equipa terminar em {place}, a sua posição prevista.",
       pickProbabilityAdvanceAria:

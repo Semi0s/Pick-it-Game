@@ -200,7 +200,6 @@ export async function fetchUserGroupProjectionSourceMap(
     ])
   );
 }
-
 function isMissingProjectionSourceTableError(message?: string | null) {
   if (!message) {
     return false;

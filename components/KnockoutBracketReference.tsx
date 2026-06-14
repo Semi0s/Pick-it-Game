@@ -104,19 +104,19 @@ function BracketPreviewColumn({
   side: "left" | "right";
 }) {
   const layout = getBracketLayout(matches.length);
-  const connectorViewBoxWidth = 160;
-  const innerSegmentWidth = 16;
-  const outerSegmentWidth = 8;
-  const roundGap = 6;
+  const connectorViewBoxWidth = 120;
+  const innerSegmentWidth = 18;
+  const outerSegmentWidth = 10;
+  const roundGap = 4;
   const roundOffset = innerSegmentWidth + outerSegmentWidth + roundGap;
-  const xStartBase = side === "left" ? 70 : 90;
+  const xStartBase = side === "left" ? 40 : 80;
 
   return (
-    <div className="relative w-[10.5rem]" style={{ height: `${layout.totalHeight}px` }}>
+    <div className="relative w-[9.75rem]" style={{ height: `${layout.totalHeight}px` }}>
       {layout.totalHeight > 0 ? (
         <svg
           aria-hidden
-          className="pointer-events-none absolute inset-y-0 h-full w-[5rem] overflow-visible"
+          className="pointer-events-none absolute inset-y-0 h-full w-[4.75rem] overflow-visible"
           style={side === "left" ? { right: 0 } : { left: 0 }}
           viewBox={`0 0 ${connectorViewBoxWidth} ${layout.totalHeight}`}
           preserveAspectRatio="none"
@@ -156,8 +156,8 @@ function BracketPreviewColumn({
               key={`${match.matchId}-${slotIndex}`}
               className={
                 side === "left"
-                  ? `grid min-h-[20px] grid-cols-[1rem_minmax(0,1fr)] items-center gap-1.5 rounded-md px-0.5 py-0 pr-[3.25rem] ${slot.teamId ? "text-gray-900" : "text-gray-400"}`
-                  : `grid min-h-[20px] grid-cols-[minmax(0,1fr)_1rem] items-center gap-1.5 rounded-md px-0.5 py-0 pl-[3.25rem] text-right ${slot.teamId ? "text-gray-900" : "text-gray-400"}`
+                  ? `grid min-h-[20px] grid-cols-[1rem_minmax(0,1fr)] items-center gap-1.5 rounded-md px-0.5 py-0 pr-[2.8rem] ${slot.teamId ? "text-gray-900" : "text-gray-400"}`
+                  : `grid min-h-[20px] grid-cols-[minmax(0,1fr)_1rem] items-center gap-1.5 rounded-md px-0.5 py-0 pl-[2.8rem] text-right ${slot.teamId ? "text-gray-900" : "text-gray-400"}`
               }
             >
               {side === "left" ? (
@@ -208,7 +208,7 @@ export function KnockoutBracketReference({
   const previewMatches = useMemo(() => buildReferencePreviewMatches(referenceView), [referenceView]);
   const leftBracketMatches = previewMatches.slice(0, 8);
   const rightBracketMatches = previewMatches.slice(8, 16);
-  const previewBaseWidth = 344;
+  const previewBaseWidth = 314;
   const previewBaseHeight = Math.max(
     getBracketLayout(leftBracketMatches.length).totalHeight,
     getBracketLayout(rightBracketMatches.length).totalHeight,
@@ -226,7 +226,7 @@ export function KnockoutBracketReference({
     }
 
     const updateScale = () => {
-      const nextScale = Math.min(1, Math.max(0.84, element.clientWidth / previewBaseWidth));
+      const nextScale = Math.min(1, Math.max(0.88, element.clientWidth / previewBaseWidth));
       setPreviewScale(nextScale);
     };
 
@@ -281,7 +281,7 @@ export function KnockoutBracketReference({
             <div className="min-h-0 flex-1 overflow-auto px-2 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-3 sm:px-4 sm:pb-5">
               {previewMatches.length > 0 ? (
                 <div className="mx-auto max-w-xl rounded-[1.25rem] border border-gray-200 bg-white px-1 py-2 shadow-soft sm:px-2 sm:py-3">
-                  <div ref={previewViewportRef} className="w-full overflow-x-auto overflow-y-hidden">
+                  <div ref={previewViewportRef} className="w-full overflow-hidden">
                     <div
                       className="mx-auto origin-top"
                       style={{
@@ -291,7 +291,7 @@ export function KnockoutBracketReference({
                         transformOrigin: "top center"
                       }}
                     >
-                      <div className="grid w-[344px] grid-cols-[10.5rem_0.5rem_10.5rem] gap-0">
+                      <div className="grid w-[314px] grid-cols-[9.75rem_0.125rem_9.75rem] gap-0">
                         <BracketPreviewColumn matches={leftBracketMatches} side="left" />
                         <div aria-hidden />
                         <BracketPreviewColumn matches={rightBracketMatches} side="right" />

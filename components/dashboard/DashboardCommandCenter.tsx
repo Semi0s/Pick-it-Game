@@ -59,6 +59,7 @@ type TriptychScoringLens =
       mode: "score_movement";
       scoreKind: DashboardMovementSummary["scoreKind"];
       movement: DashboardMovementSummary["score"];
+      projectedOutlook: DashboardCommandCenterSummary["scoring"]["projectedOutlook"];
       points: TriptychScoringTrackPoint[];
     };
 
@@ -690,6 +691,7 @@ function TriptychScoringOutlookContent({
 }) {
   if (scoringLens.mode === "score_movement") {
     const isProjected = scoringLens.scoreKind === "projected";
+    const projectedOutlook = isProjected ? scoringLens.projectedOutlook ?? null : null;
     const ariaLabel = t(language, "dashboard.scoringTrackAria", {
       points: formatPoints(scoringLens.movement.currentPoints, language),
       rank: formatRank(scoringLens.movement.currentRank, language)
@@ -700,18 +702,24 @@ function TriptychScoringOutlookContent({
         className="flex h-full w-full min-w-0 translate-y-1 flex-col items-center justify-center px-1 pb-1 text-center"
         aria-label={ariaLabel}
       >
-        <TriptychScoringSparkline points={scoringLens.points} language={language} theme={theme} />
-        {scoringLens.points.length === 0 ? null : (
-          <div className="mt-1 flex w-full flex-col items-center gap-0.5">
-            <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
-              <CompactMetric label={isProjected ? "Proj pts" : t(language, "leaderboard.points")} value={formatPoints(scoringLens.movement.currentPoints, language)} theme={theme} />
-              <CompactMetric label={t(language, "leaderboard.rank")} value={formatRank(scoringLens.movement.currentRank, language)} theme={theme} />
-            </div>
-            <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
-              <CompactMetric label={t(language, "dashboard.todayShort")} value={formatSignedMetric(scoringLens.movement.pointsChange, language)} theme={theme} />
-              <CompactMetric label="+/-" value={formatSignedMetric(scoringLens.movement.rankChange, language)} theme={theme} />
-            </div>
-          </div>
+        {projectedOutlook ? (
+          <ProjectedOutlookCompactContent outlook={projectedOutlook} language={language} theme={theme} />
+        ) : (
+          <>
+            <TriptychScoringSparkline points={scoringLens.points} language={language} theme={theme} />
+            {scoringLens.points.length === 0 ? null : (
+              <div className="mt-1 flex w-full flex-col items-center gap-0.5">
+                <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
+                  <CompactMetric label={isProjected ? "Proj pts" : t(language, "leaderboard.points")} value={formatPoints(scoringLens.movement.currentPoints, language)} theme={theme} />
+                  <CompactMetric label={t(language, "leaderboard.rank")} value={formatRank(scoringLens.movement.currentRank, language)} theme={theme} />
+                </div>
+                <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
+                  <CompactMetric label={t(language, "dashboard.todayShort")} value={formatSignedMetric(scoringLens.movement.pointsChange, language)} theme={theme} />
+                  <CompactMetric label="+/-" value={formatSignedMetric(scoringLens.movement.rankChange, language)} theme={theme} />
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     );
@@ -799,7 +807,7 @@ function TriptychScoringSparkline({
     const max = Math.max(...values);
     const spread = Math.max(1, max - min);
     const padding = Math.max(2, Math.round(spread * 0.12));
-    return [Math.max(0, min - padding), max + padding];
+    return [min - padding, max + padding];
   }, [displayChartData]);
 
   if (chartData.length === 0) {
@@ -984,6 +992,17 @@ function DashboardScoringDetailSheet({
     );
   }
 
+  if (scoring.scoreKind === "projected" && scoring.projectedOutlook) {
+    return (
+      <DashboardProjectedOutlookDetailSheet
+        outlook={scoring.projectedOutlook}
+        language={language}
+        theme={theme}
+        onClose={onClose}
+      />
+    );
+  }
+
   return (
     <DashboardScoreMovementDetailSheet
       score={scoring.score}
@@ -992,6 +1011,163 @@ function DashboardScoringDetailSheet({
       theme={theme}
       onClose={onClose}
     />
+  );
+}
+
+function DashboardProjectedOutlookDetailSheet({
+  outlook,
+  language,
+  theme,
+  onClose
+}: {
+  outlook: NonNullable<DashboardCommandCenterSummary["scoring"]["projectedOutlook"]>;
+  language?: string | null;
+  theme: TriptychTheme;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-4 sm:items-center sm:px-5 sm:pb-4">
+      <button type="button" aria-label={t(language, "common.close")} onClick={onClose} className="absolute inset-0" />
+      <ProjectedOutlookDetailSurface
+        outlook={outlook}
+        language={language}
+        theme={theme}
+        onClose={onClose}
+      />
+    </div>
+  );
+}
+
+function ProjectedOutlookDetailSurface({
+  outlook,
+  language,
+  theme,
+  onClose,
+  preview = false
+}: {
+  outlook: NonNullable<DashboardCommandCenterSummary["scoring"]["projectedOutlook"]>;
+  language?: string | null;
+  theme: TriptychTheme;
+  onClose?: () => void;
+  preview?: boolean;
+}) {
+  const decisiveMatches = outlook.ceilingRiskGraph.decisiveMatches.slice(0, 2);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal={preview ? undefined : true}
+      aria-label="Projected outlook"
+      className={`relative flex w-full max-w-xl min-w-0 flex-col overflow-x-hidden rounded-[1.35rem] border shadow-2xl sm:rounded-[1.5rem] ${
+        preview ? "max-h-none" : "max-h-[calc(100dvh-24px)]"
+      } ${theme === "dark" ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-950"}`}
+      style={preview ? undefined : { width: "calc(100vw - 24px)" }}
+    >
+      <div className={`flex items-start justify-between gap-3 border-b px-3 py-3 sm:px-5 ${theme === "dark" ? "border-white/10" : "border-slate-200"}`}>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className={`text-[11px] font-black uppercase leading-none tracking-[0.1em] sm:tracking-[0.14em] ${getMutedTextClasses(theme)}`}>
+              Projected outlook
+            </p>
+          </div>
+        </div>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t(language, "common.close")}
+            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border sm:h-10 sm:w-10 ${
+              theme === "dark" ? "border-white/15 bg-white/5 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
+            }`}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+
+      <div className={`min-w-0 overflow-y-auto overflow-x-hidden px-3 pb-3 pt-3 sm:px-5 sm:pb-4 sm:pt-4 ${preview ? "" : ""}`}>
+        <ProjectedOutlookStatStrip
+          metrics={[
+            {
+              label: "Proj",
+              desktopLabel: "Projected",
+              value: formatPoints(outlook.summary.projectedFinalPoints, language)
+            },
+            {
+              label: "Ceiling",
+              desktopLabel: "Ceiling",
+              value: formatPoints(outlook.ceiling.currentCeilingPoints, language)
+            },
+            {
+              label: "Risk",
+              desktopLabel: "Risk Next",
+              value: formatPoints(outlook.ceiling.atRiskNextPoints, language)
+            }
+          ]}
+          theme={theme}
+        />
+
+        <section className={`mt-3 rounded-[1.05rem] border px-2.5 py-2.5 sm:mt-4 sm:rounded-[1.25rem] sm:px-4 sm:py-4 ${theme === "dark" ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-slate-50/70"}`}>
+          <div className="mb-2 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className={`text-[10px] font-black uppercase tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
+                Bracket ceiling
+              </p>
+              <p className={`text-xs font-semibold sm:text-sm ${getMutedTextClasses(theme)}`}>
+                Max still alive
+              </p>
+            </div>
+          </div>
+          <ProjectedOutlookRiskGraph outlook={outlook} theme={theme} />
+        </section>
+
+        <section className="mt-4 sm:mt-5">
+          <div className="mb-2">
+            <h3 className={`text-sm font-black tracking-[-0.03em] sm:text-base ${getPrimaryTextClasses(theme)}`}>
+              Next decisive matches
+            </h3>
+          </div>
+          <div className="space-y-2">
+            {decisiveMatches.length > 0 ? (
+              decisiveMatches.map((match) => (
+                <ProjectedOutlookDecisiveMatchRow key={match.matchId} match={match} theme={theme} />
+              ))
+            ) : (
+              <div
+                className={`rounded-[0.95rem] border px-3 py-2 text-sm font-semibold ${
+                  theme === "dark" ? "border-white/10 bg-white/[0.03] text-white/70" : "border-slate-200 bg-white text-slate-600"
+                }`}
+              >
+                Decisive matches will appear as your picks come into play.
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="mt-4 sm:mt-5">
+          <div className="mb-2">
+            <h3 className={`text-sm font-black tracking-[-0.03em] sm:text-base ${getPrimaryTextClasses(theme)}`}>
+              Recent movement
+            </h3>
+          </div>
+          <div className="space-y-2">
+            {outlook.recentMovementRows.length === 0 ? (
+              <div
+                className={`rounded-[0.95rem] border px-3 py-2 text-sm font-semibold ${
+                  theme === "dark" ? "border-white/10 bg-white/[0.03] text-white/70" : "border-slate-200 bg-white text-slate-600"
+                }`}
+              >
+                Result checkpoints will appear here as the tournament unfolds.
+              </div>
+            ) : (
+              outlook.recentMovementRows.slice(0, 4).map((row) => (
+                <ProjectedOutlookRecentRow key={row.id} row={row} language={language} theme={theme} />
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+    </div>
   );
 }
 
@@ -1309,6 +1485,92 @@ function CompactMetric({
   );
 }
 
+function ProjectedOutlookCompactContent({
+  outlook,
+  language,
+  theme
+}: {
+  outlook: NonNullable<DashboardCommandCenterSummary["scoring"]["projectedOutlook"]>;
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(240);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateWidth = () => {
+      const nextWidth = Math.max(Math.round(element.getBoundingClientRect().width), 220);
+      setContainerWidth((current) => (Math.abs(current - nextWidth) < 2 ? current : nextWidth));
+    };
+
+    updateWidth();
+
+    const observer = new ResizeObserver(() => {
+      updateWidth();
+    });
+
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const useSingleMetric = containerWidth < 300;
+
+  return (
+    <div ref={containerRef} className="flex h-full w-full min-w-0 flex-col px-1 pb-1 pt-0.5 text-center">
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <ProjectedOutlookRiskGraph outlook={outlook} theme={theme} compact />
+      </div>
+      {useSingleMetric ? (
+        <div className="mt-0.5 min-w-0 pb-0 text-center">
+          <span className={`block truncate text-[8px] font-semibold uppercase leading-none tracking-[0.06em] ${getMutedTextClasses(theme)}`}>
+            Proj
+          </span>
+          <span className={`mt-0.5 block truncate text-[13px] font-black leading-none tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>
+            {formatPoints(outlook.summary.projectedFinalPoints, language)}
+          </span>
+        </div>
+      ) : (
+        <div className="mt-1 grid w-full grid-cols-3 gap-x-1.5 gap-y-1 pb-0.5 sm:gap-x-2">
+          <ProjectedOutlookCompactMetric label="Proj" value={formatPoints(outlook.summary.projectedFinalPoints, language)} theme={theme} />
+          <ProjectedOutlookCompactMetric label="Ceiling" value={formatPoints(outlook.ceiling.currentCeilingPoints, language)} theme={theme} />
+          <ProjectedOutlookCompactMetric label="Risk" value={formatPoints(outlook.ceiling.atRiskNextPoints, language)} theme={theme} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProjectedOutlookStatStrip({
+  metrics,
+  theme
+}: {
+  metrics: Array<{
+    label: string;
+    desktopLabel?: string;
+    value: string;
+  }>;
+  theme: TriptychTheme;
+}) {
+  return (
+    <div className="grid min-w-0 grid-cols-3 gap-x-2 sm:gap-x-4">
+      {metrics.map((metric) => (
+        <div key={metric.label} className="min-w-0 text-center">
+          <p className={`truncate text-[10px] font-black uppercase leading-none tracking-[0.08em] sm:text-[11px] sm:tracking-[0.12em] ${getMutedTextClasses(theme)}`}>
+            <span className="sm:hidden">{metric.label}</span>
+            <span className="hidden sm:inline">{metric.desktopLabel ?? metric.label}</span>
+          </p>
+          <p className={`mt-1 truncate text-base font-black leading-none tracking-[-0.04em] sm:text-lg ${getPrimaryTextClasses(theme)}`}>{metric.value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DetailMetricCard({
   label,
   value,
@@ -1324,6 +1586,440 @@ function DetailMetricCard({
       <p className={`mt-1 text-lg font-black tracking-[-0.04em] ${getPrimaryTextClasses(theme)}`}>{value}</p>
     </div>
   );
+}
+
+function ProjectedOutlookRiskGraph({
+  outlook,
+  theme,
+  compact = false
+}: {
+  outlook: NonNullable<DashboardCommandCenterSummary["scoring"]["projectedOutlook"]>;
+  theme: TriptychTheme;
+  compact?: boolean;
+}) {
+  const model = outlook.ceilingRiskGraph;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState<number>(compact ? 240 : 560);
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(
+    compact ? null : model.graphPoints.find((point) => point.kind === "now")?.id ?? model.graphPoints[0]?.id ?? null
+  );
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateWidth = () => {
+      const nextWidth = Math.max(Math.round(element.getBoundingClientRect().width), compact ? 220 : 320);
+      setContainerWidth((current) => (Math.abs(current - nextWidth) < 2 ? current : nextWidth));
+    };
+
+    updateWidth();
+
+    const observer = new ResizeObserver(() => {
+      updateWidth();
+    });
+
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, [compact]);
+
+  const chart = useMemo(
+    () =>
+      buildCeilingRiskSvgModel(model, {
+        variant: compact ? "compact" : "modal",
+        width: containerWidth
+      }),
+    [compact, containerWidth, model]
+  );
+  const selectedTooltip = selectedPointId ? model.tooltipsByPointId[selectedPointId] ?? null : null;
+
+  if (chart.points.length === 0) {
+    return (
+      <div className={`flex ${compact ? "h-16" : "h-48"} items-center justify-center text-center`}>
+        <span className={`text-sm font-semibold ${getMutedTextClasses(theme)}`}>Bracket ceiling will appear as more results land.</span>
+      </div>
+    );
+  }
+
+  const axisStroke = theme === "dark" ? "rgba(226,232,240,0.26)" : "rgba(100,116,139,0.24)";
+  const textFill = theme === "dark" ? "rgba(226,232,240,0.72)" : "rgba(51,65,85,0.72)";
+  const solidStroke = theme === "dark" ? "#f8fafc" : "#0f172a";
+  const riskFill = theme === "dark" ? "rgba(251,191,36,0.22)" : "rgba(251,191,36,0.34)";
+  const historyFill = theme === "dark" ? "rgba(96,165,250,0.22)" : "rgba(96,165,250,0.18)";
+
+  return (
+    <div className="min-w-0">
+      <div
+        ref={containerRef}
+        className="w-full"
+        style={{
+          height: compact ? "100%" : "clamp(180px, 55vw, 240px)"
+        }}
+      >
+        <svg
+          viewBox={`0 0 ${chart.width} ${chart.height}`}
+          className="h-full w-full"
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          aria-label="Bracket ceiling risk graph"
+        >
+          <line x1={chart.padding.left} y1={chart.padding.top} x2={chart.padding.left} y2={chart.height - chart.padding.bottom} stroke={solidStroke} strokeWidth={compact ? 1.4 : 1.8} />
+          <line x1={chart.padding.left} y1={chart.height - chart.padding.bottom} x2={chart.width - chart.padding.right} y2={chart.height - chart.padding.bottom} stroke={solidStroke} strokeWidth={compact ? 1.4 : 1.8} />
+
+          {chart.yTicks.map((tick) => (
+            <g key={tick.value}>
+              <line x1={chart.padding.left} y1={tick.y} x2={chart.width - chart.padding.right} y2={tick.y} stroke={axisStroke} strokeDasharray={compact ? "2 5" : "3 6"} />
+              <text x={chart.padding.left - 8} y={tick.y + 4} textAnchor="end" fontSize={compact ? 7 : 10} fontWeight={700} fill={textFill}>
+                {tick.label}
+              </text>
+            </g>
+          ))}
+
+          {chart.historyAreaPath ? <path d={chart.historyAreaPath} fill={historyFill} /> : null}
+          {chart.futureWedgePath ? <path d={chart.futureWedgePath} fill={riskFill} /> : null}
+          {chart.historyPath ? <path d={chart.historyPath} fill="none" stroke={solidStroke} strokeWidth={compact ? 1.1 : 1.45} strokeLinecap="round" strokeLinejoin="round" /> : null}
+          {chart.futureBestPath ? <path d={chart.futureBestPath} fill="none" stroke={solidStroke} strokeWidth={compact ? 1 : 1.3} strokeDasharray={compact ? "4 4" : "6 5"} strokeLinecap="round" /> : null}
+          {chart.futureWorstPath ? <path d={chart.futureWorstPath} fill="none" stroke={solidStroke} strokeWidth={compact ? 1 : 1.3} strokeDasharray={compact ? "4 4" : "6 5"} strokeLinecap="round" /> : null}
+
+          {chart.points.map((point) => {
+            const isFuturePoint = point.kind === "future_best" || point.kind === "future_worst";
+            const dotFill = isFuturePoint ? "#0b0b0b" : solidStroke;
+            const dotStroke = isFuturePoint ? "#ffffff" : solidStroke;
+
+            return (
+              <g key={point.id}>
+                {compact ? null : (
+                  <circle
+                    cx={point.x}
+                    cy={point.y}
+                    r={16}
+                    fill="transparent"
+                    className="cursor-pointer"
+                    onClick={() => setSelectedPointId(point.id)}
+                  />
+                )}
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={compact ? 3.3 : 5}
+                  fill={dotFill}
+                  stroke={dotStroke}
+                  strokeWidth={compact ? 1.5 : 2}
+                  className={compact ? undefined : "cursor-pointer"}
+                  onClick={compact ? undefined : () => setSelectedPointId(point.id)}
+                />
+              </g>
+            );
+          })}
+
+          {chart.xLabels.map((label) => (
+            <text
+              key={`${label.key}-${label.text}`}
+              x={label.x}
+              y={chart.height - chart.padding.bottom + (compact ? 12 : 18)}
+              textAnchor="middle"
+              fontSize={compact ? 7.5 : 11}
+              fontWeight={700}
+              fill={textFill}
+            >
+              {label.text}
+            </text>
+          ))}
+        </svg>
+      </div>
+
+      {compact || !selectedTooltip ? null : (
+        <div className={`mt-3 rounded-[0.95rem] border px-3 py-2 ${theme === "dark" ? "border-white/10 bg-white/[0.04]" : "border-slate-200 bg-white"}`}>
+          <p className={`text-[10px] font-black uppercase tracking-[0.12em] ${getMutedTextClasses(theme)}`}>{selectedTooltip.title}</p>
+          <div className="mt-1 space-y-1">
+            {selectedTooltip.lines.map((line) => (
+              <p key={line} className={`text-sm font-semibold ${getPrimaryTextClasses(theme)}`}>{line}</p>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function buildCeilingRiskSvgModel(
+  model: NonNullable<DashboardCommandCenterSummary["scoring"]["projectedOutlook"]>["ceilingRiskGraph"],
+  options: {
+    variant: "compact" | "modal";
+    width: number;
+  }
+) {
+  const compact = options.variant === "compact";
+  const width = Math.max(Math.round(options.width), compact ? 220 : 320);
+  const height = compact ? 248 : width < 390 ? 228 : 248;
+  const padding = compact
+    ? { top: 6, right: 6, bottom: 14, left: 6 }
+    : width < 390
+      ? { top: 14, right: 12, bottom: 22, left: 44 }
+      : { top: 18, right: 18, bottom: 30, left: 52 };
+
+  const historyPoints = model.graphPoints.filter((point) => point.kind === "history" || point.kind === "now");
+  const futureBest = model.graphPoints.find((point) => point.kind === "future_best") ?? null;
+  const futureWorst = model.graphPoints.find((point) => point.kind === "future_worst") ?? null;
+  const values = model.graphPoints.map((point) => point.ceilingPoints);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const spread = Math.max(8, maxValue - minValue);
+  const domainMin = Math.max(0, minValue - Math.max(4, spread * (compact ? 0.12 : 0.22)));
+  const domainMax = maxValue + Math.max(6, spread * 0.18);
+  const plotHeight = height - padding.top - padding.bottom;
+  const scaleY = (value: number) => padding.top + ((domainMax - value) / Math.max(domainMax - domainMin, 1)) * plotHeight;
+  const plotWidth = width - padding.left - padding.right;
+  const hasFuture = Boolean(futureBest || futureWorst);
+  const futureReserve = hasFuture ? Math.max(compact ? 72 : 104, plotWidth * (compact ? 0.31 : 0.28)) : 0;
+  const historyRightX = width - padding.right - futureReserve;
+  const effectiveHistoryWidth = Math.max(historyRightX - padding.left, plotWidth * 0.45);
+  const historyStep = historyPoints.length > 1 ? effectiveHistoryWidth / (historyPoints.length - 1) : 0;
+  const futureX = hasFuture ? width - padding.right : historyRightX;
+
+  const pointMap = new Map<string, { id: string; x: number; y: number; kind: string }>();
+  historyPoints.forEach((point, index) => {
+    pointMap.set(point.id, {
+      id: point.id,
+      x: padding.left + historyStep * index,
+      y: scaleY(point.ceilingPoints),
+      kind: point.kind
+    });
+  });
+  if (futureBest) {
+    pointMap.set(futureBest.id, { id: futureBest.id, x: futureX, y: scaleY(futureBest.ceilingPoints), kind: futureBest.kind });
+  }
+  if (futureWorst) {
+    pointMap.set(futureWorst.id, { id: futureWorst.id, x: futureX, y: scaleY(futureWorst.ceilingPoints), kind: futureWorst.kind });
+  }
+
+  const historicalCoords = historyPoints.map((point) => ({
+    ...point,
+    x: pointMap.get(point.id)!.x,
+    y: pointMap.get(point.id)!.y
+  }));
+  const historyPath = historicalCoords.length > 1
+    ? `M ${historicalCoords.map((point) => `${point.x} ${point.y}`).join(" L ")}`
+    : null;
+  const nowCoord = historicalCoords.at(-1) ?? null;
+  const futureBestCoord = futureBest ? pointMap.get(futureBest.id)! : null;
+  const futureWorstCoord = futureWorst ? pointMap.get(futureWorst.id)! : null;
+  const historyAreaPath =
+    historicalCoords.length > 1
+      ? [
+          historyPath,
+          futureBestCoord ? `L ${futureBestCoord.x} ${futureBestCoord.y}` : "",
+          `L ${futureBestCoord?.x ?? historicalCoords[historicalCoords.length - 1]!.x} ${height - padding.bottom}`,
+          `L ${historicalCoords[0]!.x} ${height - padding.bottom} Z`
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : null;
+  const futureBestPath =
+    nowCoord && futureBestCoord
+      ? `M ${nowCoord.x} ${nowCoord.y} L ${futureBestCoord.x} ${futureBestCoord.y}`
+      : null;
+  const futureWorstPath =
+    nowCoord && futureWorstCoord
+      ? `M ${nowCoord.x} ${nowCoord.y} L ${futureWorstCoord.x} ${futureWorstCoord.y}`
+      : null;
+  const futureWedgePath =
+    nowCoord && futureBestCoord && futureWorstCoord
+      ? `M ${nowCoord.x} ${nowCoord.y} L ${futureBestCoord.x} ${futureBestCoord.y} L ${futureWorstCoord.x} ${futureWorstCoord.y} Z`
+      : null;
+
+  const tickValues = compact
+    ? []
+    : Array.from(new Set([domainMax, (domainMax + domainMin) / 2, domainMin].map((value) => roundChartNumber(value))));
+  const yTicks = tickValues
+    .filter((value, index, all) => all.indexOf(value) === index)
+    .sort((left, right) => right - left)
+    .slice(0, width < 430 ? 2 : 3)
+    .map((value) => ({ value, y: scaleY(value), label: `${value}` }));
+
+  const xLabels = buildDateAxisLabels({
+    historyPoints,
+    pointMap,
+    futureBest,
+    futureBestCoord
+  });
+
+  return {
+    width,
+    height,
+    padding,
+    points: Array.from(pointMap.values()),
+    historyPath,
+    historyAreaPath,
+    futureBestPath,
+    futureWorstPath,
+    futureWedgePath,
+    yTicks,
+    xLabels
+  };
+}
+
+function roundChartNumber(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function buildDateAxisLabels(input: {
+  historyPoints: Array<{
+    id: string;
+    shortLabel: string;
+  }>;
+  pointMap: Map<string, { id: string; x: number; y: number; kind: string }>;
+  futureBest: { id: string; shortLabel: string } | null;
+  futureBestCoord: { id: string; x: number; y: number; kind: string } | null;
+}) {
+  const labels: Array<{ key: string; x: number; text: string }> = [];
+  const first = input.historyPoints[0];
+  const now = input.historyPoints.at(-1);
+
+  if (first) {
+    labels.push({
+      key: first.id,
+      x: input.pointMap.get(first.id)!.x,
+      text: buildCompactCeilingRiskDateLabel(first.shortLabel, "")
+    });
+  }
+
+  if (now && now.id !== first?.id) {
+    labels.push({
+      key: now.id,
+      x: input.pointMap.get(now.id)!.x,
+      text: buildCompactCeilingRiskDateLabel(now.shortLabel, "")
+    });
+  }
+
+  if (input.futureBest && input.futureBestCoord) {
+    labels.push({
+      key: input.futureBest.id,
+      x: input.futureBestCoord.x,
+      text: buildCompactCeilingRiskDateLabel(input.futureBest.shortLabel, "")
+    });
+  }
+
+  const seen = new Set<string>();
+  return labels.filter((label) => {
+    const normalized = label.text.trim();
+    if (!normalized || seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function buildCompactCeilingRiskDateLabel(value: string | null | undefined, fallback: string) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  return normalized;
+}
+
+function ProjectedOutlookCompactMetric({
+  label,
+  value,
+  theme
+}: {
+  label: string;
+  value: string;
+  theme: TriptychTheme;
+}) {
+  return (
+    <div className="min-w-0 text-center">
+      <span className={`block truncate text-[8px] font-semibold uppercase leading-none tracking-[0.04em] sm:text-[10px] sm:tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
+        {label}
+      </span>
+      <span className={`mt-1 block truncate text-[11px] font-black leading-none tracking-[-0.03em] sm:text-xs ${getPrimaryTextClasses(theme)}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ProjectedOutlookDecisiveMatchRow({
+  match,
+  theme
+}: {
+  match: NonNullable<DashboardCommandCenterSummary["scoring"]["projectedOutlook"]>["ceilingRiskGraph"]["decisiveMatches"][number];
+  theme: TriptychTheme;
+}) {
+  const secondaryLabel = buildProjectedOutlookMatchSecondaryLabel(match);
+  return (
+    <div className={`rounded-[0.95rem] border px-3 py-2.5 ${theme === "dark" ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-white"}`}>
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className={`truncate text-sm font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{match.compactLabel}</p>
+          {secondaryLabel ? (
+            <p className={`mt-1 truncate text-[11px] font-semibold ${getMutedTextClasses(theme)}`}>
+              {secondaryLabel}
+            </p>
+          ) : null}
+        </div>
+        <div className="shrink-0 text-right">
+          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.08em] ${
+            theme === "dark" ? "border-amber-300/25 bg-amber-300/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"
+          }`}>
+            {match.pointsAtStake === null ? "—" : `${formatPoints(match.pointsAtStake, null)} pts`}
+          </span>
+          {match.goalDifferenceSensitive ? (
+            <div className="mt-1">
+              <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.08em] ${
+                theme === "dark" ? "border-white/10 bg-white/[0.04] text-white/75" : "border-slate-200 bg-slate-50 text-slate-600"
+              }`}>
+                GD
+              </span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="mt-1.5 min-h-[1rem]">
+        {match.probabilityChips.length > 0 ? (
+          <p className={`truncate text-[11px] font-semibold ${getMutedTextClasses(theme)}`}>
+            {match.probabilityChips.map((chip) => chip.label).join(" · ")}
+          </p>
+        ) : match.affectedPickLabels.length > 0 ? (
+          <p className={`truncate text-[11px] font-semibold ${getMutedTextClasses(theme)}`}>
+            {match.affectedPickLabels.join(" · ")}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function buildProjectedOutlookMatchSecondaryLabel(
+  match: NonNullable<DashboardCommandCenterSummary["scoring"]["projectedOutlook"]>["ceilingRiskGraph"]["decisiveMatches"][number]
+) {
+  if (match.goalDifferenceSensitive) {
+    return "GD swing";
+  }
+
+  if (match.kickoffLabel) {
+    const kickoffDate = match.kickoffLabel.split("·")[0]?.trim();
+    if (kickoffDate) {
+      return kickoffDate;
+    }
+  }
+
+  const hasThirdPlaceExposure = match.affectedPickLabels.some((label) => label.toLowerCase().includes("3rd"));
+  if (hasThirdPlaceExposure) {
+    return "3rd-place swing";
+  }
+
+  if (match.pointsAtStake && match.pointsAtStake > 0) {
+    return "Projected swing";
+  }
+
+  return null;
 }
 
 function ScoringTimelineRow({
@@ -1363,6 +2059,94 @@ function ScoringTimelineRow({
           <p className={`text-sm font-black ${getPrimaryTextClasses(theme)}`}>{formatSignedMetric(point.paceDelta, language)}</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+export function DashboardProjectedOutlookDevPreview({
+  outlook,
+  language,
+  theme = "light"
+}: {
+  outlook: NonNullable<DashboardCommandCenterSummary["scoring"]["projectedOutlook"]>;
+  language?: string | null;
+  theme?: TriptychTheme;
+}) {
+  const widths = [320, 360, 390, 430];
+
+  return (
+    <div className="space-y-8">
+      <section className="space-y-3">
+        <h2 className="text-lg font-black tracking-[-0.04em]">Compact widget</h2>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {widths.map((width) => (
+            <div key={`compact-${width}`} className="space-y-2">
+              <p className="text-sm font-semibold text-slate-600">{width}px</p>
+              <div
+                className={`overflow-hidden rounded-[1.25rem] border p-3 ${
+                  theme === "dark" ? "border-white/10 bg-slate-950" : "border-slate-200 bg-white"
+                }`}
+                style={{ width }}
+              >
+                <ProjectedOutlookCompactContent outlook={outlook} language={language} theme={theme} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-black tracking-[-0.04em]">Detail surface</h2>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {widths.map((width) => (
+            <div key={`detail-${width}`} className="space-y-2">
+              <p className="text-sm font-semibold text-slate-600">{width}px</p>
+              <div style={{ width }}>
+                <ProjectedOutlookDetailSurface
+                  outlook={outlook}
+                  language={language}
+                  theme={theme}
+                  preview
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-slate-600">Desktop modal width</p>
+          <div className="max-w-xl">
+            <ProjectedOutlookDetailSurface
+              outlook={outlook}
+              language={language}
+              theme={theme}
+              preview
+            />
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ProjectedOutlookRecentRow({
+  row,
+  language,
+  theme
+}: {
+  row: NonNullable<DashboardCommandCenterSummary["scoring"]["projectedOutlook"]>["recentMovementRows"][number];
+  language?: string | null;
+  theme: TriptychTheme;
+}) {
+  return (
+    <div className={`flex items-center justify-between rounded-[1rem] border px-3 py-2 ${theme === "dark" ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-white"}`}>
+      <div className="min-w-0">
+        <p className={`truncate text-sm font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>
+          {row.compactLabel}
+        </p>
+      </div>
+      <p className={`ml-3 shrink-0 text-sm font-black ${getPrimaryTextClasses(theme)}`}>
+        {formatSignedMetric(row.changeFromPrevious, language)}
+      </p>
     </div>
   );
 }
@@ -2133,11 +2917,18 @@ function getTriptychScoringLens({
   scoring: DashboardCommandCenterSummary["scoring"];
 }): TriptychScoringLens | null {
   if (scoring.mode === "score_movement") {
+    const projectedOutlook = scoring.projectedOutlook ?? null;
     return {
       mode: "score_movement",
       scoreKind: scoring.scoreKind,
       movement: scoring.score,
-      points: getScoringTrackPoints(scoring.score.history)
+      projectedOutlook,
+      points:
+        scoring.scoreKind === "projected" && projectedOutlook
+          ? (projectedOutlook.hasMeaningfulHistory
+              ? getProjectedOutlookTrackPoints(projectedOutlook)
+              : [])
+          : getScoringTrackPoints(scoring.score.history)
     };
   }
 
@@ -2159,6 +2950,19 @@ function getScoringTrackPoints(history: DashboardScoringHistoryPoint[]): Triptyc
     label: formatCompactScoringLabel(point.createdAt),
     actualPoints: point.totalPoints,
     pacePoints: point.pacePoints
+  }));
+}
+
+function getProjectedOutlookTrackPoints(
+  projectedOutlook: NonNullable<DashboardCommandCenterSummary["scoring"]["projectedOutlook"]>
+): TriptychScoringTrackPoint[] {
+  return projectedOutlook.ceilingRiskGraph.graphPoints
+    .filter((point) => point.kind === "history" || point.kind === "now")
+    .map((point) => ({
+    checkpointId: point.id,
+    label: point.shortLabel,
+    actualPoints: point.ceilingPoints,
+    pacePoints: null
   }));
 }
 
