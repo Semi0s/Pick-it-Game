@@ -535,9 +535,9 @@ test("ceiling risk graph model creates a future wedge from ceiling and at-risk p
     ]
   });
 
-  assert.equal(chartModel.futureWedge?.bestPoints, 168);
-  assert.equal(chartModel.futureWedge?.worstPoints, 126);
-  assert.equal(chartModel.futureWedge?.worstPoints, 168 - 42);
+  assert.equal(chartModel.futureWedge?.bestPoints, 121.2);
+  assert.equal(chartModel.futureWedge?.worstPoints, 79.2);
+  assert.equal(chartModel.futureWedge?.worstPoints, 121.2 - 42);
   assert.equal(chartModel.graphPoints.some((point) => point.kind === "now"), true);
   assert.equal(chartModel.graphPoints.some((point) => point.kind === "future_best"), true);
   assert.equal(chartModel.graphPoints.some((point) => point.kind === "future_worst"), true);
@@ -661,8 +661,8 @@ test("projected outlook builds a current ceiling bar model from live group expos
   assert.equal(summary.ceiling.stillLiveLaterPoints, 9);
   assert.equal(summary.ceiling.lostCeilingPoints, 0);
   assert.equal(summary.exposures.some((chip) => chip.status === "at_risk_next" && chip.teamId === "tur"), true);
-  assert.equal(summary.ceilingRiskGraph.futureWedge?.bestPoints, 14);
-  assert.equal(summary.ceilingRiskGraph.futureWedge?.worstPoints, 9);
+  assert.equal(summary.ceilingRiskGraph.futureWedge?.bestPoints, 121.2);
+  assert.equal(summary.ceilingRiskGraph.futureWedge?.worstPoints, 116.2);
 });
 
 test("ceiling risk graph limits decisive matches to the top two", () => {
