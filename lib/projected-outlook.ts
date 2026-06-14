@@ -878,7 +878,7 @@ export function buildCeilingRiskChartModel(input: {
   stakesCards: ProjectionOutlookStakesCardViewModel[];
 }): CeilingRiskGraphModel {
   const latest = input.history.at(-1) ?? null;
-  const submittedCeiling = input.ceiling.submittedCeilingPoints;
+  const currentProjected = input.summary.projectedFinalPoints;
   const currentCeiling = input.ceiling.currentCeilingPoints;
   const atRiskNext = input.ceiling.atRiskNextPoints;
   const nextCompactDateLabel = deriveCompactKickoffDateLabel(input.stakesCards[0]?.kickoffLabel ?? null);
@@ -892,11 +892,7 @@ export function buildCeilingRiskChartModel(input: {
     tooltipsByPointId[point.id] = tooltip;
   };
 
-  const historicalCeilingSeries = buildHistoricalCeilingSeries({
-    history: input.history,
-    submittedCeiling,
-    currentCeiling
-  });
+  const historicalCeilingSeries = buildHistoricalProjectedSeries(input.history);
 
   for (const point of historicalCeilingSeries) {
     addPoint(
@@ -906,19 +902,19 @@ export function buildCeilingRiskChartModel(input: {
             pointId: point.id,
             title: "Now",
             lines: [
-              `Ceiling ${formatPlainOutlookNumber(point.ceilingPoints)}`,
-              `Projected ${formatPlainOutlookNumber(input.summary.projectedFinalPoints)}`,
+              `Projected ${formatPlainOutlookNumber(point.ceilingPoints)}`,
+              typeof currentCeiling === "number" ? `Ceiling ${formatPlainOutlookNumber(currentCeiling)}` : null,
               `At risk next ${formatPlainOutlookNumber(input.summary.atRiskNextPoints)}`
-            ].filter(Boolean)
+            ].filter((value): value is string => Boolean(value))
           }
         : {
             pointId: point.id,
             title: point.dateLabel ?? point.label,
             lines: [
               point.checkpointDisplayLabel ?? point.label,
-              `Ceiling ${formatPlainOutlookNumber(point.ceilingPoints)}`,
-              typeof point.lostSincePrevious === "number" && point.lostSincePrevious > 0
-                ? `Lost ${formatPlainOutlookNumber(point.lostSincePrevious)}`
+              `Projected ${formatPlainOutlookNumber(point.ceilingPoints)}`,
+              typeof point.lostSincePrevious === "number" && point.lostSincePrevious !== 0
+                ? `Change ${point.lostSincePrevious > 0 ? "-" : "+"}${formatPlainOutlookNumber(Math.abs(point.lostSincePrevious))}`
                 : null
             ].filter((value): value is string => Boolean(value))
           }
@@ -926,13 +922,13 @@ export function buildCeilingRiskChartModel(input: {
   }
 
   const futureWedge =
-    typeof currentCeiling === "number" &&
+    typeof currentProjected === "number" &&
     typeof atRiskNext === "number" &&
     atRiskNext > 0
       ? {
-          nowPoints: roundOutlookMetric(currentCeiling),
-          bestPoints: roundOutlookMetric(currentCeiling),
-          worstPoints: roundOutlookMetric(Math.max(0, currentCeiling - atRiskNext))
+          nowPoints: roundOutlookMetric(currentProjected),
+          bestPoints: roundOutlookMetric(currentProjected),
+          worstPoints: roundOutlookMetric(Math.max(0, currentProjected - atRiskNext))
         }
       : null;
 
@@ -953,7 +949,7 @@ export function buildCeilingRiskChartModel(input: {
       {
         pointId: bestId,
         title: "Best near-term path",
-        lines: [`Ceiling holds at ${formatPlainOutlookNumber(futureWedge.bestPoints)}`]
+        lines: [`Projected holds at ${formatPlainOutlookNumber(futureWedge.bestPoints)}`]
       }
     );
     addPoint(
@@ -972,7 +968,7 @@ export function buildCeilingRiskChartModel(input: {
         pointId: worstId,
         title: "Risk next",
         lines: [
-          `Ceiling drops to ${formatPlainOutlookNumber(futureWedge.worstPoints)}`,
+          `Projected drops to ${formatPlainOutlookNumber(futureWedge.worstPoints)}`,
           `Swing ${formatPlainOutlookNumber(futureWedge.bestPoints - futureWedge.worstPoints)}`
         ]
       }
@@ -1033,75 +1029,47 @@ function buildRecentMovementRows(history: ProjectedOutlookHistoryPoint[]): Proje
     }));
 }
 
-function buildHistoricalCeilingSeries(input: {
-  history: ProjectedOutlookHistoryPoint[];
-  submittedCeiling: number | null;
-  currentCeiling: number | null;
-}): CeilingRiskPoint[] {
+function buildHistoricalProjectedSeries(history: ProjectedOutlookHistoryPoint[]): CeilingRiskPoint[] {
   const points: CeilingRiskPoint[] = [];
-  const history = input.history;
-  const first = history[0] ?? null;
   const latest = history.at(-1) ?? null;
-
-  let runningCeiling =
-    typeof input.submittedCeiling === "number"
-      ? input.submittedCeiling
-      : typeof input.currentCeiling === "number"
-        ? input.currentCeiling
-        : 0;
-
-  if (runningCeiling > 0) {
-    points.push({
-      id: "ceiling-start",
-      kind: "history",
-      label: "Start",
-      shortLabel: first ? formatCompactMonthDayLabel(first.createdAt) : "Start",
-      dateLabel: first?.detailTimestampLabel ?? null,
-      ceilingPoints: roundOutlookMetric(runningCeiling),
-      checkpointCompactLabel: "Start",
-      checkpointDisplayLabel: "Bracket submitted",
-      lostSincePrevious: null
-    });
-  }
 
   if (!latest) {
     return points;
   }
 
   const middlePoints = history.slice(0, -1);
+  let previousProjected: number | null = null;
   for (const point of middlePoints) {
-    const resolvedCeiling = resolveHistoricalCeilingPoint(point, runningCeiling);
-    const normalizedCeiling = Math.min(runningCeiling, resolvedCeiling);
-    const lostSincePrevious = roundOutlookMetric(Math.max(0, runningCeiling - normalizedCeiling));
-    runningCeiling = normalizedCeiling;
+    const projectedPoints = roundOutlookMetric(point.projectedFinalPoints);
+    const delta =
+      previousProjected === null ? null : roundOutlookMetric(projectedPoints - previousProjected);
+    previousProjected = projectedPoints;
     points.push({
       id: `history:${point.checkpointId}`,
       kind: "history",
       label: point.triggerLabel,
       shortLabel: formatCompactMonthDayLabel(point.createdAt),
       dateLabel: point.detailTimestampLabel,
-      ceilingPoints: normalizedCeiling,
+      ceilingPoints: projectedPoints,
       checkpointCompactLabel: point.compactLabel,
       checkpointDisplayLabel: point.triggerLabel,
-      lostSincePrevious
+      lostSincePrevious: delta
     });
   }
 
-  const nowCeiling =
-    typeof input.currentCeiling === "number"
-      ? Math.min(runningCeiling, input.currentCeiling)
-      : resolveHistoricalCeilingPoint(latest, runningCeiling);
-  const nowLost = roundOutlookMetric(Math.max(0, runningCeiling - nowCeiling));
+  const nowProjected = roundOutlookMetric(latest.projectedFinalPoints);
+  const nowDelta =
+    previousProjected === null ? null : roundOutlookMetric(nowProjected - previousProjected);
   points.push({
     id: `now:${latest.checkpointId}`,
     kind: "now",
     label: "Now",
     shortLabel: formatCompactMonthDayLabel(latest.createdAt),
     dateLabel: latest.detailTimestampLabel,
-    ceilingPoints: nowCeiling,
+    ceilingPoints: nowProjected,
     checkpointCompactLabel: latest.compactLabel,
     checkpointDisplayLabel: latest.triggerLabel,
-    lostSincePrevious: nowLost
+    lostSincePrevious: nowDelta
   });
 
   return dedupeCeilingRiskPoints(points);
@@ -1122,18 +1090,6 @@ function dedupeCeilingRiskPoints(points: CeilingRiskPoint[]) {
     result.push(point);
   }
   return result;
-}
-
-function resolveHistoricalCeilingPoint(point: ProjectedOutlookHistoryPoint, fallbackCeiling: number) {
-  if (typeof point.maxPossiblePoints === "number") {
-    return roundOutlookMetric(point.maxPossiblePoints);
-  }
-
-  if (typeof point.lockedPoints === "number" && typeof point.remainingPossiblePoints === "number") {
-    return roundOutlookMetric(point.lockedPoints + point.remainingPossiblePoints);
-  }
-
-  return roundOutlookMetric(fallbackCeiling);
 }
 
 function formatCompactMonthDayLabel(value: string) {

@@ -1026,7 +1026,7 @@ function DashboardProjectedOutlookDetailSheet({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-4 sm:items-center sm:px-5 sm:pb-4">
+    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:items-center sm:px-5 sm:pb-4 sm:pt-4">
       <button type="button" aria-label={t(language, "common.close")} onClick={onClose} className="absolute inset-0" />
       <ProjectedOutlookDetailSurface
         outlook={outlook}
@@ -1059,11 +1059,11 @@ function ProjectedOutlookDetailSurface({
       aria-modal={preview ? undefined : true}
       aria-label="Projected outlook"
       className={`relative flex w-full max-w-xl min-w-0 flex-col overflow-x-hidden rounded-[1.35rem] border shadow-2xl sm:rounded-[1.5rem] ${
-        preview ? "max-h-none" : "max-h-[calc(100dvh-24px)]"
+        preview ? "max-h-none" : "max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-24px)]"
       } ${theme === "dark" ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-950"}`}
       style={preview ? undefined : { width: "calc(100vw - 24px)" }}
     >
-      <div className={`flex items-start justify-between gap-3 border-b px-3 py-3 sm:px-5 ${theme === "dark" ? "border-white/10" : "border-slate-200"}`}>
+      <div className={`sticky top-0 z-[1] flex items-start justify-between gap-3 border-b px-3 py-3 sm:px-5 ${theme === "dark" ? "border-white/10 bg-slate-950" : "border-slate-200 bg-white"}`}>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className={`text-[11px] font-black uppercase leading-none tracking-[0.1em] sm:tracking-[0.14em] ${getMutedTextClasses(theme)}`}>
@@ -1212,17 +1212,19 @@ function DashboardScoreMovementDetailSheet({
   }, [displayChartData]);
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-4 sm:items-center sm:px-5 sm:pb-4">
+    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:items-center sm:px-5 sm:pb-4 sm:pt-4">
       <button type="button" aria-label={t(language, "common.close")} onClick={onClose} className="absolute inset-0" />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={isProjected ? "Projected movement" : t(language, "dashboard.scoringDetailTitle")}
-        className={`relative flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-[1.5rem] border shadow-2xl ${
+        className={`relative flex w-full max-w-xl flex-col overflow-hidden rounded-[1.5rem] border shadow-2xl ${
+          "max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-24px)]"
+        } ${
           theme === "dark" ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-950"
         }`}
       >
-        <div className={`flex items-center justify-between border-b px-4 py-3 sm:px-5 ${theme === "dark" ? "border-white/10" : "border-slate-200"}`}>
+        <div className={`sticky top-0 z-[1] flex items-center justify-between border-b px-4 py-3 sm:px-5 ${theme === "dark" ? "border-white/10 bg-slate-950" : "border-slate-200 bg-white"}`}>
           <div>
             <p className={`text-[11px] font-black uppercase tracking-[0.14em] ${getMutedTextClasses(theme)}`}>
               {isProjected ? "Projected" : t(language, "dashboard.scoringTrack")}
@@ -1347,17 +1349,19 @@ function DashboardPicksInPlayDetailSheet({
   }, [displayChartData]);
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-4 sm:items-center sm:px-5 sm:pb-4">
+    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:items-center sm:px-5 sm:pb-4 sm:pt-4">
       <button type="button" aria-label={t(language, "common.close")} onClick={onClose} className="absolute inset-0" />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={t(language, "dashboard.picksInPlay")}
-        className={`relative flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-[1.5rem] border shadow-2xl ${
+        className={`relative flex w-full max-w-xl flex-col overflow-hidden rounded-[1.5rem] border shadow-2xl ${
+          "max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-24px)]"
+        } ${
           theme === "dark" ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-950"
         }`}
       >
-        <div className={`flex items-center justify-between border-b px-4 py-3 sm:px-5 ${theme === "dark" ? "border-white/10" : "border-slate-200"}`}>
+        <div className={`sticky top-0 z-[1] flex items-center justify-between border-b px-4 py-3 sm:px-5 ${theme === "dark" ? "border-white/10 bg-slate-950" : "border-slate-200 bg-white"}`}>
           <div>
             <p className={`text-[11px] font-black uppercase tracking-[0.14em] ${getMutedTextClasses(theme)}`}>
               {t(language, "dashboard.picksInPlay")}
@@ -1768,9 +1772,12 @@ function buildCeilingRiskSvgModel(
   const values = model.graphPoints.map((point) => point.ceilingPoints);
   const minValue = Math.min(...values);
   const maxValue = Math.max(...values);
-  const spread = Math.max(8, maxValue - minValue);
-  const domainMin = Math.max(0, minValue - Math.max(4, spread * (compact ? 0.12 : 0.22)));
-  const domainMax = maxValue + Math.max(6, spread * 0.18);
+  const rawSpread = Math.max(maxValue - minValue, 0);
+  const spread = Math.max(compact ? 3 : 4, rawSpread);
+  const lowerPadding = Math.max(compact ? 1.25 : 1.75, spread * (compact ? 0.08 : 0.1));
+  const upperPadding = Math.max(compact ? 1.75 : 2.25, spread * (compact ? 0.1 : 0.12));
+  const domainMin = Math.max(0, minValue - lowerPadding);
+  const domainMax = maxValue + upperPadding;
   const plotHeight = height - padding.top - padding.bottom;
   const scaleY = (value: number) => padding.top + ((domainMax - value) / Math.max(domainMax - domainMin, 1)) * plotHeight;
   const plotWidth = width - padding.left - padding.right;
