@@ -562,6 +562,12 @@ export function buildUpcomingMatchStakes(input: {
 export function buildProjectionOutlookViewModel(input: {
   projected: DashboardScoringMovementSummary;
   official?: DashboardScoringMovementSummary | null;
+  currentProjection?: {
+    checkpointId: string | null;
+    createdAt?: string | null;
+    projectedFinalPoints: number | null;
+    projectedRank?: number | null;
+  } | null;
   checkpointMatchesById?: ReadonlyMap<string, ProjectionCheckpointMatch> | null;
   checkpointRangesById?: ReadonlyMap<string, ProjectionCheckpointRange> | null;
   snapshot?: LightSeedBuilderSnapshot | null;
@@ -571,7 +577,12 @@ export function buildProjectionOutlookViewModel(input: {
   scoringRules?: ProjectedOutlookScoringRules | null;
   language?: string | null;
 }): DashboardProjectedOutlookSummary {
-  const projectedHistory = normalizeProjectionHistory(input.projected.history);
+  const projectedHistory = synchronizeCurrentProjectionHistory({
+    history: input.projected.history,
+    currentProjection: input.currentProjection ?? null,
+    fallbackRank: input.projected.currentRank ?? null,
+    fallbackCreatedAt: input.projected.latestSnapshotAt ?? null
+  });
   if (projectedHistory.length === 0) {
     return createEmptyDashboardProjectedOutlookSummary();
   }
@@ -1377,6 +1388,69 @@ function normalizeProjectionHistory(history: DashboardScoringHistoryPoint[]): Da
   }
 
   return sortHistoryAscending(Array.from(latestByCheckpointId.values()));
+}
+
+function synchronizeCurrentProjectionHistory(input: {
+  history: DashboardScoringHistoryPoint[];
+  currentProjection: {
+    checkpointId: string | null;
+    createdAt?: string | null;
+    projectedFinalPoints: number | null;
+    projectedRank?: number | null;
+  } | null;
+  fallbackRank: number | null;
+  fallbackCreatedAt: string | null;
+}) {
+  const normalizedHistory = normalizeProjectionHistory(input.history);
+  const checkpointId = input.currentProjection?.checkpointId?.trim() ?? "";
+  const projectedFinalPoints = input.currentProjection?.projectedFinalPoints;
+
+  if (!checkpointId || typeof projectedFinalPoints !== "number") {
+    return normalizedHistory;
+  }
+
+  const existingIndex = normalizedHistory.findIndex((point) => point.matchId === checkpointId);
+  const existingPoint = existingIndex >= 0 ? normalizedHistory[existingIndex] ?? null : null;
+  const resolvedCreatedAt =
+    input.currentProjection?.createdAt ??
+    existingPoint?.createdAt ??
+    input.fallbackCreatedAt ??
+    new Date().toISOString();
+  const resolvedRank =
+    input.currentProjection?.projectedRank ??
+    existingPoint?.rank ??
+    input.fallbackRank ??
+    1;
+
+  const replacementPoint: DashboardScoringHistoryPoint = {
+    matchId: checkpointId,
+    createdAt: resolvedCreatedAt,
+    totalPoints: roundOutlookMetric(projectedFinalPoints),
+    pacePoints: existingPoint?.pacePoints ?? null,
+    rank: resolvedRank,
+    pointsDelta: existingPoint?.pointsDelta ?? null,
+    rankDelta: existingPoint?.rankDelta ?? null,
+    paceDelta:
+      typeof existingPoint?.pacePoints === "number"
+        ? roundOutlookMetric(projectedFinalPoints - existingPoint.pacePoints)
+        : null
+  };
+
+  if (existingPoint) {
+    if (
+      existingPoint.totalPoints === replacementPoint.totalPoints &&
+      existingPoint.rank === replacementPoint.rank &&
+      existingPoint.createdAt === replacementPoint.createdAt
+    ) {
+      return normalizedHistory;
+    }
+
+    const nextHistory = normalizedHistory.slice();
+    nextHistory.splice(existingIndex, 1, replacementPoint);
+    return sortHistoryAscending(nextHistory);
+  }
+
+  return sortHistoryAscending([...normalizedHistory, replacementPoint]);
 }
 
 function sortHistoryAscending(history: DashboardScoringHistoryPoint[]) {

@@ -26,7 +26,8 @@ import {
 } from "@/lib/leaderboard-movement";
 import {
   PROJECTED_LEADERBOARD_ENABLED_KEY,
-  fetchProjectedDashboardScoringMovementSummary
+  fetchProjectedDashboardScoringMovementSummary,
+  fetchProjectedGroupPhaseSummaries
 } from "@/lib/projected-leaderboard";
 import { selectDashboardProjectedScoreSummary } from "@/lib/projected-leaderboard-mode";
 import { buildProjectedGroupStandings } from "@/lib/knockout-seeding";
@@ -115,6 +116,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     globalRankResult,
     scoringMovementResult,
     projectedScoringMovementResult,
+    projectedGroupPhaseResult,
     projectedLeaderboardEnabledResult,
     userSettingsResult,
     totalPlayersResult,
@@ -147,6 +149,10 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     })),
     fetchGlobalDashboardScoringMovementSummary(userId).catch(() => createEmptyDashboardScoringMovementSummary()),
     fetchProjectedDashboardScoringMovementSummary(userId).catch(() => createEmptyDashboardScoringMovementSummary()),
+    fetchProjectedGroupPhaseSummaries([userId]).catch(() => ({
+      summaries: new Map(),
+      projectionKey: null
+    })),
     fetchBooleanAppSetting(PROJECTED_LEADERBOARD_ENABLED_KEY, true).catch(() => true),
     adminSupabase.from("user_settings").select("followed_team_ids").eq("user_id", userId).maybeSingle(),
     adminSupabase.from("users").select("id", { count: "exact", head: true }),
@@ -458,6 +464,20 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
   const projectedOutlook = buildProjectionOutlookViewModel({
     official: officialScoreSummary,
     projected: projectedScoringMovementResult,
+    currentProjection:
+      projectedGroupPhaseResult.projectionKey && projectedGroupPhaseResult.summaries.get(userId)
+        ? {
+            checkpointId: projectedGroupPhaseResult.projectionKey,
+            createdAt:
+              getLatestTimestamp(
+                dashboardMatches
+                  .filter((match) => match.status === "live" || match.status === "final")
+                  .map((match) => match.kickoffTime)
+              ) ?? projectedScoringMovementResult.latestSnapshotAt ?? null,
+            projectedFinalPoints: projectedGroupPhaseResult.summaries.get(userId)?.projectedPoints ?? null,
+            projectedRank: null
+          }
+        : null,
     checkpointMatchesById,
     snapshot,
     currentStandings,
