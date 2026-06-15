@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction, type TouchEvent, type WheelEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode, type SetStateAction, type TouchEvent, type WheelEvent } from "react";
 import { X } from "lucide-react";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
@@ -149,6 +149,7 @@ export function DashboardOverview({
   const { user, isLoading: isCurrentUserLoading } = useCurrentUser();
   const { activeLanguage: displayLanguage } = useAppLanguage();
   const currentUserId = user?.id ?? null;
+  const [, startCommandCenterRefreshTransition] = useTransition();
   const [groupMatches, setGroupMatches] = useState<MatchWithTeams[]>(() => getLocalGroupMatches());
   const [adminCounts, setAdminCounts] = useState<AdminCounts | null>(null);
   const [adminError, setAdminError] = useState<string | null>(null);
@@ -214,6 +215,8 @@ export function DashboardOverview({
   const standingsSwipeWheelResetTimeoutRef = useRef<number | null>(null);
   const standingsSwipeWheelCooldownTimeoutRef = useRef<number | null>(null);
   const standingsSwipeWheelIsCoolingDownRef = useRef(false);
+  const commandCenterRefreshCooldownTimeoutRef = useRef<number | null>(null);
+  const commandCenterRefreshInFlightRef = useRef(false);
   const [standingsSwipeOffsetX, setStandingsSwipeOffsetX] = useState(0);
   const [isStandingsSurfaceSwiping, setIsStandingsSurfaceSwiping] = useState(false);
   const refreshGroupAccess = useCallback(async () => {
@@ -271,6 +274,26 @@ export function DashboardOverview({
     }
   }, []);
 
+  const refreshCommandCenter = useCallback(() => {
+    if (commandCenterRefreshInFlightRef.current) {
+      return;
+    }
+
+    commandCenterRefreshInFlightRef.current = true;
+    startCommandCenterRefreshTransition(() => {
+      router.refresh();
+    });
+
+    if (commandCenterRefreshCooldownTimeoutRef.current !== null) {
+      window.clearTimeout(commandCenterRefreshCooldownTimeoutRef.current);
+    }
+
+    commandCenterRefreshCooldownTimeoutRef.current = window.setTimeout(() => {
+      commandCenterRefreshInFlightRef.current = false;
+      commandCenterRefreshCooldownTimeoutRef.current = null;
+    }, 2500);
+  }, [router, startCommandCenterRefreshTransition]);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -299,12 +322,14 @@ export function DashboardOverview({
     function handleWindowFocus() {
       refreshGroupAccess().catch(() => undefined);
       refreshGroupMatches().catch(() => undefined);
+      refreshCommandCenter();
     }
 
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
         refreshGroupAccess().catch(() => undefined);
         refreshGroupMatches().catch(() => undefined);
+        refreshCommandCenter();
       }
     }
 
@@ -314,6 +339,7 @@ export function DashboardOverview({
       if (document.visibilityState === "visible") {
         refreshGroupAccess().catch(() => undefined);
         refreshGroupMatches().catch(() => undefined);
+        refreshCommandCenter();
       }
     }, DASHBOARD_GROUP_MATCH_REFRESH_INTERVAL_MS);
 
@@ -322,7 +348,15 @@ export function DashboardOverview({
       window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refreshGroupAccess, refreshGroupMatches, user]);
+  }, [refreshCommandCenter, refreshGroupAccess, refreshGroupMatches, user]);
+
+  useEffect(() => {
+    return () => {
+      if (commandCenterRefreshCooldownTimeoutRef.current !== null) {
+        window.clearTimeout(commandCenterRefreshCooldownTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!user) {

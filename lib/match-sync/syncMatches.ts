@@ -3,6 +3,7 @@ import { fetchMatchesByDate, type NormalizedExternalMatch } from "@/lib/match-ap
 import { appendMatchEvent } from "@/lib/match-events";
 import { rebuildKnockoutAdvancementWithClient } from "@/lib/knockout-advancement";
 import { seedOfficialKnockoutFromFinalGroupResults } from "@/lib/knockout-seeding-runtime";
+import { persistProjectedGlobalSnapshotsForAllUsers } from "@/lib/projected-leaderboard";
 import { rebuildScopedLeaderboardState } from "@/lib/scoped-scoring";
 import { scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { scoreFinalizedKnockoutMatchWithClient, resetKnockoutMatchScoring } from "@/lib/bracket-predictions";
@@ -345,6 +346,7 @@ async function finalizeMatchFromSync(
     await seedOfficialKnockoutFromFinalGroupResults(adminSupabase, {
       source: "auto"
     });
+    await persistProjectedGlobalSnapshotsForAllUsers();
   } else {
     if (internalMatch.status === "final") {
       await resetKnockoutMatchScoring(internalMatch.id);

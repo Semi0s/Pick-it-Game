@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createEmptyDashboardScoringMovementSummary } from "../lib/leaderboard-movement-helpers.ts";
+import { buildProjectedGlobalHistoryCheckpointStates } from "../lib/projected-leaderboard.ts";
 import {
   selectDashboardProjectedScoreSummary,
   shouldUseProjectedLeaderboardMode
@@ -166,4 +167,94 @@ test("dashboard does not switch to projected scoring when the setting is disable
 
   assert.equal(result.scoreKind, "official");
   assert.equal(result.score, official);
+});
+
+test("projected history checkpoints replay group results in order and preserve a pre state", () => {
+  const states = buildProjectedGlobalHistoryCheckpointStates(
+    [
+      {
+        id: "g-01",
+        stage: "group",
+        group_name: "Group A",
+        status: "final",
+        home_team_id: "mex",
+        away_team_id: "rsa",
+        home_score: 2,
+        away_score: 0,
+        kickoff_time: "2026-06-11T19:00:00.000Z"
+      },
+      {
+        id: "g-02",
+        stage: "group",
+        group_name: "Group B",
+        status: "final",
+        home_team_id: "sui",
+        away_team_id: "can",
+        home_score: 1,
+        away_score: 1,
+        kickoff_time: "2026-06-12T19:00:00.000Z"
+      },
+      {
+        id: "g-03",
+        stage: "group",
+        group_name: "Group C",
+        status: "scheduled",
+        home_team_id: "bra",
+        away_team_id: "mar",
+        home_score: null,
+        away_score: null,
+        kickoff_time: "2026-06-13T19:00:00.000Z"
+      }
+    ],
+    new Map([
+      ["g-01", "2026-06-11T21:05:00.000Z"],
+      ["g-02", "2026-06-12T21:10:00.000Z"]
+    ])
+  );
+
+  assert.equal(states.length, 3);
+  assert.equal(states[0]?.projectionKey, "group:g-01:pre");
+  assert.equal(states[0]?.createdAt, "2026-06-11T18:59:00.000Z");
+  assert.equal(states[1]?.projectionKey, "group:g-01");
+  assert.equal(states[1]?.createdAt, "2026-06-11T21:05:00.000Z");
+  assert.equal(states[2]?.projectionKey, "group:g-02");
+  assert.equal(states[2]?.createdAt, "2026-06-12T21:10:00.000Z");
+});
+
+test("projected history checkpoints reset future group matches until their result checkpoint arrives", () => {
+  const states = buildProjectedGlobalHistoryCheckpointStates([
+    {
+      id: "g-01",
+      stage: "group",
+      group_name: "Group A",
+      status: "final",
+      home_team_id: "mex",
+      away_team_id: "rsa",
+      home_score: 2,
+      away_score: 0,
+      kickoff_time: "2026-06-11T19:00:00.000Z"
+    },
+    {
+      id: "g-02",
+      stage: "group",
+      group_name: "Group B",
+      status: "final",
+      home_team_id: "sui",
+      away_team_id: "can",
+      home_score: 1,
+      away_score: 1,
+      kickoff_time: "2026-06-12T19:00:00.000Z"
+    }
+  ]);
+
+  const afterFirstResult = states[1]?.matches.find((match) => match.id === "g-02");
+  const afterSecondResult = states[2]?.matches.find((match) => match.id === "g-02");
+
+  assert.equal(afterFirstResult?.status, "scheduled");
+  assert.equal(afterFirstResult?.home_score, null);
+  assert.equal(afterFirstResult?.away_score, null);
+
+  assert.equal(afterSecondResult?.status, "final");
+  assert.equal(afterSecondResult?.home_score, 1);
+  assert.equal(afterSecondResult?.away_score, 1);
 });
