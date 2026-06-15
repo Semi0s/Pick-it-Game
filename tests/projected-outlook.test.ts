@@ -7,7 +7,8 @@ import {
   buildProjectionOutlookViewModel,
   buildUpcomingMatchStakes,
   createEmptyDashboardProjectedOutlookSummary,
-  resolveProjectionEventLabel
+  resolveProjectionEventLabel,
+  type ProjectedOutlookStandingRow
 } from "../lib/projected-outlook.ts";
 
 function createScoreSummary(overrides?: {
@@ -60,17 +61,16 @@ function createSnapshot() {
 }
 
 function createCurrentStandings() {
+  const groupDRows: ProjectedOutlookStandingRow[] = [
+    { teamId: "usa", rank: 1, played: 1, points: 3, goalsFor: 2, goalDifference: 2 },
+    { teamId: "aus", rank: 2, played: 1, points: 1, goalsFor: 1, goalDifference: 0 },
+    { teamId: "tur", rank: 3, played: 1, points: 1, goalsFor: 1, goalDifference: 0 },
+    { teamId: "par", rank: 4, played: 1, points: 0, goalsFor: 0, goalDifference: -2 }
+  ];
+
   return {
     byGroup: new Map([
-      [
-        "Group D",
-        [
-          { teamId: "usa", rank: 1, played: 1, points: 3, goalsFor: 2, goalDifference: 2 },
-          { teamId: "aus", rank: 2, played: 1, points: 1, goalsFor: 1, goalDifference: 0 },
-          { teamId: "tur", rank: 3, played: 1, points: 1, goalsFor: 1, goalDifference: 0 },
-          { teamId: "par", rank: 4, played: 1, points: 0, goalsFor: 0, goalDifference: -2 }
-        ]
-      ]
+      ["Group D", groupDRows]
     ])
   };
 }
@@ -528,6 +528,7 @@ test("ceiling risk graph model creates a future wedge from ceiling and at-risk p
         helpsLabel: "TUR result",
         hurtsLabel: "PAR swing",
         affectedPickLabels: ["TUR to qualify as 3rd"],
+        probabilityChips: [],
         pickChips: [],
         goalDifferenceSensitive: true,
         impactScore: 5
@@ -843,7 +844,7 @@ test("upcoming match stakes prefer sooner kickoff when points at stake are tied"
 });
 
 test("upcoming match stakes include trustworthy team-keyed probability chips", () => {
-  const groupDStandings = [
+  const groupDStandings: ProjectedOutlookStandingRow[] = [
     { teamId: "usa", rank: 1, played: 1, points: 3, goalsFor: 2, goalDifference: 2, teamName: "United States", teamShortName: "USA", teamCode: "USA", flagEmoji: "🇺🇸" },
     { teamId: "aus", rank: 2, played: 1, points: 1, goalsFor: 1, goalDifference: 0, teamName: "Australia", teamShortName: "AUS", teamCode: "AUS", flagEmoji: "🇦🇺" },
     { teamId: "tur", rank: 3, played: 1, points: 1, goalsFor: 1, goalDifference: 0, teamName: "Türkiye", teamShortName: "TUR", teamCode: "TUR", flagEmoji: "🇹🇷" },

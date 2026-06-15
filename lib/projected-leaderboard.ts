@@ -6,6 +6,7 @@ import { normalizeGroupKey } from "@/lib/group-standings";
 import { GROUP_PHASE_GROUP_MAX_POINTS } from "@/lib/group-phase-scoring";
 import { getAdvanceViaThirdProbability, getAdvanceTotalProbability, getGroupSelectionProbability, type PickProbabilityStandingsRow, type PickProbabilityTeam } from "@/lib/group-pick-probability";
 import { buildProjectedGroupStandings, buildQualifiedTeamSeeds, getRequiredThirdPlaceQualifierCount, type GroupStandingsRow, type KnockoutPlaceholderMatch } from "@/lib/knockout-seeding";
+import { assignDeterministicRanks } from "@/lib/scoring-engine";
 import { getTeamRating } from "@/lib/team-strength";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
@@ -36,6 +37,16 @@ type TeamRow = {
   fifa_rank?: number | null;
   fifa_points?: number | null;
   flag_emoji?: string | null;
+};
+
+type UserIdRow = {
+  id: string;
+};
+
+type MatchEventRow = {
+  match_id: string;
+  event_type: "sync" | "finalize" | "override" | "reopen" | "lock" | "batch_test_finalize" | "seed";
+  created_at: string;
 };
 
 type GroupSeedRankingRecord = {
@@ -75,6 +86,12 @@ type ProjectionContext = {
   standingsRowsByGroup: Map<string, PickProbabilityStandingsRow[]>;
   groupTeamsByGroup: Map<string, PickProbabilityTeam[]>;
   thirdPlacePool: PickProbabilityTeam[];
+};
+
+type ProjectionCheckpointState = {
+  projectionKey: string;
+  createdAt: string | null;
+  matches: MatchRow[];
 };
 
 export async function fetchProjectedGroupPhaseSummaries(userIds: string[]): Promise<{
@@ -143,6 +160,7 @@ export async function persistProjectedLeaderboardSnapshots(input: {
   scopeType: "global" | "group";
   groupId?: string | null;
   projectionKey: string | null;
+  createdAt?: string | null;
   rankedEntries: Array<{ user_id: string; rank: number; total_points: number }>;
 }): Promise<void> {
   if (!input.projectionKey || input.rankedEntries.length === 0 || !hasSupabaseConfig()) {
@@ -179,13 +197,140 @@ export async function persistProjectedLeaderboardSnapshots(input: {
       group_id: input.scopeType === "group" ? input.groupId ?? null : null,
       user_id: entry.user_id,
       rank: entry.rank,
-      projected_points: roundProjectedPoints(entry.total_points)
+      projected_points: roundProjectedPoints(entry.total_points),
+      created_at: input.createdAt ?? undefined
     }))
   );
 
   if (insertError) {
     throw new Error(insertError.message);
   }
+}
+
+export async function persistProjectedGlobalSnapshotsForAllUsers(): Promise<{
+  projectionKey: string | null;
+  persistedUsers: number;
+}> {
+  if (!hasSupabaseConfig()) {
+    return {
+      projectionKey: null,
+      persistedUsers: 0
+    };
+  }
+
+  const adminSupabase = createAdminClient();
+  const userIds = await fetchAllUserIds(adminSupabase);
+  if (userIds.length === 0) {
+    return {
+      projectionKey: null,
+      persistedUsers: 0
+    };
+  }
+
+  const projectedGroupPhaseResult = await fetchProjectedGroupPhaseSummaries(userIds);
+  const rankedEntries = buildGlobalProjectedRankedEntries(userIds, projectedGroupPhaseResult.summaries);
+  await persistProjectedLeaderboardSnapshots({
+    scopeType: "global",
+    projectionKey: projectedGroupPhaseResult.projectionKey,
+    rankedEntries
+  });
+
+  return {
+    projectionKey: projectedGroupPhaseResult.projectionKey,
+    persistedUsers: rankedEntries.length
+  };
+}
+
+export async function ensureProjectedGlobalSnapshotHistory(): Promise<{
+  expectedProjectionKeys: number;
+  existingProjectionKeys: number;
+  backfilledProjectionKeys: string[];
+}> {
+  if (!hasSupabaseConfig()) {
+    return {
+      expectedProjectionKeys: 0,
+      existingProjectionKeys: 0,
+      backfilledProjectionKeys: []
+    };
+  }
+
+  const adminSupabase = createAdminClient();
+  const [teams, matches, userIds] = await Promise.all([
+    fetchTeams(adminSupabase),
+    fetchMatches(adminSupabase),
+    fetchAllUserIds(adminSupabase)
+  ]);
+
+  if (userIds.length === 0) {
+    return {
+      expectedProjectionKeys: 0,
+      existingProjectionKeys: 0,
+      backfilledProjectionKeys: []
+    };
+  }
+
+  const checkpointTimestampsByMatchId = await fetchCheckpointTimestampsByMatchId(adminSupabase, matches);
+  const checkpointStates = buildProjectedGlobalHistoryCheckpointStates(matches, checkpointTimestampsByMatchId);
+  if (checkpointStates.length === 0) {
+    return {
+      expectedProjectionKeys: 0,
+      existingProjectionKeys: 0,
+      backfilledProjectionKeys: []
+    };
+  }
+
+  const expectedProjectionKeys = checkpointStates.map((state) => state.projectionKey);
+  const { data: existingRows, error: existingError } = await adminSupabase
+    .from("projected_leaderboard_snapshots")
+    .select("projection_key,user_id")
+    .eq("scope_type", "global")
+    .is("group_id", null)
+    .in("projection_key", expectedProjectionKeys);
+
+  if (existingError) {
+    throw new Error(existingError.message);
+  }
+
+  const userCountByProjectionKey = new Map<string, Set<string>>();
+  for (const row of ((existingRows as Array<Pick<ProjectedLeaderboardSnapshotRow, "projection_key" | "user_id">> | null) ?? [])) {
+    if (!row.projection_key || !row.user_id) {
+      continue;
+    }
+    const current = userCountByProjectionKey.get(row.projection_key) ?? new Set<string>();
+    current.add(row.user_id);
+    userCountByProjectionKey.set(row.projection_key, current);
+  }
+
+  const missingStates = checkpointStates.filter((state) => {
+    const persistedUsers = userCountByProjectionKey.get(state.projectionKey);
+    return (persistedUsers?.size ?? 0) < userIds.length;
+  });
+  if (missingStates.length === 0) {
+    return {
+      expectedProjectionKeys: checkpointStates.length,
+      existingProjectionKeys: userCountByProjectionKey.size,
+      backfilledProjectionKeys: []
+    };
+  }
+
+  const backfilledProjectionKeys: string[] = [];
+  for (const state of missingStates) {
+    const context = buildProjectionContextFromMatches(teams, state.matches);
+    const rankedEntries = await buildProjectedGlobalRankedEntriesForContext(userIds, context);
+    await persistProjectedLeaderboardSnapshots({
+      scopeType: "global",
+      projectionKey: state.projectionKey,
+      createdAt: state.createdAt,
+      rankedEntries
+    });
+    backfilledProjectionKeys.push(state.projectionKey);
+  }
+
+  return {
+    expectedProjectionKeys: checkpointStates.length,
+    existingProjectionKeys: userCountByProjectionKey.size,
+    backfilledProjectionKeys
+  };
 }
 
 export async function fetchProjectedLeaderboardRankMovement(input: {
@@ -326,6 +471,8 @@ export async function fetchProjectedDashboardScoringMovementSummary(
     return createEmptyDashboardScoringMovementSummary();
   }
 
+  await ensureProjectedGlobalSnapshotHistory();
+
   const adminSupabase = createAdminClient();
   const { data, error } = await adminSupabase
     .from("projected_leaderboard_snapshots")
@@ -392,7 +539,13 @@ export async function fetchProjectedDashboardScoringMovementSummary(
 async function fetchProjectionContext(): Promise<ProjectionContext> {
   const adminSupabase = createAdminClient();
   const [teams, matches] = await Promise.all([fetchTeams(adminSupabase), fetchMatches(adminSupabase)]);
+  return buildProjectionContextFromMatches(teams, matches);
+}
 
+function buildProjectionContextFromMatches(
+  teams: Team[],
+  matches: MatchRow[]
+): ProjectionContext {
   const projectedStandings = buildProjectedGroupStandings(
     matches.map((match) => ({
       id: match.id,
@@ -460,6 +613,70 @@ async function fetchProjectionContext(): Promise<ProjectionContext> {
     groupTeamsByGroup,
     thirdPlacePool
   };
+}
+
+async function fetchAllUserIds(
+  adminSupabase: ReturnType<typeof createAdminClient>
+): Promise<string[]> {
+  const { data: userRows, error: usersError } = await adminSupabase.from("users").select("id");
+  if (usersError) {
+    throw new Error(usersError.message);
+  }
+
+  return Array.from(
+    new Set((((userRows as UserIdRow[] | null) ?? []).map((row) => row.id.trim()).filter(Boolean)))
+  );
+}
+
+function buildGlobalProjectedRankedEntries(
+  userIds: string[],
+  summaries: Map<string, ProjectedGroupPhaseUserSummary>
+) {
+  return assignDeterministicRanks(
+    userIds.map((userId) => ({
+      user_id: userId,
+      total_points: summaries.get(userId)?.projectedPoints ?? 0
+    }))
+  );
+}
+
+async function buildProjectedGlobalRankedEntriesForContext(
+  userIds: string[],
+  context: ProjectionContext
+) {
+  const adminSupabase = createAdminClient();
+  const [groupSeedRows, thirdPlaceRows] = await Promise.all([
+    fetchGroupSeedRankingsForUsers(adminSupabase, userIds),
+    fetchThirdPlaceRankingsForUsers(adminSupabase, userIds)
+  ]);
+
+  const groupedRankings = groupSeedRankingsByUser(
+    groupSeedRows.map((row) => ({
+      ...row,
+      group_name: normalizeGroupKey(row.group_name) ?? row.group_name
+    }))
+  );
+  const groupedThirdPlaceRankings = thirdPlaceRankingsByUser(thirdPlaceRows);
+
+  const summaries = new Map<string, ProjectedGroupPhaseUserSummary>();
+  const maxPoints = context.groupTeamsByGroup.size * GROUP_PHASE_GROUP_MAX_POINTS;
+  for (const userId of userIds) {
+    const snapshot = buildGroupPhaseSnapshot({
+      userId,
+      groupedRankings,
+      groupedThirdPlaceRankings
+    });
+
+    summaries.set(userId, {
+      userId,
+      snapshot,
+      projectedPoints: roundProjectedPoints(computeProjectedGroupPhasePoints(snapshot, context)),
+      maxPoints,
+      hasSnapshot: Boolean(snapshot?.groupRankings.length || snapshot?.thirdPlaceRankings.length)
+    });
+  }
+
+  return buildGlobalProjectedRankedEntries(userIds, summaries);
 }
 
 function computeProjectedGroupPhasePoints(
@@ -670,6 +887,129 @@ function deriveProjectionKey(matches: MatchRow[]): string {
 
   const firstScheduled = groupStageMatches.find((match) => match.id);
   return firstScheduled?.id ? `group:${firstScheduled.id}:pre` : "group:pre";
+}
+
+export function buildProjectedGlobalHistoryCheckpointStates(
+  matches: MatchRow[],
+  checkpointTimestampsByMatchId: ReadonlyMap<string, string> = new Map()
+): ProjectionCheckpointState[] {
+  const groupStageMatches = matches
+    .filter((match) => Boolean(normalizeGroupKey(match.group_name) ?? match.group_name))
+    .sort((left, right) => {
+      const kickoffDelta =
+        new Date(left.kickoff_time ?? 0).getTime() - new Date(right.kickoff_time ?? 0).getTime();
+      if (kickoffDelta !== 0) {
+        return kickoffDelta;
+      }
+      return left.id.localeCompare(right.id);
+    });
+
+  if (groupStageMatches.length === 0) {
+    return [];
+  }
+
+  const activeCheckpointMatches = groupStageMatches.filter(
+    (match) => match.status === "live" || match.status === "final"
+  );
+  const checkpointStates: ProjectionCheckpointState[] = [];
+
+  const preMatches = matches.map((match) =>
+    isGroupStageMatch(match)
+      ? {
+          ...match,
+          status: "scheduled" as const,
+          home_score: null,
+          away_score: null
+        }
+      : { ...match }
+  );
+  checkpointStates.push({
+    projectionKey: deriveProjectionKey(preMatches),
+    createdAt: derivePreCheckpointTimestamp(groupStageMatches),
+    matches: preMatches
+  });
+
+  for (let index = 0; index < activeCheckpointMatches.length; index += 1) {
+    const checkpointMatch = activeCheckpointMatches[index];
+    const includedMatchIds = new Set(activeCheckpointMatches.slice(0, index + 1).map((match) => match.id));
+    const checkpointMatches = matches.map((match) => {
+      if (!isGroupStageMatch(match)) {
+        return { ...match };
+      }
+
+      if (includedMatchIds.has(match.id)) {
+        return { ...match };
+      }
+
+      return {
+        ...match,
+        status: "scheduled" as const,
+        home_score: null,
+        away_score: null
+      };
+    });
+
+    checkpointStates.push({
+      projectionKey: deriveProjectionKey(checkpointMatches),
+      createdAt:
+        checkpointTimestampsByMatchId.get(checkpointMatch.id) ??
+        checkpointMatch.kickoff_time ??
+        null,
+      matches: checkpointMatches
+    });
+  }
+
+  const checkpointByKey = new Map<string, ProjectionCheckpointState>();
+  for (const state of checkpointStates) {
+    checkpointByKey.set(state.projectionKey, state);
+  }
+
+  return Array.from(checkpointByKey.values());
+}
+
+function isGroupStageMatch(match: MatchRow) {
+  return Boolean(normalizeGroupKey(match.group_name) ?? match.group_name);
+}
+
+function derivePreCheckpointTimestamp(matches: MatchRow[]): string | null {
+  const firstKickoff = matches.find((match) => match.kickoff_time)?.kickoff_time ?? null;
+  if (!firstKickoff) {
+    return null;
+  }
+
+  const preTime = new Date(firstKickoff).getTime() - 60_000;
+  return Number.isFinite(preTime) ? new Date(preTime).toISOString() : firstKickoff;
+}
+
+async function fetchCheckpointTimestampsByMatchId(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matches: MatchRow[]
+): Promise<Map<string, string>> {
+  const finalizedMatchIds = matches
+    .filter((match) => isGroupStageMatch(match) && (match.status === "live" || match.status === "final"))
+    .map((match) => match.id);
+
+  if (finalizedMatchIds.length === 0) {
+    return new Map();
+  }
+
+  const { data, error } = await adminSupabase
+    .from("match_events")
+    .select("match_id,event_type,created_at")
+    .in("match_id", finalizedMatchIds)
+    .in("event_type", ["sync", "finalize", "override", "batch_test_finalize"])
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const timestampByMatchId = new Map<string, string>();
+  for (const row of ((data as MatchEventRow[] | null) ?? [])) {
+    timestampByMatchId.set(row.match_id, row.created_at);
+  }
+
+  return timestampByMatchId;
 }
 
 function buildGroupPhaseSnapshot(input: {
