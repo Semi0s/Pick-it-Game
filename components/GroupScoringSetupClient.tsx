@@ -175,6 +175,10 @@ export function GroupScoringSetupClient({
               </label>
             </div>
 
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-700">
+              If a legacy phase deadline has already passed, PICK-IT will lock that phase at the official tournament cutoff.
+            </div>
+
             {message ? (
               <div
                 className={`rounded-lg px-3 py-3 text-sm font-semibold ${

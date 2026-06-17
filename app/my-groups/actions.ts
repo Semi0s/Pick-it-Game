@@ -6,6 +6,7 @@ import { fetchBooleanAppSetting, fetchIntegerAppSetting } from "@/lib/app-settin
 import { normalizeAccessCode } from "@/lib/access-codes";
 import { buildGroupInviteEmailCopy, getSafeEmailLanguage } from "@/lib/email-copy";
 import { ensureUserCanJoinAnotherGroup, fetchJoinedPlayerGroupCount } from "@/lib/group-membership-limits";
+import { LEGACY_GROUP_STAGE_MAX_DUE_DATE, resolveLegacyScoringSetupDueDates } from "@/lib/group-scoring-setup";
 import { GROUP_AVATAR_IMAGE_UPLOAD_POLICY } from "@/lib/image-upload-config";
 import { validateImageUploadFile } from "@/lib/image-upload-validation";
 import {
@@ -81,7 +82,6 @@ const DEFAULT_INVITE_EXPIRY_DAYS = 14;
 const GROUP_INVITE_RESEND_COOLDOWN_MS = 60 * 1000;
 const GROUP_INVITE_RESEND_DAILY_LIMIT = 5;
 const GROUP_INVITE_MANAGER_DAILY_LIMIT = 50;
-const GROUP_SCORING_SETUP_GROUP_STAGE_MAX_DUE_DATE = "2026-06-13T00:00:00.000Z";
 const MAX_CUSTOM_TROPHIES_PER_GROUP = 10;
 const MAX_GROUP_INVITE_CUSTOM_MESSAGE_LENGTH = 280;
 const MAX_MANAGED_GROUP_INVITE_CODE_ATTEMPTS = 5;
@@ -4281,21 +4281,6 @@ export async function saveLegacyGroupScoringSetupAction(
   const groupBonusMode = MANAGER_COMPATIBLE_GROUP_SCORING_DEFAULTS.groupBonusMode;
   const groupBonusPreset = GROUP_BONUS_MODE_PRESETS[groupBonusMode];
 
-  const parsedGroupStageDueAt = parseMidnightGmtDateKey(input.groupStagePicksDueAt);
-  const parsedKnockoutDueAt = parseMidnightGmtDateKey(input.knockoutPicksDueAt);
-  if (!parsedGroupStageDueAt || !parsedKnockoutDueAt) {
-    return { ok: false, message: "Choose valid due dates for both group and knockout picks." };
-  }
-
-  const now = Date.now();
-  if (parsedGroupStageDueAt.getTime() <= now || parsedKnockoutDueAt.getTime() <= now) {
-    return { ok: false, message: "Both due dates must be in the future." };
-  }
-
-  if (parsedKnockoutDueAt.getTime() <= parsedGroupStageDueAt.getTime()) {
-    return { ok: false, message: "Knockout picks due date must be after the group-stage due date." };
-  }
-
   try {
     const adminSupabase = createAdminClient();
     const managedGroup = await getManagedGroup(adminSupabase, trimmedGroupId, currentUser);
@@ -4303,13 +4288,16 @@ export async function saveLegacyGroupScoringSetupAction(
       return { ok: false, message: "You do not manage that group." };
     }
 
-    const { knockoutDeadline } = await fetchTournamentPickLockDeadlines(adminSupabase);
-    if (parsedGroupStageDueAt.getTime() > new Date(GROUP_SCORING_SETUP_GROUP_STAGE_MAX_DUE_DATE).getTime()) {
-      return { ok: false, message: "Group-stage picks due date must be on or before June 13." };
-    }
-
-    if (knockoutDeadline && parsedKnockoutDueAt.getTime() > new Date(knockoutDeadline).getTime()) {
-      return { ok: false, message: "Knockout picks due date must be on or before the start of the knockout phase." };
+    const { groupStageDeadline, knockoutDeadline } = await fetchTournamentPickLockDeadlines(adminSupabase);
+    const resolvedDueDates = resolveLegacyScoringSetupDueDates({
+      groupStagePicksDueAt: input.groupStagePicksDueAt,
+      knockoutPicksDueAt: input.knockoutPicksDueAt,
+      now: new Date(),
+      groupStageDeadlineIso: groupStageDeadline ?? LEGACY_GROUP_STAGE_MAX_DUE_DATE,
+      knockoutDeadlineIso: knockoutDeadline
+    });
+    if (!resolvedDueDates.ok) {
+      return { ok: false, message: resolvedDueDates.message };
     }
 
     const { data: existingRulesets, error: existingRulesetsError } = await adminSupabase
@@ -4360,8 +4348,8 @@ export async function saveLegacyGroupScoringSetupAction(
         group_stage_prediction_depth: groupStagePredictionDepth,
         full_match_scoring_variant: null,
         group_bonus_mode: groupBonusMode,
-        group_stage_picks_due_at: parsedGroupStageDueAt.toISOString(),
-        knockout_picks_due_at: parsedKnockoutDueAt.toISOString(),
+        group_stage_picks_due_at: resolvedDueDates.groupStageDueAt.toISOString(),
+        knockout_picks_due_at: resolvedDueDates.knockoutDueAt.toISOString(),
         scoring_settings_locked_at: lockedAt,
         early_group_stage_completion_bonus: groupBonusPreset.earlyGroupStageCompletionBonus,
         knockout_completion_bonus: groupBonusPreset.knockoutCompletionBonus,
@@ -6622,43 +6610,21 @@ function normalizeRequestedMembershipLimit(value?: number) {
   return Math.max(1, Math.floor(value));
 }
 
-function parseMidnightGmtDateKey(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return null;
-  }
-
-  const parsedDate = new Date(`${value}T00:00:00.000Z`);
-  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
-}
-
 async function fetchTournamentPickLockDeadlines(adminSupabase: ReturnType<typeof createAdminClient>) {
-  const [groupDeadlineResult, knockoutDeadlineResult] = await Promise.all([
-    adminSupabase
-      .from("matches")
-      .select("kickoff_time")
-      .eq("stage", "group")
-      .order("kickoff_time", { ascending: true })
-      .limit(1)
-      .maybeSingle(),
-    adminSupabase
-      .from("matches")
-      .select("kickoff_time")
-      .in("stage", ["r32", "round_of_32"])
-      .order("kickoff_time", { ascending: true })
-      .limit(1)
-      .maybeSingle()
-  ]);
-
-  if (groupDeadlineResult.error) {
-    throw new Error(groupDeadlineResult.error.message);
-  }
+  const knockoutDeadlineResult = await adminSupabase
+    .from("matches")
+    .select("kickoff_time")
+    .in("stage", ["r32", "round_of_32"])
+    .order("kickoff_time", { ascending: true })
+    .limit(1)
+    .maybeSingle();
 
   if (knockoutDeadlineResult.error) {
     throw new Error(knockoutDeadlineResult.error.message);
   }
 
   return {
-    groupStageDeadline: (groupDeadlineResult.data as { kickoff_time?: string | null } | null)?.kickoff_time ?? null,
+    groupStageDeadline: LEGACY_GROUP_STAGE_MAX_DUE_DATE,
     knockoutDeadline: (knockoutDeadlineResult.data as { kickoff_time?: string | null } | null)?.kickoff_time ?? null
   };
 }
