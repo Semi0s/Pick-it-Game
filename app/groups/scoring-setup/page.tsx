@@ -3,6 +3,7 @@ import { AppShell } from "@/components/AppShell";
 import { GroupScoringSetupClient } from "@/components/GroupScoringSetupClient";
 import { ManagementIntro } from "@/components/player-management/Shared";
 import { fetchManagedLegacyScoringGroups } from "@/lib/group-scoring-setup-gate";
+import { buildScoringSetupDateOptions, LEGACY_GROUP_STAGE_MAX_DUE_DATE } from "@/lib/group-scoring-setup";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -59,32 +60,19 @@ export default async function GroupScoringSetupPage({
 
 async function fetchScoringSetupDateOptions() {
   const adminSupabase = createAdminClient();
-  const [groupDeadlineResult, knockoutPhaseStartResult] = await Promise.all([
-    adminSupabase
-      .from("matches")
-      .select("kickoff_time")
-      .eq("stage", "group")
-      .order("kickoff_time", { ascending: true })
-      .limit(1)
-      .maybeSingle(),
-    adminSupabase
+  const knockoutPhaseStartResult = await adminSupabase
       .from("matches")
       .select("kickoff_time")
       .in("stage", ["r32", "round_of_32"])
       .order("kickoff_time", { ascending: true })
       .limit(1)
-      .maybeSingle()
-  ]);
-
-  if (groupDeadlineResult.error) {
-    throw new Error(groupDeadlineResult.error.message);
-  }
+      .maybeSingle();
 
   if (knockoutPhaseStartResult.error) {
     throw new Error(knockoutPhaseStartResult.error.message);
   }
 
-  const groupStageDates = buildMidnightGmtDateOptions("2026-06-13T00:00:00.000Z");
+  const groupStageDates = buildMidnightGmtDateOptions(LEGACY_GROUP_STAGE_MAX_DUE_DATE);
   const knockoutDates = buildMidnightGmtDateOptions(
     (knockoutPhaseStartResult.data as { kickoff_time?: string | null } | null)?.kickoff_time ?? null
   );
@@ -96,29 +84,5 @@ async function fetchScoringSetupDateOptions() {
 }
 
 function buildMidnightGmtDateOptions(deadlineIso: string | null) {
-  if (!deadlineIso) {
-    return [];
-  }
-
-  const now = new Date();
-  const startUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-  const deadline = new Date(deadlineIso);
-  const endUtc = new Date(Date.UTC(deadline.getUTCFullYear(), deadline.getUTCMonth(), deadline.getUTCDate()));
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC"
-  });
-
-  const options: Array<{ value: string; label: string }> = [];
-  for (let cursor = startUtc.getTime(); cursor <= endUtc.getTime(); cursor += 24 * 60 * 60 * 1000) {
-    const date = new Date(cursor);
-    const value = date.toISOString().slice(0, 10);
-    options.push({
-      value,
-      label: formatter.format(date)
-    });
-  }
-
-  return options;
+  return buildScoringSetupDateOptions(deadlineIso, new Date());
 }
