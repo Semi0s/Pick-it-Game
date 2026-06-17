@@ -1,4 +1,5 @@
 export const LEGACY_GROUP_STAGE_MAX_DUE_DATE = "2026-06-13T00:00:00.000Z";
+export const LEGACY_KNOCKOUT_DEFAULT_DUE_DATE = "2026-06-28T00:00:00.000Z";
 
 export type ScoringSetupDateOption = {
   value: string;
@@ -61,15 +62,19 @@ export function resolveLegacyScoringSetupDueDates(input: {
   groupStageDeadlineIso?: string | null;
   knockoutDeadlineIso?: string | null;
 }): ResolveLegacyScoringSetupDueDatesResult {
-  const parsedGroupStageDueAt = parseMidnightGmtDateKey(input.groupStagePicksDueAt);
-  const parsedKnockoutDueAt = parseMidnightGmtDateKey(input.knockoutPicksDueAt);
+  const groupStageDeadline = parseDeadlineIso(input.groupStageDeadlineIso ?? LEGACY_GROUP_STAGE_MAX_DUE_DATE);
+  const knockoutDeadline = parseDeadlineIso(input.knockoutDeadlineIso ?? LEGACY_KNOCKOUT_DEFAULT_DUE_DATE);
+  const now = input.now ?? new Date();
+  const parsedGroupStageDueAt =
+    parseMidnightGmtDateKey(input.groupStagePicksDueAt) ??
+    (groupStageDeadline && now.getTime() > groupStageDeadline.getTime() ? groupStageDeadline : null);
+  const parsedKnockoutDueAt =
+    parseMidnightGmtDateKey(input.knockoutPicksDueAt) ??
+    knockoutDeadline;
+
   if (!parsedGroupStageDueAt || !parsedKnockoutDueAt) {
     return { ok: false, message: "Choose valid due dates for both group and knockout picks." };
   }
-
-  const groupStageDeadline = parseDeadlineIso(input.groupStageDeadlineIso ?? LEGACY_GROUP_STAGE_MAX_DUE_DATE);
-  const knockoutDeadline = parseDeadlineIso(input.knockoutDeadlineIso);
-  const now = input.now ?? new Date();
 
   const resolvedGroupStageDueAt = resolvePhaseDueAt({
     requestedDueAt: parsedGroupStageDueAt,

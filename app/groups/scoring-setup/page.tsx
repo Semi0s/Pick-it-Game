@@ -3,7 +3,11 @@ import { AppShell } from "@/components/AppShell";
 import { GroupScoringSetupClient } from "@/components/GroupScoringSetupClient";
 import { ManagementIntro } from "@/components/player-management/Shared";
 import { fetchManagedLegacyScoringGroups } from "@/lib/group-scoring-setup-gate";
-import { buildScoringSetupDateOptions, LEGACY_GROUP_STAGE_MAX_DUE_DATE } from "@/lib/group-scoring-setup";
+import {
+  buildScoringSetupDateOptions,
+  LEGACY_GROUP_STAGE_MAX_DUE_DATE,
+  LEGACY_KNOCKOUT_DEFAULT_DUE_DATE
+} from "@/lib/group-scoring-setup";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -74,7 +78,8 @@ async function fetchScoringSetupDateOptions() {
 
   const groupStageDates = buildMidnightGmtDateOptions(LEGACY_GROUP_STAGE_MAX_DUE_DATE);
   const knockoutDates = buildMidnightGmtDateOptions(
-    (knockoutPhaseStartResult.data as { kickoff_time?: string | null } | null)?.kickoff_time ?? null
+    (knockoutPhaseStartResult.data as { kickoff_time?: string | null } | null)?.kickoff_time ??
+      LEGACY_KNOCKOUT_DEFAULT_DUE_DATE
   );
 
   return {
