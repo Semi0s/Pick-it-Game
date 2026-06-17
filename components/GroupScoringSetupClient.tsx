@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveLegacyGroupScoringSetupAction } from "@/app/my-groups/actions";
 import { ActionButton, ManagementBadge } from "@/components/player-management/Shared";
@@ -48,6 +48,22 @@ export function GroupScoringSetupClient({
     () => availableKnockoutDates.filter((option) => option.value > formState.groupStagePicksDueAt),
     [availableKnockoutDates, formState.groupStagePicksDueAt]
   );
+
+  useEffect(() => {
+    if (filteredKnockoutDates.length === 0) {
+      return;
+    }
+
+    const hasSelectedKnockoutDate = filteredKnockoutDates.some((option) => option.value === formState.knockoutPicksDueAt);
+    if (hasSelectedKnockoutDate) {
+      return;
+    }
+
+    setFormState((current) => ({
+      ...current,
+      knockoutPicksDueAt: filteredKnockoutDates[0]?.value ?? current.knockoutPicksDueAt
+    }));
+  }, [filteredKnockoutDates, formState.knockoutPicksDueAt]);
 
   const activeGroup = useMemo(
     () => groups.find((group) => group.groupId === activeGroupId) ?? groups[0] ?? null,
@@ -137,7 +153,11 @@ export function GroupScoringSetupClient({
                       knockoutPicksDueAt:
                         current.knockoutPicksDueAt > event.target.value
                           ? current.knockoutPicksDueAt
-                          : (availableKnockoutDates.find((option) => option.value > event.target.value)?.value ?? "")
+                          : (
+                              availableKnockoutDates.find((option) => option.value > event.target.value)?.value ??
+                              availableKnockoutDates[0]?.value ??
+                              ""
+                            )
                     }))
                   }
                   className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
@@ -163,7 +183,7 @@ export function GroupScoringSetupClient({
                   }
                   className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-800 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
                 >
-                  {filteredKnockoutDates.map((option) => (
+                  {(filteredKnockoutDates.length > 0 ? filteredKnockoutDates : availableKnockoutDates).map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>

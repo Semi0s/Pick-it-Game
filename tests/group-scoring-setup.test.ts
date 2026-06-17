@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildScoringSetupDateOptions,
   LEGACY_GROUP_STAGE_MAX_DUE_DATE,
+  LEGACY_KNOCKOUT_DEFAULT_DUE_DATE,
   resolveLegacyScoringSetupDueDates
 } from "../lib/group-scoring-setup.ts";
 
@@ -51,4 +52,21 @@ test("resolveLegacyScoringSetupDueDates still rejects knockout deadlines beyond 
     ok: false,
     message: "Knockout picks due date must be on or before the start of the knockout phase."
   });
+});
+
+test("resolveLegacyScoringSetupDueDates falls back to the knockout default when the submitted value is blank", () => {
+  const result = resolveLegacyScoringSetupDueDates({
+    groupStagePicksDueAt: "2026-06-13",
+    knockoutPicksDueAt: "",
+    now: new Date("2026-06-17T12:00:00.000Z"),
+    groupStageDeadlineIso: LEGACY_GROUP_STAGE_MAX_DUE_DATE,
+    knockoutDeadlineIso: null
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.knockoutDueAt.toISOString(), LEGACY_KNOCKOUT_DEFAULT_DUE_DATE);
 });
