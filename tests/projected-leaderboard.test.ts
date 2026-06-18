@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createEmptyDashboardScoringMovementSummary } from "../lib/leaderboard-movement-helpers.ts";
-import { buildProjectedGlobalHistoryCheckpointStates } from "../lib/projected-leaderboard.ts";
+import {
+  buildProjectedGlobalHistoryCheckpointStates,
+  buildProjectedLeaderboardSnapshotInsertRows
+} from "../lib/projected-leaderboard.ts";
 import {
   selectDashboardProjectedScoreSummary,
   shouldUseProjectedLeaderboardMode
@@ -257,4 +260,30 @@ test("projected history checkpoints reset future group matches until their resul
   assert.equal(afterSecondResult?.status, "final");
   assert.equal(afterSecondResult?.home_score, 1);
   assert.equal(afterSecondResult?.away_score, 1);
+});
+
+test("projected snapshot insert rows omit created_at when no checkpoint timestamp is provided", () => {
+  const rows = buildProjectedLeaderboardSnapshotInsertRows({
+    scopeType: "global",
+    projectionKey: "group:g-01",
+    createdAt: null,
+    rankedEntries: [{ user_id: "user-1", rank: 1, total_points: 121.234 }]
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal("created_at" in rows[0]!, false);
+  assert.equal(rows[0]?.projected_points, 121.234);
+});
+
+test("projected snapshot insert rows include created_at when a checkpoint timestamp exists", () => {
+  const rows = buildProjectedLeaderboardSnapshotInsertRows({
+    scopeType: "group",
+    groupId: "group-1",
+    projectionKey: "group:g-02",
+    createdAt: "2026-06-18T14:00:00.000Z",
+    rankedEntries: [{ user_id: "user-2", rank: 3, total_points: 99.5 }]
+  });
+
+  assert.equal(rows[0]?.created_at, "2026-06-18T14:00:00.000Z");
+  assert.equal(rows[0]?.group_id, "group-1");
 });

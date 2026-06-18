@@ -133,7 +133,14 @@ export function sortLeaderboardEntries<T extends LeaderboardComparable>(entries:
 }
 
 export function assignDeterministicRanks<T extends LeaderboardComparable>(entries: T[]): Array<T & { rank: number }> {
-  const sortedEntries = sortLeaderboardEntries(entries);
+  return assignDeterministicRanksWithComparator(entries, compareLeaderboardEntries);
+}
+
+export function assignDeterministicRanksWithComparator<T extends LeaderboardComparable>(
+  entries: T[],
+  comparator: (left: T, right: T) => number
+): Array<T & { rank: number }> {
+  const sortedEntries = [...entries].sort(comparator);
   let currentRank = 0;
   let previousPoints: number | null = null;
 
