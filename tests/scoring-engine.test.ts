@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   assertScoreBreakdownInvariant,
   assignDeterministicRanks,
+  assignDeterministicRanksWithComparator,
   calculateGroupMatchScoreLineItem,
   calculateKnockoutMatchScoreLineItem,
   calculateUserScoreBreakdown,
@@ -279,6 +280,32 @@ test("group leaderboard filtering uses the same deterministic score ordering for
       { user_id: "user-a", rank: 1 },
       { user_id: "user-c", rank: 1 },
       { user_id: "user-d", rank: 3 }
+    ]
+  );
+});
+
+test("custom leaderboard comparator can break projected ties without changing shared ranks", () => {
+  const ranked = assignDeterministicRanksWithComparator(
+    [
+      { user_id: "user-z", total_points: 12, tiebreak_points: 4, tiebreak_name: "Zulu" },
+      { user_id: "user-a", total_points: 12, tiebreak_points: 6, tiebreak_name: "Alpha" },
+      { user_id: "user-b", total_points: 12, tiebreak_points: 6, tiebreak_name: "Bravo" },
+      { user_id: "user-c", total_points: 9, tiebreak_points: 8, tiebreak_name: "Charlie" }
+    ],
+    (left, right) =>
+      right.total_points - left.total_points ||
+      right.tiebreak_points - left.tiebreak_points ||
+      left.tiebreak_name.localeCompare(right.tiebreak_name) ||
+      left.user_id.localeCompare(right.user_id)
+  );
+
+  assert.deepEqual(
+    ranked.map((entry) => ({ user_id: entry.user_id, rank: entry.rank })),
+    [
+      { user_id: "user-a", rank: 1 },
+      { user_id: "user-b", rank: 1 },
+      { user_id: "user-z", rank: 1 },
+      { user_id: "user-c", rank: 4 }
     ]
   );
 });

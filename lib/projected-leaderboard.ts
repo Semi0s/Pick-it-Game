@@ -166,6 +166,7 @@ export async function persistProjectedLeaderboardSnapshots(input: {
   if (!input.projectionKey || input.rankedEntries.length === 0 || !hasSupabaseConfig()) {
     return;
   }
+  const projectionKey = input.projectionKey;
 
   const adminSupabase = createAdminClient();
   const userIds = Array.from(new Set(input.rankedEntries.map((entry) => entry.user_id).filter(Boolean)));
@@ -190,21 +191,51 @@ export async function persistProjectedLeaderboardSnapshots(input: {
     throw new Error(deleteError.message);
   }
 
-  const { error: insertError } = await adminSupabase.from("projected_leaderboard_snapshots").insert(
-    input.rankedEntries.map((entry) => ({
+  const { error: insertError } = await adminSupabase
+    .from("projected_leaderboard_snapshots")
+    .insert(
+      buildProjectedLeaderboardSnapshotInsertRows({
+        ...input,
+        projectionKey
+      })
+    );
+
+  if (insertError) {
+    throw new Error(insertError.message);
+  }
+}
+
+export function buildProjectedLeaderboardSnapshotInsertRows(input: {
+  scopeType: "global" | "group";
+  groupId?: string | null;
+  projectionKey: string;
+  createdAt?: string | null;
+  rankedEntries: Array<{ user_id: string; rank: number; total_points: number }>;
+}) {
+  return input.rankedEntries.map((entry) => {
+    const row = {
       projection_key: input.projectionKey,
       scope_type: input.scopeType,
       group_id: input.scopeType === "group" ? input.groupId ?? null : null,
       user_id: entry.user_id,
       rank: entry.rank,
-      projected_points: roundProjectedPoints(entry.total_points),
-      created_at: input.createdAt ?? undefined
-    }))
-  );
+      projected_points: roundProjectedPoints(entry.total_points)
+    } as {
+      projection_key: string;
+      scope_type: "global" | "group";
+      group_id: string | null;
+      user_id: string;
+      rank: number;
+      projected_points: number;
+      created_at?: string;
+    };
 
-  if (insertError) {
-    throw new Error(insertError.message);
-  }
+    if (input.createdAt) {
+      row.created_at = input.createdAt;
+    }
+
+    return row;
+  });
 }
 
 export async function persistProjectedGlobalSnapshotsForAllUsers(): Promise<{
