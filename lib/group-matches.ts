@@ -24,7 +24,7 @@ export async function fetchGroupMatchesForPredictions(): Promise<MatchWithTeams[
   const supabase = createClient();
   const { data, error } = await supabase
     .from("matches")
-    .select("id,stage,group_name,status,home_team_id,away_team_id,home_score,away_score,winner_team_id,kickoff_time")
+    .select("id,external_id,stage,group_name,status,home_team_id,away_team_id,home_score,away_score,winner_team_id,kickoff_time")
     .eq("stage", "group");
 
   if (error) {

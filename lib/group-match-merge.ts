@@ -2,6 +2,7 @@ import type { MatchStatus, MatchWithTeams, Team } from "./types";
 
 export type GroupMatchRow = {
   id: string;
+  external_id?: string | null;
   stage: "group";
   group_name?: string | null;
   status: MatchStatus;
@@ -21,6 +22,7 @@ export function mergeGroupMatchRows(
   resolveTeam: TeamResolver
 ): MatchWithTeams[] {
   const localMatchesById = new Map(localMatches.map((match) => [match.id, match] as const));
+  const localMatchesByExternalId = new Map(localMatches.map((match) => [match.id, match] as const));
   const localMatchesByFixtureKey = new Map(
     localMatches.map((match) => [toFixtureKey(match.groupName, match.homeTeamId, match.awayTeamId), match] as const)
   );
@@ -29,6 +31,7 @@ export function mergeGroupMatchRows(
     .map((row) => {
       const localMatch =
         localMatchesById.get(row.id) ??
+        localMatchesByExternalId.get(row.external_id ?? "") ??
         localMatchesByFixtureKey.get(
           toFixtureKey(row.group_name ?? undefined, row.home_team_id ?? undefined, row.away_team_id ?? undefined)
         ) ??

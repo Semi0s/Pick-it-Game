@@ -99,6 +99,44 @@ test("group match rows keep local metadata when the database row is partial", ()
   assert.equal(matches[0]?.awayScore, 1);
 });
 
+test("group match rows fall back through external fixture ids when the synced row id changes", () => {
+  const localMatches = [
+    createLocalMatch({
+      id: "g-10",
+      groupName: "E",
+      homeTeamId: "civ",
+      awayTeamId: "ecu",
+      kickoffTime: "2026-06-14T19:00:00.000Z"
+    })
+  ];
+
+  const matches = mergeGroupMatchRows(
+    [
+      {
+        id: "api-football-fixture-9910",
+        external_id: "g-10",
+        stage: "group",
+        status: "final",
+        home_score: 1,
+        away_score: 1,
+        winner_team_id: null,
+        kickoff_time: "2026-06-14T19:00:00.000Z"
+      }
+    ],
+    localMatches,
+    () => undefined
+  );
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0]?.id, "api-football-fixture-9910");
+  assert.equal(matches[0]?.groupName, "E");
+  assert.equal(matches[0]?.homeTeamId, "civ");
+  assert.equal(matches[0]?.awayTeamId, "ecu");
+  assert.equal(matches[0]?.homeScore, 1);
+  assert.equal(matches[0]?.awayScore, 1);
+  assert.equal(matches[0]?.status, "final");
+});
+
 test("group match rows sort by kickoff time after merging", () => {
   const localMatches = [
     createLocalMatch({
