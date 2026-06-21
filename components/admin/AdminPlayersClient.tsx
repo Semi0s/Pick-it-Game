@@ -7,6 +7,7 @@ import {
   deleteUserAndStartOverAction,
   fetchAdminPlayerHealthAction,
   fetchLeaderboardFeatureSettingsAction,
+  fetchProjectedLeaderboardAuditAction,
   fetchPublicSignupSettingAction,
   getUserDemotionImpactAction,
   fetchRequiredLegalDocumentAction,
@@ -73,10 +74,54 @@ type SignupDateFilterMode = (typeof SIGNUP_DATE_FILTERS)[number]["value"];
 
 type AdminManagementTab = "setup" | "users" | "groups";
 
+type ProjectedAuditRow = {
+  userId: string;
+  name: string;
+  email: string;
+  rank: number;
+  rawProjectedPoints: number;
+  projectedPoints: number;
+  displayRoundDelta: number;
+  thirdPlaceQualificationPoints: number;
+  topTwoBonus: number;
+  fullLadderBonus: number;
+  hasSnapshot: boolean;
+};
+
+type ProjectedAuditBreakdown = {
+  totalProjectedPoints: number;
+  winnerPoints: number;
+  runnerUpPoints: number;
+  thirdPoints: number;
+  topTwoBonus: number;
+  thirdPlaceQualificationPoints: number;
+  fullLadderBonus: number;
+  groups: Array<{
+    groupName: string;
+    totalProjectedPoints: number;
+    winnerPoints: number;
+    runnerUpPoints: number;
+    thirdPoints: number;
+    topTwoBonus: number;
+    thirdPlaceQualificationPoints: number;
+    thirdQualificationProbability: number;
+    fullLadderBonus: number;
+    predictedThirdTeamId: string | null;
+  }>;
+};
+
 export function AdminPlayersClient() {
   const [players, setPlayers] = useState<AdminPlayerHealthRow[]>([]);
   const [leaderboardSettings, setLeaderboardSettings] = useState<LeaderboardFeatureSettings | null>(null);
   const [publicSignupEnabled, setPublicSignupEnabled] = useState<boolean | null>(null);
+  const [projectedAudit, setProjectedAudit] = useState<{
+    projectionKey: string | null;
+    generatedAt: string;
+    topRows: ProjectedAuditRow[];
+    selectedRow: ProjectedAuditRow | null;
+    selectedBreakdown: ProjectedAuditBreakdown | null;
+  } | null>(null);
+  const [selectedProjectedAuditUserId, setSelectedProjectedAuditUserId] = useState("");
   const [legalDocument, setLegalDocument] = useState<LegalDocument | null>(null);
   const [systemReadiness, setSystemReadiness] = useState<SystemReadinessReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -151,6 +196,25 @@ export function AdminPlayersClient() {
     setPublicSignupEnabled(result.enabled);
   }
 
+  const loadProjectedAudit = useCallback(async (selectedUserId?: string) => {
+    const result = await fetchProjectedLeaderboardAuditAction({
+      selectedUserId: (selectedUserId ?? "").trim() || null,
+      limit: 10
+    });
+    if (!result.ok) {
+      setMessage({ tone: "error", text: result.message });
+      return;
+    }
+
+    setProjectedAudit({
+      projectionKey: result.projectionKey,
+      generatedAt: result.generatedAt,
+      topRows: result.topRows as ProjectedAuditRow[],
+      selectedRow: result.selectedRow as ProjectedAuditRow | null,
+      selectedBreakdown: result.selectedBreakdown as ProjectedAuditBreakdown | null
+    });
+  }, []);
+
   const loadLegalDocument = useCallback(async (language = legalEditor.language) => {
     const result = await fetchRequiredLegalDocumentAction(legalEditor.documentType, language);
     if (!result.ok) {
@@ -189,10 +253,10 @@ export function AdminPlayersClient() {
   }
 
   useEffect(() => {
-    Promise.all([loadPlayers(), loadLeaderboardSettings(), loadPublicSignupSetting(), loadLegalDocument(), loadSystemReadiness()]).finally(() =>
+    Promise.all([loadPlayers(), loadLeaderboardSettings(), loadProjectedAudit(), loadPublicSignupSetting(), loadLegalDocument(), loadSystemReadiness()]).finally(() =>
       setIsLoading(false)
     );
-  }, [loadLegalDocument]);
+  }, [loadLegalDocument, loadProjectedAudit]);
 
   useEffect(() => {
     void loadLegalDocument(legalEditor.language);
@@ -249,7 +313,7 @@ export function AdminPlayersClient() {
   async function refreshPlayers() {
     setMessage(null);
     setIsLoading(true);
-    await Promise.all([loadPlayers(), loadLeaderboardSettings(), loadPublicSignupSetting(), loadLegalDocument(), loadSystemReadiness()]);
+    await Promise.all([loadPlayers(), loadLeaderboardSettings(), loadProjectedAudit(selectedProjectedAuditUserId), loadPublicSignupSetting(), loadLegalDocument(), loadSystemReadiness()]);
     setIsLoading(false);
   }
 
@@ -652,6 +716,150 @@ export function AdminPlayersClient() {
                   }}
                 />
               </div>
+            </div>
+          </AdminToolCard>
+
+          <AdminToolCard
+            title="Projected leaderboard audit"
+            storageKey="admin-players:projected-leaderboard-audit:v1"
+            badge={<ManagementBadge label="fairness check" tone="warning" />}
+          >
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="min-w-[14rem] flex-1">
+                  <span className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">Inspect player</span>
+                  <select
+                    value={selectedProjectedAuditUserId}
+                    onChange={(event) => setSelectedProjectedAuditUserId(event.target.value)}
+                    className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2.5 text-sm font-semibold text-gray-900 outline-none focus:border-accent focus:ring-2 focus:ring-accent-light"
+                  >
+                    <option value="">Top 10 only</option>
+                    {players
+                      .slice()
+                      .sort((left, right) => left.displayName.localeCompare(right.displayName))
+                      .map((player) =>
+                        player.appUserId ? (
+                          <option key={player.appUserId} value={player.appUserId}>
+                            {player.displayName} · {player.email}
+                          </option>
+                        ) : null
+                      )}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void withAction("projected-leaderboard-audit", async () => {
+                      await loadProjectedAudit(selectedProjectedAuditUserId);
+                    });
+                  }}
+                  className="rounded-md border border-gray-300 bg-white px-3 py-2.5 text-sm font-bold text-gray-700 transition hover:border-accent hover:bg-accent-light disabled:opacity-60"
+                  disabled={activeActionKey === "projected-leaderboard-audit"}
+                >
+                  {activeActionKey === "projected-leaderboard-audit" ? "Refreshing..." : "Refresh audit"}
+                </button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <ManagementDatum label="Projection key" value={projectedAudit?.projectionKey ?? "—"} />
+                <ManagementDatum label="Generated" value={projectedAudit ? formatDate(projectedAudit.generatedAt) : "—"} />
+                <ManagementDatum label="Top row" value={projectedAudit?.topRows[0] ? `${projectedAudit.topRows[0].name} #${projectedAudit.topRows[0].rank}` : "—"} />
+                <ManagementDatum
+                  label="Selected"
+                  value={projectedAudit?.selectedRow ? `${projectedAudit.selectedRow.name} #${projectedAudit.selectedRow.rank}` : "Top 10 only"}
+                />
+              </div>
+
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black uppercase tracking-[0.16em] text-gray-500">Top projected rows</p>
+                    <p className="mt-1 text-sm font-semibold text-gray-600">
+                      Raw points drive rank. Rounded points are display only. Third-place credit is isolated here to spot bias quickly.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="min-w-full text-left text-sm">
+                    <thead className="text-xs font-black uppercase tracking-[0.16em] text-gray-500">
+                      <tr>
+                        <th className="pb-2 pr-3">Rank</th>
+                        <th className="pb-2 pr-3">Player</th>
+                        <th className="pb-2 pr-3">Raw</th>
+                        <th className="pb-2 pr-3">Shown</th>
+                        <th className="pb-2 pr-3">Round diff</th>
+                        <th className="pb-2 pr-3">3rd qual</th>
+                        <th className="pb-2 pr-3">Top 2 bonus</th>
+                        <th className="pb-2">Ladder bonus</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(projectedAudit?.topRows ?? []).map((row) => (
+                        <tr key={row.userId} className="border-t border-gray-100 align-top">
+                          <td className="py-2 pr-3 font-black text-gray-950">#{row.rank}</td>
+                          <td className="py-2 pr-3">
+                            <div className="font-black text-gray-950">{row.name}</div>
+                            <div className="text-xs font-semibold text-gray-500">{row.email}</div>
+                          </td>
+                          <td className="py-2 pr-3 font-semibold text-gray-800">{row.rawProjectedPoints.toFixed(3)}</td>
+                          <td className="py-2 pr-3 font-semibold text-gray-800">{row.projectedPoints.toFixed(1)}</td>
+                          <td className="py-2 pr-3 font-semibold text-amber-700">{row.displayRoundDelta.toFixed(3)}</td>
+                          <td className="py-2 pr-3 font-semibold text-gray-800">{row.thirdPlaceQualificationPoints.toFixed(3)}</td>
+                          <td className="py-2 pr-3 font-semibold text-gray-800">{row.topTwoBonus.toFixed(3)}</td>
+                          <td className="py-2 font-semibold text-gray-800">{row.fullLadderBonus.toFixed(3)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {projectedAudit?.selectedRow && projectedAudit.selectedBreakdown ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-black text-amber-900">{projectedAudit.selectedRow.name}</p>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+                        Raw {projectedAudit.selectedRow.rawProjectedPoints.toFixed(3)} · shown {projectedAudit.selectedRow.projectedPoints.toFixed(1)} · rank #{projectedAudit.selectedRow.rank}
+                      </p>
+                    </div>
+                    <ManagementBadge label={projectedAudit.selectedRow.hasSnapshot ? "Has snapshot" : "No snapshot"} tone={projectedAudit.selectedRow.hasSnapshot ? "success" : "warning"} />
+                  </div>
+
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <ManagementDatum label="Winner points" value={projectedAudit.selectedBreakdown.winnerPoints.toFixed(3)} />
+                    <ManagementDatum label="Runner-up points" value={projectedAudit.selectedBreakdown.runnerUpPoints.toFixed(3)} />
+                    <ManagementDatum label="Third-place exact" value={projectedAudit.selectedBreakdown.thirdPoints.toFixed(3)} />
+                    <ManagementDatum label="Third-place qual" value={projectedAudit.selectedBreakdown.thirdPlaceQualificationPoints.toFixed(3)} />
+                    <ManagementDatum label="Top two bonus" value={projectedAudit.selectedBreakdown.topTwoBonus.toFixed(3)} />
+                    <ManagementDatum label="Full ladder bonus" value={projectedAudit.selectedBreakdown.fullLadderBonus.toFixed(3)} />
+                    <ManagementDatum label="Projected total" value={projectedAudit.selectedBreakdown.totalProjectedPoints.toFixed(3)} />
+                    <ManagementDatum label="Display delta" value={projectedAudit.selectedRow.displayRoundDelta.toFixed(3)} />
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    {projectedAudit.selectedBreakdown.groups
+                      .slice()
+                      .sort((left, right) => right.totalProjectedPoints - left.totalProjectedPoints)
+                      .map((group) => (
+                        <div key={group.groupName} className="rounded-md border border-amber-200 bg-white px-3 py-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-black text-gray-950">Group {group.groupName}</p>
+                            <ManagementBadge label={`${group.totalProjectedPoints.toFixed(3)} pts`} tone="neutral" />
+                          </div>
+                          <p className="mt-1 text-xs font-semibold text-gray-600">
+                            Winner {group.winnerPoints.toFixed(3)} · Runner-up {group.runnerUpPoints.toFixed(3)} · Third {group.thirdPoints.toFixed(3)} · Top 2 bonus {group.topTwoBonus.toFixed(3)} · 3rd qual {group.thirdPlaceQualificationPoints.toFixed(3)} · Ladder {group.fullLadderBonus.toFixed(3)}
+                          </p>
+                          {group.predictedThirdTeamId ? (
+                            <p className="mt-1 text-xs font-semibold text-amber-700">
+                              Predicted third: {group.predictedThirdTeamId.toUpperCase()} · live third-place qualification probability {(group.thirdQualificationProbability * 100).toFixed(1)}%
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </AdminToolCard>
         </div>

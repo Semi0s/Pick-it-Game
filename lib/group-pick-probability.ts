@@ -247,6 +247,23 @@ export function getAdvanceViaThirdProbability(
   return clamp(Math.round(estimate), 18, 86);
 }
 
+export function resolveAdvanceViaThirdRankingIndex(
+  team: PickProbabilityTeam,
+  thirdPlacePool: PickProbabilityTeam[],
+  thirdPlaceRankingIndex?: number | null
+) {
+  if (thirdPlacePool.length === 0) {
+    return null;
+  }
+
+  if (typeof thirdPlaceRankingIndex === "number") {
+    return thirdPlaceRankingIndex >= 0 ? thirdPlaceRankingIndex : null;
+  }
+
+  const selectedIndex = thirdPlacePool.findIndex((candidate) => candidate.id === team.id);
+  return selectedIndex >= 0 ? selectedIndex : null;
+}
+
 export function getThirdPlaceSelectionProbability(
   team: PickProbabilityTeam,
   rankingIndex: number,
@@ -323,14 +340,8 @@ function getAdvanceViaThirdCandidateProbability({
   thirdPlacePool: PickProbabilityTeam[];
   thirdPlaceRankingIndex?: number | null;
 }) {
-  if (thirdPlacePool.length > 0) {
-    const selectedIndex = thirdPlacePool.findIndex((candidate) => candidate.id === team.id);
-    const rankingIndex =
-      typeof thirdPlaceRankingIndex === "number"
-        ? thirdPlaceRankingIndex
-        : selectedIndex >= 0
-          ? selectedIndex
-          : Math.max(0, (getStrengthRank(team, thirdPlacePool) ?? thirdPlacePool.length + 1) - 1);
+  const rankingIndex = resolveAdvanceViaThirdRankingIndex(team, thirdPlacePool, thirdPlaceRankingIndex);
+  if (rankingIndex !== null) {
     return getAdvanceViaThirdProbability(team, rankingIndex, thirdPlacePool);
   }
 

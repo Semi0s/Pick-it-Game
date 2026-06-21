@@ -74,6 +74,11 @@ import {
   type AdminScoringAuditReport
 } from "@/lib/admin-scoring-audit";
 import {
+  fetchProjectedLeaderboardAudit,
+  type ProjectedLeaderboardAuditBreakdown,
+  type ProjectedLeaderboardAuditRow
+} from "@/lib/projected-leaderboard";
+import {
   DASHBOARD_UI_RESET_EPOCH_SETTING_KEY,
   LEADERBOARD_SOCIAL_RESET_AT_SETTING_KEY
 } from "@/lib/ui-storage-keys";
@@ -711,6 +716,19 @@ export type FetchLeaderboardFeatureSettingsResult =
       message: string;
     };
 export type UpdateLeaderboardFeatureSettingResult = ResetUserAccessResult;
+export type FetchProjectedLeaderboardAuditResult =
+  | {
+      ok: true;
+      projectionKey: string | null;
+      generatedAt: string;
+      topRows: ProjectedLeaderboardAuditRow[];
+      selectedRow: ProjectedLeaderboardAuditRow | null;
+      selectedBreakdown: ProjectedLeaderboardAuditBreakdown | null;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
 export type FetchPublicSignupSettingResult =
   | {
       ok: true;
@@ -2369,6 +2387,33 @@ export async function updateLeaderboardFeatureSettingAction(
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Could not update leaderboard feature settings."
+    };
+  }
+}
+
+export async function fetchProjectedLeaderboardAuditAction(input?: {
+  selectedUserId?: string | null;
+  limit?: number;
+}): Promise<FetchProjectedLeaderboardAuditResult> {
+  const adminCheck = await assertCurrentUserIsAdmin();
+  if (!adminCheck.ok) {
+    return adminCheck;
+  }
+
+  try {
+    const audit = await fetchProjectedLeaderboardAudit(input);
+    return {
+      ok: true,
+      projectionKey: audit.projectionKey,
+      generatedAt: audit.generatedAt,
+      topRows: audit.topRows,
+      selectedRow: audit.selectedRow,
+      selectedBreakdown: audit.selectedBreakdown
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not load the projected leaderboard audit."
     };
   }
 }
