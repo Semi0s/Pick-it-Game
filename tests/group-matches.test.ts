@@ -137,6 +137,80 @@ test("group match rows fall back through external fixture ids when the synced ro
   assert.equal(matches[0]?.status, "final");
 });
 
+test("group match rows recover metadata when the synced fixture arrives with reversed team direction", () => {
+  const localMatches = [
+    createLocalMatch({
+      id: "g-10",
+      groupName: "E",
+      homeTeamId: "civ",
+      awayTeamId: "ecu",
+      kickoffTime: "2026-06-14T19:00:00.000Z"
+    })
+  ];
+
+  const matches = mergeGroupMatchRows(
+    [
+      {
+        id: "provider-9910",
+        stage: "group",
+        group_name: "E",
+        status: "final",
+        home_team_id: "ecu",
+        away_team_id: "civ",
+        home_score: 1,
+        away_score: 1,
+        winner_team_id: null,
+        kickoff_time: "2026-06-14T19:00:00.000Z"
+      }
+    ],
+    localMatches,
+    () => undefined
+  );
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0]?.homeTeamId, "ecu");
+  assert.equal(matches[0]?.awayTeamId, "civ");
+  assert.equal(matches[0]?.homeScore, 1);
+  assert.equal(matches[0]?.awayScore, 1);
+  assert.equal(matches[0]?.status, "final");
+});
+
+test("group match rows recover local fixture metadata from a unique kickoff and group fallback", () => {
+  const localMatches = [
+    createLocalMatch({
+      id: "g-10",
+      groupName: "E",
+      homeTeamId: "civ",
+      awayTeamId: "ecu",
+      kickoffTime: "2026-06-14T19:00:00.000Z"
+    })
+  ];
+
+  const matches = mergeGroupMatchRows(
+    [
+      {
+        id: "provider-9910",
+        stage: "group",
+        group_name: "E",
+        status: "final",
+        home_score: 1,
+        away_score: 1,
+        winner_team_id: null,
+        kickoff_time: "2026-06-14T19:00:00.000Z"
+      }
+    ],
+    localMatches,
+    () => undefined
+  );
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0]?.groupName, "E");
+  assert.equal(matches[0]?.homeTeamId, "civ");
+  assert.equal(matches[0]?.awayTeamId, "ecu");
+  assert.equal(matches[0]?.homeScore, 1);
+  assert.equal(matches[0]?.awayScore, 1);
+});
+
 test("group match rows sort by kickoff time after merging", () => {
   const localMatches = [
     createLocalMatch({
