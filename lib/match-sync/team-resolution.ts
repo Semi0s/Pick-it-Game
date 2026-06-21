@@ -20,6 +20,7 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
   "saudi arabia": "saudi arabia",
   "bosnia and herzegovina": "bosnia herzegovina",
   "cote d ivoire": "cote d ivoire",
+  "ivory coast": "cote d ivoire",
   turkey: "turkiye",
   "dr congo": "congo dr",
   "south africa": "south africa"
@@ -61,6 +62,7 @@ function normalizeTeamName(value: string) {
   return value
     .toLowerCase()
     .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^\w\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();

@@ -26,15 +26,30 @@ export function mergeGroupMatchRows(
   const localMatchesByFixtureKey = new Map(
     localMatches.map((match) => [toFixtureKey(match.groupName, match.homeTeamId, match.awayTeamId), match] as const)
   );
+  const localMatchesByKickoffGroupKey = new Map<string, MatchWithTeams[]>();
+
+  for (const match of localMatches) {
+    const kickoffGroupKey = toKickoffGroupKey(match.groupName, match.kickoffTime);
+    const current = localMatchesByKickoffGroupKey.get(kickoffGroupKey) ?? [];
+    current.push(match);
+    localMatchesByKickoffGroupKey.set(kickoffGroupKey, current);
+  }
 
   return rows
     .map((row) => {
+      const kickoffGroupMatches = localMatchesByKickoffGroupKey.get(
+        toKickoffGroupKey(row.group_name ?? undefined, row.kickoff_time ?? undefined)
+      );
       const localMatch =
         localMatchesById.get(row.id) ??
         localMatchesByExternalId.get(row.external_id ?? "") ??
         localMatchesByFixtureKey.get(
+          toFixtureKey(row.group_name ?? undefined, row.away_team_id ?? undefined, row.home_team_id ?? undefined)
+        ) ??
+        localMatchesByFixtureKey.get(
           toFixtureKey(row.group_name ?? undefined, row.home_team_id ?? undefined, row.away_team_id ?? undefined)
         ) ??
+        (kickoffGroupMatches?.length === 1 ? kickoffGroupMatches[0] : null) ??
         null;
 
       const homeTeamId = row.home_team_id ?? localMatch?.homeTeamId;
@@ -61,4 +76,8 @@ export function mergeGroupMatchRows(
 
 function toFixtureKey(groupName?: string, homeTeamId?: string, awayTeamId?: string) {
   return [groupName ?? "", homeTeamId ?? "", awayTeamId ?? ""].join("|");
+}
+
+function toKickoffGroupKey(groupName?: string, kickoffTime?: string) {
+  return [groupName ?? "", kickoffTime ?? ""].join("|");
 }
