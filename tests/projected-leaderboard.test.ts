@@ -5,7 +5,11 @@ import { createEmptyDashboardScoringMovementSummary } from "../lib/leaderboard-m
 import {
   buildProjectedGlobalHistoryCheckpointStates,
   buildProjectedLeaderboardSnapshotInsertRows
-} from "../lib/projected-leaderboard.ts";
+} from "../lib/projected-leaderboard-history.ts";
+import {
+  buildGlobalProjectedRankedEntries,
+  computeThirdPlaceQualificationExpectation
+} from "../lib/projected-leaderboard-logic.ts";
 import {
   selectDashboardProjectedScoreSummary,
   shouldUseProjectedLeaderboardMode
@@ -272,7 +276,7 @@ test("projected snapshot insert rows omit created_at when no checkpoint timestam
 
   assert.equal(rows.length, 1);
   assert.equal("created_at" in rows[0]!, false);
-  assert.equal(rows[0]?.projected_points, 121.234);
+  assert.equal(rows[0]?.projected_points, 121.2);
 });
 
 test("projected snapshot insert rows include created_at when a checkpoint timestamp exists", () => {
@@ -286,4 +290,99 @@ test("projected snapshot insert rows include created_at when a checkpoint timest
 
   assert.equal(rows[0]?.created_at, "2026-06-18T14:00:00.000Z");
   assert.equal(rows[0]?.group_id, "group-1");
+});
+
+test("third-place qualification expectation returns zero when the predicted team is not in the live third-place pool", () => {
+  const turkey = {
+    id: "tur",
+    name: "Turkiye",
+    shortName: "TUR",
+    groupName: "D",
+    fifaRank: 28,
+    fifaPoints: 1530,
+    flagEmoji: "🇹🇷"
+  };
+  const qatar = {
+    id: "qat",
+    name: "Qatar",
+    shortName: "QAT",
+    groupName: "B",
+    fifaRank: 41,
+    fifaPoints: 1470,
+    flagEmoji: "🇶🇦"
+  };
+
+  const result = computeThirdPlaceQualificationExpectation({
+    predictedThird: turkey,
+    predictedThirdPlaceQualifiedIds: new Set(["tur"]),
+    thirdPlacePool: [qatar]
+  });
+
+  assert.equal(result.thirdQualificationProbability, 0);
+  assert.equal(result.thirdPlaceQualificationPoints, 0);
+});
+
+test("third-place qualification expectation gives full credit only when a non-qualified third pick is correctly expected to miss the live pool", () => {
+  const qatar = {
+    id: "qat",
+    name: "Qatar",
+    shortName: "QAT",
+    groupName: "B",
+    fifaRank: 41,
+    fifaPoints: 1470,
+    flagEmoji: "🇶🇦"
+  };
+  const turkey = {
+    id: "tur",
+    name: "Turkiye",
+    shortName: "TUR",
+    groupName: "D",
+    fifaRank: 28,
+    fifaPoints: 1530,
+    flagEmoji: "🇹🇷"
+  };
+
+  const result = computeThirdPlaceQualificationExpectation({
+    predictedThird: qatar,
+    predictedThirdPlaceQualifiedIds: new Set(["tur"]),
+    thirdPlacePool: [turkey]
+  });
+
+  assert.equal(result.thirdQualificationProbability, 0);
+  assert.equal(result.thirdPlaceQualificationPoints, 1);
+});
+
+test("global projected ranking uses raw projected totals when display-rounded totals tie", () => {
+  const ranked = buildGlobalProjectedRankedEntries(
+    ["santiago", "mara"],
+    new Map([
+      [
+        "santiago",
+        {
+          userId: "santiago",
+          snapshot: null,
+          rawProjectedPoints: 121.23,
+          projectedPoints: 121.2,
+          maxPoints: 240,
+          hasSnapshot: true
+        }
+      ],
+      [
+        "mara",
+        {
+          userId: "mara",
+          snapshot: null,
+          rawProjectedPoints: 121.24,
+          projectedPoints: 121.2,
+          maxPoints: 240,
+          hasSnapshot: true
+        }
+      ]
+    ])
+  );
+
+  assert.equal(ranked[0]?.user_id, "mara");
+  assert.equal(ranked[0]?.rank, 1);
+  assert.equal(ranked[1]?.user_id, "santiago");
+  assert.equal(ranked[1]?.rank, 2);
 });
