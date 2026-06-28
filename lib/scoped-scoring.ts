@@ -10,6 +10,7 @@ import { isMissingAnyRelationError, warnOptionalFeatureOnce } from "@/lib/schema
 import { calculateCanonicalLeaderboardScores, sumScoreRowsByUser } from "@/lib/canonical-scoring";
 import { recomputeGroupPhaseLadderScores } from "@/lib/group-phase-ladder-recompute";
 import { normalizeGroupKey } from "@/lib/group-standings";
+import { recomputeSidePickScores } from "@/lib/side-picks-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizeGroupStageMode, type GroupStageMode } from "@/lib/group-stage-modes";
 import type { MatchStatus, Team } from "@/lib/types";
@@ -757,6 +758,16 @@ export async function rebuildScopedLeaderboardState(
       ok: false,
       message: error instanceof Error ? error.message : "Could not rebuild group-local bonus scores."
     };
+  }
+
+  try {
+    await recomputeSidePickScores();
+  } catch (error) {
+    warnOptionalFeatureOnce(
+      "side-pick-standard-recompute-failed",
+      "Standard Side Picks scoring could not be refreshed during leaderboard rebuild.",
+      error instanceof Error ? error.message : String(error)
+    );
   }
 
   const [
