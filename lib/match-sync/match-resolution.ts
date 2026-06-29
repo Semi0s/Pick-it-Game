@@ -91,9 +91,17 @@ export function deriveSyncedNonFinalStatus(input: {
   return "locked" as const;
 }
 
+export function resolveEffectiveKickoffAt(input: {
+  kickoffAt?: string | null;
+  kickoffTime?: string | null;
+}) {
+  return input.kickoffAt ?? input.kickoffTime ?? null;
+}
+
 export function shouldReopenUpcomingLockedMatch(input: {
   currentStatus: MatchStatus;
   kickoffAt: string | null;
+  kickoffTime?: string | null;
   nowMs?: number;
   finalizedAt?: string | null;
   homeScore?: number | null;
@@ -107,15 +115,45 @@ export function shouldReopenUpcomingLockedMatch(input: {
     return false;
   }
 
-  if (!input.kickoffAt) {
+  const effectiveKickoffAt = resolveEffectiveKickoffAt(input);
+  if (!effectiveKickoffAt) {
     return false;
   }
 
-  const kickoffMs = new Date(input.kickoffAt).getTime();
+  const kickoffMs = new Date(effectiveKickoffAt).getTime();
   if (!Number.isFinite(kickoffMs)) {
     return false;
   }
 
   const nowMs = input.nowMs ?? Date.now();
   return kickoffMs > nowMs + 5 * 60 * 1000;
+}
+
+export function shouldLockScheduledMatch(input: {
+  currentStatus: MatchStatus;
+  kickoffAt?: string | null;
+  kickoffTime?: string | null;
+  nowMs?: number;
+  finalizedAt?: string | null;
+}) {
+  if (input.currentStatus !== "scheduled") {
+    return false;
+  }
+
+  if (input.finalizedAt) {
+    return false;
+  }
+
+  const effectiveKickoffAt = resolveEffectiveKickoffAt(input);
+  if (!effectiveKickoffAt) {
+    return false;
+  }
+
+  const kickoffMs = new Date(effectiveKickoffAt).getTime();
+  if (!Number.isFinite(kickoffMs)) {
+    return false;
+  }
+
+  const nowMs = input.nowMs ?? Date.now();
+  return kickoffMs <= nowMs + 5 * 60 * 1000;
 }

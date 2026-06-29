@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { deriveSyncedNonFinalStatus, findInternalMatch } from "../lib/match-sync/match-resolution.ts";
+import {
+  deriveSyncedNonFinalStatus,
+  findInternalMatch,
+  resolveEffectiveKickoffAt,
+  shouldLockScheduledMatch,
+  shouldReopenUpcomingLockedMatch
+} from "../lib/match-sync/match-resolution.ts";
 
 test("findInternalMatch matches a unique reversed-team fixture by kickoff", () => {
   const match = findInternalMatch({
@@ -100,4 +106,46 @@ test("deriveSyncedNonFinalStatus keeps imminent scheduled matches locked", () =>
   });
 
   assert.equal(status, "locked");
+});
+
+test("resolveEffectiveKickoffAt falls back to kickoff_time when kickoff_at is missing", () => {
+  const kickoff = "2026-06-29T20:00:00.000Z";
+
+  assert.equal(
+    resolveEffectiveKickoffAt({
+      kickoffAt: null,
+      kickoffTime: kickoff
+    }),
+    kickoff
+  );
+});
+
+test("shouldReopenUpcomingLockedMatch reopens future locked matches when kickoff_at is missing", () => {
+  const futureKickoff = new Date(Date.now() + 45 * 60 * 1000).toISOString();
+
+  assert.equal(
+    shouldReopenUpcomingLockedMatch({
+      currentStatus: "locked",
+      kickoffAt: null,
+      kickoffTime: futureKickoff,
+      finalizedAt: null,
+      homeScore: null,
+      awayScore: null
+    }),
+    true
+  );
+});
+
+test("shouldLockScheduledMatch locks scheduled matches using kickoff_time fallback", () => {
+  const imminentKickoff = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+
+  assert.equal(
+    shouldLockScheduledMatch({
+      currentStatus: "scheduled",
+      kickoffAt: null,
+      kickoffTime: imminentKickoff,
+      finalizedAt: null
+    }),
+    true
+  );
 });

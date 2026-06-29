@@ -1135,6 +1135,9 @@ function ProjectedAndOfficialRoundView({
     if (event.pointerType === "mouse" && event.button !== 0) {
       return;
     }
+    if ((event.target as HTMLElement | null)?.closest?.('[data-knockout-score-control="true"]')) {
+      return;
+    }
 
     beginDrag(event.clientX, event.clientY);
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -2203,25 +2206,36 @@ function KnockoutTeamPanel({
     }
 
     return (
-      <span className="inline-flex shrink-0 flex-col items-center justify-center rounded-sm bg-gray-100 text-gray-500">
+      <span
+        data-knockout-score-control="true"
+        className="inline-flex shrink-0 flex-col items-center justify-center rounded-md bg-gray-100 text-gray-500 [touch-action:manipulation]"
+      >
         <button
           type="button"
+          data-knockout-score-control="true"
+          onPointerDown={(event) => {
+            event.stopPropagation();
+          }}
           onClick={(event) => {
             event.stopPropagation();
             onIncrement();
           }}
-          className={`inline-flex h-5 w-7 items-center justify-center ${isProjectedTone ? "hover:text-amber-800" : "hover:text-accent-dark"}`}
+          className={`inline-flex h-6 w-9 items-center justify-center ${isProjectedTone ? "hover:text-amber-800" : "hover:text-accent-dark"}`}
           aria-label={kt(language, "increaseTeamScore", { teamName: ariaTeamName })}
         >
           <ChevronUpSmall />
         </button>
         <button
           type="button"
+          data-knockout-score-control="true"
+          onPointerDown={(event) => {
+            event.stopPropagation();
+          }}
           onClick={(event) => {
             event.stopPropagation();
             onDecrement();
           }}
-          className={`inline-flex h-5 w-7 items-center justify-center border-t border-gray-200 ${
+          className={`inline-flex h-6 w-9 items-center justify-center border-t border-gray-200 ${
             isProjectedTone ? "hover:text-amber-800" : "hover:text-accent-dark"
           }`}
           aria-label={kt(language, "decreaseTeamScore", { teamName: ariaTeamName })}
