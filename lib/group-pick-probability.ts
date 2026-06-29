@@ -19,6 +19,8 @@ export type PickProbabilityResult = {
 
 export type PickProbabilityMatchState = {
   status?: string | null;
+  homeTeamId?: string | null;
+  awayTeamId?: string | null;
 };
 
 export type PickProbabilityStandingsRow = {
@@ -141,6 +143,22 @@ export function getPickProbabilityForTeam({
 
   const mode = predictedPlace <= 2 ? "exact_place" : "advance_total";
   const targetLabel = predictedPlace === 1 ? "1st" : predictedPlace === 2 ? "2nd" : "advance";
+
+  const liveOutcomeOverride = resolveLivePickProbabilityOverride({
+    rows,
+    remainingMatches,
+    teamId,
+    predictedPlace,
+    mode
+  });
+  if (liveOutcomeOverride !== null) {
+    return createPickProbabilityResult({
+      probability: liveOutcomeOverride,
+      predictedPlace,
+      mode,
+      targetLabel
+    });
+  }
 
   if (isGroupFinal(rows, remainingMatches)) {
     const finalAdvanceState = isAdvancing ?? row.rank <= 2;
@@ -276,13 +294,33 @@ export function getAdvanceViaThirdProbabilityResult({
   team,
   thirdPlacePool,
   thirdPlaceRankingIndex,
-  predictedPlace = 3
+  predictedPlace = 3,
+  rows = [],
+  remainingMatches = []
 }: {
   team: PickProbabilityTeam;
   thirdPlacePool: PickProbabilityTeam[];
   thirdPlaceRankingIndex?: number | null;
   predictedPlace?: 3 | 4;
+  rows?: PickProbabilityStandingsRow[];
+  remainingMatches?: PickProbabilityMatchState[];
 }): PickProbabilityResult {
+  const liveOutcomeOverride = resolveLivePickProbabilityOverride({
+    rows,
+    remainingMatches,
+    teamId: team.id,
+    predictedPlace,
+    mode: "advance_via_third"
+  });
+  if (liveOutcomeOverride !== null) {
+    return createPickProbabilityResult({
+      probability: liveOutcomeOverride,
+      predictedPlace,
+      mode: "advance_via_third",
+      targetLabel: "via 3rd"
+    });
+  }
+
   const probability = getAdvanceViaThirdCandidateProbability({
     team,
     thirdPlacePool,
@@ -408,6 +446,104 @@ function createPickProbabilityResult({
     ariaLabel,
     isUnavailable
   };
+}
+
+function resolveLivePickProbabilityOverride({
+  rows,
+  remainingMatches,
+  teamId,
+  predictedPlace,
+  mode
+}: {
+  rows: PickProbabilityStandingsRow[];
+  remainingMatches: PickProbabilityMatchState[];
+  teamId: string;
+  predictedPlace: PickProbabilityPlace;
+  mode: PickProbabilityMode;
+}) {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const row = rows.find((candidate) => candidate.teamId === teamId);
+  if (!row) {
+    return null;
+  }
+
+  if (isGroupFinal(rows, remainingMatches)) {
+    if (mode === "advance_via_third") {
+      return row.rank === 3 ? 100 : 0;
+    }
+    return null;
+  }
+
+  const teamRemainingMatchesById = buildRemainingMatchesByTeamId(rows, remainingMatches);
+  if (teamRemainingMatchesById.size === 0) {
+    return null;
+  }
+
+  const teamMaxPoints = row.points + (teamRemainingMatchesById.get(teamId) ?? 0) * 3;
+  const opponentsAheadOfMax = rows.filter(
+    (candidate) => candidate.teamId !== teamId && candidate.points > teamMaxPoints
+  ).length;
+
+  if (mode === "exact_place") {
+    if (predictedPlace === 1 && opponentsAheadOfMax >= 1) {
+      return 0;
+    }
+    if (predictedPlace === 2 && opponentsAheadOfMax >= 2) {
+      return 0;
+    }
+
+    const otherMaxPoints = rows
+      .filter((candidate) => candidate.teamId !== teamId)
+      .map((candidate) => candidate.points + (teamRemainingMatchesById.get(candidate.teamId) ?? 0) * 3);
+    if (predictedPlace === 1 && otherMaxPoints.every((candidateMax) => row.points > candidateMax)) {
+      return 100;
+    }
+    return null;
+  }
+
+  if (mode === "advance_via_third") {
+    if (opponentsAheadOfMax >= 3) {
+      return 0;
+    }
+    return null;
+  }
+
+  return null;
+}
+
+function buildRemainingMatchesByTeamId(
+  rows: PickProbabilityStandingsRow[],
+  remainingMatches: PickProbabilityMatchState[]
+) {
+  const remainingByTeamId = new Map<string, number>();
+
+  for (const row of rows) {
+    remainingByTeamId.set(row.teamId, Math.max(0, 3 - row.played));
+  }
+
+  const teamAwareMatches = remainingMatches.filter(
+    (match) => Boolean(match.homeTeamId?.trim()) && Boolean(match.awayTeamId?.trim()) && match.status !== "final"
+  );
+  if (teamAwareMatches.length === 0) {
+    return remainingByTeamId;
+  }
+
+  const countedByTeamId = new Map<string, number>();
+  for (const match of teamAwareMatches) {
+    const homeTeamId = match.homeTeamId!.trim();
+    const awayTeamId = match.awayTeamId!.trim();
+    countedByTeamId.set(homeTeamId, (countedByTeamId.get(homeTeamId) ?? 0) + 1);
+    countedByTeamId.set(awayTeamId, (countedByTeamId.get(awayTeamId) ?? 0) + 1);
+  }
+
+  for (const [teamId, count] of countedByTeamId.entries()) {
+    remainingByTeamId.set(teamId, count);
+  }
+
+  return remainingByTeamId;
 }
 
 function isGroupFinal(rows: PickProbabilityStandingsRow[], remainingMatches: PickProbabilityMatchState[]) {
