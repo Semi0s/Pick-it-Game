@@ -11,6 +11,9 @@ import {
   deriveSyncedNonFinalStatus,
   findInternalMatch,
   findInternalMatchByExternalId,
+  resolveEffectiveKickoffAt,
+  shouldLockScheduledMatch,
+  shouldReopenUpcomingLockedMatch,
   type MatchSyncRow
 } from "@/lib/match-sync/match-resolution";
 import { resolveTeamIdByName } from "@/lib/match-sync/team-resolution";
@@ -245,41 +248,88 @@ export async function syncMatches(): Promise<SyncMatchesResult> {
 }
 
 export async function lockMatchesByKickoffWithClient(adminSupabase: AdminSupabaseClient) {
-  const lockCutoff = new Date(Date.now() + 5 * 60 * 1000).toISOString();
   const nowIso = new Date().toISOString();
-
-  const { error: reopenError } = await adminSupabase
+  const nowMs = Date.now();
+  const { data: candidateMatches, error: candidateMatchesError } = await adminSupabase
     .from("matches")
-    .update({
-      status: "scheduled",
-      updated_at: nowIso
-    })
-    .eq("status", "locked")
-    .gt("kickoff_at", lockCutoff)
-    .is("finalized_at", null)
-    .is("home_score", null)
-    .is("away_score", null);
+    .select("id,status,kickoff_time,kickoff_at,finalized_at,home_score,away_score")
+    .in("status", ["scheduled", "locked"]);
 
-  if (reopenError) {
-    throw reopenError;
+  if (candidateMatchesError) {
+    throw candidateMatchesError;
   }
 
-  const { data, error } = await adminSupabase
-    .from("matches")
-    .update({
-      status: "locked",
-      updated_at: nowIso
+  const matchesNeedingSchedule = ((candidateMatches ?? []) as Array<{
+    id: string;
+    status: MatchStatus;
+    kickoff_time?: string | null;
+    kickoff_at?: string | null;
+    finalized_at?: string | null;
+    home_score?: number | null;
+    away_score?: number | null;
+  }>).filter((match) =>
+    shouldReopenUpcomingLockedMatch({
+      currentStatus: match.status,
+      kickoffAt: resolveEffectiveKickoffAt({
+        kickoffAt: match.kickoff_at ?? null,
+        kickoffTime: match.kickoff_time ?? null
+      }),
+      kickoffTime: match.kickoff_time ?? null,
+      nowMs,
+      finalizedAt: match.finalized_at ?? null,
+      homeScore: match.home_score ?? null,
+      awayScore: match.away_score ?? null
     })
-    .eq("status", "scheduled")
-    .lte("kickoff_at", lockCutoff)
-    .select("id");
+  );
 
-  if (error) {
-    throw error;
+  if (matchesNeedingSchedule.length > 0) {
+    const { error: reopenError } = await adminSupabase
+      .from("matches")
+      .update({
+        status: "scheduled",
+        updated_at: nowIso
+      })
+      .in("id", matchesNeedingSchedule.map((match) => match.id));
+
+    if (reopenError) {
+      throw reopenError;
+    }
+  }
+
+  const matchesNeedingLock = ((candidateMatches ?? []) as Array<{
+    id: string;
+    status: MatchStatus;
+    kickoff_time?: string | null;
+    kickoff_at?: string | null;
+    finalized_at?: string | null;
+    home_score?: number | null;
+    away_score?: number | null;
+  }>).filter((match) =>
+    shouldLockScheduledMatch({
+      currentStatus: match.status,
+      kickoffAt: match.kickoff_at ?? null,
+      kickoffTime: match.kickoff_time ?? null,
+      nowMs,
+      finalizedAt: match.finalized_at ?? null
+    })
+  );
+
+  if (matchesNeedingLock.length > 0) {
+    const { error: lockError } = await adminSupabase
+      .from("matches")
+      .update({
+        status: "locked",
+        updated_at: nowIso
+      })
+      .in("id", matchesNeedingLock.map((match) => match.id));
+
+    if (lockError) {
+      throw lockError;
+    }
   }
 
   return {
-    lockedMatches: (data ?? []).length
+    lockedMatches: matchesNeedingLock.length
   };
 }
 
