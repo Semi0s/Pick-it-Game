@@ -1592,7 +1592,9 @@ async function fetchKnockoutPointsByUserIds(
 }
 
 function normalizeLeaderboardPhase(value?: string | null): LeaderboardPhase {
-  return value === "global_top10" || value === "side_picks" ? value : "group_phase";
+  return value === "global_top10" || value === "side_picks" || value === "knockout_phase"
+    ? value
+    : "group_phase";
 }
 
 function resolveAllowedView(
