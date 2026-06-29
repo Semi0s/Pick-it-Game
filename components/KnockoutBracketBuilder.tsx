@@ -48,7 +48,14 @@ type BracketSlideView = {
 };
 
 const KNOCKOUT_COMPARE_VIEW_STATE_STORAGE_KEY = "knockout-compare-view-state";
-const VISIBLE_KNOCKOUT_STAGE_IDS = new Set<KnockoutBracketMatchView["stage"]>(["r32"]);
+const VISIBLE_KNOCKOUT_STAGE_IDS = new Set<KnockoutBracketMatchView["stage"]>([
+  "r32",
+  "r16",
+  "qf",
+  "sf",
+  "third",
+  "final"
+]);
 
 type KnockoutViewState = {
   activeSlideIndex: number;
