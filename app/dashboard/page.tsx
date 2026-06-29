@@ -116,7 +116,8 @@ export default async function DashboardPage() {
             nextMatch: null,
             upcomingMatches: [],
             liveMatches: []
-          }
+          },
+          knockoutProgress: null
         }}
         initialGroupAccess={groupAccessResult?.ok ? {
           hasAnyGroups: groupAccessResult.groupAccess.hasAnyGroups,

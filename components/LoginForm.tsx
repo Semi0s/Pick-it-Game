@@ -193,9 +193,9 @@ export function LoginForm({
       accessCode: !promoManagerCode && accessCode.trim() ? accessCode : undefined,
       promoManagerCode: mode === "signup" ? promoManagerCode ?? undefined : undefined
     });
-    setIsSubmitting(false);
 
     if (!result.ok) {
+      setIsSubmitting(false);
       const normalizedMessage = result.message.toLowerCase();
       if (mode === "login" && isConfirmationRequiredMessage(result.message)) {
         storePendingConfirmationEmail(email);

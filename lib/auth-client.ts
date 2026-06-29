@@ -132,6 +132,10 @@ type LegalDocumentRow = {
   body: string;
 };
 
+type FetchCurrentProfileOptions = {
+  retryForSession?: boolean;
+};
+
 export type CurrentLegalDocument = {
   language: SupportedLanguage;
   requiredVersion: string;
@@ -158,6 +162,14 @@ const AVATAR_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/gif": "gif",
   "image/avif": "avif"
 };
+
+const SESSION_HYDRATION_RETRY_DELAYS_MS = [120, 240, 480] as const;
+
+function waitFor(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
 
 export async function authenticateWithEmail(
   mode: AuthMode,
@@ -268,7 +280,7 @@ export async function authenticateWithEmail(
     }
   }
 
-  const profile = response.data.user ? await fetchCurrentProfile() : null;
+  const profile = response.data.user ? await fetchCurrentProfile({ retryForSession: true }) : null;
   return { ok: true, user: profile };
 }
 
@@ -300,16 +312,35 @@ async function redeemAccessCodeForCurrentUser(accessCode: string): Promise<AuthR
   };
 }
 
-export async function fetchCurrentProfile(): Promise<UserProfile | null> {
+export async function fetchCurrentProfile(options?: FetchCurrentProfileOptions): Promise<UserProfile | null> {
   if (!hasSupabaseConfig()) {
     return getDemoCurrentUser();
   }
 
   const supabase = createClient();
-  const {
-    data: { session },
-    error: sessionError
-  } = await supabase.auth.getSession();
+  let session = null;
+  let sessionError: { message: string } | null = null;
+  const attempts = options?.retryForSession ? SESSION_HYDRATION_RETRY_DELAYS_MS.length + 1 : 1;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const sessionResult = await supabase.auth.getSession();
+    session = sessionResult.data.session;
+    sessionError = sessionResult.error;
+
+    if (sessionError) {
+      break;
+    }
+
+    if (session?.user) {
+      break;
+    }
+
+    if (!options?.retryForSession || attempt === attempts - 1) {
+      break;
+    }
+
+    await waitFor(SESSION_HYDRATION_RETRY_DELAYS_MS[attempt] ?? SESSION_HYDRATION_RETRY_DELAYS_MS.at(-1) ?? 0);
+  }
 
   if (sessionError) {
     if (isInvalidRefreshTokenError(sessionError.message)) {

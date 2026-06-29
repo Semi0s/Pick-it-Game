@@ -1,4 +1,5 @@
 import type { DashboardScoringMovementSummary } from "./leaderboard-movement.ts";
+import type { DashboardKnockoutProgressSummary } from "./knockout-progress.ts";
 import type { DashboardKnockoutOutlookSummary } from "./knockout-outlook.ts";
 import { normalizeGroupKey } from "./group-standings.ts";
 import type { DashboardProjectedOutlookSummary } from "./projected-outlook.ts";
@@ -97,6 +98,7 @@ export type DashboardCommandCenterSummary = {
   performance: DashboardPerformanceSummary;
   scoring: DashboardMovementSummary;
   reminder: DashboardReminderSummary;
+  knockoutProgress?: DashboardKnockoutProgressSummary | null;
 };
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type 
 import { X } from "lucide-react";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
 import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
+import { KnockoutProgressMiniBracket } from "@/components/KnockoutProgressMiniBracket";
 import { SidePicksIcon } from "@/components/SidePicksIcon";
 import { DashboardAdminPanel } from "@/components/dashboard/DashboardAdminPanel";
 import { DashboardCommandCenter } from "@/components/dashboard/DashboardCommandCenter";
@@ -176,6 +177,9 @@ export function DashboardOverview({
   const selectedStandingsGroup = dashboardViewState.selectedStandingsGroup;
   const isStandingsOpen = dashboardViewState.isStandingsOpen;
   const isHowToPlayOpen = dashboardViewState.isHowToPlayOpen;
+  const knockoutProgress = initialCommandCenterSummary.knockoutProgress ?? null;
+  const shouldShowKnockoutProgressModule =
+    initialCommandCenterSummary.progress.phase === "knockout_stage" && Boolean(knockoutProgress);
   const tournamentTransitionMessageId = tournamentTransitionSettings
     ? buildTournamentTransitionMessageId(tournamentTransitionSettings)
     : null;
@@ -1150,10 +1154,12 @@ export function DashboardOverview({
         />
       </div>
 
-      {availableStandingsGroups.length > 0 ? (
+      {shouldShowKnockoutProgressModule || availableStandingsGroups.length > 0 ? (
         <section className="space-y-3 pt-4 sm:pt-5">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">{t(displayLanguage, "dashboard.tournamentStandings")}</p>
+            <p className="text-sm font-bold uppercase tracking-wide text-accent-dark">
+              {shouldShowKnockoutProgressModule ? "Knockout Progress" : t(displayLanguage, "dashboard.tournamentStandings")}
+            </p>
             <InlineDisclosureButton
               isOpen={isStandingsOpen}
               variant="subtle"
@@ -1162,6 +1168,9 @@ export function DashboardOverview({
           </div>
 
           {isStandingsOpen ? (
+            shouldShowKnockoutProgressModule && knockoutProgress ? (
+              <KnockoutProgressMiniBracket summary={knockoutProgress} language={displayLanguage} />
+            ) : (
             <>
               <WindowChoiceRail
                 activeItemKey={resolvedStandingsGroup}
@@ -1222,6 +1231,7 @@ export function DashboardOverview({
                 <span className="triptych-micro-copy">{t(displayLanguage, "dashboard.standingsAdvanceRule")}</span>
               </p>
             </>
+            )
           ) : null}
         </section>
       ) : null}
