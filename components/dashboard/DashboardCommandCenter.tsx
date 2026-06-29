@@ -345,6 +345,7 @@ function ProgressPanel({
   const scenarioImpactSwipeClickBlockRef = useRef(false);
   const scenarioImpactSwipeClickResetTimeoutRef = useRef<number | null>(null);
   const [isScoringDetailOpen, setIsScoringDetailOpen] = useState(false);
+  const [isKnockoutOutlookDetailOpen, setIsKnockoutOutlookDetailOpen] = useState(false);
   const scoringLensContentId = useId();
   const resolvedViewConfig = useMemo(
     () =>
@@ -514,6 +515,7 @@ function ProgressPanel({
             <KnockoutOutlookTriptychContent
               outlook={displayedProgress.knockoutOutlook ?? null}
               theme={theme}
+              onOpenDetail={() => setIsKnockoutOutlookDetailOpen(true)}
             />
           ) : (
             <>
@@ -595,6 +597,14 @@ function ProgressPanel({
           language={language}
           theme={theme}
           onClose={() => setIsScoringDetailOpen(false)}
+        />
+      ) : null}
+      {shouldShowKnockoutOutlook && displayedProgress?.knockoutOutlook && isKnockoutOutlookDetailOpen ? (
+        <DashboardKnockoutOutlookDetailSheet
+          outlook={displayedProgress.knockoutOutlook}
+          language={language}
+          theme={theme}
+          onClose={() => setIsKnockoutOutlookDetailOpen(false)}
         />
       ) : null}
     </PanelShell>
@@ -681,16 +691,18 @@ function LastChanceTriptychContent({
 
 function KnockoutOutlookTriptychContent({
   outlook,
-  theme
+  theme,
+  onOpenDetail
 }: {
   outlook: DashboardKnockoutOutlookSummary | null;
   theme: TriptychTheme;
+  onOpenDetail: () => void;
 }) {
   if (!outlook) {
     return (
       <div className="flex h-full min-w-0 flex-col items-center justify-center gap-1 px-2 py-2 text-center">
         <p className={`max-w-full truncate text-[7px] font-black uppercase tracking-[0.1em] ${getPrimaryTextClasses(theme)}`}>
-          KNOCKOUT OUTLOOK
+          KO OUTLOOK
         </p>
         <p className={`triptych-micro-copy max-w-full truncate font-semibold ${getMutedTextClasses(theme)}`}>
           Waiting
@@ -699,81 +711,210 @@ function KnockoutOutlookTriptychContent({
     );
   }
 
+  const activeRound =
+    outlook.rounds.find((round) => round.status === "open" || round.status === "saved") ??
+    outlook.rounds.find((round) => round.status === "locked" || round.status === "missed") ??
+    outlook.rounds.find((round) => round.status === "final" || round.status === "complete") ??
+    outlook.rounds[0] ??
+    null;
+  const compactSummary = activeRound
+    ? `${activeRound.shortLabel} · ${activeRound.savedMatches}/${activeRound.totalMatches}`
+    : outlook.headline;
+  const compactHelper = activeRound ? activeRound.helperText : outlook.helperText;
+
   return (
-    <div className="flex h-full min-w-0 flex-col gap-1 px-1.5 py-1.5 text-left">
+    <div className="flex h-full min-w-0 flex-col justify-between gap-1 px-1.5 py-1.5 text-left">
       <div className="space-y-0.5">
-        <p className={`truncate text-[7px] font-black uppercase tracking-[0.12em] ${getPrimaryTextClasses(theme)}`}>
-          KNOCKOUT OUTLOOK
-        </p>
-        <p className={`triptych-micro-copy truncate font-semibold ${getMutedTextClasses(theme)}`}>Official score picks</p>
+        <div className="flex items-center justify-between gap-1">
+          <p className={`truncate text-[7px] font-black uppercase tracking-[0.12em] ${getPrimaryTextClasses(theme)}`}>
+            KO OUTLOOK
+          </p>
+          <button
+            type="button"
+            aria-label="Open knockout outlook detail"
+            onClick={onOpenDetail}
+            className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[6px] font-black uppercase tracking-[0.08em] ${
+              theme === "dark"
+                ? "border-white/12 bg-white/[0.05] text-white/75"
+                : "border-black/10 bg-white/75 text-black/65"
+            }`}
+          >
+            More
+          </button>
+        </div>
+        <p className={`triptych-micro-copy truncate font-semibold ${getPrimaryTextClasses(theme)}`}>{compactSummary}</p>
+        <p className={`truncate text-[8px] font-semibold ${getMutedTextClasses(theme)}`}>{compactHelper}</p>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-1">
+      <div className="grid min-h-0 grid-cols-1 gap-0.5">
         {outlook.rounds.map((round) => (
           <Link
             key={round.stage}
             href={round.href}
-            className={`grid min-w-0 grid-cols-[2rem,1fr,auto] items-center gap-1 rounded-[0.7rem] border px-1.5 py-1 ${
+            className={`grid min-w-0 grid-cols-[1.45rem,1fr,auto] items-center gap-1 rounded-[0.55rem] border px-1 py-[3px] ${
               theme === "dark"
                 ? "border-white/12 bg-white/[0.045] hover:bg-white/[0.08]"
                 : "border-black/10 bg-white/70 hover:bg-white"
             }`}
           >
-            <span className={`text-[9px] font-black uppercase tracking-[0.08em] ${getPrimaryTextClasses(theme)}`}>
+            <span className={`text-[8px] font-black uppercase tracking-[0.06em] ${getPrimaryTextClasses(theme)}`}>
               {round.shortLabel}
             </span>
-            <span className="min-w-0">
-              <span className={`triptych-micro-copy block truncate font-semibold ${getPrimaryTextClasses(theme)}`}>
-                {round.savedMatches}/{round.totalMatches} saved
-              </span>
-              <span className={`block truncate text-[8px] font-semibold ${getMutedTextClasses(theme)}`}>
-                {round.helperText}
-              </span>
+            <span className={`min-w-0 truncate text-[8px] font-semibold ${getPrimaryTextClasses(theme)}`}>
+              {round.savedMatches}/{round.totalMatches}
             </span>
             <span
-              className={`shrink-0 rounded-full px-1.5 py-0.5 text-[7px] font-black uppercase tracking-[0.12em] ${
+              className={`shrink-0 rounded-full px-1.5 py-[2px] text-[6px] font-black uppercase tracking-[0.08em] ${
                 theme === "dark"
                   ? "bg-white/10 text-white/80"
                   : "bg-black/5 text-black/65"
               }`}
             >
-              {formatKnockoutRoundState(round.status)}
+              {formatKnockoutRoundStateShort(round.status)}
             </span>
           </Link>
         ))}
       </div>
 
-      {outlook.projection?.active ? (
-        <div
-          className={`rounded-[0.75rem] border px-2 py-1 ${
-            theme === "dark"
-              ? "border-[color:var(--warning)]/35 bg-[color:var(--warning)]/10"
-              : "border-[color:var(--warning)]/35 bg-[color:var(--warning)]/12"
+      <div className="space-y-0.5">
+        <div className="flex flex-wrap gap-1">
+          {outlook.projection?.active ? (
+            <span
+              className={`inline-flex max-w-full truncate rounded-full border px-1.5 py-0.5 text-[6px] font-black uppercase tracking-[0.08em] ${
+                theme === "dark"
+                  ? "border-[color:var(--warning)]/35 bg-[color:var(--warning)]/10 text-[color:var(--warning)]"
+                  : "border-[color:var(--warning)]/35 bg-[color:var(--warning)]/12 text-[color:var(--warning)]"
+              }`}
+            >
+              P {outlook.projection.hitSides}/{Math.max(outlook.projection.comparedSides, 1)}
+            </span>
+          ) : null}
+          {outlook.nearestGroupDeadline ? (
+            <span
+              className={`inline-flex max-w-full truncate rounded-full border px-1.5 py-0.5 text-[6px] font-black uppercase tracking-[0.08em] ${
+                theme === "dark"
+                  ? "border-white/12 bg-white/[0.05] text-white/65"
+                  : "border-black/10 bg-white/75 text-black/55"
+              }`}
+            >
+              {formatKnockoutCompactDate(outlook.nearestGroupDeadline.deadlineAt)}
+            </span>
+          ) : null}
+        </div>
+
+        <Link
+          href={outlook.ctaHref}
+          className={`block truncate pt-0.5 text-center text-[8px] font-black uppercase tracking-[0.08em] ${
+            theme === "dark" ? "text-[color:var(--triptych-dark-accent-text)]" : "text-accent-dark"
           }`}
         >
-          <p className="truncate text-[7px] font-black uppercase tracking-[0.12em] text-[color:var(--warning)]">
-            Projection active
-          </p>
-          <p className={`truncate text-[8px] font-semibold ${getPrimaryTextClasses(theme)}`}>
-            {outlook.projection.hitSides}/{Math.max(outlook.projection.comparedSides, 1)} sides match
-          </p>
-        </div>
-      ) : null}
+          {compactKnockoutCtaLabel(outlook.ctaLabel)}
+        </Link>
+      </div>
+    </div>
+  );
+}
 
-      {outlook.nearestGroupDeadline ? (
-        <p className={`truncate text-[8px] font-semibold ${getMutedTextClasses(theme)}`}>
-          {outlook.nearestGroupDeadline.groupName} · {formatKnockoutCompactDate(outlook.nearestGroupDeadline.deadlineAt)}
-        </p>
-      ) : null}
-
-      <Link
-        href={outlook.ctaHref}
-        className={`mt-auto truncate text-center text-[8px] font-black uppercase tracking-[0.12em] ${
-          theme === "dark" ? "text-[color:var(--triptych-dark-accent-text)]" : "text-accent-dark"
+function DashboardKnockoutOutlookDetailSheet({
+  outlook,
+  language,
+  theme,
+  onClose
+}: {
+  outlook: DashboardKnockoutOutlookSummary;
+  language?: string | null;
+  theme: TriptychTheme;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/35 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:items-center sm:px-5 sm:pb-4 sm:pt-4">
+      <button type="button" aria-label={t(language, "common.close")} onClick={onClose} className="absolute inset-0" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Knockout outlook"
+        className={`relative flex w-full max-w-md flex-col overflow-hidden rounded-[1.4rem] border shadow-2xl max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-24px)] ${
+          theme === "dark" ? "border-white/10 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-950"
         }`}
       >
-        {outlook.ctaLabel}
-      </Link>
+        <div className={`sticky top-0 z-[1] flex items-center justify-between border-b px-4 py-3 ${theme === "dark" ? "border-white/10 bg-slate-950" : "border-slate-200 bg-white"}`}>
+          <div className="min-w-0">
+            <p className={`text-[11px] font-black uppercase tracking-[0.12em] ${getMutedTextClasses(theme)}`}>Knockout outlook</p>
+            <p className={`truncate text-sm font-semibold ${getPrimaryTextClasses(theme)}`}>{outlook.headline}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t(language, "common.close")}
+            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border ${
+              theme === "dark" ? "border-white/15 bg-white/5 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
+            }`}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className={`min-w-0 overflow-y-auto px-4 py-4 ${theme === "dark" ? "bg-slate-950" : "bg-white"}`}>
+          <div className="space-y-2">
+            {outlook.rounds.map((round) => (
+              <Link
+                key={round.stage}
+                href={round.href}
+                className={`grid min-w-0 grid-cols-[2.2rem,1fr,auto] items-center gap-2 rounded-[0.9rem] border px-3 py-2 ${
+                  theme === "dark"
+                    ? "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
+                    : "border-slate-200 bg-slate-50/70 hover:bg-white"
+                }`}
+                onClick={onClose}
+              >
+                <span className={`text-[10px] font-black uppercase tracking-[0.08em] ${getPrimaryTextClasses(theme)}`}>
+                  {round.shortLabel}
+                </span>
+                <span className="min-w-0">
+                  <span className={`block truncate text-sm font-semibold ${getPrimaryTextClasses(theme)}`}>
+                    {round.savedMatches}/{round.totalMatches} saved
+                  </span>
+                  <span className={`block truncate text-xs font-semibold ${getMutedTextClasses(theme)}`}>
+                    {round.helperText}
+                  </span>
+                </span>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-[0.08em] ${
+                    theme === "dark"
+                      ? "bg-white/10 text-white/80"
+                      : "bg-black/5 text-black/65"
+                  }`}
+                >
+                  {formatKnockoutRoundStateShort(round.status)}
+                </span>
+              </Link>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {outlook.projection?.active ? (
+              <span
+                className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] ${
+                  theme === "dark"
+                    ? "border-[color:var(--warning)]/35 bg-[color:var(--warning)]/10 text-[color:var(--warning)]"
+                    : "border-[color:var(--warning)]/35 bg-[color:var(--warning)]/12 text-[color:var(--warning)]"
+                }`}
+              >
+                Projection {outlook.projection.hitSides}/{Math.max(outlook.projection.comparedSides, 1)}
+              </span>
+            ) : null}
+            {outlook.nearestGroupDeadline ? (
+              <span
+                className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] ${
+                  theme === "dark"
+                    ? "border-white/12 bg-white/[0.05] text-white/65"
+                    : "border-black/10 bg-slate-50 text-black/55"
+                }`}
+              >
+                {outlook.nearestGroupDeadline.groupName} · {formatKnockoutCompactDate(outlook.nearestGroupDeadline.deadlineAt)}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3474,22 +3615,22 @@ function compactStageLabel(stage: string, language?: string | null) {
   return stage;
 }
 
-function formatKnockoutRoundState(state: DashboardKnockoutOutlookSummary["rounds"][number]["status"]) {
+function formatKnockoutRoundStateShort(state: DashboardKnockoutOutlookSummary["rounds"][number]["status"]) {
   switch (state) {
     case "waiting":
-      return "Waiting";
+      return "WAIT";
     case "open":
-      return "Open";
+      return "OPEN";
     case "saved":
-      return "Saved";
+      return "SAVED";
     case "locked":
-      return "Locked";
+      return "LOCK";
     case "final":
-      return "Final";
+      return "FINAL";
     case "missed":
-      return "Missed";
+      return "MISS";
     case "complete":
-      return "Complete";
+      return "DONE";
   }
 }
 
@@ -3503,6 +3644,26 @@ function formatKnockoutCompactDate(value: string) {
     month: "numeric",
     day: "numeric"
   }).format(date);
+}
+
+function compactKnockoutCtaLabel(value: string) {
+  if (value === "Predict R32 Scores") {
+    return "Pick R32";
+  }
+
+  if (value.startsWith("Continue ")) {
+    return value.replace("Continue ", "");
+  }
+
+  if (value === "Review Knockout Picks") {
+    return "Review Picks";
+  }
+
+  if (value === "Waiting for qualifiers") {
+    return "Waiting";
+  }
+
+  return value;
 }
 
 function formatReminderStageLabel(match: DashboardMatchSummary, language?: string | null) {
