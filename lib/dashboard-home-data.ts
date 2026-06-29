@@ -17,6 +17,7 @@ import {
   type DashboardCommandCenterSummary,
   type DashboardMatchSummary
 } from "@/lib/dashboard-home";
+import { buildDashboardKnockoutProgressSummary } from "@/lib/knockout-progress";
 import { buildKnockoutOutlookSummary } from "@/lib/knockout-outlook";
 import { normalizeGroupKey } from "@/lib/group-standings";
 import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
@@ -82,6 +83,9 @@ type MatchRow = {
   away_source?: string | null;
   home_score: number | null;
   away_score: number | null;
+  winner_team_id?: string | null;
+  next_match_id?: string | null;
+  next_match_slot?: "home" | "away" | null;
 };
 
 type GroupMemberRow = {
@@ -138,7 +142,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       .order("name", { ascending: true }),
     adminSupabase
       .from("matches")
-      .select("id,stage,status,kickoff_time,home_team_id,away_team_id,home_source,away_source,home_score,away_score")
+      .select("id,stage,status,kickoff_time,home_team_id,away_team_id,home_source,away_source,home_score,away_score,winner_team_id,next_match_id,next_match_slot")
       .order("kickoff_time", { ascending: true }),
     adminSupabase.from("users").select("total_points,role").eq("id", userId).maybeSingle(),
     adminSupabase.from("group_members").select("group_id,role").eq("user_id", userId),
@@ -203,7 +207,10 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         home_source: null,
         away_source: null,
         home_score: match.homeScore ?? null,
-        away_score: match.awayScore ?? null
+        away_score: match.awayScore ?? null,
+        winner_team_id: null,
+        next_match_id: null,
+        next_match_slot: null
       }));
   const profile = (userResult.data as UserRow | null) ?? null;
   const sidePicksDisplayProgress =
@@ -443,7 +450,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     projectedRoundOf32ResolvedSideCount,
     projectedRoundOf32ExpectedSideCount
   });
-  const knockoutProgress = getPredictionProgress({
+  const knockoutPredictionProgress = getPredictionProgress({
     phase: "knockout_stage",
     savedPredictionCount: savedKnockoutPredictions.length,
     totalPredictionCount: officialKnockoutMatches.length,
@@ -481,6 +488,27 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     groupSummaries,
     groupRulesets
   });
+  const knockoutBracketProgress = buildDashboardKnockoutProgressSummary({
+    matches: officialKnockoutMatches.map((match) => ({
+      id: match.id,
+      stage: match.stage,
+      status: match.status,
+      kickoffTime: match.kickoff_time,
+      homeTeamId: match.home_team_id ?? null,
+      awayTeamId: match.away_team_id ?? null,
+      homeScore: match.home_score ?? null,
+      awayScore: match.away_score ?? null,
+      winnerTeamId: match.winner_team_id ?? null,
+      nextMatchId: match.next_match_id ?? null,
+      nextMatchSlot: match.next_match_slot ?? null
+    })),
+    teams: teams.map((team) => ({
+      id: team.id,
+      name: team.name,
+      shortName: team.short_name,
+      flagEmoji: team.flag_emoji
+    }))
+  });
   const sidePicksProgress = sidePicksDisplayProgress
     ? getPredictionProgress({
         phase: "last_chance",
@@ -490,7 +518,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         isLocked: sidePicksDisplayProgress.isLocked
       })
     : null;
-  const progressBase = isKnockoutActive ? knockoutProgress : groupStageProgress;
+  const progressBase = isKnockoutActive ? knockoutPredictionProgress : groupStageProgress;
   const progress = {
     ...progressBase,
     hasCompletedBracketOnce: groupStageSaveStatus.hasCommittedEntry
@@ -557,7 +585,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         hasCompletedBracketOnce: groupStageSaveStatus.hasCommittedEntry
       },
       knockout_progress: {
-        ...knockoutProgress,
+        ...knockoutPredictionProgress,
         knockoutOutlook
       },
       side_picks_progress: sidePicksProgress
@@ -585,7 +613,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       nextMatch: reminderNextMatch,
       upcomingMatches: reminderUpcomingMatches,
       liveMatches: reminderLiveMatches
-    }
+    },
+    knockoutProgress: knockoutBracketProgress
   };
 }
 
@@ -637,7 +666,8 @@ function buildFallbackDashboardCommandCenter(): DashboardCommandCenterSummary {
       nextMatch: null,
       upcomingMatches: [],
       liveMatches: []
-    }
+    },
+    knockoutProgress: null
   };
 }
 
