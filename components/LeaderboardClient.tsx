@@ -52,7 +52,7 @@ type LeaderboardPhaseRailValue = LeaderboardPhase | "side_picks";
 const LEADERBOARD_PHASE_RAIL_ITEMS: Array<{ value: LeaderboardPhaseRailValue; disabled?: boolean }> = [
   { value: "global_top10" },
   { value: "group_phase" },
-  { value: "knockout_phase", disabled: true },
+  { value: "knockout_phase" },
   { value: "side_picks" }
 ];
 
@@ -81,7 +81,7 @@ type PhaseNavItem = {
 };
 
 function getAvailableLeaderboardPhase(phase?: LeaderboardPhase | null): LeaderboardPhase {
-  return phase === "knockout_phase" ? DEFAULT_LEADERBOARD_PHASE : phase ?? DEFAULT_LEADERBOARD_PHASE;
+  return phase ?? DEFAULT_LEADERBOARD_PHASE;
 }
 
 function isLeaderboardPhase(value: LeaderboardPhaseRailValue): value is LeaderboardPhase {
@@ -2063,11 +2063,6 @@ export function LeaderboardClient() {
             </button>
           ))}
         </LeaderboardChoiceRail>
-
-        <p className="mx-auto max-w-[22rem] text-center text-[11px] font-semibold leading-4 text-gray-500">
-          {t(uiLanguage, "leaderboard.knockoutLeaderboardComingSoon")}
-        </p>
-
         {shouldShowPhaseNavMenu ? (
           <div className="relative mx-auto w-[87%]">
             <button
