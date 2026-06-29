@@ -721,95 +721,85 @@ function KnockoutOutlookTriptychContent({
     ? `${activeRound.shortLabel} · ${activeRound.savedMatches}/${activeRound.totalMatches}`
     : outlook.headline;
   const compactHelper = activeRound ? activeRound.helperText : outlook.helperText;
+  const footerProjectionLabel = outlook.projection?.active
+    ? `Projection ${outlook.projection.hitSides}/${Math.max(outlook.projection.comparedSides, 1)}`
+    : null;
+  const footerActionLabel = compactKnockoutCtaLabel(outlook.ctaLabel);
 
   return (
-    <div className="flex h-full min-w-0 flex-col justify-between gap-1 px-1.5 py-1.5 text-left">
-      <div className="space-y-0.5">
-        <div className="flex items-center justify-between gap-1">
+    <div
+      className="flex h-full min-w-0 flex-col gap-1.5 px-1.5 py-1.5 text-left"
+      onDoubleClick={onOpenDetail}
+    >
+      <div className="space-y-0.5 px-0.5 pt-0.5">
+        <div className="flex min-w-0 items-start justify-between gap-2">
           <p className={`truncate text-[7px] font-black uppercase tracking-[0.12em] ${getPrimaryTextClasses(theme)}`}>
             KO OUTLOOK
           </p>
-          <button
-            type="button"
-            aria-label="Open knockout outlook detail"
-            onClick={onOpenDetail}
-            className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[6px] font-black uppercase tracking-[0.08em] ${
-              theme === "dark"
-                ? "border-white/12 bg-white/[0.05] text-white/75"
-                : "border-black/10 bg-white/75 text-black/65"
-            }`}
-          >
-            More
-          </button>
         </div>
-        <p className={`triptych-micro-copy truncate font-semibold ${getPrimaryTextClasses(theme)}`}>{compactSummary}</p>
-        <p className={`truncate text-[8px] font-semibold ${getMutedTextClasses(theme)}`}>{compactHelper}</p>
+        <p className={`truncate text-[10px] font-black leading-tight tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>{compactSummary}</p>
       </div>
 
-      <div className="grid min-h-0 grid-cols-1 gap-0.5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-0.5 pr-1 touch-pan-y [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="space-y-1">
         {outlook.rounds.map((round) => (
           <Link
             key={round.stage}
             href={round.href}
-            className={`grid min-w-0 grid-cols-[1.45rem,1fr,auto] items-center gap-1 rounded-[0.55rem] border px-1 py-[3px] ${
-              theme === "dark"
-                ? "border-white/12 bg-white/[0.045] hover:bg-white/[0.08]"
-                : "border-black/10 bg-white/70 hover:bg-white"
+            className={`grid min-w-0 grid-cols-[1.65rem,1fr,auto] items-center gap-1.5 border-b px-0.5 py-1 ${
+              theme === "dark" ? "border-white/10 hover:bg-white/[0.04]" : "border-black/10 hover:bg-black/[0.02]"
             }`}
           >
-            <span className={`text-[8px] font-black uppercase tracking-[0.06em] ${getPrimaryTextClasses(theme)}`}>
+            <span className={`text-[8px] font-black uppercase tracking-[0.08em] ${getPrimaryTextClasses(theme)}`}>
               {round.shortLabel}
             </span>
-            <span className={`min-w-0 truncate text-[8px] font-semibold ${getPrimaryTextClasses(theme)}`}>
+            <span
+              className={`min-w-0 truncate text-[11px] font-black leading-none tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}
+            >
               {round.savedMatches}/{round.totalMatches}
             </span>
             <span
-              className={`shrink-0 rounded-full px-1.5 py-[2px] text-[6px] font-black uppercase tracking-[0.08em] ${
-                theme === "dark"
-                  ? "bg-white/10 text-white/80"
-                  : "bg-black/5 text-black/65"
+              className={`shrink-0 text-[7px] font-black uppercase tracking-[0.08em] ${
+                round.status === "open" || round.status === "saved"
+                  ? theme === "dark"
+                    ? "text-white/88"
+                    : "text-black/72"
+                  : getMutedTextClasses(theme)
               }`}
             >
               {formatKnockoutRoundStateShort(round.status)}
             </span>
           </Link>
         ))}
+        </div>
       </div>
 
-      <div className="space-y-0.5">
-        <div className="flex flex-wrap gap-1">
-          {outlook.projection?.active ? (
-            <span
-              className={`inline-flex max-w-full truncate rounded-full border px-1.5 py-0.5 text-[6px] font-black uppercase tracking-[0.08em] ${
-                theme === "dark"
-                  ? "border-[color:var(--warning)]/35 bg-[color:var(--warning)]/10 text-[color:var(--warning)]"
-                  : "border-[color:var(--warning)]/35 bg-[color:var(--warning)]/12 text-[color:var(--warning)]"
-              }`}
-            >
-              P {outlook.projection.hitSides}/{Math.max(outlook.projection.comparedSides, 1)}
-            </span>
-          ) : null}
-          {outlook.nearestGroupDeadline ? (
-            <span
-              className={`inline-flex max-w-full truncate rounded-full border px-1.5 py-0.5 text-[6px] font-black uppercase tracking-[0.08em] ${
-                theme === "dark"
-                  ? "border-white/12 bg-white/[0.05] text-white/65"
-                  : "border-black/10 bg-white/75 text-black/55"
-              }`}
-            >
-              {formatKnockoutCompactDate(outlook.nearestGroupDeadline.deadlineAt)}
-            </span>
-          ) : null}
-        </div>
-
+      <div className={`space-y-0.5 border-t px-0.5 pt-1 ${theme === "dark" ? "border-white/10" : "border-black/10"}`}>
+        <p className={`truncate text-[8px] font-semibold ${getMutedTextClasses(theme)}`}>{compactHelper}</p>
+        {footerProjectionLabel ? (
+          <p
+            className={`truncate text-[7px] font-black uppercase tracking-[0.08em] ${
+              theme === "dark"
+                ? "text-[color:var(--warning)]"
+                : "text-[color:var(--warning)]"
+            }`}
+          >
+            {footerProjectionLabel}
+          </p>
+        ) : null}
         <Link
           href={outlook.ctaHref}
-          className={`block truncate pt-0.5 text-center text-[8px] font-black uppercase tracking-[0.08em] ${
+          className={`block truncate pt-0.5 text-[8px] font-black uppercase tracking-[0.08em] ${
             theme === "dark" ? "text-[color:var(--triptych-dark-accent-text)]" : "text-accent-dark"
           }`}
         >
-          {compactKnockoutCtaLabel(outlook.ctaLabel)}
+          {footerActionLabel}
         </Link>
+        {outlook.nearestGroupDeadline ? (
+          <p className={`truncate text-[7px] font-semibold ${getMutedTextClasses(theme)}`}>
+            {formatKnockoutCompactDate(outlook.nearestGroupDeadline.deadlineAt)}
+          </p>
+        ) : null}
       </div>
     </div>
   );
