@@ -1,6 +1,7 @@
 import "server-only";
 
 import { appendMatchEvent } from "@/lib/match-events";
+import { FIFA_2026_OFFICIAL_KNOCKOUT_KICKOFF_BY_STORED_MATCH_ID } from "@/lib/fifa-2026-knockout-seeding";
 import {
   buildGroupStandingsByGroup,
   buildQualifiedTeamSeeds,
@@ -21,6 +22,8 @@ type MatchRow = {
   stage: MatchStage;
   group_name?: string | null;
   status: MatchStatus;
+  kickoff_time?: string | null;
+  kickoff_at?: string | null;
   home_team_id?: string | null;
   away_team_id?: string | null;
   home_source?: string | null;
@@ -87,7 +90,7 @@ export async function seedOfficialKnockoutFromFinalGroupResults(
         .order("kickoff_time", { ascending: true }),
       adminSupabase
         .from("matches")
-        .select("id,stage,home_source,away_source,home_team_id,away_team_id,status")
+        .select("id,stage,home_source,away_source,home_team_id,away_team_id,status,kickoff_time,kickoff_at")
         .in("stage", ["r32", "round_of_32"])
         .order("kickoff_time", { ascending: true }),
       adminSupabase
@@ -211,6 +214,7 @@ export async function seedOfficialKnockoutFromFinalGroupResults(
     const seededAt = new Date().toISOString();
     const writeResults = await Promise.all(
       assignments.map(async (assignment) => {
+        const canonicalKickoff = FIFA_2026_OFFICIAL_KNOCKOUT_KICKOFF_BY_STORED_MATCH_ID.get(assignment.matchId);
         const { error } = await adminSupabase
           .from("matches")
           .update({
@@ -218,6 +222,9 @@ export async function seedOfficialKnockoutFromFinalGroupResults(
             away_team_id: assignment.awayTeamId,
             home_source: assignment.homeSource,
             away_source: assignment.awaySource,
+            kickoff_time: canonicalKickoff ?? undefined,
+            kickoff_at: canonicalKickoff ?? undefined,
+            status: "scheduled",
             updated_at: seededAt
           })
           .eq("id", assignment.matchId);
