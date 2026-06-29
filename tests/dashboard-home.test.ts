@@ -844,6 +844,75 @@ test("third-place qualifier probability helper returns null when the selected te
   assert.equal(probability, null);
 });
 
+test("exact-place probability returns zero when the predicted finish is already impossible by points", () => {
+  const teams = [
+    { id: "usa", name: "United States", shortName: "USA", groupName: "Group D", fifaRank: 10, fifaPoints: 1700, flagEmoji: "🇺🇸" },
+    { id: "aus", name: "Australia", shortName: "AUS", groupName: "Group D", fifaRank: 20, fifaPoints: 1600, flagEmoji: "🇦🇺" },
+    { id: "tur", name: "Türkiye", shortName: "TUR", groupName: "Group D", fifaRank: 22, fifaPoints: 1580, flagEmoji: "🇹🇷" },
+    { id: "par", name: "Paraguay", shortName: "PAR", groupName: "Group D", fifaRank: 30, fifaPoints: 1500, flagEmoji: "🇵🇾" }
+  ];
+  const rows = [
+    { teamId: "usa", rank: 1, played: 2, goalsFor: 4, goalDifference: 3, points: 6 },
+    { teamId: "aus", rank: 2, played: 2, goalsFor: 2, goalDifference: 1, points: 4 },
+    { teamId: "tur", rank: 3, played: 2, goalsFor: 1, goalDifference: -1, points: 1 },
+    { teamId: "par", rank: 4, played: 2, goalsFor: 1, goalDifference: -3, points: 0 }
+  ];
+  const remainingMatches = [
+    { status: "scheduled", homeTeamId: "usa", awayTeamId: "par" },
+    { status: "scheduled", homeTeamId: "aus", awayTeamId: "tur" }
+  ];
+
+  const impossibleFirst = getPickProbabilityForTeam({
+    rows,
+    remainingMatches,
+    teamId: "tur",
+    team: teams[2],
+    groupTeams: teams,
+    predictedPlace: 1
+  });
+  const impossibleSecond = getPickProbabilityForTeam({
+    rows,
+    remainingMatches,
+    teamId: "par",
+    team: teams[3],
+    groupTeams: teams,
+    predictedPlace: 2
+  });
+
+  assert.equal(impossibleFirst?.probability, 0);
+  assert.equal(impossibleSecond?.probability, 0);
+});
+
+test("third-place qualification probability returns zero when finishing third is already impossible", () => {
+  const teams = [
+    { id: "usa", name: "United States", shortName: "USA", groupName: "Group D", fifaRank: 10, fifaPoints: 1700, flagEmoji: "🇺🇸" },
+    { id: "aus", name: "Australia", shortName: "AUS", groupName: "Group D", fifaRank: 20, fifaPoints: 1600, flagEmoji: "🇦🇺" },
+    { id: "tur", name: "Türkiye", shortName: "TUR", groupName: "Group D", fifaRank: 22, fifaPoints: 1580, flagEmoji: "🇹🇷" },
+    { id: "par", name: "Paraguay", shortName: "PAR", groupName: "Group D", fifaRank: 30, fifaPoints: 1500, flagEmoji: "🇵🇾" }
+  ];
+  const rows = [
+    { teamId: "usa", rank: 1, played: 2, goalsFor: 4, goalDifference: 3, points: 6 },
+    { teamId: "aus", rank: 2, played: 2, goalsFor: 2, goalDifference: 1, points: 4 },
+    { teamId: "tur", rank: 3, played: 2, goalsFor: 2, goalDifference: 0, points: 4 },
+    { teamId: "par", rank: 4, played: 2, goalsFor: 1, goalDifference: -4, points: 0 }
+  ];
+  const remainingMatches = [
+    { status: "scheduled", homeTeamId: "usa", awayTeamId: "par" },
+    { status: "scheduled", homeTeamId: "aus", awayTeamId: "tur" }
+  ];
+
+  const impossibleViaThird = getAdvanceViaThirdProbabilityResult({
+    team: teams[3],
+    thirdPlacePool: [teams[2], teams[3]],
+    thirdPlaceRankingIndex: 1,
+    rows,
+    remainingMatches
+  });
+
+  assert.equal(impossibleViaThird.probability, 0);
+  assert.equal(impossibleViaThird.mode, "advance_via_third");
+});
+
 test("mini standings keep prediction order before kickoff even if scheduled rows have stale scores", () => {
   const futureKickoff = new Date(BASE_NOW + 24 * 60 * 60 * 1000).toISOString();
   const pastKickoff = new Date(BASE_NOW - 60 * 1000).toISOString();

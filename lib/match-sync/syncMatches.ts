@@ -7,29 +7,16 @@ import { persistProjectedGlobalSnapshotsForAllUsers } from "@/lib/projected-lead
 import { rebuildScopedLeaderboardState } from "@/lib/scoped-scoring";
 import { scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { scoreFinalizedKnockoutMatchWithClient, resetKnockoutMatchScoring } from "@/lib/bracket-predictions";
+import {
+  deriveSyncedNonFinalStatus,
+  findInternalMatch,
+  findInternalMatchByExternalId,
+  type MatchSyncRow
+} from "@/lib/match-sync/match-resolution";
 import { resolveTeamIdByName } from "@/lib/match-sync/team-resolution";
 import type { MatchStage, MatchStatus } from "@/lib/types";
 
 type AdminSupabaseClient = ReturnType<typeof createAdminClient>;
-
-type MatchSyncRow = {
-  id: string;
-  stage: MatchStage;
-  home_team_id?: string | null;
-  away_team_id?: string | null;
-  kickoff_time: string;
-  kickoff_at?: string | null;
-  status: MatchStatus;
-  home_score?: number | null;
-  away_score?: number | null;
-  winner_team_id?: string | null;
-  finalized_at?: string | null;
-  last_synced_at?: string | null;
-  external_id?: string | null;
-  is_manual_override?: boolean | null;
-  sync_status?: "ok" | "skipped" | "error" | null;
-  sync_error?: string | null;
-};
 
 type TeamRow = {
   id: string;
@@ -198,6 +185,11 @@ export async function syncMatches(): Promise<SyncMatchesResult> {
         }
       } else {
         await markSyncState(adminSupabase, internalMatch.id, {
+          status: deriveSyncedNonFinalStatus({
+            externalStatus: externalMatch.status,
+            kickoffAt: externalMatch.kickoff_at,
+            currentStatus: internalMatch.status
+          }),
           lastSyncedAt: latestSyncedAt,
           syncStatus: "ok",
           syncError: null,
@@ -414,47 +406,11 @@ function deriveWinnerTeamId(
   return externalMatch.home_score > externalMatch.away_score ? homeTeamId : awayTeamId;
 }
 
-function findInternalMatch({
-  externalMatch,
-  matches,
-  homeTeamId,
-  awayTeamId
-}: {
-  externalMatch: NormalizedExternalMatch;
-  matches: MatchSyncRow[];
-  homeTeamId: string;
-  awayTeamId: string;
-}) {
-  const exactExternalIdMatch = findInternalMatchByExternalId(externalMatch.external_id, matches);
-  if (exactExternalIdMatch) {
-    return exactExternalIdMatch;
-  }
-
-  const kickoffMillis = new Date(externalMatch.kickoff_at).getTime();
-  const candidates = matches.filter((match) => {
-    if (match.home_team_id !== homeTeamId || match.away_team_id !== awayTeamId) {
-      return false;
-    }
-
-    const internalKickoffMillis = new Date(match.kickoff_at ?? match.kickoff_time).getTime();
-    return Math.abs(internalKickoffMillis - kickoffMillis) <= 60 * 60 * 1000;
-  });
-
-  if (candidates.length !== 1) {
-    return null;
-  }
-
-  return candidates[0];
-}
-
-function findInternalMatchByExternalId(externalId: string, matches: MatchSyncRow[]) {
-  return matches.find((match) => match.external_id === externalId) ?? null;
-}
-
 async function markSyncState(
   adminSupabase: AdminSupabaseClient,
   matchId: string,
   input: {
+    status?: MatchStatus;
     lastSyncedAt: string;
     syncStatus: "ok" | "skipped" | "error";
     syncError: string | null;
@@ -465,6 +421,7 @@ async function markSyncState(
   const { error } = await adminSupabase
     .from("matches")
     .update({
+      status: input.status,
       last_synced_at: input.lastSyncedAt,
       sync_status: input.syncStatus,
       sync_error: input.syncError,

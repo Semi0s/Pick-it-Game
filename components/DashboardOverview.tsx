@@ -511,30 +511,6 @@ export function DashboardOverview({
       ),
     [allGroupTeamsById, initialLightSeedSnapshot]
   );
-  const thirdPlaceQualificationProbabilityByTeamId = useMemo(() => {
-    const probabilities = new Map<string, ReturnType<typeof getAdvanceViaThirdProbabilityResult>>();
-    for (const teamId of predictedThirdPlaceQualifierTeamIds) {
-      const team = allGroupTeamsById.get(teamId);
-      if (!team) {
-        continue;
-      }
-
-      probabilities.set(
-        teamId,
-        getAdvanceViaThirdProbabilityResult({
-          team,
-          thirdPlacePool: predictedThirdPlaceCandidatePool,
-          thirdPlaceRankingIndex: predictedThirdPlaceRankingIndexByTeamId.get(teamId) ?? null
-        })
-      );
-    }
-    return probabilities;
-  }, [
-    allGroupTeamsById,
-    predictedThirdPlaceCandidatePool,
-    predictedThirdPlaceQualifierTeamIds,
-    predictedThirdPlaceRankingIndexByTeamId
-  ]);
   const hasGroupStageStarted = useMemo(() => shouldUseOfficialGroupStandingsOrder(groupMatches), [groupMatches]);
   const qualifyingThirdPlaceTeamIds = useMemo(() => {
     const ids = new Set<string>();
@@ -560,7 +536,11 @@ export function DashboardOverview({
     );
     const remainingMatches = groupMatches
       .filter((match) => normalizeGroupKey(match.groupName) === resolvedStandingsGroup && match.status !== "final")
-      .map((match) => ({ status: match.status }));
+      .map((match) => ({
+        status: match.status,
+        homeTeamId: match.homeTeamId,
+        awayTeamId: match.awayTeamId
+      }));
     const groupIsFinal = rows.length > 0 && rows.every((row) => row.played >= 3);
     const hasPredictionForGroup = rows.some((row) => predictedPlacementByTeamId.has(row.teamId));
     const hasFinalizedResultInGroup = groupMatchesForStandings.some((match) => match.status === "final");
@@ -584,10 +564,31 @@ export function DashboardOverview({
         predictedPlace,
         isSelectedThirdPlaceQualifier: predictedThirdPlaceQualifierTeamIds.has(row.teamId)
       });
+      const liveThirdPlaceProbability = (() => {
+        if (!predictedThirdPlaceQualifierTeamIds.has(row.teamId)) {
+          return null;
+        }
+
+        const team = allGroupTeamsById.get(row.teamId);
+        if (!team) {
+          return null;
+        }
+
+        return getAdvanceViaThirdProbabilityResult({
+          team,
+          thirdPlacePool: predictedThirdPlaceCandidatePool,
+          thirdPlaceRankingIndex: predictedThirdPlaceRankingIndexByTeamId.get(row.teamId) ?? null,
+          rows,
+          remainingMatches
+        });
+      })();
       const thirdPlaceQualifierProbability = getThirdPlaceQualifierProbabilityForTeam({
         teamId: row.teamId,
         predictedThirdPlaceQualifierTeamIds,
-        thirdPlaceQualificationProbabilityByTeamId
+        thirdPlaceQualificationProbabilityByTeamId:
+          liveThirdPlaceProbability === null
+            ? new Map()
+            : new Map([[row.teamId, liveThirdPlaceProbability]])
       });
       return {
         ...row,
@@ -625,7 +626,6 @@ export function DashboardOverview({
     predictedThirdPlaceQualifierTeamIds,
     predictedThirdPlaceCandidatePool,
     predictedThirdPlaceRankingIndexByTeamId,
-    thirdPlaceQualificationProbabilityByTeamId,
     qualifyingThirdPlaceTeamIds,
     resolvedStandingsGroup,
     standingsByGroup,
