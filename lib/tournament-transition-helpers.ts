@@ -17,6 +17,7 @@ export type DashboardTriptychViewKey = (typeof DASHBOARD_TRIPTYCH_VIEW_KEYS)[num
 
 export type TournamentTransitionSettings = {
   modality: TournamentModality;
+  showKnockoutOutlook: boolean;
   dashboardMessage: {
     active: boolean;
     title: string;
@@ -119,6 +120,7 @@ export function getDefaultTriptychViews(modality: TournamentModality): {
 
 export function resolveTournamentTransitionSettings(input?: {
   modality?: string | null;
+  showKnockoutOutlook?: boolean;
   dashboardMessage?: {
     active?: boolean;
     title?: string | null;
@@ -149,6 +151,7 @@ export function resolveTournamentTransitionSettings(input?: {
 
   return {
     modality,
+    showKnockoutOutlook: input?.showKnockoutOutlook ?? false,
     dashboardMessage: {
       active: input?.dashboardMessage?.active ?? false,
       title: input?.dashboardMessage?.title?.trim() || defaultMessage.title,

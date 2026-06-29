@@ -126,7 +126,8 @@ export function DashboardOverview({
   initialCommandCenterSummary,
   initialGroupAccess,
   initialLightSeedSnapshot,
-  tournamentTransitionSettings
+  tournamentTransitionSettings,
+  showKnockoutOutlook = false
 }: {
   initialGlobalChallengeSummary?: {
     groupStrategy: { points: number | null; maxPoints: number; status: string };
@@ -144,6 +145,7 @@ export function DashboardOverview({
   } | null;
   initialLightSeedSnapshot?: LightSeedBuilderSnapshot | null;
   tournamentTransitionSettings?: TournamentTransitionSettings | null;
+  showKnockoutOutlook?: boolean;
 }) {
   const router = useRouter();
   const { user, isLoading: isCurrentUserLoading } = useCurrentUser();
@@ -1144,6 +1146,7 @@ export function DashboardOverview({
           language={displayLanguage}
           primaryView={tournamentTransitionSettings?.leftTriptych.primaryView}
           secondaryView={tournamentTransitionSettings?.leftTriptych.secondaryView}
+          showKnockoutOutlook={showKnockoutOutlook}
         />
       </div>
 

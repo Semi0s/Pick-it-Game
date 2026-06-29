@@ -143,6 +143,16 @@ export function AdminTournamentTransitionManager() {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <ToggleField
+            label="Show Knockout Outlook"
+            checked={settings.showKnockoutOutlook}
+            disabled={isLoading || isSaving}
+            onChange={(checked) =>
+              patchSettings({
+                showKnockoutOutlook: checked
+              })
+            }
+          />
+          <ToggleField
             label="Start each session on Dashboard"
             checked={settings.sessionBehavior.startEachSessionOnDashboard}
             disabled={isLoading || isSaving}

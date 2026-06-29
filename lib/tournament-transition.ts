@@ -24,6 +24,7 @@ import {
 } from "./tournament-transition-helpers.ts";
 
 export const TOURNAMENT_MODALITY_KEY = "tournament_modality";
+export const DASHBOARD_SHOW_KNOCKOUT_OUTLOOK_KEY = "dashboard_show_knockout_outlook";
 export const DASHBOARD_TRANSITION_MESSAGE_ACTIVE_KEY = "dashboard_transition_message_active";
 export const DASHBOARD_TRANSITION_MESSAGE_TITLE_KEY = "dashboard_transition_message_title";
 export const DASHBOARD_TRANSITION_MESSAGE_BODY_KEY = "dashboard_transition_message_body";
@@ -41,6 +42,7 @@ type AppSettingRow = {
 
 const SETTINGS_KEYS = [
   TOURNAMENT_MODALITY_KEY,
+  DASHBOARD_SHOW_KNOCKOUT_OUTLOOK_KEY,
   DASHBOARD_TRANSITION_MESSAGE_ACTIVE_KEY,
   DASHBOARD_TRANSITION_MESSAGE_TITLE_KEY,
   DASHBOARD_TRANSITION_MESSAGE_BODY_KEY,
@@ -79,6 +81,7 @@ export async function fetchTournamentTransitionSettings(): Promise<TournamentTra
 
   return resolveTournamentTransitionSettings({
     modality: rows[TOURNAMENT_MODALITY_KEY]?.text_value ?? null,
+    showKnockoutOutlook: rows[DASHBOARD_SHOW_KNOCKOUT_OUTLOOK_KEY]?.boolean_value ?? false,
     dashboardMessage: {
       active: rows[DASHBOARD_TRANSITION_MESSAGE_ACTIVE_KEY]?.boolean_value ?? false,
       title: rows[DASHBOARD_TRANSITION_MESSAGE_TITLE_KEY]?.text_value ?? null,
@@ -117,6 +120,9 @@ export async function saveTournamentTransitionSettings(
   const { error } = await adminSupabase.from("app_settings").upsert(
     [
       buildSettingRow(TOURNAMENT_MODALITY_KEY, { textValue: resolved.modality }),
+      buildSettingRow(DASHBOARD_SHOW_KNOCKOUT_OUTLOOK_KEY, {
+        booleanValue: resolved.showKnockoutOutlook
+      }),
       buildSettingRow(DASHBOARD_TRANSITION_MESSAGE_ACTIVE_KEY, {
         booleanValue: resolved.dashboardMessage.active
       }),

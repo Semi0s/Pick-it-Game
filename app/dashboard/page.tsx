@@ -126,6 +126,7 @@ export default async function DashboardPage() {
         } : null}
         initialLightSeedSnapshot={lightSeedSnapshot}
         tournamentTransitionSettings={tournamentTransitionSettings}
+        showKnockoutOutlook={tournamentTransitionSettings?.showKnockoutOutlook ?? false}
       />
     </AppShell>
   );
