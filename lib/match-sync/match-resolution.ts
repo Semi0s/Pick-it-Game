@@ -90,3 +90,32 @@ export function deriveSyncedNonFinalStatus(input: {
 
   return "locked" as const;
 }
+
+export function shouldReopenUpcomingLockedMatch(input: {
+  currentStatus: MatchStatus;
+  kickoffAt: string | null;
+  nowMs?: number;
+  finalizedAt?: string | null;
+  homeScore?: number | null;
+  awayScore?: number | null;
+}) {
+  if (input.currentStatus !== "locked") {
+    return false;
+  }
+
+  if (input.finalizedAt || input.homeScore !== null && input.homeScore !== undefined || input.awayScore !== null && input.awayScore !== undefined) {
+    return false;
+  }
+
+  if (!input.kickoffAt) {
+    return false;
+  }
+
+  const kickoffMs = new Date(input.kickoffAt).getTime();
+  if (!Number.isFinite(kickoffMs)) {
+    return false;
+  }
+
+  const nowMs = input.nowMs ?? Date.now();
+  return kickoffMs > nowMs + 5 * 60 * 1000;
+}
