@@ -17,6 +17,7 @@ import {
   type DashboardCommandCenterSummary,
   type DashboardMatchSummary
 } from "@/lib/dashboard-home";
+import { buildKnockoutOutlookSummary } from "@/lib/knockout-outlook";
 import { normalizeGroupKey } from "@/lib/group-standings";
 import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
 import { fetchGlobalLeaderboardRankSummaryForUser } from "@/lib/leaderboard-data";
@@ -41,6 +42,7 @@ import { EXPECTED_KNOCKOUT_MATCH_COUNTS, isRoundOf32Stage, normalizeKnockoutStag
 import { getGroupMatches, teams as demoTeams } from "@/lib/mock-data";
 import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
 import { loadProjectedRoundOf32FromPreferredSource } from "@/lib/projected-knockout-source";
+import { fetchActiveGroupRulesets } from "@/lib/scoped-scoring";
 import { isMissingColumnError, isMissingRelationError } from "@/lib/schema-safety";
 import { fetchSidePicksDashboardPreviewProgress, fetchSidePicksDashboardProgress } from "@/lib/side-picks-data";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -124,6 +126,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     latestGroupSeedUpdateResult,
     latestThirdPlaceUpdateResult,
     projectedRoundOf32Result,
+    knockoutScoreRowsResult,
     sidePicksProgressResult,
     sidePicksPreviewEnabledResult,
     sidePicksPreviewProgressResult
@@ -170,6 +173,10 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       .order("updated_at", { ascending: false })
       .limit(1),
     loadProjectedRoundOf32FromPreferredSource(adminSupabase, userId).catch(() => null),
+    adminSupabase
+      .from("bracket_scores")
+      .select("match_id,stage,points")
+      .eq("user_id", userId),
     fetchSidePicksDashboardProgress(adminSupabase, userId).catch(() => null),
     fetchBooleanAppSetting(SIDE_PICKS_TRIPTYCH_PREVIEW_ENABLED_KEY, false).catch(() => false),
     fetchSidePicksDashboardPreviewProgress(adminSupabase, userId).catch(() => null)
@@ -208,6 +215,10 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
   const savedKnockoutPredictions = Array.from(
     new Set(((knockoutPredictionsResult ?? []) as BracketPrediction[]).map((prediction) => prediction.matchId))
   );
+  const knockoutScoreRows =
+    knockoutScoreRowsResult.error && isMissingRelationError(knockoutScoreRowsResult.error.message, "bracket_scores")
+      ? []
+      : (((knockoutScoreRowsResult.data as Array<{ match_id: string; stage: MatchStage; points: number | null }> | null) ?? []));
 
   const teamById = new Map(
     teams.map((team) => [team.id, team])
@@ -304,6 +315,13 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     ].filter(Boolean))
   );
   const visibleGroupIds = Array.from(new Set([...joinedGroupIds, ...managedGroupIds]));
+  const [groupSummariesResult, groupRulesets] = await Promise.all([
+    visibleGroupIds.length > 0
+      ? adminSupabase.from("groups").select("id,name").in("id", visibleGroupIds)
+      : Promise.resolve({ data: [], error: null }),
+    fetchActiveGroupRulesets(adminSupabase, visibleGroupIds).catch(() => new Map())
+  ]);
+  const groupSummaries = ((groupSummariesResult.data as Array<{ id: string; name: string }> | null) ?? []);
 
   const groupNames = Array.from(
     new Set(
@@ -433,6 +451,36 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     deadlineAt: nextKnockoutDeadline,
     isLive: dashboardMatches.some((match) => match.status === "live" && normalizeKnockoutStage(match.stage) !== null)
   });
+  const knockoutOutlook = buildKnockoutOutlookSummary({
+    matches: officialKnockoutMatches.map((match) => ({
+      id: match.id,
+      stage: match.stage,
+      status: match.status,
+      kickoffTime: match.kickoff_time,
+      homeTeamId: match.home_team_id,
+      awayTeamId: match.away_team_id
+    })),
+    savedPredictionMatchIds: savedKnockoutPredictions,
+    scoreRows: knockoutScoreRows.map((row) => ({
+      matchId: row.match_id,
+      stage: row.stage,
+      points: row.points
+    })),
+    projectedComparison: projectedRoundOf32Result
+      ? {
+          projectedSeeds: projectedRoundOf32Result.projectedSeeds
+        }
+      : null,
+    officialRoundOf32Matches: officialKnockoutMatches
+      .filter((match) => normalizeKnockoutStage(match.stage) === "r32")
+      .map((match) => ({
+        id: match.id,
+        homeTeamId: match.home_team_id,
+        awayTeamId: match.away_team_id
+      })),
+    groupSummaries,
+    groupRulesets
+  });
   const sidePicksProgress = sidePicksDisplayProgress
     ? getPredictionProgress({
         phase: "last_chance",
@@ -508,7 +556,10 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         ...groupStageProgress,
         hasCompletedBracketOnce: groupStageSaveStatus.hasCommittedEntry
       },
-      knockout_progress: knockoutProgress,
+      knockout_progress: {
+        ...knockoutProgress,
+        knockoutOutlook
+      },
       side_picks_progress: sidePicksProgress
     },
     performance: {

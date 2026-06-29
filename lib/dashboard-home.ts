@@ -1,4 +1,5 @@
 import type { DashboardScoringMovementSummary } from "./leaderboard-movement.ts";
+import type { DashboardKnockoutOutlookSummary } from "./knockout-outlook.ts";
 import { normalizeGroupKey } from "./group-standings.ts";
 import type { DashboardProjectedOutlookSummary } from "./projected-outlook.ts";
 import { SIDE_PICK_PUBLIC_NAME, formatLastChanceDeadlineLabel } from "./side-picks.ts";
@@ -87,6 +88,7 @@ export type DashboardProgressSummary = {
   lastCommittedAt?: string | null;
   lastChangedAt?: string | null;
   hasCompletedBracketOnce?: boolean;
+  knockoutOutlook?: DashboardKnockoutOutlookSummary | null;
 };
 
 export type DashboardCommandCenterSummary = {

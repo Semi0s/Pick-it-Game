@@ -13,6 +13,7 @@ import {
   type DashboardMatchSummary,
   type DashboardUrgencyTone
 } from "@/lib/dashboard-home";
+import type { DashboardKnockoutOutlookSummary } from "@/lib/knockout-outlook";
 import {
   GROUP_STAGE_UNSAVED_DRAFT_STORAGE_KEY,
   hasCurrentUnsavedGroupStageDraft
@@ -29,6 +30,7 @@ type DashboardCommandCenterProps = {
   language?: string | null;
   primaryView?: DashboardTriptychViewKey | null;
   secondaryView?: DashboardTriptychViewKey | null;
+  showKnockoutOutlook?: boolean;
 };
 
 type TriptychTheme = "light" | "dark";
@@ -176,7 +178,8 @@ export function DashboardCommandCenter({
   userId,
   language,
   primaryView,
-  secondaryView
+  secondaryView,
+  showKnockoutOutlook = false
 }: DashboardCommandCenterProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [triptychTheme, setTriptychTheme] = useState<TriptychTheme>("light");
@@ -291,6 +294,7 @@ export function DashboardCommandCenter({
           scoringLens={scoringLens}
           primaryView={primaryView}
           secondaryView={secondaryView}
+          showKnockoutOutlook={showKnockoutOutlook}
         />
         <PerformancePanel
           performance={summary.performance}
@@ -315,7 +319,8 @@ function ProgressPanel({
   hasUnsavedGroupStageDraft = false,
   scoringLens,
   primaryView,
-  secondaryView
+  secondaryView,
+  showKnockoutOutlook = false
 }: {
   progress: DashboardCommandCenterSummary["progress"];
   progressViews: DashboardCommandCenterSummary["progressViews"];
@@ -328,6 +333,7 @@ function ProgressPanel({
   scoringLens?: TriptychScoringLens | null;
   primaryView?: DashboardTriptychViewKey | null;
   secondaryView?: DashboardTriptychViewKey | null;
+  showKnockoutOutlook?: boolean;
 }) {
   const [leftPanelViewState, setLeftPanelViewState] = useSessionViewState<TriptychLeftPanelViewState>({
     key: "dashboard-triptych-left-panel",
@@ -395,6 +401,10 @@ function ProgressPanel({
         : displayedProgress.label
     : getTriptychViewLabel("score_movement", language);
   const isShowingScoringLens = displayedView === "score_movement";
+  const shouldShowKnockoutOutlook =
+    Boolean(showKnockoutOutlook) &&
+    displayedProgress?.phase === "knockout_stage" &&
+    Boolean(displayedProgress.knockoutOutlook);
   const canOpenScoringDetail =
     isShowingScoringLens &&
     Boolean(scoringLens && (scoringLens.mode === "score_movement" || scoringLens.mode === "picks_in_play"));
@@ -500,6 +510,11 @@ function ProgressPanel({
         <div className={`absolute inset-x-0 top-0 ${contentViewportBottomClass} flex flex-col items-center justify-center text-center`}>
           {displayedProgress && isLastChanceProgress ? (
             <LastChanceTriptychContent progress={displayedProgress} theme={theme} />
+          ) : displayedProgress && shouldShowKnockoutOutlook ? (
+            <KnockoutOutlookTriptychContent
+              outlook={displayedProgress.knockoutOutlook ?? null}
+              theme={theme}
+            />
           ) : (
             <>
               <DigitalWatchRing percentage={percentage} tone={tone} theme={theme} />
@@ -544,6 +559,10 @@ function ProgressPanel({
           aria-label={t(language, "dashboard.picksActivateAsMatchesBegin")}
           className="flex h-full w-full min-w-0 items-center justify-center rounded-[1rem]"
         >
+          {panelContent}
+        </div>
+      ) : shouldShowKnockoutOutlook ? (
+        <div className="flex h-full w-full min-w-0 items-center justify-center rounded-[1rem]">
           {panelContent}
         </div>
       ) : (
@@ -656,6 +675,105 @@ function LastChanceTriptychContent({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function KnockoutOutlookTriptychContent({
+  outlook,
+  theme
+}: {
+  outlook: DashboardKnockoutOutlookSummary | null;
+  theme: TriptychTheme;
+}) {
+  if (!outlook) {
+    return (
+      <div className="flex h-full min-w-0 flex-col items-center justify-center gap-1 px-2 py-2 text-center">
+        <p className={`max-w-full truncate text-[7px] font-black uppercase tracking-[0.1em] ${getPrimaryTextClasses(theme)}`}>
+          KNOCKOUT OUTLOOK
+        </p>
+        <p className={`triptych-micro-copy max-w-full truncate font-semibold ${getMutedTextClasses(theme)}`}>
+          Waiting
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-w-0 flex-col gap-1 px-1.5 py-1.5 text-left">
+      <div className="space-y-0.5">
+        <p className={`truncate text-[7px] font-black uppercase tracking-[0.12em] ${getPrimaryTextClasses(theme)}`}>
+          KNOCKOUT OUTLOOK
+        </p>
+        <p className={`triptych-micro-copy truncate font-semibold ${getMutedTextClasses(theme)}`}>Official score picks</p>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-1">
+        {outlook.rounds.map((round) => (
+          <Link
+            key={round.stage}
+            href={round.href}
+            className={`grid min-w-0 grid-cols-[2rem,1fr,auto] items-center gap-1 rounded-[0.7rem] border px-1.5 py-1 ${
+              theme === "dark"
+                ? "border-white/12 bg-white/[0.045] hover:bg-white/[0.08]"
+                : "border-black/10 bg-white/70 hover:bg-white"
+            }`}
+          >
+            <span className={`text-[9px] font-black uppercase tracking-[0.08em] ${getPrimaryTextClasses(theme)}`}>
+              {round.shortLabel}
+            </span>
+            <span className="min-w-0">
+              <span className={`triptych-micro-copy block truncate font-semibold ${getPrimaryTextClasses(theme)}`}>
+                {round.savedMatches}/{round.totalMatches} saved
+              </span>
+              <span className={`block truncate text-[8px] font-semibold ${getMutedTextClasses(theme)}`}>
+                {round.helperText}
+              </span>
+            </span>
+            <span
+              className={`shrink-0 rounded-full px-1.5 py-0.5 text-[7px] font-black uppercase tracking-[0.12em] ${
+                theme === "dark"
+                  ? "bg-white/10 text-white/80"
+                  : "bg-black/5 text-black/65"
+              }`}
+            >
+              {formatKnockoutRoundState(round.status)}
+            </span>
+          </Link>
+        ))}
+      </div>
+
+      {outlook.projection?.active ? (
+        <div
+          className={`rounded-[0.75rem] border px-2 py-1 ${
+            theme === "dark"
+              ? "border-[color:var(--warning)]/35 bg-[color:var(--warning)]/10"
+              : "border-[color:var(--warning)]/35 bg-[color:var(--warning)]/12"
+          }`}
+        >
+          <p className="truncate text-[7px] font-black uppercase tracking-[0.12em] text-[color:var(--warning)]">
+            Projection active
+          </p>
+          <p className={`truncate text-[8px] font-semibold ${getPrimaryTextClasses(theme)}`}>
+            {outlook.projection.hitSides}/{Math.max(outlook.projection.comparedSides, 1)} sides match
+          </p>
+        </div>
+      ) : null}
+
+      {outlook.nearestGroupDeadline ? (
+        <p className={`truncate text-[8px] font-semibold ${getMutedTextClasses(theme)}`}>
+          {outlook.nearestGroupDeadline.groupName} · {formatKnockoutCompactDate(outlook.nearestGroupDeadline.deadlineAt)}
+        </p>
+      ) : null}
+
+      <Link
+        href={outlook.ctaHref}
+        className={`mt-auto truncate text-center text-[8px] font-black uppercase tracking-[0.12em] ${
+          theme === "dark" ? "text-[color:var(--triptych-dark-accent-text)]" : "text-accent-dark"
+        }`}
+      >
+        {outlook.ctaLabel}
+      </Link>
     </div>
   );
 }
@@ -3354,6 +3472,37 @@ function compactStageLabel(stage: string, language?: string | null) {
   }
 
   return stage;
+}
+
+function formatKnockoutRoundState(state: DashboardKnockoutOutlookSummary["rounds"][number]["status"]) {
+  switch (state) {
+    case "waiting":
+      return "Waiting";
+    case "open":
+      return "Open";
+    case "saved":
+      return "Saved";
+    case "locked":
+      return "Locked";
+    case "final":
+      return "Final";
+    case "missed":
+      return "Missed";
+    case "complete":
+      return "Complete";
+  }
+}
+
+function formatKnockoutCompactDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Soon";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "numeric",
+    day: "numeric"
+  }).format(date);
 }
 
 function formatReminderStageLabel(match: DashboardMatchSummary, language?: string | null) {

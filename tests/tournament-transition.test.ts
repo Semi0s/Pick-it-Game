@@ -12,6 +12,7 @@ test("transition settings default to pre-tournament behavior", () => {
   const settings = resolveTournamentTransitionSettings();
 
   assert.equal(settings.modality, "pre_tournament");
+  assert.equal(settings.showKnockoutOutlook, false);
   assert.equal(settings.sessionBehavior.startEachSessionOnDashboard, false);
   assert.equal(settings.sessionBehavior.showReturnToDashboardIndicator, false);
   assert.equal(settings.leftTriptych.primaryView, "group_stage_progress");
