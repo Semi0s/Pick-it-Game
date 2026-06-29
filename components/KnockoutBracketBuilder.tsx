@@ -150,10 +150,7 @@ export function KnockoutBracketBuilder({
   );
   const roundChoices = useMemo(() => buildBracketSlides(view, uiLanguage), [uiLanguage, view]);
   const slides = useMemo(
-    () =>
-      roundChoices.filter(
-        (slide) => VISIBLE_KNOCKOUT_STAGE_IDS.has(slide.currentStage) && slide.currentMatches.length > 0
-      ),
+    () => roundChoices.filter((slide) => VISIBLE_KNOCKOUT_STAGE_IDS.has(slide.currentStage)),
     [roundChoices]
   );
   const activeSlide = slides[activeSlideIndex] ?? null;
@@ -702,6 +699,35 @@ function BracketStageViewport({
         </div>
         <div className="px-0 py-5 text-center text-sm font-semibold text-gray-600">
           {kt(language, "noMatchesForTeam", { teamName: activeFilterTeamLabel(slide, selectedCountryFilter, language) })}
+        </div>
+      </section>
+    );
+  }
+
+  if (!selectedCountryFilter && filteredSlide.currentMatches.length === 0) {
+    return (
+      <section className="w-full max-w-full overflow-x-clip overflow-y-visible">
+        {!usesComparisonView ? (
+          <div className="border-b border-gray-200/80 px-2.5 py-3 sm:px-0 sm:py-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h3 className="text-3xl font-extrabold leading-none text-gray-950 sm:text-4xl">{slide.title}</h3>
+              </div>
+              <div className="shrink-0 pt-1 text-right">
+                <p className="text-sm font-bold uppercase tracking-wide text-gray-950 sm:text-base">
+                  {kt(language, "matchesCount", { count: 0 })}
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        <div className="px-0 py-6">
+          <div className="rounded-[1.15rem] border border-gray-200 bg-gray-50 px-4 py-5 text-center">
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-gray-500">{slide.eyebrow}</p>
+            <p className="mt-3 text-base font-semibold text-gray-700">
+              {kt(language, "knockoutRoundWillOpenSoon", { roundName: slide.title })}
+            </p>
+          </div>
         </div>
       </section>
     );
