@@ -246,11 +246,29 @@ export async function syncMatches(): Promise<SyncMatchesResult> {
 
 export async function lockMatchesByKickoffWithClient(adminSupabase: AdminSupabaseClient) {
   const lockCutoff = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const nowIso = new Date().toISOString();
+
+  const { error: reopenError } = await adminSupabase
+    .from("matches")
+    .update({
+      status: "scheduled",
+      updated_at: nowIso
+    })
+    .eq("status", "locked")
+    .gt("kickoff_at", lockCutoff)
+    .is("finalized_at", null)
+    .is("home_score", null)
+    .is("away_score", null);
+
+  if (reopenError) {
+    throw reopenError;
+  }
+
   const { data, error } = await adminSupabase
     .from("matches")
     .update({
       status: "locked",
-      updated_at: new Date().toISOString()
+      updated_at: nowIso
     })
     .eq("status", "scheduled")
     .lte("kickoff_at", lockCutoff)

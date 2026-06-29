@@ -1,6 +1,16 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isKnockoutStage, normalizeKnockoutStage } from "@/lib/match-stage";
+import { shouldClearKnockoutParticipants } from "@/lib/knockout-advancement-logic";
+import {
+  buildGroupStandingsByGroup,
+  buildQualifiedTeamSeeds,
+  getRequiredThirdPlaceQualifierCount,
+  resolveRoundOf32SeedAssignments,
+  type GroupStageMatchForSeeding,
+  type KnockoutPlaceholderMatch
+} from "@/lib/knockout-seeding";
 import type { MatchNextSlot, MatchStage } from "@/lib/types";
+import type { Team } from "@/lib/types";
 
 type AdminSupabaseClient = ReturnType<typeof createAdminClient>;
 
@@ -38,16 +48,38 @@ export type KnockoutAdvancementSummary = {
 export async function rebuildKnockoutAdvancementWithClient(
   adminSupabase: AdminSupabaseClient
 ): Promise<KnockoutAdvancementSummary> {
-  const { data, error } = await adminSupabase
-    .from("matches")
-    .select(
-      "id,stage,status,home_team_id,away_team_id,home_source,away_source,kickoff_time,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at"
-    )
-    .neq("stage", "group")
-    .order("kickoff_time", { ascending: true });
+  const [
+    { data, error },
+    { data: groupMatchRows, error: groupMatchesError },
+    { data: teamRows, error: teamsError }
+  ] = await Promise.all([
+    adminSupabase
+      .from("matches")
+      .select(
+        "id,stage,status,home_team_id,away_team_id,home_source,away_source,kickoff_time,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at"
+      )
+      .neq("stage", "group")
+      .order("kickoff_time", { ascending: true }),
+    adminSupabase
+      .from("matches")
+      .select("id,stage,group_name,status,home_team_id,away_team_id,home_score,away_score")
+      .eq("stage", "group")
+      .order("kickoff_time", { ascending: true }),
+    adminSupabase
+      .from("teams")
+      .select("id,name,short_name,group_name,fifa_rank,flag_emoji")
+      .order("group_name", { ascending: true })
+      .order("name", { ascending: true })
+  ]);
 
   if (error) {
     throw error;
+  }
+  if (groupMatchesError) {
+    throw groupMatchesError;
+  }
+  if (teamsError) {
+    throw teamsError;
   }
 
   const knockoutMatches = ((data ?? []) as MatchRow[]).filter((match) => isKnockoutStage(match.stage));
@@ -90,8 +122,75 @@ export async function rebuildKnockoutAdvancementWithClient(
     updatesByMatchId.set(matchId, currentUpdate);
   };
 
+  const roundOf32Matches = knockoutMatches.filter((match) => normalizeKnockoutStage(match.stage) === "r32");
+  const hasMissingRoundOf32Teams = roundOf32Matches.some((match) => !match.home_team_id || !match.away_team_id);
+  const mappedGroupMatches = ((groupMatchRows ?? []) as Array<{
+    id: string;
+    stage: MatchStage;
+    group_name?: string | null;
+    status: "scheduled" | "locked" | "live" | "final";
+    home_team_id?: string | null;
+    away_team_id?: string | null;
+    home_score?: number | null;
+    away_score?: number | null;
+  }>).map((match) => ({
+    id: match.id,
+    stage: match.stage,
+    groupName: match.group_name ?? null,
+    status: match.status,
+    homeTeamId: match.home_team_id ?? null,
+    awayTeamId: match.away_team_id ?? null,
+    homeScore: match.home_score ?? null,
+    awayScore: match.away_score ?? null
+  })) satisfies GroupStageMatchForSeeding[];
+  const allGroupMatchesFinal =
+    mappedGroupMatches.length > 0 && mappedGroupMatches.every((match) => match.status === "final");
+
+  if (hasMissingRoundOf32Teams && allGroupMatchesFinal) {
+    const mappedTeams: Team[] = ((teamRows ?? []) as Array<{
+      id: string;
+      name: string;
+      short_name: string;
+      group_name: string;
+      fifa_rank: number | null;
+      flag_emoji: string | null;
+    }>).map((team) => ({
+      id: team.id,
+      name: team.name,
+      shortName: team.short_name,
+      groupName: team.group_name,
+      fifaRank: team.fifa_rank ?? 0,
+      flagEmoji: team.flag_emoji ?? ""
+    }));
+    const placeholders = roundOf32Matches.map((match) => ({
+      id: match.id,
+      stage: match.stage,
+      homeSource: match.home_source ?? null,
+      awaySource: match.away_source ?? null,
+      homeTeamId: match.home_team_id ?? null,
+      awayTeamId: match.away_team_id ?? null,
+      status: match.status
+    })) satisfies KnockoutPlaceholderMatch[];
+    const standingsByGroup = buildGroupStandingsByGroup(mappedGroupMatches, mappedTeams);
+    const requiredThirdPlaceQualifierCount = getRequiredThirdPlaceQualifierCount(placeholders);
+    const { automaticQualifiers, rankedThirdPlaceTeams } = buildQualifiedTeamSeeds(
+      standingsByGroup,
+      requiredThirdPlaceQualifierCount || 8
+    );
+    const seedAssignments = resolveRoundOf32SeedAssignments(
+      placeholders,
+      automaticQualifiers,
+      rankedThirdPlaceTeams
+    );
+
+    for (const assignment of seedAssignments) {
+      assignTeamToSlot(assignment.matchId, "home", assignment.homeTeamId);
+      assignTeamToSlot(assignment.matchId, "away", assignment.awayTeamId);
+    }
+  }
+
   for (const match of knockoutMatches) {
-    if (match.status === "final") {
+    if (!shouldClearKnockoutParticipants(match)) {
       continue;
     }
 
