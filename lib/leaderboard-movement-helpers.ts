@@ -17,6 +17,9 @@ export type DashboardScoringHistoryPoint = {
   pointsDelta: number | null;
   rankDelta: number | null;
   paceDelta: number | null;
+  stage?: string | null;
+  matchupLabel?: string | null;
+  compactMatchupLabel?: string | null;
 };
 
 export type DashboardScoringMovementSummary = {
