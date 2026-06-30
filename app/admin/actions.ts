@@ -142,6 +142,7 @@ type LeaderboardEventInsert = {
   rank_delta: number | null;
   message: string;
   metadata: Record<string, unknown>;
+  created_at?: string;
 };
 
 type InsertedLeaderboardEventRow = NotificationEventSeed;
@@ -5994,6 +5995,7 @@ async function recreateGlobalLeaderboardEventsForMatch(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const globalEventTypes = ["points_awarded", "perfect_pick", "rank_moved_up", "rank_moved_down"] as const;
   const events: LeaderboardEventInsert[] = [];
+  const eventTimestamp = await fetchLeaderboardEventTimestampForMatch(adminSupabase, matchId);
 
   for (const prediction of scoredPredictions) {
     if (prediction.scoreBreakdown.points > 0) {
@@ -6012,7 +6014,8 @@ async function recreateGlobalLeaderboardEventsForMatch(
           outcomePoints: prediction.scoreBreakdown.outcome_points,
           exactScorePoints: prediction.scoreBreakdown.exact_score_points,
           goalDifferencePoints: prediction.scoreBreakdown.goal_difference_points
-        }
+        },
+        created_at: eventTimestamp
       });
     }
 
@@ -6030,7 +6033,8 @@ async function recreateGlobalLeaderboardEventsForMatch(
         metadata: {
           predictionId: prediction.predictionId,
           exactScorePoints: prediction.scoreBreakdown.exact_score_points
-        }
+        },
+        created_at: eventTimestamp
       });
     }
   }
@@ -6053,7 +6057,8 @@ async function recreateGlobalLeaderboardEventsForMatch(
           previousRank: movement.previous_rank,
           currentPoints: movement.current_points,
           previousPoints: movement.previous_points
-        }
+        },
+        created_at: eventTimestamp
       });
     }
 
@@ -6074,7 +6079,8 @@ async function recreateGlobalLeaderboardEventsForMatch(
           previousRank: movement.previous_rank,
           currentPoints: movement.current_points,
           previousPoints: movement.previous_points
-        }
+        },
+        created_at: eventTimestamp
       });
     }
   }
@@ -6132,6 +6138,7 @@ async function recreateGroupLeaderboardEventsForMatch(
   scoredPredictions: ScoredPrediction[]
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const groupEventTypes = ["points_awarded", "perfect_pick", "rank_moved_up", "rank_moved_down"] as const;
+  const eventTimestamp = await fetchLeaderboardEventTimestampForMatch(adminSupabase, matchId);
   const { data: memberships, error: membershipsError } = await adminSupabase
     .from("group_members")
     .select("group_id,user_id");
@@ -6177,7 +6184,8 @@ async function recreateGroupLeaderboardEventsForMatch(
             outcomePoints: prediction.scoreBreakdown.outcome_points,
             exactScorePoints: prediction.scoreBreakdown.exact_score_points,
             goalDifferencePoints: prediction.scoreBreakdown.goal_difference_points
-          }
+          },
+          created_at: eventTimestamp
         });
       }
 
@@ -6195,7 +6203,8 @@ async function recreateGroupLeaderboardEventsForMatch(
           metadata: {
             predictionId: prediction.predictionId,
             exactScorePoints: prediction.scoreBreakdown.exact_score_points
-          }
+          },
+          created_at: eventTimestamp
         });
       }
 
@@ -6232,7 +6241,8 @@ async function recreateGroupLeaderboardEventsForMatch(
             previousRank: movement.previous_rank,
             currentPoints: movement.current_points,
             previousPoints: movement.previous_points
-          }
+          },
+          created_at: eventTimestamp
         });
       }
 
@@ -6253,7 +6263,8 @@ async function recreateGroupLeaderboardEventsForMatch(
             previousRank: movement.previous_rank,
             currentPoints: movement.current_points,
             previousPoints: movement.previous_points
-          }
+          },
+          created_at: eventTimestamp
         });
       }
     }
@@ -6316,6 +6327,24 @@ async function recreateGroupLeaderboardEventsForMatch(
 
 function buildPointsAwardedMessage(points: number) {
   return `earned +${points} ${points === 1 ? "point" : "points"}`;
+}
+
+async function fetchLeaderboardEventTimestampForMatch(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  matchId: string
+) {
+  const { data, error } = await adminSupabase
+    .from("matches")
+    .select("finalized_at,last_synced_at,kickoff_at,updated_at")
+    .eq("id", matchId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const match = data as Pick<MatchRow, "finalized_at" | "last_synced_at" | "kickoff_at" | "updated_at"> | null;
+  return match?.finalized_at ?? match?.last_synced_at ?? match?.kickoff_at ?? match?.updated_at ?? new Date().toISOString();
 }
 
 async function clearDerivedGroupMatchScoringState(

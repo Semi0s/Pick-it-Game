@@ -2,6 +2,7 @@ import {
   fetchCommentsForEvents,
   type LeaderboardEventComment
 } from "@/lib/leaderboard-comments";
+import { getLeaderboardActivityTimestamp } from "@/lib/leaderboard-activity-helpers";
 import {
   fetchDailyWinners,
   LEADERBOARD_HIGHLIGHT_TIME_ZONE,
@@ -28,6 +29,20 @@ type LeaderboardEventRow = {
     | { id: string; name: string; avatar_url?: string | null; home_team_id?: string | null }
     | Array<{ id: string; name: string; avatar_url?: string | null; home_team_id?: string | null }>
     | null;
+  match?:
+    | {
+        finalized_at?: string | null;
+        last_synced_at?: string | null;
+        kickoff_at?: string | null;
+        updated_at?: string | null;
+      }
+    | Array<{
+        finalized_at?: string | null;
+        last_synced_at?: string | null;
+        kickoff_at?: string | null;
+        updated_at?: string | null;
+      }>
+    | null;
 };
 
 export type LeaderboardActivityItem = {
@@ -49,6 +64,7 @@ export type LeaderboardActivityItem = {
 };
 
 const RECENT_EVENT_LIMIT = 10;
+const RECENT_EVENT_SCAN_LIMIT = 50;
 
 export async function fetchRecentGlobalLeaderboardActivity(options?: {
   includeDailyWinner?: boolean;
@@ -94,11 +110,11 @@ async function fetchRecentLeaderboardActivity(options: {
   let query = adminSupabase
     .from("leaderboard_events")
     .select(
-      "id,event_type,scope_type,group_id,match_id,user_id,related_user_id,points_delta,rank_delta,message,metadata,created_at,user:users!leaderboard_events_user_id_fkey(id,name,avatar_url,home_team_id)"
+      "id,event_type,scope_type,group_id,match_id,user_id,related_user_id,points_delta,rank_delta,message,metadata,created_at,user:users!leaderboard_events_user_id_fkey(id,name,avatar_url,home_team_id),match:matches!leaderboard_events_match_id_fkey(finalized_at,last_synced_at,kickoff_at,updated_at)"
     )
     .eq("scope_type", options.scopeType)
     .order("created_at", { ascending: false })
-    .limit(RECENT_EVENT_LIMIT);
+    .limit(RECENT_EVENT_SCAN_LIMIT);
 
   query = options.scopeType === "group" ? query.eq("group_id", options.groupId!) : query.is("group_id", null);
 
@@ -129,13 +145,15 @@ async function fetchRecentLeaderboardActivity(options: {
   const commentsByEventId = includeComments ? await fetchCommentsForEvents(commentableEventIds) : new Map<string, LeaderboardEventComment[]>();
   const persistedItems = persistedEvents.map((event, index) => {
     const userRow = Array.isArray(event.user) ? event.user[0] : event.user;
+    const matchRow = Array.isArray(event.match) ? event.match[0] : event.match;
+    const effectiveCreatedAt = getLeaderboardActivityTimestamp(event, matchRow);
     return {
       id: `${event.id}:${index}`,
       eventId: event.id,
       eventType: event.event_type,
       message: event.message ?? formatFallbackMessage(event),
       ...getFallbackMessageDescriptor(event),
-      createdAt: event.created_at,
+      createdAt: effectiveCreatedAt,
       pointsDelta: event.points_delta,
       userName: userRow?.name ?? null,
       userAvatarUrl: userRow?.avatar_url ?? null,
@@ -145,14 +163,16 @@ async function fetchRecentLeaderboardActivity(options: {
       canReact: true,
       canComment: includeComments && (event.event_type === "daily_winner" || event.event_type === "trophy_awarded")
     };
+  }).sort((left, right) => {
+    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
   });
 
   if (!includeDailyWinner) {
-    return pinDailyWinnerToTop(persistedItems);
+    return pinDailyWinnerToTop(persistedItems).slice(0, RECENT_EVENT_LIMIT);
   }
 
   if (persistedItems.some((item) => item.eventType === "daily_winner")) {
-    return pinDailyWinnerToTop(persistedItems);
+    return pinDailyWinnerToTop(persistedItems).slice(0, RECENT_EVENT_LIMIT);
   }
 
   const dailyWinnerItems = buildDailyWinnerActivityItems(
