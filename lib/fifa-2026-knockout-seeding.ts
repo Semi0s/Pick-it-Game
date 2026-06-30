@@ -131,6 +131,30 @@ const LEGACY_R32_ID_BY_OFFICIAL_MATCH_ID = new Map<string, string>([
   ["M88", "r32-16"]
 ]);
 
+const LEGACY_KNOCKOUT_ID_BY_OFFICIAL_MATCH_ID = new Map<string, string>([
+  ...LEGACY_R32_ID_BY_OFFICIAL_MATCH_ID,
+  ["M89", "r16-01"],
+  ["M90", "r16-02"],
+  ["M91", "r16-03"],
+  ["M92", "r16-04"],
+  ["M93", "r16-05"],
+  ["M94", "r16-06"],
+  ["M95", "r16-07"],
+  ["M96", "r16-08"],
+  ["M97", "qf-01"],
+  ["M98", "qf-02"],
+  ["M99", "qf-03"],
+  ["M100", "qf-04"],
+  ["M101", "sf-01"],
+  ["M102", "sf-02"],
+  ["M103", "third-01"],
+  ["M104", "final-01"]
+]);
+
+const OFFICIAL_KNOCKOUT_ID_BY_LEGACY_MATCH_ID = new Map(
+  Array.from(LEGACY_KNOCKOUT_ID_BY_OFFICIAL_MATCH_ID.entries()).map(([officialId, legacyId]) => [legacyId, officialId] as const)
+);
+
 export const FIFA_2026_OFFICIAL_KNOCKOUT_KICKOFF_BY_STORED_MATCH_ID = new Map<string, string>([
   ["M73", "2026-06-28T12:00:00-07:00"],
   ["M74", "2026-06-29T16:30:00-04:00"],
@@ -259,6 +283,25 @@ export function buildFifa2026RoundOf32StoredMatchIdLookup(
   }
 
   return lookup;
+}
+
+export function normalizeFifa2026KnockoutStoredMatchId(matchId: string | null | undefined) {
+  const normalized = (matchId ?? "").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return OFFICIAL_KNOCKOUT_ID_BY_LEGACY_MATCH_ID.get(normalized) ?? normalized;
+}
+
+export function expandFifa2026KnockoutStoredMatchIds(matchId: string | null | undefined) {
+  const normalized = normalizeFifa2026KnockoutStoredMatchId(matchId);
+  if (!normalized) {
+    return [];
+  }
+
+  const legacyId = LEGACY_KNOCKOUT_ID_BY_OFFICIAL_MATCH_ID.get(normalized) ?? null;
+  return legacyId ? [normalized, legacyId] : [normalized];
 }
 
 export function rankFifa2026ThirdPlaceTeams(

@@ -1,3 +1,7 @@
+import {
+  expandFifa2026KnockoutStoredMatchIds,
+  normalizeFifa2026KnockoutStoredMatchId
+} from "./fifa-2026-knockout-seeding.ts";
 import { EXPECTED_KNOCKOUT_MATCH_COUNTS, formatMatchStage, normalizeKnockoutStage, type CanonicalKnockoutStage } from "./match-stage.ts";
 import type { MatchNextSlot, MatchStage, MatchStatus } from "./types.ts";
 
@@ -19,6 +23,8 @@ type KnockoutProgressMatchRow = {
   kickoffTime: string | null;
   homeTeamId: string | null;
   awayTeamId: string | null;
+  homeSource?: string | null;
+  awaySource?: string | null;
   homeScore: number | null;
   awayScore: number | null;
   winnerTeamId?: string | null;
@@ -112,16 +118,7 @@ export function buildDashboardKnockoutProgressSummary(input: {
   const currentRoundMatches = stageMatches.get(currentRoundStage) ?? [];
   const nextRoundMatches = [...(stageMatches.get(nextRoundStage) ?? [])].sort(compareMatchKickoff);
 
-  const feederMatchesByTargetId = new Map<string, { home?: KnockoutProgressMatchRow; away?: KnockoutProgressMatchRow }>();
-  for (const match of currentRoundMatches) {
-    if (!match.nextMatchId || !match.nextMatchSlot) {
-      continue;
-    }
-
-    const target = feederMatchesByTargetId.get(match.nextMatchId) ?? {};
-    target[match.nextMatchSlot] = match;
-    feederMatchesByTargetId.set(match.nextMatchId, target);
-  }
+  const feederMatchesByTargetId = buildFeederMatchesByTargetId(currentRoundMatches, nextRoundMatches);
 
   const matchups = nextRoundMatches
     .map((match) => {
@@ -163,6 +160,71 @@ export function buildDashboardKnockoutProgressSummary(input: {
     matchupCount: matchups.length,
     matchups
   };
+}
+
+function buildFeederMatchesByTargetId(
+  sourceMatches: KnockoutProgressMatchRow[],
+  targetMatches: KnockoutProgressMatchRow[]
+) {
+  const feederMatchesByTargetId = new Map<string, { home?: KnockoutProgressMatchRow; away?: KnockoutProgressMatchRow }>();
+  const sourceMatchesByNormalizedId = new Map<string, KnockoutProgressMatchRow>();
+
+  for (const match of sourceMatches) {
+    for (const alias of expandFifa2026KnockoutStoredMatchIds(match.id)) {
+      sourceMatchesByNormalizedId.set(alias, match);
+    }
+  }
+
+  for (const targetMatch of targetMatches) {
+    const sourceMappedHome = resolveFeederMatchFromSourceLabel(targetMatch.homeSource, sourceMatchesByNormalizedId);
+    const sourceMappedAway = resolveFeederMatchFromSourceLabel(targetMatch.awaySource, sourceMatchesByNormalizedId);
+    if (sourceMappedHome || sourceMappedAway) {
+      feederMatchesByTargetId.set(targetMatch.id, {
+        home: sourceMappedHome ?? undefined,
+        away: sourceMappedAway ?? undefined
+      });
+    }
+  }
+
+  for (const match of sourceMatches) {
+    if (!match.nextMatchId || !match.nextMatchSlot) {
+      continue;
+    }
+
+    const normalizedTargetIds = expandFifa2026KnockoutStoredMatchIds(match.nextMatchId);
+    for (const normalizedTargetId of normalizedTargetIds) {
+      const target = feederMatchesByTargetId.get(normalizedTargetId) ?? {};
+      if (!target[match.nextMatchSlot]) {
+        target[match.nextMatchSlot] = match;
+      }
+      feederMatchesByTargetId.set(normalizedTargetId, target);
+    }
+  }
+
+  return feederMatchesByTargetId;
+}
+
+function resolveFeederMatchFromSourceLabel(
+  sourceLabel: string | null | undefined,
+  sourceMatchesByNormalizedId: Map<string, KnockoutProgressMatchRow>
+) {
+  const matchId = parseWinnerSourceMatchId(sourceLabel);
+  if (!matchId) {
+    return null;
+  }
+
+  const normalizedId = normalizeFifa2026KnockoutStoredMatchId(matchId);
+  return normalizedId ? sourceMatchesByNormalizedId.get(normalizedId) ?? null : null;
+}
+
+function parseWinnerSourceMatchId(sourceLabel: string | null | undefined) {
+  const normalized = (sourceLabel ?? "").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const match = normalized.match(/^Winner of\s+([A-Za-z0-9-]+)$/i);
+  return match?.[1] ?? null;
 }
 
 function resolveCurrentRoundStage(stageMatches: Map<CanonicalKnockoutStage, KnockoutProgressMatchRow[]>) {

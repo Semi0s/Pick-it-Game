@@ -25,6 +25,8 @@ export type DashboardMatchSummary = {
   groupLabel?: string | null;
   homeTeamId?: string | null;
   awayTeamId?: string | null;
+  homeSource?: string | null;
+  awaySource?: string | null;
   homeTeamName: string;
   awayTeamName: string;
   homeTeamShortName: string;
