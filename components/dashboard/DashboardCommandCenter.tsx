@@ -68,6 +68,7 @@ type TriptychScoringLens =
 const DASHBOARD_TRIPTYCH_THEME_STORAGE_KEY = "pickit:dashboard-triptych-theme";
 const FALLBACK_TRIPTYCH_DARK_ACCENT_STYLE = getTriptychDarkAccentStyle({ r: 159, g: 229, b: 143 });
 const SCENARIO_IMPACT_SWIPE_THRESHOLD_PX = 36;
+const KNOCKOUT_SCORING_HISTORY_START_AT = "2026-06-27T00:00:00Z";
 type TriptychProgressViewKey = Exclude<DashboardTriptychViewKey, "score_movement">;
 
 type TriptychLeftPanelViewState = {
@@ -171,6 +172,20 @@ function buildDisplayPicksInPlayChartData(points: PicksInPlayChartPoint[]): Pick
     },
     firstPoint
   ];
+}
+
+function filterRelevantScoringHistory(history: DashboardScoringHistoryPoint[]) {
+  const cutoffMs = new Date(KNOCKOUT_SCORING_HISTORY_START_AT).getTime();
+  if (Number.isNaN(cutoffMs) || history.length === 0) {
+    return history;
+  }
+
+  const filteredHistory = history.filter((point) => {
+    const pointMs = new Date(point.createdAt).getTime();
+    return !Number.isNaN(pointMs) && pointMs >= cutoffMs;
+  });
+
+  return filteredHistory.length > 0 ? filteredHistory : history;
 }
 
 export function DashboardCommandCenter({
@@ -1434,15 +1449,16 @@ function DashboardScoreMovementDetailSheet({
   onClose: () => void;
 }) {
   const isProjected = scoreKind === "projected";
+  const relevantHistory = useMemo(() => filterRelevantScoringHistory(score.history), [score.history]);
   const chartData = useMemo(
     () =>
-      score.history.map((point) => ({
+      relevantHistory.map((point) => ({
         checkpointId: point.matchId,
         label: formatScoringChartLabel(point.createdAt, language),
         actualPoints: point.totalPoints,
         pacePoints: point.pacePoints
       })),
-    [language, score.history]
+    [language, relevantHistory]
   );
   const displayChartData = useMemo(() => buildDisplayScoringChartData(chartData), [chartData]);
   const yDomain = useMemo<[number, number]>(() => {
@@ -1565,7 +1581,7 @@ function DashboardScoreMovementDetailSheet({
           )}
 
           <div className="mt-4 space-y-2">
-            {score.history.length === 0 ? null : score.history.slice().reverse().map((point) => (
+            {relevantHistory.length === 0 ? null : relevantHistory.slice().reverse().map((point) => (
               <ScoringTimelineRow key={`${point.matchId}-${point.createdAt}`} point={point} language={language} theme={theme} />
             ))}
           </div>
@@ -3201,7 +3217,7 @@ function getTriptychScoringLens({
 }
 
 function getScoringTrackPoints(history: DashboardScoringHistoryPoint[]): TriptychScoringTrackPoint[] {
-  return history.map((point) => ({
+  return filterRelevantScoringHistory(history).map((point) => ({
     checkpointId: point.matchId,
     label: formatCompactScoringLabel(point.createdAt),
     actualPoints: point.totalPoints,
