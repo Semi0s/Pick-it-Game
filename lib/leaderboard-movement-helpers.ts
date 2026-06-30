@@ -94,7 +94,8 @@ export function normalizeLeaderboardSnapshotHistory(
 
 export function buildDashboardScoringMovementSummary(
   rows: LeaderboardSnapshotHistoryRow[],
-  paceByMatchId?: ReadonlyMap<string, number>
+  paceByMatchId?: ReadonlyMap<string, number>,
+  fallbackCurrentPacePoints?: number | null
 ): DashboardScoringMovementSummary {
   const history = normalizeLeaderboardSnapshotHistory(rows, paceByMatchId);
   const latestPoint = history.at(-1) ?? null;
@@ -107,13 +108,17 @@ export function buildDashboardScoringMovementSummary(
   return {
     currentPoints: latestPoint.totalPoints,
     currentRank: latestPoint.rank,
-    currentPacePoints: latestPoint.pacePoints,
+    currentPacePoints: latestPoint.pacePoints ?? fallbackCurrentPacePoints ?? null,
     previousPoints: previousPoint?.totalPoints ?? null,
     previousRank: previousPoint?.rank ?? null,
     previousPacePoints: previousPoint?.pacePoints ?? null,
     pointsChange: previousPoint ? latestPoint.totalPoints - previousPoint.totalPoints : null,
     rankChange: previousPoint ? previousPoint.rank - latestPoint.rank : null,
-    deltaFromPace: latestPoint.paceDelta,
+    deltaFromPace:
+      latestPoint.paceDelta ??
+      (typeof fallbackCurrentPacePoints === "number"
+        ? latestPoint.totalPoints - fallbackCurrentPacePoints
+        : null),
     latestSnapshotAt: latestPoint.createdAt,
     previousSnapshotAt: previousPoint?.createdAt ?? null,
     comparisonMode: previousPoint ? getComparisonMode(latestPoint, previousPoint) : "none",
