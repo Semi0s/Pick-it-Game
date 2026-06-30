@@ -686,6 +686,8 @@ function mapDashboardMatch(
     groupLabel: homeTeam?.group_name ?? awayTeam?.group_name ?? null,
     homeTeamId: match.home_team_id ?? null,
     awayTeamId: match.away_team_id ?? null,
+    homeSource: match.home_source ?? null,
+    awaySource: match.away_source ?? null,
     homeTeamName: homeTeam?.name ?? "TBD",
     awayTeamName: awayTeam?.name ?? "TBD",
     homeTeamShortName: homeTeam?.short_name?.trim() || homeTeam?.name || "TBD",
