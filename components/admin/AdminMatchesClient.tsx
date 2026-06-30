@@ -29,6 +29,12 @@ import {
 } from "@/app/admin/actions";
 import { showAppToast } from "@/lib/app-toast";
 import { getAccessLevel } from "@/lib/access-levels";
+import {
+  hasAdminWinnerScoreConflict,
+  isKnockoutStage,
+  requiresAdminKnockoutTiebreakWinner,
+  resolveAdminMatchWinnerTeamId
+} from "@/lib/admin-match-winner";
 import { formatMatchStage } from "@/lib/match-stage";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
 import {
@@ -2437,25 +2443,49 @@ function MatchResultCard({ match, isReviewTarget = false, onSaved, onScored, onE
   const [status, setStatus] = useState<MatchStatus>(match.status);
   const [homeScore, setHomeScore] = useState(getAdminInitialScoreInput(match.homeScore));
   const [awayScore, setAwayScore] = useState(getAdminInitialScoreInput(match.awayScore));
+  const [tiedWinnerTeamId, setTiedWinnerTeamId] = useState(match.winnerTeamId ?? "");
   const [isSaving, setIsSaving] = useState(false);
   const isFinalized = status === "final";
   const isLive = status === "live" || status === "locked";
+  const isKnockout = isKnockoutStage(match.stage);
   const predictionStateLabel = getPredictionStateLabel(status);
   const homeLabel = getSideLabel(match, "home");
   const awayLabel = getSideLabel(match, "away");
   const validationIssues = getMatchValidationIssues(match);
   const operationState = getMatchOperationState(match, validationIssues);
-  const resolvedWinnerTeamId = getResolvedWinnerTeamId(match, homeScore, awayScore);
-  const resolvedWinnerLabel = getResolvedWinnerLabel(match, resolvedWinnerTeamId);
+  const resolvedWinnerTeamId = resolveAdminMatchWinnerTeamId({
+    stage: match.stage,
+    homeScore,
+    awayScore,
+    homeTeamId: match.homeTeamId,
+    awayTeamId: match.awayTeamId,
+    tiedWinnerTeamId: tiedWinnerTeamId || null
+  });
+  const hasBothScores = homeScore !== "" && awayScore !== "";
+  const hasTiedScore = hasBothScores && Number(homeScore) === Number(awayScore);
+  const needsTieWinnerSelection = isKnockout && hasTiedScore;
+  const isSubmitBlockedByMissingKnockoutWinner = requiresAdminKnockoutTiebreakWinner({
+    stage: match.stage,
+    status,
+    homeScore,
+    awayScore,
+    winnerTeamId: resolvedWinnerTeamId
+  });
+  const resolvedWinnerLabel =
+    needsTieWinnerSelection && !resolvedWinnerTeamId
+      ? "Select tie-break winner"
+      : getResolvedWinnerLabel(match, resolvedWinnerTeamId);
   const hasUnsavedChanges =
     status !== match.status ||
     homeScore !== getAdminInitialScoreInput(match.homeScore) ||
-    awayScore !== getAdminInitialScoreInput(match.awayScore);
+    awayScore !== getAdminInitialScoreInput(match.awayScore) ||
+    (match.winnerTeamId ?? null) !== (resolvedWinnerTeamId ?? null);
 
   useEffect(() => {
     setStatus(match.status);
     setHomeScore(getAdminInitialScoreInput(match.homeScore));
     setAwayScore(getAdminInitialScoreInput(match.awayScore));
+    setTiedWinnerTeamId(match.winnerTeamId ?? "");
   }, [match]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -2665,7 +2695,39 @@ function MatchResultCard({ match, isReviewTarget = false, onSaved, onScored, onE
           >
             {resolvedWinnerLabel}
           </p>
-          {homeScore !== "" && awayScore !== "" && resolvedWinnerTeamId === null ? (
+          {needsTieWinnerSelection ? (
+            <label className="mt-3 block">
+              <span
+                className={`text-xs font-bold uppercase tracking-wide ${
+                  isFinalized ? "text-gray-600" : isLive ? "text-amber-800" : "text-gray-500"
+                }`}
+              >
+                Tie-break winner
+              </span>
+              <select
+                value={tiedWinnerTeamId}
+                onChange={(event) => setTiedWinnerTeamId(event.target.value)}
+                className={`mt-2 w-full rounded-md border px-3 py-3 text-sm font-semibold ${
+                  isFinalized
+                    ? "border-gray-300 bg-gray-50 text-gray-800"
+                    : isLive
+                      ? "border-amber-200 bg-white text-gray-900"
+                      : "border-gray-300 bg-white text-gray-900"
+                }`}
+              >
+                <option value="">Select winner after penalties / tie-break</option>
+                {match.homeTeamId ? <option value={match.homeTeamId}>{homeLabel.full}</option> : null}
+                {match.awayTeamId ? <option value={match.awayTeamId}>{awayLabel.full}</option> : null}
+              </select>
+              <p
+                className={`mt-2 text-xs font-semibold ${
+                  isFinalized ? "text-gray-600" : isLive ? "text-amber-800" : "text-gray-500"
+                }`}
+              >
+                Save the official score as a draw and choose the advancing team separately.
+              </p>
+            </label>
+          ) : homeScore !== "" && awayScore !== "" && resolvedWinnerTeamId === null ? (
             <p
               className={`mt-1 text-xs font-semibold ${
                 isFinalized ? "text-gray-600" : isLive ? "text-amber-800" : "text-gray-500"
@@ -2700,15 +2762,20 @@ function MatchResultCard({ match, isReviewTarget = false, onSaved, onScored, onE
 
         <button
           type="submit"
-          disabled={isSaving || !hasUnsavedChanges}
+          disabled={isSaving || !hasUnsavedChanges || isSubmitBlockedByMissingKnockoutWinner}
           className={`w-full rounded-md px-4 py-3 text-base font-bold ${
-            isSaving || !hasUnsavedChanges
+            isSaving || !hasUnsavedChanges || isSubmitBlockedByMissingKnockoutWinner
               ? "bg-gray-300 text-gray-600"
               : "bg-accent text-white"
           }`}
         >
           {isSaving ? "Saving..." : "Save Match"}
         </button>
+        {isSubmitBlockedByMissingKnockoutWinner ? (
+          <p className="text-sm font-semibold text-rose-700">
+            Choose the tie-break winner before finalizing a knockout draw.
+          </p>
+        ) : null}
       </div>
     </form>
   );
@@ -2746,25 +2813,6 @@ function ScoreInput({
 
 function getAdminInitialScoreInput(score?: number) {
   return score === undefined ? "0" : String(score);
-}
-
-function getResolvedWinnerTeamId(match: AdminMatch, homeScore: string, awayScore: string) {
-  if (homeScore === "" || awayScore === "") {
-    return undefined;
-  }
-
-  const home = Number(homeScore);
-  const away = Number(awayScore);
-
-  if (home === away) {
-    return null;
-  }
-
-  if (home > away) {
-    return match.homeTeamId;
-  }
-
-  return match.awayTeamId;
 }
 
 function getResolvedWinnerLabel(match: AdminMatch, winnerTeamId: string | null | undefined) {
@@ -2943,7 +2991,6 @@ function getMatchValidationIssues(match: AdminMatch) {
   const issues: string[] = [];
   const hasHomeScore = typeof match.homeScore === "number";
   const hasAwayScore = typeof match.awayScore === "number";
-  const isKnockout = match.stage !== "group";
 
   if ((!match.homeTeamId || !match.awayTeamId) && (match.stage === "group" || match.status !== "scheduled")) {
     issues.push("missing team");
@@ -2958,17 +3005,27 @@ function getMatchValidationIssues(match: AdminMatch) {
     issues.push("winner/team ID mismatch");
   }
   if (hasHomeScore && hasAwayScore) {
-    const expectedWinner =
-      match.homeScore === match.awayScore
-        ? null
-        : match.homeScore! > match.awayScore!
-          ? match.homeTeamId ?? null
-          : match.awayTeamId ?? null;
-
-    if (expectedWinner !== match.winnerTeamId && !(expectedWinner === null && !match.winnerTeamId)) {
+    if (
+      hasAdminWinnerScoreConflict({
+        stage: match.stage,
+        homeScore: match.homeScore,
+        awayScore: match.awayScore,
+        homeTeamId: match.homeTeamId,
+        awayTeamId: match.awayTeamId,
+        winnerTeamId: match.winnerTeamId
+      })
+    ) {
       issues.push("winner/score conflict");
     }
-    if (isKnockout && match.status === "final" && expectedWinner === null) {
+    if (
+      requiresAdminKnockoutTiebreakWinner({
+        stage: match.stage,
+        status: match.status,
+        homeScore: match.homeScore,
+        awayScore: match.awayScore,
+        winnerTeamId: match.winnerTeamId
+      })
+    ) {
       issues.push("knockout draw conflict");
     }
   }

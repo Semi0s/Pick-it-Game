@@ -9,12 +9,18 @@ type ApiFootballFixtureRow = {
     } | null;
   } | null;
   teams?: {
-    home?: { name?: string | null } | null;
-    away?: { name?: string | null } | null;
+    home?: { name?: string | null; winner?: boolean | null } | null;
+    away?: { name?: string | null; winner?: boolean | null } | null;
   } | null;
   goals?: {
     home?: number | null;
     away?: number | null;
+  } | null;
+  score?: {
+    penalty?: {
+      home?: number | null;
+      away?: number | null;
+    } | null;
   } | null;
 };
 
@@ -73,11 +79,13 @@ export async function fetchApiFootballMatches({
   });
 
   return rawRows
-    .map((row) => {
+    .map<NormalizedExternalMatch | null>((row) => {
       const externalId = row.fixture?.id != null ? String(row.fixture.id) : "";
       const kickoffAt = row.fixture?.date ?? "";
       const homeTeamName = row.teams?.home?.name?.trim() ?? "";
       const awayTeamName = row.teams?.away?.name?.trim() ?? "";
+      const homeWinner = row.teams?.home?.winner === true;
+      const awayWinner = row.teams?.away?.winner === true;
 
       if (!externalId || !kickoffAt || !homeTeamName || !awayTeamName) {
         return null;
@@ -90,8 +98,11 @@ export async function fetchApiFootballMatches({
         home_team_name: homeTeamName,
         away_team_name: awayTeamName,
         home_score: row.goals?.home ?? null,
-        away_score: row.goals?.away ?? null
-      } satisfies NormalizedExternalMatch;
+        away_score: row.goals?.away ?? null,
+        winner_side: homeWinner ? "home" : awayWinner ? "away" : null,
+        penalty_home_score: row.score?.penalty?.home ?? null,
+        penalty_away_score: row.score?.penalty?.away ?? null
+      };
     })
     .filter((row): row is NormalizedExternalMatch => Boolean(row));
 }
