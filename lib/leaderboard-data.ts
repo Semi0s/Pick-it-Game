@@ -333,13 +333,15 @@ export async function fetchLeaderboardPageData(request?: LeaderboardPageRequest)
         ? await fetchRecentGlobalLeaderboardActivity({
             includeDailyWinner: settings.daily_winner_enabled,
             dailyWinnersFallback: dailyWinners,
-            includeComments: false
+            includeComments: false,
+            phase
           })
         : selectedGroupId
           ? await fetchGroupLeaderboardActivity(selectedGroupId, {
               includeDailyWinner: settings.daily_winner_enabled,
               dailyWinnersFallback: dailyWinners,
-              includeComments: commentsEnabledForActivity
+              includeComments: commentsEnabledForActivity,
+              phase
             })
           : []
       : [];

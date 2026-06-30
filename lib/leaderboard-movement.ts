@@ -60,6 +60,7 @@ export async function fetchGlobalDashboardScoringMovementSummary(
 
   const matchIds = Array.from(new Set(userRows.map((row) => row.match_id).filter(Boolean)));
   const paceByMatchId = new Map<string, number>();
+  let fallbackCurrentPacePoints: number | null = null;
 
   if (matchIds.length > 0) {
     const { data: paceRows, error: paceError } = await adminSupabase
@@ -88,7 +89,26 @@ export async function fetchGlobalDashboardScoringMovementSummary(
     }
   }
 
-  return buildDashboardScoringMovementSummary(userRows, paceByMatchId);
+  if (paceByMatchId.size === 0) {
+    const { data: entryRows, error: entryError } = await adminSupabase
+      .from("leaderboard_entries")
+      .select("total_points");
+
+    if (entryError) {
+      throw new Error(entryError.message);
+    }
+
+    const totals = ((entryRows as Array<{ total_points: number | null }> | null) ?? [])
+      .map((row) => row.total_points)
+      .filter((value): value is number => typeof value === "number");
+
+    if (totals.length > 0) {
+      fallbackCurrentPacePoints =
+        totals.reduce((sum, value) => sum + value, 0) / totals.length;
+    }
+  }
+
+  return buildDashboardScoringMovementSummary(userRows, paceByMatchId, fallbackCurrentPacePoints);
 }
 
 export async function fetchGroupLeaderboardRankMovement(

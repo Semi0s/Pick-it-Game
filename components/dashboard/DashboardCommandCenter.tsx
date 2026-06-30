@@ -140,11 +140,14 @@ function validateTriptychLeftPanelViewState(value: unknown): TriptychLeftPanelVi
 }
 
 function buildDisplayScoringChartData(points: TriptychScoringTrackPoint[]): TriptychScoringTrackPoint[] {
-  if (points.length !== 1) {
-    return points;
+  const withBaseline = prependKnockoutScoringBaseline(points, () =>
+    formatCompactScoringLabel(KNOCKOUT_SCORING_HISTORY_START_AT)
+  );
+  if (withBaseline.length !== 1) {
+    return withBaseline;
   }
 
-  const firstPoint = points[0];
+  const firstPoint = withBaseline[0];
   return [
     {
       checkpointId: `${firstPoint.checkpointId}-start`,
@@ -154,6 +157,36 @@ function buildDisplayScoringChartData(points: TriptychScoringTrackPoint[]): Trip
         typeof firstPoint.pacePoints === "number" && firstPoint.pacePoints > 0 ? 0 : firstPoint.pacePoints
     },
     firstPoint
+  ];
+}
+
+function prependKnockoutScoringBaseline<T extends TriptychScoringTrackPoint>(
+  points: T[],
+  buildLabel: () => string
+) {
+  if (points.length === 0) {
+    return points;
+  }
+
+  const firstPoint = points[0];
+  const cutoffMs = new Date(KNOCKOUT_SCORING_HISTORY_START_AT).getTime();
+  if (
+    Number.isNaN(cutoffMs) ||
+    firstPoint.actualPoints <= 0 ||
+    firstPoint.label === buildLabel()
+  ) {
+    return points;
+  }
+
+  return [
+    {
+      checkpointId: "knockout-start",
+      label: buildLabel(),
+      actualPoints: 0,
+      pacePoints:
+        typeof firstPoint.pacePoints === "number" && firstPoint.pacePoints > 0 ? 0 : firstPoint.pacePoints
+    } as T,
+    ...points
   ];
 }
 
@@ -1482,15 +1515,21 @@ function DashboardScoreMovementDetailSheet({
     [relevantHistory, score]
   );
   const chartData = useMemo(
-    () =>
-      relevantHistory.map((point, index) => ({
-        checkpointId: point.matchId,
-        label: formatScoringChartLabel(point.createdAt, language),
-        actualPoints: point.totalPoints,
-        pacePoints:
-          point.pacePoints ??
-          (index === relevantHistory.length - 1 ? relevantSummary.currentPacePoints : null)
-      })),
+    () => {
+      const hasHistoricalPace = relevantHistory.some((point) => typeof point.pacePoints === "number");
+      return prependKnockoutScoringBaseline(
+        relevantHistory.map((point, index) => ({
+          checkpointId: point.matchId,
+          label: formatScoringChartLabel(point.createdAt, language),
+          actualPoints: point.totalPoints,
+          pacePoints: hasHistoricalPace
+            ? point.pacePoints ??
+              (index === relevantHistory.length - 1 ? relevantSummary.currentPacePoints : null)
+            : relevantSummary.currentPacePoints
+        })),
+        () => formatScoringChartLabel(KNOCKOUT_SCORING_HISTORY_START_AT, language)
+      );
+    },
     [language, relevantHistory, relevantSummary.currentPacePoints]
   );
   const displayChartData = useMemo(() => buildDisplayScoringChartData(chartData), [chartData]);

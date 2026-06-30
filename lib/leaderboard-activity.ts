@@ -2,7 +2,10 @@ import {
   fetchCommentsForEvents,
   type LeaderboardEventComment
 } from "@/lib/leaderboard-comments";
-import { getLeaderboardActivityTimestamp } from "@/lib/leaderboard-activity-helpers";
+import {
+  getLeaderboardActivityTimestamp,
+  shouldIncludeLeaderboardActivityItem
+} from "@/lib/leaderboard-activity-helpers";
 import {
   fetchDailyWinners,
   LEADERBOARD_HIGHLIGHT_TIME_ZONE,
@@ -11,6 +14,7 @@ import {
 import { fetchLeaderboardEventReactions, type LeaderboardReactionSummary } from "@/lib/leaderboard-reactions";
 import { isMissingRelationError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { LeaderboardPhase } from "@/lib/leaderboard-data";
 
 type LeaderboardEventRow = {
   id: string;
@@ -31,12 +35,14 @@ type LeaderboardEventRow = {
     | null;
   match?:
     | {
+        stage?: string | null;
         finalized_at?: string | null;
         last_synced_at?: string | null;
         kickoff_at?: string | null;
         updated_at?: string | null;
       }
     | Array<{
+        stage?: string | null;
         finalized_at?: string | null;
         last_synced_at?: string | null;
         kickoff_at?: string | null;
@@ -70,18 +76,20 @@ export async function fetchRecentGlobalLeaderboardActivity(options?: {
   includeDailyWinner?: boolean;
   dailyWinnersFallback?: DailyWinner[];
   includeComments?: boolean;
+  phase?: LeaderboardPhase;
 }): Promise<LeaderboardActivityItem[]> {
   return fetchRecentLeaderboardActivity({
     scopeType: "global",
     includeDailyWinner: options?.includeDailyWinner,
     dailyWinnersFallback: options?.dailyWinnersFallback,
-    includeComments: options?.includeComments
+    includeComments: options?.includeComments,
+    phase: options?.phase ?? "global_top10"
   });
 }
 
 export async function fetchGroupLeaderboardActivity(
   groupId: string,
-  options?: { includeDailyWinner?: boolean; dailyWinnersFallback?: DailyWinner[]; includeComments?: boolean }
+  options?: { includeDailyWinner?: boolean; dailyWinnersFallback?: DailyWinner[]; includeComments?: boolean; phase?: LeaderboardPhase }
 ): Promise<LeaderboardActivityItem[]> {
   if (!groupId.trim()) {
     return [];
@@ -92,7 +100,8 @@ export async function fetchGroupLeaderboardActivity(
     groupId,
     includeDailyWinner: options?.includeDailyWinner,
     dailyWinnersFallback: options?.dailyWinnersFallback,
-    includeComments: options?.includeComments
+    includeComments: options?.includeComments,
+    phase: options?.phase ?? "group_phase"
   });
 }
 
@@ -102,6 +111,7 @@ async function fetchRecentLeaderboardActivity(options: {
   includeDailyWinner?: boolean;
   dailyWinnersFallback?: DailyWinner[];
   includeComments?: boolean;
+  phase: LeaderboardPhase;
 }): Promise<LeaderboardActivityItem[]> {
   const adminSupabase = createAdminClient();
   const includeDailyWinner = options.includeDailyWinner ?? false;
@@ -110,7 +120,7 @@ async function fetchRecentLeaderboardActivity(options: {
   let query = adminSupabase
     .from("leaderboard_events")
     .select(
-      "id,event_type,scope_type,group_id,match_id,user_id,related_user_id,points_delta,rank_delta,message,metadata,created_at,user:users!leaderboard_events_user_id_fkey(id,name,avatar_url,home_team_id),match:matches!leaderboard_events_match_id_fkey(finalized_at,last_synced_at,kickoff_at,updated_at)"
+      "id,event_type,scope_type,group_id,match_id,user_id,related_user_id,points_delta,rank_delta,message,metadata,created_at,user:users!leaderboard_events_user_id_fkey(id,name,avatar_url,home_team_id),match:matches!leaderboard_events_match_id_fkey(stage,finalized_at,last_synced_at,kickoff_at,updated_at)"
     )
     .eq("scope_type", options.scopeType)
     .order("created_at", { ascending: false })
@@ -135,7 +145,14 @@ async function fetchRecentLeaderboardActivity(options: {
     throw new Error(error.message);
   }
 
-  const persistedEvents = (data as LeaderboardEventRow[] | null) ?? [];
+  const persistedEvents = ((data as LeaderboardEventRow[] | null) ?? []).filter((event) => {
+    const matchRow = Array.isArray(event.match) ? event.match[0] : event.match;
+    return shouldIncludeLeaderboardActivityItem({
+      phase: options.phase,
+      eventType: event.event_type,
+      match: matchRow
+    });
+  });
   const reactionsByEventId = await fetchLeaderboardEventReactions(persistedEvents.map((event) => event.id));
   const commentableEventIds = includeComments
     ? persistedEvents
