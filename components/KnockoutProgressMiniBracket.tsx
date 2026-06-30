@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { formatDate } from "@/lib/i18n-format";
+import { TeamFlag } from "@/components/TeamFlag";
 import type { DashboardKnockoutProgressMatchup, DashboardKnockoutProgressSlot, DashboardKnockoutProgressSummary } from "@/lib/knockout-progress";
 
 export function KnockoutProgressMiniBracket({
@@ -86,18 +87,19 @@ function KnockoutProgressSlotCard({
   align: "left" | "right";
 }) {
   const justifyClassName = align === "right" ? "items-end text-right" : "items-start text-left";
-  const pendingLabel = slot.candidates.length > 0
-    ? slot.candidates.map((team) => formatTeamToken(team.flagEmoji, team.shortName)).join(" / ")
-    : "TBD";
 
   if (slot.state === "advanced" && slot.primaryTeam) {
     return (
       <div className={`flex min-w-0 flex-col ${justifyClassName}`}>
         <div className="flex min-w-0 items-center gap-1">
           <span className={`inline-flex min-w-0 items-center gap-1 ${align === "right" ? "flex-row-reverse self-end" : ""}`}>
-            <span className="truncate text-sm font-black text-gray-950">
-              {formatTeamToken(slot.primaryTeam.flagEmoji, slot.primaryTeam.shortName)}
-            </span>
+            <TeamToken
+              flagEmoji={slot.primaryTeam.flagEmoji}
+              teamId={slot.primaryTeam.teamId}
+              shortName={slot.primaryTeam.shortName}
+              teamName={slot.primaryTeam.name}
+              className="text-sm font-black text-gray-950"
+            />
           </span>
           {slot.scoreLabel ? (
             <span className="shrink-0 rounded-full bg-accent-light px-1.5 py-0.5 text-[10px] font-bold text-accent-dark">
@@ -106,9 +108,13 @@ function KnockoutProgressSlotCard({
           ) : null}
         </div>
         {slot.secondaryTeam ? (
-          <span className="mt-0.5 truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
-            {formatTeamToken(slot.secondaryTeam.flagEmoji, slot.secondaryTeam.shortName)}
-          </span>
+          <TeamToken
+            flagEmoji={slot.secondaryTeam.flagEmoji}
+            teamId={slot.secondaryTeam.teamId}
+            shortName={slot.secondaryTeam.shortName}
+            teamName={slot.secondaryTeam.name}
+            className="mt-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400"
+          />
         ) : null}
       </div>
     );
@@ -117,7 +123,7 @@ function KnockoutProgressSlotCard({
   if (slot.state === "live") {
     return (
       <div className={`flex min-w-0 flex-col ${justifyClassName}`}>
-        <span className="truncate text-sm font-black text-gray-950">{pendingLabel}</span>
+        <TeamTokenGroup candidates={slot.candidates} className="text-sm font-black text-gray-950" />
         <span className={`mt-0.5 inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-[0.12em] text-rose-600 ${align === "right" ? "self-end" : ""}`}>
           <span className="inline-flex h-1.5 w-1.5 rounded-full bg-rose-500" />
           {slot.scoreLabel ? `${slot.scoreLabel} live` : "Live"}
@@ -128,7 +134,7 @@ function KnockoutProgressSlotCard({
 
   return (
     <div className={`flex min-w-0 flex-col ${justifyClassName}`}>
-      <span className="truncate text-sm font-black text-gray-700">{pendingLabel}</span>
+      <TeamTokenGroup candidates={slot.candidates} className="text-sm font-black text-gray-700" />
       <span className="mt-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
         {slot.state === "pending" ? "Pending" : "Waiting"}
       </span>
@@ -136,6 +142,58 @@ function KnockoutProgressSlotCard({
   );
 }
 
-function formatTeamToken(flagEmoji: string | null, shortName: string) {
-  return flagEmoji ? `${flagEmoji} ${shortName}` : shortName;
+function TeamToken({
+  flagEmoji,
+  teamId,
+  shortName,
+  teamName,
+  className
+}: {
+  flagEmoji: string | null;
+  teamId: string;
+  shortName: string;
+  teamName: string;
+  className?: string;
+}) {
+  return (
+    <span className={`inline-flex min-w-0 items-center gap-1 ${className ?? ""}`}>
+      <TeamFlag
+        flagEmoji={flagEmoji}
+        teamId={teamId}
+        shortName={shortName}
+        teamName={teamName}
+        className="h-[0.95em] w-[1.35em]"
+        emojiClassName="text-[1em]"
+      />
+      <span className="truncate">{shortName}</span>
+    </span>
+  );
+}
+
+function TeamTokenGroup({
+  candidates,
+  className
+}: {
+  candidates: DashboardKnockoutProgressSlot["candidates"];
+  className?: string;
+}) {
+  if (candidates.length === 0) {
+    return <span className={className}>TBD</span>;
+  }
+
+  return (
+    <span className={`inline-flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 ${className ?? ""}`}>
+      {candidates.map((team, index) => (
+        <span key={team.teamId} className="inline-flex min-w-0 items-center gap-1">
+          {index > 0 ? <span className="text-gray-400">/</span> : null}
+          <TeamToken
+            flagEmoji={team.flagEmoji}
+            teamId={team.teamId}
+            shortName={team.shortName}
+            teamName={team.name}
+          />
+        </span>
+      ))}
+    </span>
+  );
 }
