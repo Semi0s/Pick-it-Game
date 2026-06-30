@@ -496,6 +496,8 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       kickoffTime: match.kickoff_time,
       homeTeamId: match.home_team_id ?? null,
       awayTeamId: match.away_team_id ?? null,
+      homeSource: match.home_source ?? null,
+      awaySource: match.away_source ?? null,
       homeScore: match.home_score ?? null,
       awayScore: match.away_score ?? null,
       winnerTeamId: match.winner_team_id ?? null,
