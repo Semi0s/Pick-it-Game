@@ -446,7 +446,10 @@ async function finalizeMatchFromSync(
       source: "api",
       homeScore: externalMatch.home_score,
       awayScore: externalMatch.away_score,
-      winnerTeamId: nextWinnerTeamId
+      winnerTeamId: nextWinnerTeamId,
+      winnerSide: externalMatch.winner_side ?? null,
+      penaltyHomeScore: externalMatch.penalty_home_score ?? null,
+      penaltyAwayScore: externalMatch.penalty_away_score ?? null
     }
   });
 
@@ -466,6 +469,14 @@ function deriveWinnerTeamId(
   if (externalMatch.home_score === externalMatch.away_score) {
     if (stage === "group") {
       return null;
+    }
+
+    if (externalMatch.winner_side === "home") {
+      return homeTeamId;
+    }
+
+    if (externalMatch.winner_side === "away") {
+      return awayTeamId;
     }
 
     throw new Error("Final knockout tie requires a manual winner override.");

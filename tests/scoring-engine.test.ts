@@ -219,6 +219,45 @@ test("knockout golden scoring values are stable for every supported round", () =
   }
 });
 
+test("knockout tied score with explicit winner still awards exact-score bonus fairly", () => {
+  const tiedKnockoutExact = calculateKnockoutMatchScoreLineItem({
+    userId: "user-penalties",
+    matchId: "r32-pen",
+    match: {
+      stage: "r32",
+      status: "final",
+      homeScore: 1,
+      awayScore: 1,
+      winnerTeamId: "ger"
+    },
+    prediction: {
+      predictedWinnerTeamId: "ger",
+      predictedHomeScore: 1,
+      predictedAwayScore: 1
+    }
+  });
+
+  const tiedKnockoutWrongWinner = calculateKnockoutMatchScoreLineItem({
+    userId: "user-penalties-wrong",
+    matchId: "r32-pen",
+    match: {
+      stage: "r32",
+      status: "final",
+      homeScore: 1,
+      awayScore: 1,
+      winnerTeamId: "ger"
+    },
+    prediction: {
+      predictedWinnerTeamId: "par",
+      predictedHomeScore: 1,
+      predictedAwayScore: 1
+    }
+  });
+
+  assert.equal(tiedKnockoutExact.points, 8);
+  assert.equal(tiedKnockoutWrongWinner.points, 0);
+});
+
 test("score breakdown totals always equal line-item sums", () => {
   const breakdown = calculateUserScoreBreakdown({
     userId: "user-total",

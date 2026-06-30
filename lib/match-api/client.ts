@@ -10,6 +10,9 @@ export type NormalizedExternalMatch = {
   away_team_name: string;
   home_score: number | null;
   away_score: number | null;
+  winner_side?: "home" | "away" | null;
+  penalty_home_score?: number | null;
+  penalty_away_score?: number | null;
 };
 
 export async function fetchMatchesByDate({
