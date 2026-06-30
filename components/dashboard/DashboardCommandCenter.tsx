@@ -20,6 +20,7 @@ import {
 } from "@/lib/group-stage-unsaved-draft";
 import { formatDate, formatNumber, formatTime } from "@/lib/i18n-format";
 import type { DashboardScoringHistoryPoint } from "@/lib/leaderboard-movement";
+import { isKnockoutStage } from "@/lib/match-stage";
 import { useSessionViewState } from "@/lib/session-view-state";
 import { t } from "@/lib/strings";
 import type { DashboardTriptychViewKey } from "@/lib/tournament-transition-helpers";
@@ -175,6 +176,11 @@ function buildDisplayPicksInPlayChartData(points: PicksInPlayChartPoint[]): Pick
 }
 
 function filterRelevantScoringHistory(history: DashboardScoringHistoryPoint[]) {
+  const knockoutHistory = history.filter((point) => isKnockoutStage(point.stage));
+  if (knockoutHistory.length > 0) {
+    return knockoutHistory;
+  }
+
   const cutoffMs = new Date(KNOCKOUT_SCORING_HISTORY_START_AT).getTime();
   if (Number.isNaN(cutoffMs) || history.length === 0) {
     return history;
@@ -186,6 +192,27 @@ function filterRelevantScoringHistory(history: DashboardScoringHistoryPoint[]) {
   });
 
   return filteredHistory.length > 0 ? filteredHistory : history;
+}
+
+function buildRelevantScoringSummary(
+  score: DashboardMovementSummary["score"],
+  relevantHistory: DashboardScoringHistoryPoint[]
+) {
+  const latestPoint = relevantHistory.at(-1) ?? null;
+  const previousPoint = relevantHistory.length > 1 ? relevantHistory.at(-2) ?? null : null;
+
+  return {
+    currentPoints: latestPoint?.totalPoints ?? score.currentPoints,
+    currentRank: latestPoint?.rank ?? score.currentRank,
+    currentPacePoints: latestPoint?.pacePoints ?? score.currentPacePoints,
+    pointsChange: latestPoint?.pointsDelta ?? score.pointsChange,
+    rankChange: latestPoint?.rankDelta ?? score.rankChange,
+    deltaFromPace: latestPoint?.paceDelta ?? score.deltaFromPace,
+    comparisonMode: score.comparisonMode,
+    previousPoints: previousPoint?.totalPoints ?? score.previousPoints,
+    previousRank: previousPoint?.rank ?? score.previousRank,
+    previousPacePoints: previousPoint?.pacePoints ?? score.previousPacePoints
+  };
 }
 
 export function DashboardCommandCenter({
@@ -1450,15 +1477,21 @@ function DashboardScoreMovementDetailSheet({
 }) {
   const isProjected = scoreKind === "projected";
   const relevantHistory = useMemo(() => filterRelevantScoringHistory(score.history), [score.history]);
+  const relevantSummary = useMemo(
+    () => buildRelevantScoringSummary(score, relevantHistory),
+    [relevantHistory, score]
+  );
   const chartData = useMemo(
     () =>
-      relevantHistory.map((point) => ({
+      relevantHistory.map((point, index) => ({
         checkpointId: point.matchId,
         label: formatScoringChartLabel(point.createdAt, language),
         actualPoints: point.totalPoints,
-        pacePoints: point.pacePoints
+        pacePoints:
+          point.pacePoints ??
+          (index === relevantHistory.length - 1 ? relevantSummary.currentPacePoints : null)
       })),
-    [language, relevantHistory]
+    [language, relevantHistory, relevantSummary.currentPacePoints]
   );
   const displayChartData = useMemo(() => buildDisplayScoringChartData(chartData), [chartData]);
   const yDomain = useMemo<[number, number]>(() => {
@@ -1510,12 +1543,12 @@ function DashboardScoreMovementDetailSheet({
 
         <div className="overflow-y-auto px-4 pb-4 pt-4 sm:px-5">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <DetailMetricCard label={isProjected ? "Projected pts" : t(language, "leaderboard.points")} value={formatPoints(score.currentPoints, language)} theme={theme} />
-            <DetailMetricCard label={t(language, "leaderboard.rank")} value={formatRank(score.currentRank, language)} theme={theme} />
-            <DetailMetricCard label={t(language, "dashboard.todayShort")} value={formatSignedMetric(score.pointsChange, language)} theme={theme} />
-            <DetailMetricCard label="+/-" value={formatSignedMetric(score.rankChange, language)} theme={theme} />
-            <DetailMetricCard label={t(language, "dashboard.scoringPaceShort")} value={formatPoints(score.currentPacePoints, language)} theme={theme} />
-            <DetailMetricCard label={t(language, "dashboard.scoringVsPaceShort")} value={formatSignedMetric(score.deltaFromPace, language)} theme={theme} />
+            <DetailMetricCard label={isProjected ? "Projected pts" : t(language, "leaderboard.points")} value={formatPoints(relevantSummary.currentPoints, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "leaderboard.rank")} value={formatRank(relevantSummary.currentRank, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.todayShort")} value={formatSignedMetric(relevantSummary.pointsChange, language)} theme={theme} />
+            <DetailMetricCard label="+/-" value={formatSignedMetric(relevantSummary.rankChange, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.scoringPaceShort")} value={formatPoints(relevantSummary.currentPacePoints, language)} theme={theme} />
+            <DetailMetricCard label={t(language, "dashboard.scoringVsPaceShort")} value={formatSignedMetric(relevantSummary.deltaFromPace, language)} theme={theme} />
           </div>
 
           <div className={`mt-4 rounded-[1.25rem] border px-3 py-3 sm:px-4 ${theme === "dark" ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-slate-50/70"}`}>
@@ -2307,10 +2340,10 @@ function ScoringTimelineRow({
     <div className={`flex items-center justify-between rounded-[1rem] border px-3 py-2 ${theme === "dark" ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-white"}`}>
       <div className="min-w-0">
         <p className={`truncate text-sm font-black tracking-[-0.03em] ${getPrimaryTextClasses(theme)}`}>
-          {formatScoringTimelineTimestamp(point.createdAt, language)}
+          {point.matchupLabel ?? point.compactMatchupLabel ?? point.matchId}
         </p>
         <p className={`triptych-micro-copy truncate font-semibold uppercase tracking-[0.1em] ${getMutedTextClasses(theme)}`}>
-          {point.matchId}
+          {formatScoringTimelineTimestamp(point.createdAt, language)}
         </p>
       </div>
       <div className="ml-3 flex shrink-0 items-center gap-3 text-right">

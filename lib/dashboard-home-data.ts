@@ -24,7 +24,8 @@ import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-ga
 import { fetchGlobalLeaderboardRankSummaryForUser } from "@/lib/leaderboard-data";
 import {
   createEmptyDashboardScoringMovementSummary,
-  fetchGlobalDashboardScoringMovementSummary
+  fetchGlobalDashboardScoringMovementSummary,
+  type DashboardScoringMovementSummary
 } from "@/lib/leaderboard-movement";
 import {
   PROJECTED_LEADERBOARD_ENABLED_KEY,
@@ -231,6 +232,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     teams.map((team) => [team.id, team])
   );
   const dashboardMatches = matches.map((match) => mapDashboardMatch(match, teamById));
+  const dashboardMatchById = new Map(dashboardMatches.map((match) => [match.id, match]));
   const projectedCurrentStandings = buildProjectedGroupStandings(
     matches.map((match) => ({
       id: match.id,
@@ -520,28 +522,36 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         isLocked: sidePicksDisplayProgress.isLocked
       })
     : null;
+  const decoratedOfficialScoreSummary = decorateDashboardScoringMovementSummary(
+    scoringMovementResult,
+    dashboardMatchById
+  );
+  const decoratedProjectedScoreSummary = decorateDashboardScoringMovementSummary(
+    projectedScoringMovementResult,
+    dashboardMatchById
+  );
   const progressBase = isKnockoutActive ? knockoutPredictionProgress : groupStageProgress;
   const progress = {
     ...progressBase,
     hasCompletedBracketOnce: groupStageSaveStatus.hasCommittedEntry
   };
   const officialScoreSummary = {
-    ...scoringMovementResult,
+    ...decoratedOfficialScoreSummary,
     currentPoints:
-      scoringMovementResult.currentPoints ??
+      decoratedOfficialScoreSummary.currentPoints ??
       profile?.total_points ??
       globalRankResult.totalPoints ??
       null,
-    currentRank: scoringMovementResult.currentRank ?? globalRankResult.rank ?? null
+    currentRank: decoratedOfficialScoreSummary.currentRank ?? globalRankResult.rank ?? null
   };
   const { score: effectiveScoreSummary, scoreKind } = selectDashboardProjectedScoreSummary({
     official: officialScoreSummary,
-    projected: projectedScoringMovementResult,
+    projected: decoratedProjectedScoreSummary,
     projectedLeaderboardEnabled: projectedLeaderboardEnabledResult
   });
   const projectedOutlook = buildProjectionOutlookViewModel({
     official: officialScoreSummary,
-    projected: projectedScoringMovementResult,
+    projected: decoratedProjectedScoreSummary,
     currentProjection:
       projectedGroupPhaseResult.projectionKey && projectedGroupPhaseResult.summaries.get(userId)
         ? {
@@ -551,7 +561,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
                 dashboardMatches
                   .filter((match) => match.status === "live" || match.status === "final")
                   .map((match) => match.kickoffTime)
-              ) ?? projectedScoringMovementResult.latestSnapshotAt ?? null,
+              ) ?? decoratedProjectedScoreSummary.latestSnapshotAt ?? null,
             projectedFinalPoints: projectedGroupPhaseResult.summaries.get(userId)?.projectedPoints ?? null,
             projectedRank: null
           }
@@ -699,6 +709,42 @@ function mapDashboardMatch(
     homeScore: match.home_score ?? null,
     awayScore: match.away_score ?? null
   };
+}
+
+function decorateDashboardScoringMovementSummary(
+  summary: DashboardScoringMovementSummary,
+  matchesById: ReadonlyMap<string, DashboardMatchSummary>
+): DashboardScoringMovementSummary {
+  if (summary.history.length === 0) {
+    return summary;
+  }
+
+  return {
+    ...summary,
+    history: summary.history.map((point) => {
+      const match = matchesById.get(point.matchId);
+      if (!match) {
+        return point;
+      }
+
+      return {
+        ...point,
+        stage: match.stage,
+        compactMatchupLabel: buildCompactDashboardMatchLabel(match),
+        matchupLabel: buildDashboardMatchLabel(match)
+      };
+    })
+  };
+}
+
+function buildCompactDashboardMatchLabel(match: DashboardMatchSummary) {
+  return `${match.homeTeamShortName} v ${match.awayTeamShortName}`;
+}
+
+function buildDashboardMatchLabel(match: DashboardMatchSummary) {
+  const homeFlag = match.homeTeamFlagEmoji ? `${match.homeTeamFlagEmoji} ` : "";
+  const awayFlag = match.awayTeamFlagEmoji ? `${match.awayTeamFlagEmoji} ` : "";
+  return `${homeFlag}${match.homeTeamShortName} v ${awayFlag}${match.awayTeamShortName}`;
 }
 
 function resolveFollowedTeamIds(row: UserSettingsRow | null, errorMessage?: string) {
