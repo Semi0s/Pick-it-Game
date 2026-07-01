@@ -2,32 +2,55 @@
 
 import { revalidatePath } from "next/cache";
 import { getCurrentUserId } from "@/app/groups/actions";
-import { saveUserSidePicks } from "@/lib/side-picks-data";
-import { SIDE_PICK_PUBLIC_NAME, normalizeSidePicksSubmission, type SidePicksSubmission } from "@/lib/side-picks";
+import { savePredictionLabSettings } from "@/lib/prediction-lab-data";
+import { normalizePredictionLabSettings, type PredictionLabSettings } from "@/lib/prediction-lab";
 
-export async function saveSidePicksAction(
-  input: Partial<SidePicksSubmission>
-): Promise<{ ok: true; message: string; receipt: SidePicksSubmission } | { ok: false; message: string }> {
+export async function savePredictionLabSettingsAction(input: {
+  tournamentId?: string | null;
+  groupId: string | null;
+  settings: Partial<PredictionLabSettings>;
+}): Promise<
+  | {
+      ok: true;
+      messageKey: string;
+      settings: PredictionLabSettings;
+      averageSummary: Awaited<ReturnType<typeof savePredictionLabSettings>>["averageSummary"];
+    }
+  | {
+      ok: false;
+      messageKey?: string;
+      message: string;
+    }
+> {
   const userResult = await getCurrentUserId();
   if (!userResult.ok) {
-    return userResult;
+    return {
+      ok: false,
+      message: userResult.message
+    };
   }
 
-  const result = await saveUserSidePicks({
-    userId: userResult.userId,
-    picks: normalizeSidePicksSubmission(input)
-  });
+  try {
+    const result = await savePredictionLabSettings({
+      userId: userResult.userId,
+      groupId: input.groupId,
+      settings: normalizePredictionLabSettings(input.settings)
+    });
 
-  if (!result.ok) {
-    return result;
+    revalidatePath("/side-picks");
+    revalidatePath("/last-chance-picks");
+
+    return {
+      ok: true,
+      messageKey: "predictionLab.saveSuccess",
+      settings: result.settings,
+      averageSummary: result.averageSummary
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      messageKey: "predictionLab.saveError",
+      message: error instanceof Error ? error.message : "Could not save Prediction Lab settings."
+    };
   }
-
-  revalidatePath("/side-picks");
-  revalidatePath("/dashboard");
-
-  return {
-    ok: true,
-    message: `${SIDE_PICK_PUBLIC_NAME} saved. They score on their own leaderboard and do not change your main bracket score.`,
-    receipt: result.receipt
-  };
 }

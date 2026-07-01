@@ -1,4 +1,4 @@
-import { normalizeLanguage, type AppLanguage } from "@/lib/i18n";
+import { normalizeLanguage, type AppLanguage } from "./i18n.ts";
 
 const localeByLanguage: Record<AppLanguage, string> = {
   en: "en",

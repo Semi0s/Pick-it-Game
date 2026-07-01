@@ -1778,10 +1778,12 @@ export function LeaderboardClient() {
 
           {!isLoading && !error && activePhase === "side_picks" && users.length === 0 ? (
             <div className="rounded-[1.15rem] border border-accent-light bg-accent-light/35 px-4 py-4 text-sm font-semibold leading-6 text-accent-dark">
-              <p className="font-black text-gray-950">No Side Picks scores yet.</p>
-              <p>Make your Side Picks, then scores will appear here after Super Admin recomputes this separate leaderboard.</p>
+              <p className="font-black text-gray-950">{t(uiLanguage, "predictionLab.leaderboardCallout.title")}</p>
+              <p>
+                {t(uiLanguage, "predictionLab.leaderboardCallout.body")}
+              </p>
               <Link href="/side-picks" className="mt-3 inline-flex rounded-xl bg-accent px-4 py-2 text-sm font-black text-accent-text">
-                Make Side Picks
+                {t(uiLanguage, "predictionLab.leaderboardCallout.cta")}
               </Link>
             </div>
           ) : null}

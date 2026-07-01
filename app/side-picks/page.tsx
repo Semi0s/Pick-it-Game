@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { SidePicksClient } from "@/components/SidePicksClient";
 import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
-import { fetchSidePicksPageData } from "@/lib/side-picks-data";
+import { fetchPredictionLabPageData } from "@/lib/prediction-lab-data";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -18,21 +18,11 @@ export default async function SidePicksPage() {
   }
 
   await redirectIfLaunchOnboardingRequired({ userId: user.id });
-  const data = await fetchSidePicksPageData(user.id);
+  const data = await fetchPredictionLabPageData(user.id);
 
   return (
     <AppShell>
-      <SidePicksClient
-        isEnabled={data.isEnabled}
-        isLocked={data.isLocked}
-        lockAt={data.lockAt}
-        group={data.group}
-        teams={data.teams}
-        tournamentPlayers={data.tournamentPlayers}
-        definitions={data.definitions}
-        initialPicks={data.picks}
-        scores={data.scores}
-      />
+      <SidePicksClient {...data} />
     </AppShell>
   );
 }
