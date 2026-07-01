@@ -1035,6 +1035,157 @@ export const translations = {
       tipPrefix: "Tip: {tip}",
       closing: "That's it. Build your Group Stage first, then come back for Knockout Stage when the bracket is official."
     },
+    predictionLab: {
+      title: "Prediction Lab",
+      intro: "Match Lens reads one future matchup at a time. Real signals point toward each team. You only control how much attention each signal gets.",
+      nonScoring: "Non-scoring",
+      previewLocalOnly: "Preview mode keeps these Match Lens settings local only.",
+      saveSuccess: "Prediction Lab settings saved. They do not affect scoring or standings.",
+      saveError: "Could not save Prediction Lab settings.",
+      notice: {
+        title: "Side Picks update",
+        lead: "Thank you for your patience! We had some technical difficulties with Side Picks and the first game of the Knockout Phase.",
+        body: "Side Picks are voided for this tournament. They were not available fairly to all players, so they will not count toward scoring, standings, prizes, or tiebreakers.",
+        thanks: "Prediction Lab below is for fun and planning only. It does not affect the contest.",
+        detailInactive: "Old Side Picks are no longer active and no new Side Picks submissions are accepted."
+      },
+      leaderboardCallout: {
+        title: "Side Picks are voided for this tournament.",
+        body: "They will not count toward scoring, standings, prizes, or tiebreakers. Prediction Lab is still open if you want to test scenarios for fun.",
+        cta: "Open Prediction Lab"
+      },
+      matchLens: {
+        title: "Match Lens",
+        crowdGroup: "Crowd markers reflect anonymous settings from {groupName}.",
+        crowdFallback: "Crowd markers appear after enough saved lab settings.",
+        reset: "Reset",
+        saving: "Saving...",
+        saved: "Saved",
+        pending: "Pending",
+        needsSave: "Needs save",
+        save: "Save Lens",
+        preview: "Preview",
+        matchup: "Matchup",
+        empty: "No fully seeded knockout matchup is available yet. Match Lens opens as soon as the next bracket path is known.",
+        noSignals: "No active signals yet.",
+        even: "Even",
+        landingZone: "Landing zone",
+        yourLens: "Your lens",
+        yourLensSubject: "Your lens",
+        crowd: "Crowd",
+        noCrowdSignal: "No crowd signal yet.",
+        axisRead: "Axis read",
+        bracketPick: "Bracket pick",
+        bracketPickIs: "Your bracket pick is {team}.",
+        moreSignals: "More signals",
+        moreSignalsHint: "Extra signals stay off until enough data is available for {groupName}.",
+        moreSignalsFallback: "Extra signals stay off until enough data is available."
+      },
+      signals: {
+        scheduleLoad: {
+          label: "Schedule Load",
+          missingEvidence: "Waiting for enough rest and travel data.",
+          evidence: "{homeShort}: {homeRest} rest · {awayShort}: {awayRest} rest",
+          source: "match schedule"
+        },
+        availability: {
+          label: "Team Health",
+          missingEvidence: "Waiting for a reliable Team Health check.",
+          notConfiguredEvidence: "Team Health feed is not configured yet.",
+          noUpdatesEvidence: "Team Health is waiting for fresh provider updates.",
+          mappingEvidence: "Team Health updates arrived, but they do not map cleanly to these tournament teams yet.",
+          errorEvidence: "Team Health could not load right now. It will try again on the next refresh.",
+          evidence: "{homeShort}: {homeCount} flagged · {awayShort}: {awayCount} flagged",
+          source: "team health feed",
+          comingLater: "Coming later"
+        },
+        formQuality: {
+          label: "Form / Quality",
+          evidence: "{homeShort} #{homeRank} · {homeRecord} · {awayShort} #{awayRank} · {awayRecord}",
+          source: "tournament form"
+        },
+        crowdPulse: {
+          label: "Crowd Pulse",
+          missingEvidence: "Group average appears after enough players try the lab.",
+          evidence: "Lab avg {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          source: "anonymous lab avg"
+        },
+        publicPulse: {
+          label: "Rank + Form",
+          missingEvidence: "Rank + Form appears here once both teams are seeded.",
+          evidence: "Rank + form {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          providerEvidence: "API-Football pulse {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          source: "FIFA rank + tournament form",
+          providerSource: "API-Football consensus"
+        }
+      },
+      attention: {
+        off: "Off",
+        light: "Light",
+        normal: "Normal",
+        heavy: "Heavy"
+      },
+      agreement: {
+        turnOnSignal: "Turn on a signal to build your lens.",
+        strong: "Strong agreement",
+        clear: "Clear lean",
+        mixed: "Mixed signals",
+        low: "Low confidence"
+      },
+      lean: {
+        even: "{subject} is close to even.",
+        slight: "{subject} slightly favors {team}.",
+        lean: "{subject} leans {team}.",
+        strong: "{subject} strongly favors {team}."
+      },
+      quickScenario: {
+        title: "Quick Scenario",
+        intro: "Run one result and follow the branch it opens.",
+        reset: "Reset",
+        whatIf: "What if",
+        wins: "wins",
+        chooseWinner: "Choose a winner to see how the path changes.",
+        allDecided: "All fully seeded knockout scenarios are decided.",
+        pathDiagram: "Path diagram",
+        pathAppears: "Path view appears when the next bracket link is known.",
+        winnerAdvances: "Winner advances",
+        winnerFaces: "Winner faces {team}",
+        winnerOfSource: "Winner of {source}",
+        currentPath: "{team} → {opponent}",
+        winnerShortLabel: "Winner",
+        mostHelped: "Most helped",
+        mostHurt: "Most hurt"
+      },
+      scenario: {
+        advances: "{team} advances.",
+        advancesToFace: "{team} advances to face {opponent}.",
+        keepsBracketPick: "This keeps your bracket pick on this match alive.",
+        flipsBracketPick: "This flips away from your bracket pick on this match.",
+        pathWindow: "Path window: {path}.",
+        alignsWithCrowd: "This aligns with the crowd lean.",
+        againstCrowd: "This goes against the crowd lean.",
+        nextLensSubject: "Next lens"
+      },
+      projection: {
+        title: "Full projections",
+        secondary: "Secondary entertainment-only tournament view.",
+        topUnderLens: "Top under your lens: {teams}.",
+        hide: "Hide list",
+        show: "Show full projections",
+        you: "You",
+        crowd: "Crowd"
+      },
+      footer: "Match Lens is for fun and planning only. It does not reopen Side Picks and it does not change scoring, standings, prizes, or tiebreakers.",
+      format: {
+        upcoming: "Upcoming",
+        stageR32: "Round of 32",
+        stageR16: "Round of 16",
+        stageQf: "Quarterfinal",
+        stageSf: "Semifinal",
+        stageFinal: "Final",
+        stageKnockout: "Knockout"
+      }
+    },
     legal: {
       termsOfUse: "Terms of Use",
       privacyPolicy: "Privacy Policy",
@@ -2074,6 +2225,157 @@ export const translations = {
       tipPrefix: "Consejo: {tip}",
       closing: "Eso es todo. Arma primero tu Fase de Grupos y vuelve para Knockout cuando el bracket sea oficial."
     },
+    predictionLab: {
+      title: "Prediction Lab",
+      intro: "Match Lens lee un cruce futuro por vez. Las señales reales apuntan hacia cada equipo. Tú solo controlas cuánta atención recibe cada señal.",
+      nonScoring: "Sin puntuación",
+      previewLocalOnly: "El modo vista previa mantiene estas configuraciones de Match Lens solo en este dispositivo.",
+      saveSuccess: "La configuración de Prediction Lab se guardó. No afecta la puntuación ni las clasificaciones.",
+      saveError: "No se pudo guardar la configuración de Prediction Lab.",
+      notice: {
+        title: "Actualización de Side Picks",
+        lead: "Gracias por tu paciencia. Tuvimos algunas dificultades técnicas con Side Picks y con el primer partido de la fase Knockout.",
+        body: "Side Picks quedan anulados para este torneo. No estuvieron disponibles de forma justa para todos los jugadores, así que no contarán para puntuación, clasificaciones, premios ni desempates.",
+        thanks: "Prediction Lab queda abajo para divertirte y planificar. No afecta el concurso.",
+        detailInactive: "Los Side Picks anteriores ya no están activos y no se aceptan nuevos envíos."
+      },
+      leaderboardCallout: {
+        title: "Side Picks quedan anulados para este torneo.",
+        body: "No contarán para puntuación, clasificaciones, premios ni desempates. Prediction Lab sigue abierto si quieres probar escenarios por diversión.",
+        cta: "Abrir Prediction Lab"
+      },
+      matchLens: {
+        title: "Match Lens",
+        crowdGroup: "Los marcadores del grupo reflejan ajustes anónimos de {groupName}.",
+        crowdFallback: "Los marcadores del grupo aparecen cuando haya suficientes configuraciones guardadas.",
+        reset: "Restablecer",
+        saving: "Guardando...",
+        saved: "Guardado",
+        pending: "Pendiente",
+        needsSave: "Sin guardar",
+        save: "Guardar Lens",
+        preview: "Vista previa",
+        matchup: "Partido",
+        empty: "Todavía no hay un cruce knockout completamente definido. Match Lens se abre en cuanto se conozca el siguiente camino del bracket.",
+        noSignals: "Todavía no hay señales activas.",
+        even: "Parejo",
+        landingZone: "Zona de caída",
+        yourLens: "Tu lens",
+        yourLensSubject: "Tu lens",
+        crowd: "Grupo",
+        noCrowdSignal: "Todavía no hay señal del grupo.",
+        axisRead: "Lectura del eje",
+        bracketPick: "Pick del bracket",
+        bracketPickIs: "Tu pick del bracket es {team}.",
+        moreSignals: "Más señales",
+        moreSignalsHint: "Las señales extra siguen apagadas hasta que haya datos suficientes para {groupName}.",
+        moreSignalsFallback: "Las señales extra siguen apagadas hasta que haya suficientes datos."
+      },
+      signals: {
+        scheduleLoad: {
+          label: "Carga de calendario",
+          missingEvidence: "Esperando suficientes datos de descanso y viaje.",
+          evidence: "{homeShort}: {homeRest} descanso · {awayShort}: {awayRest} descanso",
+          source: "calendario de partidos"
+        },
+        availability: {
+          label: "Salud del equipo",
+          missingEvidence: "Esperando una revisión fiable de salud del equipo.",
+          notConfiguredEvidence: "La señal de salud del equipo todavía no está configurada.",
+          noUpdatesEvidence: "La salud del equipo está esperando nuevas actualizaciones del proveedor.",
+          mappingEvidence: "Llegaron actualizaciones de salud del equipo, pero todavía no coinciden bien con estos equipos del torneo.",
+          errorEvidence: "La salud del equipo no pudo cargarse ahora mismo. Lo volverá a intentar en la próxima actualización.",
+          evidence: "{homeShort}: {homeCount} bajas · {awayShort}: {awayCount} bajas",
+          source: "señal de salud del equipo",
+          comingLater: "Próximamente"
+        },
+        formQuality: {
+          label: "Forma / Calidad",
+          evidence: "{homeShort} #{homeRank} · {homeRecord} · {awayShort} #{awayRank} · {awayRecord}",
+          source: "forma del torneo"
+        },
+        crowdPulse: {
+          label: "Pulso del grupo",
+          missingEvidence: "El promedio del grupo aparece cuando suficientes jugadores prueban el lab.",
+          evidence: "Prom. del lab {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          source: "promedio anónimo del lab"
+        },
+        publicPulse: {
+          label: "Ranking + Forma",
+          missingEvidence: "Ranking + Forma aparece aquí cuando ambos equipos ya estén definidos.",
+          evidence: "Ranking + forma {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          providerEvidence: "Pulso API-Football {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          source: "ranking FIFA + forma del torneo",
+          providerSource: "consenso API-Football"
+        }
+      },
+      attention: {
+        off: "Apagar",
+        light: "Ligero",
+        normal: "Normal",
+        heavy: "Alto"
+      },
+      agreement: {
+        turnOnSignal: "Activa una señal para construir tu lens.",
+        strong: "Acuerdo fuerte",
+        clear: "Inclinación clara",
+        mixed: "Señales mixtas",
+        low: "Confianza baja"
+      },
+      lean: {
+        even: "{subject} está muy parejo.",
+        slight: "{subject} favorece ligeramente a {team}.",
+        lean: "{subject} se inclina por {team}.",
+        strong: "{subject} favorece claramente a {team}."
+      },
+      quickScenario: {
+        title: "Escenario rápido",
+        intro: "Ejecuta un resultado y sigue el camino que abre.",
+        reset: "Restablecer",
+        whatIf: "Qué pasa si",
+        wins: "gana",
+        chooseWinner: "Elige un ganador para ver cómo cambia el camino.",
+        allDecided: "Todos los escenarios knockout ya definidos están resueltos.",
+        pathDiagram: "Diagrama del camino",
+        pathAppears: "La vista del camino aparece cuando se conoce el siguiente enlace del bracket.",
+        winnerAdvances: "El ganador avanza",
+        winnerFaces: "El ganador se enfrenta a {team}",
+        winnerOfSource: "Ganador de {source}",
+        currentPath: "{team} → {opponent}",
+        winnerShortLabel: "Ganador",
+        mostHelped: "Más favorecidos",
+        mostHurt: "Más perjudicados"
+      },
+      scenario: {
+        advances: "{team} avanza.",
+        advancesToFace: "{team} avanza para enfrentar a {opponent}.",
+        keepsBracketPick: "Esto mantiene con vida tu pick del bracket en este partido.",
+        flipsBracketPick: "Esto se aleja de tu pick del bracket en este partido.",
+        pathWindow: "Ventana del camino: {path}.",
+        alignsWithCrowd: "Esto coincide con la inclinación del grupo.",
+        againstCrowd: "Esto va en contra de la inclinación del grupo.",
+        nextLensSubject: "Siguiente lens"
+      },
+      projection: {
+        title: "Proyecciones completas",
+        secondary: "Vista secundaria del torneo solo para entretenimiento.",
+        topUnderLens: "Arriba en tu lens: {teams}.",
+        hide: "Ocultar lista",
+        show: "Mostrar proyecciones completas",
+        you: "Tú",
+        crowd: "Grupo"
+      },
+      footer: "Match Lens es solo para divertirte y planificar. No reabre Side Picks ni cambia puntuación, clasificaciones, premios o desempates.",
+      format: {
+        upcoming: "Próximo",
+        stageR32: "Ronda de 32",
+        stageR16: "Octavos",
+        stageQf: "Cuartos",
+        stageSf: "Semifinal",
+        stageFinal: "Final",
+        stageKnockout: "Knockout"
+      }
+    },
     legal: {
       termsOfUse: "Términos de Uso",
       privacyPolicy: "Política de Privacidad",
@@ -3110,6 +3412,157 @@ export const translations = {
       tipPrefix: "Conseil : {tip}",
       closing: "C'est tout. Construisez d'abord votre Phase de groupes, puis revenez pour Knockout quand le bracket sera officiel."
     },
+    predictionLab: {
+      title: "Prediction Lab",
+      intro: "Match Lens lit un futur duel à la fois. Les signaux réels pointent vers chaque équipe. Vous ne contrôlez que l'attention donnée à chaque signal.",
+      nonScoring: "Sans score",
+      previewLocalOnly: "Le mode aperçu garde ces réglages Match Lens uniquement en local.",
+      saveSuccess: "Les réglages de Prediction Lab ont été enregistrés. Ils n'affectent ni le score ni les classements.",
+      saveError: "Impossible d'enregistrer les réglages de Prediction Lab.",
+      notice: {
+        title: "Mise à jour Side Picks",
+        lead: "Merci pour votre patience. Nous avons eu quelques difficultés techniques avec les Side Picks et le premier match de la phase Knockout.",
+        body: "Les Side Picks sont annulés pour ce tournoi. Ils n'ont pas été disponibles équitablement pour tous les joueurs, donc ils ne compteront pas pour le score, les classements, les prix ou les départages.",
+        thanks: "Prediction Lab ci-dessous sert seulement au fun et à la planification. Cela n'affecte pas le concours.",
+        detailInactive: "Les anciens Side Picks ne sont plus actifs et aucune nouvelle soumission Side Picks n'est acceptée."
+      },
+      leaderboardCallout: {
+        title: "Les Side Picks sont annulés pour ce tournoi.",
+        body: "Ils ne compteront pas pour le score, les classements, les prix ou les départages. Prediction Lab reste ouvert si vous voulez tester des scénarios pour le plaisir.",
+        cta: "Ouvrir Prediction Lab"
+      },
+      matchLens: {
+        title: "Match Lens",
+        crowdGroup: "Les marqueurs du groupe reflètent les réglages anonymes de {groupName}.",
+        crowdFallback: "Les marqueurs du groupe apparaissent après assez de réglages enregistrés.",
+        reset: "Réinitialiser",
+        saving: "Enregistrement...",
+        saved: "Enregistré",
+        pending: "En attente",
+        needsSave: "À enregistrer",
+        save: "Enregistrer Lens",
+        preview: "Aperçu",
+        matchup: "Match",
+        empty: "Aucun duel knockout entièrement défini n'est encore disponible. Match Lens s'ouvre dès que le prochain chemin du bracket est connu.",
+        noSignals: "Aucun signal actif pour le moment.",
+        even: "Équilibré",
+        landingZone: "Zone de projection",
+        yourLens: "Votre lens",
+        yourLensSubject: "Votre lens",
+        crowd: "Groupe",
+        noCrowdSignal: "Pas encore de signal du groupe.",
+        axisRead: "Lecture de l'axe",
+        bracketPick: "Pick du bracket",
+        bracketPickIs: "Votre pick du bracket est {team}.",
+        moreSignals: "Plus de signaux",
+        moreSignalsHint: "Les signaux supplémentaires restent coupés jusqu'à ce que {groupName} dispose d'assez de données.",
+        moreSignalsFallback: "Les signaux supplémentaires restent coupés jusqu'à ce qu'il y ait assez de données."
+      },
+      signals: {
+        scheduleLoad: {
+          label: "Charge du calendrier",
+          missingEvidence: "En attente de suffisamment de données sur le repos et les déplacements.",
+          evidence: "{homeShort} : {homeRest} de repos · {awayShort} : {awayRest} de repos",
+          source: "calendrier des matchs"
+        },
+        availability: {
+          label: "Santé de l’équipe",
+          missingEvidence: "En attente d’un point fiable sur la santé de l’équipe.",
+          notConfiguredEvidence: "Le flux Santé de l’équipe n’est pas encore configuré.",
+          noUpdatesEvidence: "La santé de l’équipe attend de nouvelles mises à jour du fournisseur.",
+          mappingEvidence: "Des mises à jour de santé sont arrivées, mais elles ne correspondent pas encore clairement à ces équipes du tournoi.",
+          errorEvidence: "La santé de l’équipe n’a pas pu être chargée pour le moment. Un nouvel essai aura lieu au prochain rafraîchissement.",
+          evidence: "{homeShort} : {homeCount} absences · {awayShort} : {awayCount} absences",
+          source: "flux santé de l’équipe",
+          comingLater: "À venir"
+        },
+        formQuality: {
+          label: "Forme / Qualité",
+          evidence: "{homeShort} #{homeRank} · {homeRecord} · {awayShort} #{awayRank} · {awayRecord}",
+          source: "forme du tournoi"
+        },
+        crowdPulse: {
+          label: "Pouls du groupe",
+          missingEvidence: "La moyenne du groupe apparaît quand assez de joueurs essaient le lab.",
+          evidence: "Moy. du lab {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          source: "moyenne anonyme du lab"
+        },
+        publicPulse: {
+          label: "Classement + Forme",
+          missingEvidence: "Classement + Forme apparaît ici dès que les deux équipes sont connues.",
+          evidence: "Classement + forme {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          providerEvidence: "Pulse API-Football {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          source: "classement FIFA + forme du tournoi",
+          providerSource: "consensus API-Football"
+        }
+      },
+      attention: {
+        off: "Off",
+        light: "Léger",
+        normal: "Normal",
+        heavy: "Fort"
+      },
+      agreement: {
+        turnOnSignal: "Activez un signal pour construire votre lens.",
+        strong: "Accord fort",
+        clear: "Tendance claire",
+        mixed: "Signaux mixtes",
+        low: "Confiance faible"
+      },
+      lean: {
+        even: "{subject} est presque à égalité.",
+        slight: "{subject} favorise légèrement {team}.",
+        lean: "{subject} penche vers {team}.",
+        strong: "{subject} favorise nettement {team}."
+      },
+      quickScenario: {
+        title: "Scénario rapide",
+        intro: "Lancez un résultat et suivez la branche qu'il ouvre.",
+        reset: "Réinitialiser",
+        whatIf: "Et si",
+        wins: "gagne",
+        chooseWinner: "Choisissez un vainqueur pour voir comment le chemin change.",
+        allDecided: "Tous les scénarios knockout entièrement définis sont déjà décidés.",
+        pathDiagram: "Diagramme du chemin",
+        pathAppears: "La vue du chemin apparaît quand le prochain lien du bracket est connu.",
+        winnerAdvances: "Le vainqueur avance",
+        winnerFaces: "Le vainqueur affronte {team}",
+        winnerOfSource: "Vainqueur de {source}",
+        currentPath: "{team} → {opponent}",
+        winnerShortLabel: "Vainqueur",
+        mostHelped: "Le plus aidés",
+        mostHurt: "Le plus pénalisés"
+      },
+      scenario: {
+        advances: "{team} avance.",
+        advancesToFace: "{team} avance pour affronter {opponent}.",
+        keepsBracketPick: "Cela garde votre pick du bracket en vie sur ce match.",
+        flipsBracketPick: "Cela va à l'encontre de votre pick du bracket sur ce match.",
+        pathWindow: "Fenêtre du chemin : {path}.",
+        alignsWithCrowd: "Cela suit la tendance du groupe.",
+        againstCrowd: "Cela va contre la tendance du groupe.",
+        nextLensSubject: "Lens suivante"
+      },
+      projection: {
+        title: "Projections complètes",
+        secondary: "Vue secondaire du tournoi, uniquement pour le divertissement.",
+        topUnderLens: "En tête dans votre lens : {teams}.",
+        hide: "Masquer la liste",
+        show: "Afficher toutes les projections",
+        you: "Vous",
+        crowd: "Groupe"
+      },
+      footer: "Match Lens est uniquement là pour le fun et la planification. Il ne rouvre pas les Side Picks et ne change ni le score, ni les classements, ni les prix, ni les départages.",
+      format: {
+        upcoming: "À venir",
+        stageR32: "Tour de 32",
+        stageR16: "Huitièmes",
+        stageQf: "Quarts",
+        stageSf: "Demi-finale",
+        stageFinal: "Finale",
+        stageKnockout: "Knockout"
+      }
+    },
     legal: {
       termsOfUse: "Conditions d'utilisation",
       privacyPolicy: "Politique de confidentialité",
@@ -4144,6 +4597,157 @@ export const translations = {
       quickTips: "Dicas rápidas",
       tipPrefix: "Dica: {tip}",
       closing: "É isso. Monte primeiro a sua Fase de Grupos e volte para o Knockout quando o bracket for oficial."
+    },
+    predictionLab: {
+      title: "Prediction Lab",
+      intro: "O Match Lens lê um confronto futuro de cada vez. Os sinais reais apontam para cada equipa. Só controlas quanta atenção cada sinal recebe.",
+      nonScoring: "Sem pontuação",
+      previewLocalOnly: "O modo de pré-visualização mantém estas definições do Match Lens apenas no dispositivo.",
+      saveSuccess: "As definições do Prediction Lab foram guardadas. Não afetam a pontuação nem as classificações.",
+      saveError: "Não foi possível guardar as definições do Prediction Lab.",
+      notice: {
+        title: "Atualização Side Picks",
+        lead: "Obrigado pela tua paciência. Tivemos algumas dificuldades técnicas com os Side Picks e com o primeiro jogo da fase Knockout.",
+        body: "Os Side Picks foram anulados para este torneio. Não estiveram disponíveis de forma justa para todos os jogadores, por isso não contam para pontuação, classificações, prémios ou desempates.",
+        thanks: "O Prediction Lab abaixo é apenas para diversão e planeamento. Não afeta o concurso.",
+        detailInactive: "Os antigos Side Picks já não estão ativos e não são aceites novas submissões de Side Picks."
+      },
+      leaderboardCallout: {
+        title: "Os Side Picks foram anulados para este torneio.",
+        body: "Não contam para pontuação, classificações, prémios ou desempates. O Prediction Lab continua aberto se quiseres testar cenários por diversão.",
+        cta: "Abrir Prediction Lab"
+      },
+      matchLens: {
+        title: "Match Lens",
+        crowdGroup: "Os marcadores da multidão refletem definições anónimas de {groupName}.",
+        crowdFallback: "Os marcadores da multidão aparecem depois de existirem definições guardadas suficientes.",
+        reset: "Repor",
+        saving: "A guardar...",
+        saved: "Guardado",
+        pending: "Pendente",
+        needsSave: "Por guardar",
+        save: "Guardar Lens",
+        preview: "Pré-visualização",
+        matchup: "Confronto",
+        empty: "Ainda não existe um confronto knockout totalmente definido. O Match Lens abre assim que o próximo caminho do bracket for conhecido.",
+        noSignals: "Ainda não há sinais ativos.",
+        even: "Equilíbrio",
+        landingZone: "Zona de projeção",
+        yourLens: "A tua lens",
+        yourLensSubject: "A tua lens",
+        crowd: "Multidão",
+        noCrowdSignal: "Ainda não existe sinal da multidão.",
+        axisRead: "Leitura do eixo",
+        bracketPick: "Pick do bracket",
+        bracketPickIs: "O teu pick do bracket é {team}.",
+        moreSignals: "Mais sinais",
+        moreSignalsHint: "Os sinais extra ficam desligados até existirem dados suficientes para {groupName}.",
+        moreSignalsFallback: "Os sinais extra ficam desligados até existirem dados suficientes."
+      },
+      signals: {
+        scheduleLoad: {
+          label: "Carga do calendário",
+          missingEvidence: "À espera de dados suficientes sobre descanso e deslocações.",
+          evidence: "{homeShort}: {homeRest} descanso · {awayShort}: {awayRest} descanso",
+          source: "calendário de jogos"
+        },
+        availability: {
+          label: "Saúde da equipa",
+          missingEvidence: "À espera de uma verificação fiável da saúde da equipa.",
+          notConfiguredEvidence: "O feed de saúde da equipa ainda não está configurado.",
+          noUpdatesEvidence: "A saúde da equipa está à espera de novas atualizações do fornecedor.",
+          mappingEvidence: "Chegaram atualizações de saúde da equipa, mas ainda não correspondem bem a estas equipas do torneio.",
+          errorEvidence: "A saúde da equipa não pôde ser carregada agora. Vai tentar novamente na próxima atualização.",
+          evidence: "{homeShort}: {homeCount} baixas · {awayShort}: {awayCount} baixas",
+          source: "feed de saúde da equipa",
+          comingLater: "Em breve"
+        },
+        formQuality: {
+          label: "Forma / Qualidade",
+          evidence: "{homeShort} #{homeRank} · {homeRecord} · {awayShort} #{awayRank} · {awayRecord}",
+          source: "forma do torneio"
+        },
+        crowdPulse: {
+          label: "Pulso da multidão",
+          missingEvidence: "A média do grupo aparece quando jogadores suficientes experimentam o lab.",
+          evidence: "Média do lab {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          source: "média anónima do lab"
+        },
+        publicPulse: {
+          label: "Ranking + Forma",
+          missingEvidence: "Ranking + Forma aparece aqui quando as duas equipas estiverem definidas.",
+          evidence: "Ranking + forma {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          providerEvidence: "Pulso API-Football {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          source: "ranking FIFA + forma do torneio",
+          providerSource: "consenso API-Football"
+        }
+      },
+      attention: {
+        off: "Off",
+        light: "Leve",
+        normal: "Normal",
+        heavy: "Forte"
+      },
+      agreement: {
+        turnOnSignal: "Ativa um sinal para construir a tua lens.",
+        strong: "Acordo forte",
+        clear: "Inclinação clara",
+        mixed: "Sinais mistos",
+        low: "Baixa confiança"
+      },
+      lean: {
+        even: "{subject} está muito equilibrada.",
+        slight: "{subject} favorece ligeiramente {team}.",
+        lean: "{subject} inclina-se para {team}.",
+        strong: "{subject} favorece claramente {team}."
+      },
+      quickScenario: {
+        title: "Cenário rápido",
+        intro: "Corre um resultado e segue o ramo que ele abre.",
+        reset: "Repor",
+        whatIf: "E se",
+        wins: "ganhar",
+        chooseWinner: "Escolhe um vencedor para ver como o caminho muda.",
+        allDecided: "Todos os cenários knockout totalmente definidos já estão resolvidos.",
+        pathDiagram: "Diagrama do caminho",
+        pathAppears: "A vista do caminho aparece quando o próximo elo do bracket é conhecido.",
+        winnerAdvances: "O vencedor avança",
+        winnerFaces: "O vencedor enfrenta {team}",
+        winnerOfSource: "Vencedor de {source}",
+        currentPath: "{team} → {opponent}",
+        winnerShortLabel: "Vencedor",
+        mostHelped: "Mais ajudados",
+        mostHurt: "Mais prejudicados"
+      },
+      scenario: {
+        advances: "{team} avança.",
+        advancesToFace: "{team} avança para enfrentar {opponent}.",
+        keepsBracketPick: "Isto mantém vivo o teu pick do bracket neste jogo.",
+        flipsBracketPick: "Isto afasta-se do teu pick do bracket neste jogo.",
+        pathWindow: "Janela do caminho: {path}.",
+        alignsWithCrowd: "Isto alinha-se com a inclinação da multidão.",
+        againstCrowd: "Isto vai contra a inclinação da multidão.",
+        nextLensSubject: "Próxima lens"
+      },
+      projection: {
+        title: "Projeções completas",
+        secondary: "Vista secundária do torneio apenas para entretenimento.",
+        topUnderLens: "Topo na tua lens: {teams}.",
+        hide: "Ocultar lista",
+        show: "Mostrar projeções completas",
+        you: "Tu",
+        crowd: "Multidão"
+      },
+      footer: "O Match Lens é apenas para diversão e planeamento. Não reabre Side Picks nem altera pontuação, classificações, prémios ou desempates.",
+      format: {
+        upcoming: "Próximo",
+        stageR32: "Ronda de 32",
+        stageR16: "Oitavos",
+        stageQf: "Quartos",
+        stageSf: "Meia-final",
+        stageFinal: "Final",
+        stageKnockout: "Knockout"
+      }
     },
     legal: {
       termsOfUse: "Termos de Uso",
@@ -5180,6 +5784,157 @@ export const translations = {
       quickTips: "Kurztipps",
       tipPrefix: "Tipp: {tip}",
       closing: "Das war's. Erstelle zuerst deine Gruppenphase und komm für Knockout zurück, wenn das Bracket offiziell ist."
+    },
+    predictionLab: {
+      title: "Prediction Lab",
+      intro: "Match Lens liest immer nur ein zukünftiges Duell. Reale Signale zeigen auf jedes Team. Du steuerst nur, wie viel Aufmerksamkeit jedes Signal bekommt.",
+      nonScoring: "Ohne Wertung",
+      previewLocalOnly: "Der Vorschaumodus hält diese Match-Lens-Einstellungen nur lokal.",
+      saveSuccess: "Die Prediction-Lab-Einstellungen wurden gespeichert. Sie beeinflussen weder Punkte noch Ranglisten.",
+      saveError: "Die Prediction-Lab-Einstellungen konnten nicht gespeichert werden.",
+      notice: {
+        title: "Side-Picks-Update",
+        lead: "Danke für deine Geduld. Wir hatten einige technische Schwierigkeiten mit den Side Picks und dem ersten Spiel der Knockout-Phase.",
+        body: "Side Picks werden für dieses Turnier annulliert. Sie waren nicht fair für alle Spieler verfügbar und zählen deshalb nicht für Punkte, Ranglisten, Preise oder Tiebreaker.",
+        thanks: "Prediction Lab unten ist nur zum Spaß und Planen da. Es hat keinen Einfluss auf den Wettbewerb.",
+        detailInactive: "Alte Side Picks sind nicht mehr aktiv und neue Side-Picks-Einreichungen werden nicht angenommen."
+      },
+      leaderboardCallout: {
+        title: "Side Picks sind für dieses Turnier annulliert.",
+        body: "Sie zählen nicht für Punkte, Ranglisten, Preise oder Tiebreaker. Prediction Lab bleibt offen, wenn du Szenarien zum Spaß testen willst.",
+        cta: "Prediction Lab öffnen"
+      },
+      matchLens: {
+        title: "Match Lens",
+        crowdGroup: "Die Crowd-Marker spiegeln anonyme Einstellungen aus {groupName} wider.",
+        crowdFallback: "Die Crowd-Marker erscheinen, sobald genug gespeicherte Einstellungen vorhanden sind.",
+        reset: "Zurücksetzen",
+        saving: "Speichern...",
+        saved: "Gespeichert",
+        pending: "Ausstehend",
+        needsSave: "Nicht gespeichert",
+        save: "Lens speichern",
+        preview: "Vorschau",
+        matchup: "Duell",
+        empty: "Es ist noch kein vollständig gesetztes Knockout-Duell verfügbar. Match Lens öffnet sich, sobald der nächste Bracket-Pfad feststeht.",
+        noSignals: "Noch keine aktiven Signale.",
+        even: "Ausgeglichen",
+        landingZone: "Landezone",
+        yourLens: "Deine Lens",
+        yourLensSubject: "Deine Lens",
+        crowd: "Crowd",
+        noCrowdSignal: "Noch kein Crowd-Signal.",
+        axisRead: "Achsenbild",
+        bracketPick: "Bracket-Pick",
+        bracketPickIs: "Dein Bracket-Pick ist {team}.",
+        moreSignals: "Mehr Signale",
+        moreSignalsHint: "Zusätzliche Signale bleiben aus, bis genug Daten für {groupName} vorhanden sind.",
+        moreSignalsFallback: "Zusätzliche Signale bleiben aus, bis genug Daten vorhanden sind."
+      },
+      signals: {
+        scheduleLoad: {
+          label: "Spielplanbelastung",
+          missingEvidence: "Warte auf genügend Ruhe- und Reisedaten.",
+          evidence: "{homeShort}: {homeRest} Pause · {awayShort}: {awayRest} Pause",
+          source: "Spielplan"
+        },
+        availability: {
+          label: "Teamzustand",
+          missingEvidence: "Warte auf einen verlässlichen Check zum Teamzustand.",
+          notConfiguredEvidence: "Der Feed für den Teamzustand ist noch nicht eingerichtet.",
+          noUpdatesEvidence: "Der Teamzustand wartet auf frische Updates vom Anbieter.",
+          mappingEvidence: "Updates zum Teamzustand sind eingetroffen, lassen sich aber noch nicht sauber diesen Turnierteams zuordnen.",
+          errorEvidence: "Der Teamzustand konnte gerade nicht geladen werden. Beim nächsten Refresh wird erneut versucht.",
+          evidence: "{homeShort}: {homeCount} Ausfälle · {awayShort}: {awayCount} Ausfälle",
+          source: "Teamzustand-Feed",
+          comingLater: "Kommt später"
+        },
+        formQuality: {
+          label: "Form / Qualität",
+          evidence: "{homeShort} #{homeRank} · {homeRecord} · {awayShort} #{awayRank} · {awayRecord}",
+          source: "Turnierform"
+        },
+        crowdPulse: {
+          label: "Crowd-Puls",
+          missingEvidence: "Der Gruppendurchschnitt erscheint, wenn genug Spieler das Lab ausprobiert haben.",
+          evidence: "Lab-Schnitt {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          source: "anonymer Lab-Schnitt"
+        },
+        publicPulse: {
+          label: "Ranking + Form",
+          missingEvidence: "Ranking + Form erscheint hier, sobald beide Teams feststehen.",
+          evidence: "Ranking + Form {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          providerEvidence: "API-Football-Puls {homePercent}% {homeShort} · {awayPercent}% {awayShort}",
+          source: "FIFA-Ranking + Turnierform",
+          providerSource: "API-Football-Konsens"
+        }
+      },
+      attention: {
+        off: "Aus",
+        light: "Leicht",
+        normal: "Normal",
+        heavy: "Stark"
+      },
+      agreement: {
+        turnOnSignal: "Aktiviere ein Signal, um deine Lens aufzubauen.",
+        strong: "Starke Einigkeit",
+        clear: "Klare Tendenz",
+        mixed: "Gemischte Signale",
+        low: "Geringe Sicherheit"
+      },
+      lean: {
+        even: "{subject} ist fast ausgeglichen.",
+        slight: "{subject} bevorzugt leicht {team}.",
+        lean: "{subject} tendiert zu {team}.",
+        strong: "{subject} bevorzugt klar {team}."
+      },
+      quickScenario: {
+        title: "Schnellszenario",
+        intro: "Spiele ein Ergebnis durch und folge dem Pfad, den es öffnet.",
+        reset: "Zurücksetzen",
+        whatIf: "Was wenn",
+        wins: "gewinnt",
+        chooseWinner: "Wähle einen Sieger, um zu sehen, wie sich der Pfad verändert.",
+        allDecided: "Alle vollständig gesetzten Knockout-Szenarien sind bereits entschieden.",
+        pathDiagram: "Pfaddiagramm",
+        pathAppears: "Die Pfadansicht erscheint, sobald die nächste Bracket-Verbindung feststeht.",
+        winnerAdvances: "Sieger rückt vor",
+        winnerFaces: "Der Sieger trifft auf {team}",
+        winnerOfSource: "Sieger von {source}",
+        currentPath: "{team} → {opponent}",
+        winnerShortLabel: "Sieger",
+        mostHelped: "Am meisten geholfen",
+        mostHurt: "Am meisten geschadet"
+      },
+      scenario: {
+        advances: "{team} rückt vor.",
+        advancesToFace: "{team} rückt vor und trifft auf {opponent}.",
+        keepsBracketPick: "Das hält deinen Bracket-Pick in diesem Spiel am Leben.",
+        flipsBracketPick: "Das kippt weg von deinem Bracket-Pick in diesem Spiel.",
+        pathWindow: "Pfadfenster: {path}.",
+        alignsWithCrowd: "Das entspricht der Crowd-Tendenz.",
+        againstCrowd: "Das läuft gegen die Crowd-Tendenz.",
+        nextLensSubject: "Nächste Lens"
+      },
+      projection: {
+        title: "Volle Projektionen",
+        secondary: "Sekundäre, rein unterhaltsame Turnieransicht.",
+        topUnderLens: "Vorne in deiner Lens: {teams}.",
+        hide: "Liste ausblenden",
+        show: "Volle Projektionen anzeigen",
+        you: "Du",
+        crowd: "Crowd"
+      },
+      footer: "Match Lens ist nur zum Spaß und Planen da. Es öffnet Side Picks nicht erneut und ändert keine Punkte, Ranglisten, Preise oder Tiebreaker.",
+      format: {
+        upcoming: "Demnächst",
+        stageR32: "Runde der 32",
+        stageR16: "Achtelfinale",
+        stageQf: "Viertelfinale",
+        stageSf: "Halbfinale",
+        stageFinal: "Finale",
+        stageKnockout: "Knockout"
+      }
     },
     legal: {
       termsOfUse: "Nutzungsbedingungen",
