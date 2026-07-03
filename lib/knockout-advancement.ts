@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isKnockoutStage, normalizeKnockoutStage } from "@/lib/match-stage";
 import { shouldClearKnockoutParticipants } from "@/lib/knockout-advancement-logic";
+import { buildKnockoutPreviousMatchesByTargetId } from "@/lib/knockout-team-resolution";
 import {
   buildGroupStandingsByGroup,
   buildQualifiedTeamSeeds,
@@ -202,12 +203,19 @@ export async function rebuildKnockoutAdvancementWithClient(
     }
   }
 
+  const previousMatchesByTargetId = buildKnockoutPreviousMatchesByTargetId(knockoutMatches);
   for (const match of knockoutMatches) {
-    if (match.status !== "final" || !match.winner_team_id || !match.next_match_id || !match.next_match_slot) {
-      continue;
+    const previousMatches = previousMatchesByTargetId.get(match.id) ?? [];
+    const homeSource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "home");
+    const awaySource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "away");
+
+    if (homeSource?.status === "final" && homeSource.winner_team_id) {
+      assignTeamToSlot(match.id, "home", homeSource.winner_team_id);
     }
 
-    assignTeamToSlot(match.next_match_id, match.next_match_slot, match.winner_team_id);
+    if (awaySource?.status === "final" && awaySource.winner_team_id) {
+      assignTeamToSlot(match.id, "away", awaySource.winner_team_id);
+    }
   }
 
   const thirdPlaceMatch = knockoutMatches.find((match) => normalizeKnockoutStage(match.stage) === "third") ?? null;
