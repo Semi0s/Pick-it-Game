@@ -6,7 +6,7 @@ import {
   resolveVisibleKnockoutTeamForSlot
 } from "../lib/knockout-team-resolution.ts";
 
-test("official knockout slot prefers seeded team over a stale feeder winner", () => {
+test("official knockout slot prefers a finalized feeder winner over a stale seeded team", () => {
   const resolved = resolveVisibleKnockoutTeamForSlot({
     mode: "official",
     seededTeamId: "can",
@@ -16,7 +16,7 @@ test("official knockout slot prefers seeded team over a stale feeder winner", ()
   });
 
   assert.deepEqual(resolved, {
-    teamId: "can",
+    teamId: "par",
     resolutionSource: "actual"
   });
 });
@@ -32,6 +32,21 @@ test("official knockout slot still falls back to feeder winner when no seeded te
 
   assert.deepEqual(resolved, {
     teamId: "mar",
+    resolutionSource: "actual"
+  });
+});
+
+test("official knockout slot still uses the seeded team when the feeder is not final", () => {
+  const resolved = resolveVisibleKnockoutTeamForSlot({
+    mode: "official",
+    seededTeamId: "can",
+    resolvedSourceTeamId: "par",
+    resolvedSource: "prediction",
+    projectedTeamId: null
+  });
+
+  assert.deepEqual(resolved, {
+    teamId: "can",
     resolutionSource: "actual"
   });
 });

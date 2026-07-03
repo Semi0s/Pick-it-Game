@@ -281,13 +281,16 @@ select {
   }
 
   .app-header {
+    isolation: isolate;
+    overflow: visible;
     padding-top: var(--app-header-padding-top);
     padding-bottom: var(--app-header-padding-bottom);
   }
 
   .app-header-logo {
+    display: block;
     height: var(--app-logo-height);
-    transform: translateY(7px);
+    transform: translateY(4px);
     width: var(--app-logo-width);
   }
 

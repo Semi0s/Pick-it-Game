@@ -652,7 +652,7 @@ export function AppShell({ children }: AppShellProps) {
           } as CSSProperties
         }
       >
-      <header ref={headerRef} className="app-header sticky top-0 z-20 bg-white">
+      <header ref={headerRef} className="app-header sticky top-0 z-40 bg-white">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-2.5 pl-5 pr-3 sm:pl-6 sm:pr-4">
           <Link href="/dashboard" className="shrink-0" aria-label={t(displayLanguage, "dashboard.homeAria")}>
             <ThemedPickItLogo
@@ -676,7 +676,7 @@ export function AppShell({ children }: AppShellProps) {
               <TierIconBadge accessLevel={getAccessLevel(user)} size={24} />
             ) : null}
             <NotificationsBell />
-            <div ref={languageMenuRef} className="relative">
+            <div ref={languageMenuRef} className="relative z-[55]">
               <button
                 type="button"
                 onClick={() => setIsLanguageMenuOpen((current) => !current)}
@@ -692,7 +692,7 @@ export function AppShell({ children }: AppShellProps) {
               {isLanguageMenuOpen ? (
                 <div
                   style={languagePopoverPlacement.style}
-                  className={`absolute right-0 z-20 min-w-40 overflow-y-auto rounded-[1rem] border border-gray-200 bg-white p-1 shadow-lg ${languagePopoverPlacement.className}`}
+                  className={`absolute right-0 z-[70] min-w-40 overflow-y-auto rounded-[1rem] border border-gray-200 bg-white p-1 shadow-xl shadow-slate-950/12 ${languagePopoverPlacement.className}`}
                 >
                   {(Object.keys(EXPLAINER_LANGUAGE_LABELS) as ExplainerLanguage[]).map((language) => (
                     <button
@@ -742,7 +742,7 @@ export function AppShell({ children }: AppShellProps) {
 
       {isOnboardingExperience ? null : (
         <nav
-          className="sticky z-20 hidden w-full bg-white/95 px-4 py-2 backdrop-blur lg:block"
+          className="sticky z-30 hidden w-full bg-white/95 px-4 py-2 backdrop-blur lg:block"
           style={{ top: "var(--app-header-height)" }}
           aria-label="Primary navigation"
         >

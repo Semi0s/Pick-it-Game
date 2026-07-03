@@ -17,7 +17,10 @@ import {
   type DashboardCommandCenterSummary,
   type DashboardMatchSummary
 } from "@/lib/dashboard-home";
-import { buildDashboardKnockoutProgressSummary } from "@/lib/knockout-progress";
+import {
+  buildDashboardKnockoutProgressSummary,
+  buildDashboardKnockoutProgressSummaryFromEditorView
+} from "@/lib/knockout-progress";
 import { buildKnockoutOutlookSummary } from "@/lib/knockout-outlook";
 import { normalizeGroupKey } from "@/lib/group-standings";
 import { getGroupTopTwoCompletionStatus } from "@/lib/group-stage-third-place-gate";
@@ -53,7 +56,7 @@ import { fetchTournamentEntrySettings } from "@/lib/tournament-entry";
 import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { fetchUserLightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { getRequiredThirdPlaceQualifierCount } from "@/lib/knockout-seeding";
-import { fetchUserBracketPredictions } from "@/lib/bracket-predictions";
+import { fetchKnockoutBracketEditorView, fetchUserBracketPredictions } from "@/lib/bracket-predictions";
 import type { BracketPrediction, MatchStage, MatchStatus } from "@/lib/types";
 
 type TeamRow = {
@@ -119,6 +122,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     groupMembershipResult,
     ownedGroupsResult,
     snapshotResult,
+    officialKnockoutViewResult,
     knockoutPredictionsResult,
     globalRankResult,
     scoringMovementResult,
@@ -149,6 +153,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     adminSupabase.from("group_members").select("group_id,role").eq("user_id", userId),
     adminSupabase.from("groups").select("id").eq("owner_user_id", userId),
     fetchUserLightSeedBuilderSnapshot(adminSupabase, userId).catch(() => null),
+    fetchKnockoutBracketEditorView(userId).catch(() => null),
     fetchUserBracketPredictions(userId).catch(() => []),
     fetchGlobalLeaderboardRankSummaryForUser(userId).catch(() => ({
       rank: null,
@@ -490,7 +495,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     groupSummaries,
     groupRulesets
   });
-  const knockoutBracketProgress = buildDashboardKnockoutProgressSummary({
+  const knockoutBracketProgressFallback = buildDashboardKnockoutProgressSummary({
     matches: officialKnockoutMatches.map((match) => ({
       id: match.id,
       stage: match.stage,
@@ -513,6 +518,10 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       flagEmoji: team.flag_emoji
     }))
   });
+  const knockoutBracketProgress =
+    officialKnockoutViewResult?.mode === "official"
+      ? buildDashboardKnockoutProgressSummaryFromEditorView(officialKnockoutViewResult) ?? knockoutBracketProgressFallback
+      : knockoutBracketProgressFallback;
   const sidePicksProgress = sidePicksDisplayProgress
     ? getPredictionProgress({
         phase: "last_chance",
