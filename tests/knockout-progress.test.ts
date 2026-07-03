@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildDashboardKnockoutProgressSummary } from "../lib/knockout-progress.ts";
+import {
+  buildDashboardKnockoutProgressSummary,
+  buildDashboardKnockoutProgressSummaryFromEditorView
+} from "../lib/knockout-progress.ts";
 
 const teams = [
   { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },
@@ -619,4 +622,175 @@ test("knockout progress builds all round-of-16 paths from official winner source
     { matchId: "M95", home: ["arg", "cpv"], away: ["aus", "egy"] },
     { matchId: "M96", home: ["sui", "alg"], away: ["col", "gha"] }
   ]);
+});
+
+test("knockout progress can mirror the resolved official bracket view", () => {
+  const summary = buildDashboardKnockoutProgressSummaryFromEditorView({
+    stages: [
+      {
+        stage: "r32",
+        label: "Round of 32",
+        matches: [
+          {
+            matchId: "r32-01",
+            stage: "r32",
+            stageLabel: "Round of 32",
+            title: "Match 1",
+            kickoffTime: "2026-06-28T13:00:00.000Z",
+            status: "final",
+            seededHomeTeam: { id: "rsa", name: "South Africa", shortName: "RSA", flagEmoji: "🇿🇦" },
+            seededAwayTeam: { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },
+            homeSourceMatchId: null,
+            awaySourceMatchId: null,
+            homeSourceLabel: "2A",
+            awaySourceLabel: "2B",
+            projectedHomeSourceLabel: null,
+            projectedAwaySourceLabel: null,
+            homeTeam: { id: "rsa", name: "South Africa", shortName: "RSA", flagEmoji: "🇿🇦" },
+            awayTeam: { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },
+            homeScore: 0,
+            awayScore: 1,
+            predictedHomeScore: null,
+            predictedAwayScore: null,
+            savedHomeScore: null,
+            savedAwayScore: null,
+            predictedWinnerTeamId: null,
+            savedWinnerTeamId: null,
+            savedAt: null,
+            actualWinnerTeamId: "can",
+            awardedPoints: null,
+            exactScorePoints: null,
+            isCorrectWinner: null,
+            isLocked: true,
+            canSelectWinner: false,
+            viewMode: "official",
+            homeResolutionSource: "actual",
+            awayResolutionSource: "actual"
+          },
+          {
+            matchId: "r32-03",
+            stage: "r32",
+            stageLabel: "Round of 32",
+            title: "Match 3",
+            kickoffTime: "2026-06-28T19:00:00.000Z",
+            status: "final",
+            seededHomeTeam: { id: "ned", name: "Netherlands", shortName: "NED", flagEmoji: "🇳🇱" },
+            seededAwayTeam: { id: "mar", name: "Morocco", shortName: "MAR", flagEmoji: "🇲🇦" },
+            homeSourceMatchId: null,
+            awaySourceMatchId: null,
+            homeSourceLabel: "1F",
+            awaySourceLabel: "2C",
+            projectedHomeSourceLabel: null,
+            projectedAwaySourceLabel: null,
+            homeTeam: { id: "ned", name: "Netherlands", shortName: "NED", flagEmoji: "🇳🇱" },
+            awayTeam: { id: "mar", name: "Morocco", shortName: "MAR", flagEmoji: "🇲🇦" },
+            homeScore: 1,
+            awayScore: 1,
+            predictedHomeScore: null,
+            predictedAwayScore: null,
+            savedHomeScore: null,
+            savedAwayScore: null,
+            predictedWinnerTeamId: null,
+            savedWinnerTeamId: null,
+            savedAt: null,
+            actualWinnerTeamId: "mar",
+            awardedPoints: null,
+            exactScorePoints: null,
+            isCorrectWinner: null,
+            isLocked: true,
+            canSelectWinner: false,
+            viewMode: "official",
+            homeResolutionSource: "actual",
+            awayResolutionSource: "actual"
+          },
+          {
+            matchId: "r32-04",
+            stage: "r32",
+            stageLabel: "Round of 32",
+            title: "Match 4",
+            kickoffTime: "2026-06-29T12:00:00.000Z",
+            status: "scheduled",
+            seededHomeTeam: { id: "bra", name: "Brazil", shortName: "BRA", flagEmoji: "🇧🇷" },
+            seededAwayTeam: { id: "jpn", name: "Japan", shortName: "JPN", flagEmoji: "🇯🇵" },
+            homeSourceMatchId: null,
+            awaySourceMatchId: null,
+            homeSourceLabel: "1C",
+            awaySourceLabel: "2F",
+            projectedHomeSourceLabel: null,
+            projectedAwaySourceLabel: null,
+            homeTeam: { id: "bra", name: "Brazil", shortName: "BRA", flagEmoji: "🇧🇷" },
+            awayTeam: { id: "jpn", name: "Japan", shortName: "JPN", flagEmoji: "🇯🇵" },
+            homeScore: null,
+            awayScore: null,
+            predictedHomeScore: null,
+            predictedAwayScore: null,
+            savedHomeScore: null,
+            savedAwayScore: null,
+            predictedWinnerTeamId: null,
+            savedWinnerTeamId: null,
+            savedAt: null,
+            actualWinnerTeamId: null,
+            awardedPoints: null,
+            exactScorePoints: null,
+            isCorrectWinner: null,
+            isLocked: false,
+            canSelectWinner: true,
+            viewMode: "official",
+            homeResolutionSource: "actual",
+            awayResolutionSource: "actual"
+          }
+        ]
+      },
+      {
+        stage: "r16",
+        label: "Round of 16",
+        matches: [
+          {
+            matchId: "r16-02",
+            stage: "r16",
+            stageLabel: "Round of 16",
+            title: "Round of 16 Match 2",
+            kickoffTime: "2026-07-04T17:00:00.000Z",
+            status: "scheduled",
+            seededHomeTeam: { id: "par", name: "Paraguay", shortName: "PAR", flagEmoji: "🇵🇾" },
+            seededAwayTeam: { id: "bra", name: "Brazil", shortName: "BRA", flagEmoji: "🇧🇷" },
+            homeSourceMatchId: "r32-01",
+            awaySourceMatchId: "r32-03",
+            homeSourceLabel: "Winner of r32-01",
+            awaySourceLabel: "Winner of r32-03",
+            projectedHomeSourceLabel: null,
+            projectedAwaySourceLabel: null,
+            homeTeam: { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },
+            awayTeam: { id: "mar", name: "Morocco", shortName: "MAR", flagEmoji: "🇲🇦" },
+            homeScore: null,
+            awayScore: null,
+            predictedHomeScore: null,
+            predictedAwayScore: null,
+            savedHomeScore: null,
+            savedAwayScore: null,
+            predictedWinnerTeamId: null,
+            savedWinnerTeamId: null,
+            savedAt: null,
+            actualWinnerTeamId: null,
+            awardedPoints: null,
+            exactScorePoints: null,
+            isCorrectWinner: null,
+            isLocked: false,
+            canSelectWinner: true,
+            viewMode: "official",
+            homeResolutionSource: "actual",
+            awayResolutionSource: "actual"
+          }
+        ]
+      }
+    ]
+  });
+
+  assert.ok(summary);
+  assert.equal(summary?.currentRoundStage, "r32");
+  assert.equal(summary?.nextRoundStage, "r16");
+  assert.equal(summary?.matchups[0]?.homeSlot.primaryTeam?.teamId, "can");
+  assert.equal(summary?.matchups[0]?.awaySlot.primaryTeam?.teamId, "mar");
+  assert.equal(summary?.matchups[0]?.homeSlot.scoreLabel, "0-1");
+  assert.equal(summary?.matchups[0]?.awaySlot.scoreLabel, "1-1");
 });

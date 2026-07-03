@@ -88,6 +88,15 @@ export function resolveVisibleKnockoutTeamForSlot(input: {
   teamId: string | null;
   resolutionSource: ProjectedMatchScoreSource;
 } {
+  // When an upstream knockout match is final, that winner is the canonical
+  // official entrant even if the downstream seeded slot has not been repaired yet.
+  if (input.mode === "official" && input.resolvedSource === "actual" && input.resolvedSourceTeamId) {
+    return {
+      teamId: input.resolvedSourceTeamId,
+      resolutionSource: "actual"
+    };
+  }
+
   if (input.mode === "official" && input.seededTeamId) {
     return {
       teamId: input.seededTeamId,

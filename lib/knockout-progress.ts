@@ -3,6 +3,7 @@ import {
 } from "./fifa-2026-knockout-seeding.ts";
 import { buildKnockoutPreviousMatchesByTargetId } from "./knockout-team-resolution.ts";
 import { EXPECTED_KNOCKOUT_MATCH_COUNTS, formatMatchStage, normalizeKnockoutStage, type CanonicalKnockoutStage } from "./match-stage.ts";
+import type { BracketTeamOption, KnockoutBracketEditorView, KnockoutBracketMatchView } from "./bracket-predictions.ts";
 import type { MatchNextSlot, MatchStage, MatchStatus } from "./types.ts";
 
 const KNOCKOUT_PROGRESS_SOURCE_STAGES = ["r32", "r16", "qf", "sf"] as const;
@@ -162,6 +163,81 @@ export function buildDashboardKnockoutProgressSummary(input: {
   };
 }
 
+export function buildDashboardKnockoutProgressSummaryFromEditorView(
+  view: Pick<KnockoutBracketEditorView, "stages">
+): DashboardKnockoutProgressSummary | null {
+  const stageMatches = new Map<CanonicalKnockoutStage, KnockoutBracketMatchView[]>([
+    ["r32", []],
+    ["r16", []],
+    ["qf", []],
+    ["sf", []],
+    ["third", []],
+    ["final", []]
+  ]);
+
+  for (const stage of view.stages) {
+    stageMatches.set(stage.stage, stage.matches);
+  }
+
+  const currentRoundStage = resolveCurrentRoundStageFromBracketView(stageMatches);
+  if (!currentRoundStage) {
+    return null;
+  }
+
+  const nextRoundStage = getNextRoundStage(currentRoundStage);
+  if (!nextRoundStage) {
+    return {
+      currentRoundStage,
+      currentRoundLabel: formatMatchStage(currentRoundStage),
+      currentRoundDecided: getDecidedViewMatchCount(stageMatches.get(currentRoundStage) ?? []),
+      currentRoundTotal: EXPECTED_KNOCKOUT_MATCH_COUNTS[currentRoundStage],
+      nextRoundStage: null,
+      nextRoundLabel: "Bracket complete",
+      matchupCount: 0,
+      matchups: []
+    };
+  }
+
+  const currentRoundMatches = stageMatches.get(currentRoundStage) ?? [];
+  const sourceMatchesById = new Map(currentRoundMatches.map((match) => [match.matchId, match]));
+  const nextRoundMatches = [...(stageMatches.get(nextRoundStage) ?? [])].sort(compareViewMatchKickoff);
+
+  const matchups = nextRoundMatches
+    .map((match) => ({
+      matchId: match.matchId,
+      stage: nextRoundStage,
+      label: formatMatchStage(nextRoundStage),
+      kickoffTime: match.kickoffTime,
+      status: match.status,
+      homeSlot: buildSlotSummaryFromBracketView({
+        sourceMatch: match.homeSourceMatchId ? sourceMatchesById.get(match.homeSourceMatchId) ?? null : null,
+        directTeam: match.homeTeam ?? match.seededHomeTeam ?? null
+      }),
+      awaySlot: buildSlotSummaryFromBracketView({
+        sourceMatch: match.awaySourceMatchId ? sourceMatchesById.get(match.awaySourceMatchId) ?? null : null,
+        directTeam: match.awayTeam ?? match.seededAwayTeam ?? null
+      })
+    }))
+    .filter((matchup) => {
+      return Boolean(
+        matchup.homeSlot.state !== "waiting" ||
+          matchup.awaySlot.state !== "waiting" ||
+          matchup.kickoffTime
+      );
+    });
+
+  return {
+    currentRoundStage,
+    currentRoundLabel: formatMatchStage(currentRoundStage),
+    currentRoundDecided: getDecidedViewMatchCount(currentRoundMatches),
+    currentRoundTotal: EXPECTED_KNOCKOUT_MATCH_COUNTS[currentRoundStage],
+    nextRoundStage,
+    nextRoundLabel: `${formatMatchStage(nextRoundStage)} building`,
+    matchupCount: matchups.length,
+    matchups
+  };
+}
+
 function buildFeederMatchesByTargetId(
   sourceMatches: KnockoutProgressMatchRow[],
   targetMatches: KnockoutProgressMatchRow[]
@@ -274,6 +350,33 @@ function resolveCurrentRoundStage(stageMatches: Map<CanonicalKnockoutStage, Knoc
   return null;
 }
 
+function resolveCurrentRoundStageFromBracketView(stageMatches: Map<CanonicalKnockoutStage, KnockoutBracketMatchView[]>) {
+  for (const stage of KNOCKOUT_PROGRESS_SOURCE_STAGES) {
+    const matches = stageMatches.get(stage) ?? [];
+    if (matches.length === 0) {
+      continue;
+    }
+
+    const hasParticipants = matches.some((match) =>
+      Boolean(match.homeTeam || match.awayTeam || match.seededHomeTeam || match.seededAwayTeam)
+    );
+    const hasUnfinishedMatch = matches.some((match) => match.status !== "final");
+    if (hasParticipants && hasUnfinishedMatch) {
+      return stage;
+    }
+  }
+
+  for (let index = KNOCKOUT_PROGRESS_SOURCE_STAGES.length - 1; index >= 0; index -= 1) {
+    const stage = KNOCKOUT_PROGRESS_SOURCE_STAGES[index]!;
+    const matches = stageMatches.get(stage) ?? [];
+    if (matches.length > 0) {
+      return stage;
+    }
+  }
+
+  return null;
+}
+
 function getNextRoundStage(stage: KnockoutProgressSourceStage): CanonicalKnockoutStage | null {
   switch (stage) {
     case "r32":
@@ -291,6 +394,10 @@ function getNextRoundStage(stage: KnockoutProgressSourceStage): CanonicalKnockou
 
 function getDecidedMatchCount(matches: KnockoutProgressMatchRow[]) {
   return matches.filter((match) => match.status === "final" && Boolean(match.winnerTeamId)).length;
+}
+
+function getDecidedViewMatchCount(matches: KnockoutBracketMatchView[]) {
+  return matches.filter((match) => match.status === "final" && Boolean(match.actualWinnerTeamId)).length;
 }
 
 function buildSlotSummary(input: {
@@ -388,6 +495,83 @@ function buildSlotSummary(input: {
   };
 }
 
+function buildSlotSummaryFromBracketView(input: {
+  sourceMatch: KnockoutBracketMatchView | null;
+  directTeam: BracketTeamOption | null;
+}): DashboardKnockoutProgressSlot {
+  const sourceMatch = input.sourceMatch;
+
+  if (!sourceMatch) {
+    const directTeam = input.directTeam ? mapBracketTeamSummary(input.directTeam) : null;
+    return {
+      sourceMatchId: null,
+      sourceMatchStatus: null,
+      state: directTeam ? "advanced" : "waiting",
+      primaryTeam: directTeam,
+      secondaryTeam: null,
+      candidates: directTeam ? [directTeam] : [],
+      scoreLabel: null,
+      live: false
+    };
+  }
+
+  const homeTeam = sourceMatch.homeTeam ?? sourceMatch.seededHomeTeam ?? null;
+  const awayTeam = sourceMatch.awayTeam ?? sourceMatch.seededAwayTeam ?? null;
+  const homeSummary = homeTeam ? mapBracketTeamSummary(homeTeam) : null;
+  const awaySummary = awayTeam ? mapBracketTeamSummary(awayTeam) : null;
+  const scoreLabel =
+    typeof sourceMatch.homeScore === "number" && typeof sourceMatch.awayScore === "number"
+      ? `${sourceMatch.homeScore}-${sourceMatch.awayScore}`
+      : null;
+
+  if (sourceMatch.status === "final" && sourceMatch.actualWinnerTeamId) {
+    const winner = resolveMatchViewTeamById(sourceMatch, sourceMatch.actualWinnerTeamId);
+    const loser =
+      winner && homeTeam && awayTeam
+        ? winner.id === homeTeam.id
+          ? awayTeam
+          : homeTeam
+        : null;
+    const winnerSummary = winner ? mapBracketTeamSummary(winner) : input.directTeam ? mapBracketTeamSummary(input.directTeam) : null;
+    const loserSummary = loser ? mapBracketTeamSummary(loser) : null;
+
+    return {
+      sourceMatchId: sourceMatch.matchId,
+      sourceMatchStatus: sourceMatch.status,
+      state: "advanced",
+      primaryTeam: winnerSummary,
+      secondaryTeam: loserSummary,
+      candidates: winnerSummary ? [winnerSummary] : [],
+      scoreLabel,
+      live: false
+    };
+  }
+
+  if (sourceMatch.status === "live" || sourceMatch.status === "locked") {
+    return {
+      sourceMatchId: sourceMatch.matchId,
+      sourceMatchStatus: sourceMatch.status,
+      state: "live",
+      primaryTeam: homeSummary,
+      secondaryTeam: awaySummary,
+      candidates: [homeSummary, awaySummary].filter((team): team is KnockoutProgressTeamSummary => Boolean(team)),
+      scoreLabel,
+      live: true
+    };
+  }
+
+  return {
+    sourceMatchId: sourceMatch.matchId,
+    sourceMatchStatus: sourceMatch.status,
+    state: "pending",
+    primaryTeam: homeSummary,
+    secondaryTeam: awaySummary,
+    candidates: [homeSummary, awaySummary].filter((team): team is KnockoutProgressTeamSummary => Boolean(team)),
+    scoreLabel: null,
+    live: false
+  };
+}
+
 function matchIncludesTeam(match: KnockoutProgressMatchRow, teamId: string) {
   return match.homeTeamId === teamId || match.awayTeamId === teamId || match.winnerTeamId === teamId;
 }
@@ -401,8 +585,36 @@ function mapTeamSummary(team: KnockoutProgressTeamRow): KnockoutProgressTeamSumm
   };
 }
 
+function mapBracketTeamSummary(team: BracketTeamOption): KnockoutProgressTeamSummary {
+  return {
+    teamId: team.id,
+    name: team.name,
+    shortName: team.shortName?.trim() || team.name,
+    flagEmoji: team.flagEmoji ?? null
+  };
+}
+
 function compareMatchKickoff(left: KnockoutProgressMatchRow, right: KnockoutProgressMatchRow) {
   const leftKickoff = left.kickoffTime ? new Date(left.kickoffTime).getTime() : Number.POSITIVE_INFINITY;
   const rightKickoff = right.kickoffTime ? new Date(right.kickoffTime).getTime() : Number.POSITIVE_INFINITY;
   return leftKickoff - rightKickoff || left.id.localeCompare(right.id);
+}
+
+function compareViewMatchKickoff(left: KnockoutBracketMatchView, right: KnockoutBracketMatchView) {
+  const leftKickoff = left.kickoffTime ? new Date(left.kickoffTime).getTime() : Number.POSITIVE_INFINITY;
+  const rightKickoff = right.kickoffTime ? new Date(right.kickoffTime).getTime() : Number.POSITIVE_INFINITY;
+  return leftKickoff - rightKickoff || left.matchId.localeCompare(right.matchId);
+}
+
+function resolveMatchViewTeamById(
+  match: KnockoutBracketMatchView,
+  teamId: string
+): BracketTeamOption | null {
+  for (const team of [match.homeTeam, match.awayTeam, match.seededHomeTeam, match.seededAwayTeam]) {
+    if (team?.id === teamId) {
+      return team;
+    }
+  }
+
+  return null;
 }
