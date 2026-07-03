@@ -7,6 +7,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } fro
 import { SidePicksIcon } from "@/components/SidePicksIcon";
 import {
   getDeadlineUrgency,
+  resolveDashboardScoringDisplaySummary,
   type DashboardMovementSummary,
   type DashboardPicksInPlaySummary,
   type DashboardCommandCenterSummary,
@@ -225,27 +226,6 @@ function filterRelevantScoringHistory(history: DashboardScoringHistoryPoint[]) {
   });
 
   return filteredHistory.length > 0 ? filteredHistory : history;
-}
-
-function buildRelevantScoringSummary(
-  score: DashboardMovementSummary["score"],
-  relevantHistory: DashboardScoringHistoryPoint[]
-) {
-  const latestPoint = relevantHistory.at(-1) ?? null;
-  const previousPoint = relevantHistory.length > 1 ? relevantHistory.at(-2) ?? null : null;
-
-  return {
-    currentPoints: latestPoint?.totalPoints ?? score.currentPoints,
-    currentRank: latestPoint?.rank ?? score.currentRank,
-    currentPacePoints: latestPoint?.pacePoints ?? score.currentPacePoints,
-    pointsChange: latestPoint?.pointsDelta ?? score.pointsChange,
-    rankChange: latestPoint?.rankDelta ?? score.rankChange,
-    deltaFromPace: latestPoint?.paceDelta ?? score.deltaFromPace,
-    comparisonMode: score.comparisonMode,
-    previousPoints: previousPoint?.totalPoints ?? score.previousPoints,
-    previousRank: previousPoint?.rank ?? score.previousRank,
-    previousPacePoints: previousPoint?.pacePoints ?? score.previousPacePoints
-  };
 }
 
 export function DashboardCommandCenter({
@@ -1035,7 +1015,7 @@ function TriptychScoringOutlookContent({
               <div className="mt-1 flex w-full flex-col items-center gap-0.5">
                 <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
                   <CompactMetric label={isProjected ? "Proj pts" : t(language, "leaderboard.points")} value={formatPoints(scoringLens.movement.currentPoints, language)} theme={theme} />
-                  <CompactMetric label={t(language, "leaderboard.rank")} value={formatRank(scoringLens.movement.currentRank, language)} theme={theme} />
+                  <CompactMetric label={isProjected ? "Proj rank" : t(language, "leaderboard.rank")} value={formatRank(scoringLens.movement.currentRank, language)} theme={theme} />
                 </div>
                 <div className={`flex w-full items-center justify-center gap-3 ${getSecondaryTextClasses(theme)}`}>
                   <CompactMetric label={t(language, "dashboard.todayShort")} value={formatSignedMetric(scoringLens.movement.pointsChange, language)} theme={theme} />
@@ -1511,7 +1491,7 @@ function DashboardScoreMovementDetailSheet({
   const isProjected = scoreKind === "projected";
   const relevantHistory = useMemo(() => filterRelevantScoringHistory(score.history), [score.history]);
   const relevantSummary = useMemo(
-    () => buildRelevantScoringSummary(score, relevantHistory),
+    () => resolveDashboardScoringDisplaySummary({ score, relevantHistory }),
     [relevantHistory, score]
   );
   const chartData = useMemo(
@@ -1583,7 +1563,7 @@ function DashboardScoreMovementDetailSheet({
         <div className="overflow-y-auto px-4 pb-4 pt-4 sm:px-5">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <DetailMetricCard label={isProjected ? "Projected pts" : t(language, "leaderboard.points")} value={formatPoints(relevantSummary.currentPoints, language)} theme={theme} />
-            <DetailMetricCard label={t(language, "leaderboard.rank")} value={formatRank(relevantSummary.currentRank, language)} theme={theme} />
+            <DetailMetricCard label={isProjected ? "Proj rank" : t(language, "leaderboard.rank")} value={formatRank(relevantSummary.currentRank, language)} theme={theme} />
             <DetailMetricCard label={t(language, "dashboard.todayShort")} value={formatSignedMetric(relevantSummary.pointsChange, language)} theme={theme} />
             <DetailMetricCard label="+/-" value={formatSignedMetric(relevantSummary.rankChange, language)} theme={theme} />
             <DetailMetricCard label={t(language, "dashboard.scoringPaceShort")} value={formatPoints(relevantSummary.currentPacePoints, language)} theme={theme} />

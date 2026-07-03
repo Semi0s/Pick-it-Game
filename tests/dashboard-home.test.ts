@@ -7,6 +7,7 @@ import {
   filterMatchesByTeamIds,
   formatCountdown,
   resolveDashboardMovementMode,
+  resolveDashboardScoringDisplaySummary,
   getDashboardHomeMessageStorageKey,
   getDeadlineUrgency,
   getGroupStageSaveStatus,
@@ -106,6 +107,86 @@ test("deadline urgency turns red the day before and day of", () => {
 
 test("deadline urgency stays red for live events", () => {
   assert.equal(getDeadlineUrgency(null, BASE_NOW, { isLive: true }), "red");
+});
+
+test("dashboard scoring display prefers live current metrics over stale history snapshots", () => {
+  const score = {
+    ...createEmptyDashboardScoringMovementSummary(),
+    currentPoints: 22,
+    currentRank: 9,
+    currentPacePoints: 18,
+    previousPoints: 18,
+    previousRank: 12,
+    previousPacePoints: 16,
+    pointsChange: 4,
+    rankChange: 3,
+    deltaFromPace: 4,
+    comparisonMode: "previous_snapshot" as const,
+    history: [
+      {
+        matchId: "r32-01",
+        createdAt: "2026-06-28T17:00:00.000Z",
+        totalPoints: 18,
+        pacePoints: 16,
+        rank: 12,
+        pointsDelta: 2,
+        rankDelta: 1,
+        paceDelta: 2
+      },
+      {
+        matchId: "r32-02",
+        createdAt: "2026-06-29T17:00:00.000Z",
+        totalPoints: 20,
+        pacePoints: 17,
+        rank: 30,
+        pointsDelta: 2,
+        rankDelta: -18,
+        paceDelta: 3
+      }
+    ]
+  };
+
+  const resolved = resolveDashboardScoringDisplaySummary({
+    score,
+    relevantHistory: score.history
+  });
+
+  assert.equal(resolved.currentPoints, 22);
+  assert.equal(resolved.currentRank, 9);
+  assert.equal(resolved.currentPacePoints, 18);
+  assert.equal(resolved.previousPoints, 18);
+  assert.equal(resolved.previousRank, 12);
+  assert.equal(resolved.pointsChange, 4);
+  assert.equal(resolved.rankChange, 3);
+  assert.equal(resolved.deltaFromPace, 4);
+});
+
+test("dashboard scoring display falls back to snapshot metrics when live summary values are missing", () => {
+  const score = createEmptyDashboardScoringMovementSummary();
+  const relevantHistory = [
+    {
+      matchId: "r32-01",
+      createdAt: "2026-06-28T17:00:00.000Z",
+      totalPoints: 18,
+      pacePoints: 16,
+      rank: 12,
+      pointsDelta: null,
+      rankDelta: null,
+      paceDelta: 2
+    }
+  ];
+
+  const resolved = resolveDashboardScoringDisplaySummary({
+    score,
+    relevantHistory
+  });
+
+  assert.equal(resolved.currentPoints, 18);
+  assert.equal(resolved.currentRank, 12);
+  assert.equal(resolved.currentPacePoints, 16);
+  assert.equal(resolved.pointsChange, null);
+  assert.equal(resolved.rankChange, null);
+  assert.equal(resolved.deltaFromPace, 2);
 });
 
 test("predicted standings order stays active before tournament start", () => {
