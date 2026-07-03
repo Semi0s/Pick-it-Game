@@ -308,6 +308,203 @@ test("knockout progress uses canonical FIFA feeder paths when stored R16 source 
   );
 });
 
+test("knockout progress matches official seeded round-of-16 pairings before showing feeder paths", () => {
+  const fullTeams = [
+    { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },
+    { id: "rsa", name: "South Africa", shortName: "RSA", flagEmoji: "🇿🇦" },
+    { id: "ger", name: "Germany", shortName: "GER", flagEmoji: "🇩🇪" },
+    { id: "par", name: "Paraguay", shortName: "PAR", flagEmoji: "🇵🇾" },
+    { id: "ned", name: "Netherlands", shortName: "NED", flagEmoji: "🇳🇱" },
+    { id: "mar", name: "Morocco", shortName: "MAR", flagEmoji: "🇲🇦" },
+    { id: "bra", name: "Brazil", shortName: "BRA", flagEmoji: "🇧🇷" },
+    { id: "jpn", name: "Japan", shortName: "JPN", flagEmoji: "🇯🇵" },
+    { id: "fra", name: "France", shortName: "FRA", flagEmoji: "🇫🇷" },
+    { id: "swe", name: "Sweden", shortName: "SWE", flagEmoji: "🇸🇪" },
+    { id: "civ", name: "Cote d'Ivoire", shortName: "CIV", flagEmoji: "🇨🇮" },
+    { id: "nor", name: "Norway", shortName: "NOR", flagEmoji: "🇳🇴" },
+    { id: "mex", name: "Mexico", shortName: "MEX", flagEmoji: "🇲🇽" },
+    { id: "ecu", name: "Ecuador", shortName: "ECU", flagEmoji: "🇪🇨" },
+    { id: "eng", name: "England", shortName: "ENG", flagEmoji: "🏴" }
+  ];
+
+  const summary = buildDashboardKnockoutProgressSummary({
+    teams: fullTeams,
+    matches: [
+      {
+        id: "r32-01",
+        stage: "r32",
+        status: "final",
+        kickoffTime: "2026-06-28T13:00:00.000Z",
+        homeTeamId: "rsa",
+        awayTeamId: "can",
+        homeScore: 0,
+        awayScore: 1,
+        winnerTeamId: "can",
+        nextMatchId: "r16-02",
+        nextMatchSlot: "home"
+      },
+      {
+        id: "r32-02",
+        stage: "r32",
+        status: "final",
+        kickoffTime: "2026-06-28T16:00:00.000Z",
+        homeTeamId: "ger",
+        awayTeamId: "par",
+        homeScore: 1,
+        awayScore: 1,
+        winnerTeamId: "par",
+        nextMatchId: "r16-01",
+        nextMatchSlot: "home"
+      },
+      {
+        id: "r32-03",
+        stage: "r32",
+        status: "final",
+        kickoffTime: "2026-06-28T19:00:00.000Z",
+        homeTeamId: "ned",
+        awayTeamId: "mar",
+        homeScore: 1,
+        awayScore: 1,
+        winnerTeamId: "mar",
+        nextMatchId: "r16-02",
+        nextMatchSlot: "away"
+      },
+      {
+        id: "r32-04",
+        stage: "r32",
+        status: "final",
+        kickoffTime: "2026-06-29T12:00:00.000Z",
+        homeTeamId: "bra",
+        awayTeamId: "jpn",
+        homeScore: 2,
+        awayScore: 1,
+        winnerTeamId: "bra",
+        nextMatchId: "r16-03",
+        nextMatchSlot: "home"
+      },
+      {
+        id: "r32-05",
+        stage: "r32",
+        status: "final",
+        kickoffTime: "2026-06-29T15:00:00.000Z",
+        homeTeamId: "fra",
+        awayTeamId: "swe",
+        homeScore: 3,
+        awayScore: 0,
+        winnerTeamId: "fra",
+        nextMatchId: "r16-01",
+        nextMatchSlot: "away"
+      },
+      {
+        id: "r32-06",
+        stage: "r32",
+        status: "final",
+        kickoffTime: "2026-06-29T18:00:00.000Z",
+        homeTeamId: "civ",
+        awayTeamId: "nor",
+        homeScore: 1,
+        awayScore: 2,
+        winnerTeamId: "nor",
+        nextMatchId: "r16-03",
+        nextMatchSlot: "away"
+      },
+      {
+        id: "r32-07",
+        stage: "r32",
+        status: "final",
+        kickoffTime: "2026-06-30T12:00:00.000Z",
+        homeTeamId: "mex",
+        awayTeamId: "ecu",
+        homeScore: 2,
+        awayScore: 0,
+        winnerTeamId: "mex",
+        nextMatchId: "r16-04",
+        nextMatchSlot: "home"
+      },
+      {
+        id: "r32-08",
+        stage: "r32",
+        status: "live",
+        kickoffTime: "2026-06-30T15:00:00.000Z",
+        homeTeamId: "eng",
+        awayTeamId: "cod",
+        homeScore: 2,
+        awayScore: 1,
+        winnerTeamId: null,
+        nextMatchId: "r16-04",
+        nextMatchSlot: "away"
+      },
+      {
+        id: "r16-01",
+        stage: "r16",
+        status: "scheduled",
+        kickoffTime: "2026-07-04T17:00:00.000Z",
+        homeTeamId: "mar",
+        awayTeamId: "bra",
+        homeSource: "Winner of r32-02",
+        awaySource: "Winner of r32-05",
+        homeScore: null,
+        awayScore: null,
+        winnerTeamId: null
+      },
+      {
+        id: "r16-02",
+        stage: "r16",
+        status: "scheduled",
+        kickoffTime: "2026-07-04T21:00:00.000Z",
+        homeTeamId: "can",
+        awayTeamId: "par",
+        homeSource: "Winner of r32-01",
+        awaySource: "Winner of r32-03",
+        homeScore: null,
+        awayScore: null,
+        winnerTeamId: null
+      },
+      {
+        id: "r16-03",
+        stage: "r16",
+        status: "scheduled",
+        kickoffTime: "2026-07-05T20:00:00.000Z",
+        homeTeamId: "fra",
+        awayTeamId: "nor",
+        homeScore: null,
+        awayScore: null,
+        winnerTeamId: null
+      },
+      {
+        id: "r16-04",
+        stage: "r16",
+        status: "scheduled",
+        kickoffTime: "2026-07-06T00:00:00.000Z",
+        homeTeamId: "mex",
+        awayTeamId: "eng",
+        homeScore: null,
+        awayScore: null,
+        winnerTeamId: null
+      }
+    ]
+  });
+
+  assert.ok(summary);
+  assert.equal(summary?.currentRoundStage, "r32");
+  assert.equal(summary?.nextRoundStage, "r16");
+  assert.deepEqual(
+    summary?.matchups.slice(0, 4).map((matchup) => ({
+      matchId: matchup.matchId,
+      home: matchup.homeSlot.primaryTeam?.teamId ?? null,
+      away: matchup.awaySlot.primaryTeam?.teamId ?? null,
+      homeScore: matchup.homeSlot.scoreLabel,
+      awayScore: matchup.awaySlot.scoreLabel
+    })),
+    [
+      { matchId: "r16-01", home: "mar", away: "bra", homeScore: "1-1", awayScore: "2-1" },
+      { matchId: "r16-02", home: "can", away: "par", homeScore: "0-1", awayScore: "1-1" },
+      { matchId: "r16-03", home: "fra", away: "nor", homeScore: "3-0", awayScore: "1-2" },
+      { matchId: "r16-04", home: "mex", away: "eng", homeScore: "2-0", awayScore: "2-1" }
+    ]
+  );
+});
+
 test("knockout progress builds all round-of-16 paths from official winner sources", () => {
   const fullTeams = [
     { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },

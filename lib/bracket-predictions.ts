@@ -16,6 +16,7 @@ import {
   buildUserProjectedRoundOf32,
   type ProjectedMatchScoreSource
 } from "@/lib/knockout-seeding";
+import { buildKnockoutPreviousMatchesByTargetId, resolveVisibleKnockoutTeamForSlot } from "@/lib/knockout-team-resolution";
 import {
   buildCanonicalRoundOf32SlotLabelMap,
   buildProjectedRoundOf32SlotLabelMap,
@@ -931,16 +932,7 @@ export async function fetchGroupBracketComparisonView(
 
   const finalMatch = knockoutMatches.find((match) => normalizeKnockoutStage(match.stage) === "final") ?? null;
   const semifinalMatches = knockoutMatches.filter((match) => normalizeKnockoutStage(match.stage) === "sf");
-  const previousMatchesByNextMatchId = new Map<string, MatchRow[]>();
-  for (const match of knockoutMatches) {
-    if (!match.next_match_id) {
-      continue;
-    }
-
-    const current = previousMatchesByNextMatchId.get(match.next_match_id) ?? [];
-    current.push(match);
-    previousMatchesByNextMatchId.set(match.next_match_id, current);
-  }
+  const previousMatchesByNextMatchId = buildPreviousMatchesByNextMatchId(knockoutMatches);
 
   const championPickCounts = new Map<string, number>();
   const memberSummaries = members
@@ -1396,16 +1388,7 @@ async function fetchKnockoutData(adminSupabase: ReturnType<typeof createAdminCli
   );
 
   const matchesById = new Map(matches.map((match) => [match.id, match]));
-  const previousMatchesByNextMatchId = new Map<string, MatchRow[]>();
-  for (const match of matches) {
-    if (!match.next_match_id) {
-      continue;
-    }
-
-    const current = previousMatchesByNextMatchId.get(match.next_match_id) ?? [];
-    current.push(match);
-    previousMatchesByNextMatchId.set(match.next_match_id, current);
-  }
+  const previousMatchesByNextMatchId = buildPreviousMatchesByNextMatchId(matches);
 
   return {
     matches,
@@ -1725,39 +1708,31 @@ function getAvailableKnockoutTeamIdsForMatch(
   const projectedTeams = projectedTeamByMatchId?.get(match.id);
   const resolvedHome = resolveKnockoutSourceTeam(homeSource, predictionsByMatchId, mode);
   const resolvedAway = resolveKnockoutSourceTeam(awaySource, predictionsByMatchId, mode);
+  const homeSelection = resolveVisibleKnockoutTeamForSlot({
+    mode,
+    seededTeamId: match.home_team_id ?? null,
+    resolvedSourceTeamId: resolvedHome.teamId,
+    resolvedSource: resolvedHome.source,
+    projectedTeamId: projectedTeams?.homeTeamId ?? null
+  });
+  const awaySelection = resolveVisibleKnockoutTeamForSlot({
+    mode,
+    seededTeamId: match.away_team_id ?? null,
+    resolvedSourceTeamId: resolvedAway.teamId,
+    resolvedSource: resolvedAway.source,
+    projectedTeamId: projectedTeams?.awayTeamId ?? null
+  });
 
   return {
-    homeTeamId:
-      mode === "projected"
-        ? resolvedHome.teamId ?? projectedTeams?.homeTeamId ?? null
-        : resolvedHome.teamId ?? projectedTeams?.homeTeamId ?? match.home_team_id ?? null,
-    awayTeamId:
-      mode === "projected"
-        ? resolvedAway.teamId ?? projectedTeams?.awayTeamId ?? null
-        : resolvedAway.teamId ?? projectedTeams?.awayTeamId ?? match.away_team_id ?? null,
-    homeResolutionSource:
-      resolvedHome.source ??
-      ((projectedTeams?.homeTeamId ? "prediction" : match.home_team_id ? "actual" : "missing") as ProjectedMatchScoreSource),
-    awayResolutionSource:
-      resolvedAway.source ??
-      ((projectedTeams?.awayTeamId ? "prediction" : match.away_team_id ? "actual" : "missing") as ProjectedMatchScoreSource)
+    homeTeamId: homeSelection.teamId,
+    awayTeamId: awaySelection.teamId,
+    homeResolutionSource: homeSelection.resolutionSource,
+    awayResolutionSource: awaySelection.resolutionSource
   };
 }
 
 function buildPreviousMatchesByNextMatchId(matches: MatchRow[]) {
-  const previousMatchesByNextMatchId = new Map<string, MatchRow[]>();
-
-  for (const match of matches) {
-    if (!match.next_match_id) {
-      continue;
-    }
-
-    const current = previousMatchesByNextMatchId.get(match.next_match_id) ?? [];
-    current.push(match);
-    previousMatchesByNextMatchId.set(match.next_match_id, current);
-  }
-
-  return previousMatchesByNextMatchId;
+  return buildKnockoutPreviousMatchesByTargetId(matches);
 }
 
 function resolveKnockoutSourceTeam(
