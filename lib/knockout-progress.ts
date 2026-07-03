@@ -1,5 +1,6 @@
 import {
   expandFifa2026KnockoutStoredMatchIds,
+  getFifa2026CanonicalKnockoutSources,
   normalizeFifa2026KnockoutStoredMatchId
 } from "./fifa-2026-knockout-seeding.ts";
 import { EXPECTED_KNOCKOUT_MATCH_COUNTS, formatMatchStage, normalizeKnockoutStage, type CanonicalKnockoutStage } from "./match-stage.ts";
@@ -176,8 +177,18 @@ function buildFeederMatchesByTargetId(
   }
 
   for (const targetMatch of targetMatches) {
-    const sourceMappedHome = resolveFeederMatchFromSourceLabel(targetMatch.homeSource, sourceMatchesByNormalizedId);
-    const sourceMappedAway = resolveFeederMatchFromSourceLabel(targetMatch.awaySource, sourceMatchesByNormalizedId);
+    const canonicalSources =
+      targetMatch.homeSource || targetMatch.awaySource
+        ? getFifa2026CanonicalKnockoutSources(targetMatch.id)
+        : null;
+    const sourceMappedHome = resolveFeederMatchFromSourceLabel(
+      canonicalSources?.homeSource ?? targetMatch.homeSource,
+      sourceMatchesByNormalizedId
+    );
+    const sourceMappedAway = resolveFeederMatchFromSourceLabel(
+      canonicalSources?.awaySource ?? targetMatch.awaySource,
+      sourceMatchesByNormalizedId
+    );
     if (sourceMappedHome || sourceMappedAway) {
       feederMatchesByTargetId.set(targetMatch.id, {
         home: sourceMappedHome ?? undefined,

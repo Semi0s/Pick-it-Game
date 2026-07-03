@@ -246,6 +246,68 @@ test("knockout progress prefers official winner source labels over stale legacy 
   );
 });
 
+test("knockout progress uses canonical FIFA feeder paths when stored R16 source labels drift", () => {
+  const summary = buildDashboardKnockoutProgressSummary({
+    teams,
+    matches: [
+      {
+        id: "r32-01",
+        stage: "r32",
+        status: "final",
+        kickoffTime: "2026-06-28T13:00:00.000Z",
+        homeTeamId: "rsa",
+        awayTeamId: "can",
+        homeScore: 0,
+        awayScore: 1,
+        winnerTeamId: "can"
+      },
+      {
+        id: "r32-03",
+        stage: "r32",
+        status: "live",
+        kickoffTime: "2026-06-29T19:00:00.000Z",
+        homeTeamId: "ned",
+        awayTeamId: "mar",
+        homeScore: 1,
+        awayScore: 1,
+        winnerTeamId: null
+      },
+      {
+        id: "r32-04",
+        stage: "r32",
+        status: "scheduled",
+        kickoffTime: "2026-06-29T12:00:00.000Z",
+        homeTeamId: "bra",
+        awayTeamId: "jpn",
+        homeScore: null,
+        awayScore: null,
+        winnerTeamId: null
+      },
+      {
+        id: "r16-02",
+        stage: "r16",
+        status: "scheduled",
+        kickoffTime: "2026-07-04T12:00:00.000Z",
+        homeTeamId: "can",
+        awayTeamId: null,
+        homeSource: "Winner of r32-04",
+        awaySource: "Winner of r32-03",
+        homeScore: null,
+        awayScore: null,
+        winnerTeamId: null
+      }
+    ]
+  });
+
+  assert.ok(summary);
+  assert.equal(summary?.matchups.length, 1);
+  assert.equal(summary?.matchups[0]?.homeSlot.primaryTeam?.teamId, "can");
+  assert.deepEqual(
+    summary?.matchups[0]?.awaySlot.candidates.map((team) => team.teamId),
+    ["ned", "mar"]
+  );
+});
+
 test("knockout progress builds all round-of-16 paths from official winner sources", () => {
   const fullTeams = [
     { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },
