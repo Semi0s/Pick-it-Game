@@ -79,6 +79,11 @@ type Fifa2026RoundOf32Definition = {
   sideB: Fifa2026RoundOf32Slot;
 };
 
+type Fifa2026CanonicalKnockoutSourceDefinition = {
+  homeSource: string | null;
+  awaySource: string | null;
+};
+
 export const FIFA_2026_THIRD_PLACE_PLACEHOLDERS: Record<
   Fifa2026ThirdPlaceAssignmentTarget,
   readonly Fifa2026GroupLetter[]
@@ -154,6 +159,25 @@ const LEGACY_KNOCKOUT_ID_BY_OFFICIAL_MATCH_ID = new Map<string, string>([
 const OFFICIAL_KNOCKOUT_ID_BY_LEGACY_MATCH_ID = new Map(
   Array.from(LEGACY_KNOCKOUT_ID_BY_OFFICIAL_MATCH_ID.entries()).map(([officialId, legacyId]) => [legacyId, officialId] as const)
 );
+
+const FIFA_2026_CANONICAL_KNOCKOUT_SOURCES = new Map<string, Fifa2026CanonicalKnockoutSourceDefinition>([
+  ["M89", { homeSource: "Winner of M74", awaySource: "Winner of M77" }],
+  ["M90", { homeSource: "Winner of M73", awaySource: "Winner of M75" }],
+  ["M91", { homeSource: "Winner of M76", awaySource: "Winner of M78" }],
+  ["M92", { homeSource: "Winner of M79", awaySource: "Winner of M80" }],
+  ["M93", { homeSource: "Winner of M83", awaySource: "Winner of M84" }],
+  ["M94", { homeSource: "Winner of M81", awaySource: "Winner of M82" }],
+  ["M95", { homeSource: "Winner of M86", awaySource: "Winner of M88" }],
+  ["M96", { homeSource: "Winner of M85", awaySource: "Winner of M87" }],
+  ["M97", { homeSource: "Winner of M89", awaySource: "Winner of M90" }],
+  ["M98", { homeSource: "Winner of M93", awaySource: "Winner of M94" }],
+  ["M99", { homeSource: "Winner of M91", awaySource: "Winner of M92" }],
+  ["M100", { homeSource: "Winner of M95", awaySource: "Winner of M96" }],
+  ["M101", { homeSource: "Winner of M97", awaySource: "Winner of M98" }],
+  ["M102", { homeSource: "Winner of M99", awaySource: "Winner of M100" }],
+  ["M103", { homeSource: "Loser of M101", awaySource: "Loser of M102" }],
+  ["M104", { homeSource: "Winner of M101", awaySource: "Winner of M102" }]
+]);
 
 export const FIFA_2026_OFFICIAL_KNOCKOUT_KICKOFF_BY_STORED_MATCH_ID = new Map<string, string>([
   ["M73", "2026-06-28T12:00:00-07:00"],
@@ -302,6 +326,15 @@ export function expandFifa2026KnockoutStoredMatchIds(matchId: string | null | un
 
   const legacyId = LEGACY_KNOCKOUT_ID_BY_OFFICIAL_MATCH_ID.get(normalized) ?? null;
   return legacyId ? [normalized, legacyId] : [normalized];
+}
+
+export function getFifa2026CanonicalKnockoutSources(matchId: string | null | undefined) {
+  const normalized = normalizeFifa2026KnockoutStoredMatchId(matchId);
+  if (!normalized) {
+    return null;
+  }
+
+  return FIFA_2026_CANONICAL_KNOCKOUT_SOURCES.get(normalized) ?? null;
 }
 
 export function rankFifa2026ThirdPlaceTeams(
