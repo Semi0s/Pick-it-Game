@@ -10,6 +10,7 @@ import {
   filterMatchesByTeamIds,
   getGroupStageSaveStatus,
   getPredictionProgress,
+  hasMeaningfulScoreHistory,
   getLiveMatches,
   getNextMatch,
   getUpcomingMatches,
@@ -126,8 +127,6 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     knockoutPredictionsResult,
     globalRankResult,
     scoringMovementResult,
-    projectedScoringMovementResult,
-    projectedGroupPhaseResult,
     projectedLeaderboardEnabledResult,
     userSettingsResult,
     totalPlayersResult,
@@ -161,11 +160,6 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       totalPoints: null
     })),
     fetchGlobalDashboardScoringMovementSummary(userId).catch(() => createEmptyDashboardScoringMovementSummary()),
-    fetchProjectedDashboardScoringMovementSummary(userId).catch(() => createEmptyDashboardScoringMovementSummary()),
-    fetchProjectedGroupPhaseSummaries([userId]).catch(() => ({
-      summaries: new Map(),
-      projectionKey: null
-    })),
     fetchBooleanAppSetting(PROJECTED_LEADERBOARD_ENABLED_KEY, true).catch(() => true),
     adminSupabase.from("user_settings").select("followed_team_ids").eq("user_id", userId).maybeSingle(),
     adminSupabase.from("users").select("id", { count: "exact", head: true }),
@@ -191,6 +185,24 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     fetchBooleanAppSetting(SIDE_PICKS_TRIPTYCH_PREVIEW_ENABLED_KEY, false).catch(() => false),
     fetchSidePicksDashboardPreviewProgress(adminSupabase, userId).catch(() => null)
   ]);
+
+  const shouldLoadProjectedDashboardData =
+    projectedLeaderboardEnabledResult && !hasMeaningfulScoreHistory(scoringMovementResult);
+  const [projectedScoringMovementResult, projectedGroupPhaseResult] = shouldLoadProjectedDashboardData
+    ? await Promise.all([
+        fetchProjectedDashboardScoringMovementSummary(userId).catch(() => createEmptyDashboardScoringMovementSummary()),
+        fetchProjectedGroupPhaseSummaries([userId]).catch(() => ({
+          summaries: new Map(),
+          projectionKey: null
+        }))
+      ])
+    : [
+        createEmptyDashboardScoringMovementSummary(),
+        {
+          summaries: new Map(),
+          projectionKey: null
+        }
+      ];
 
   const teams = ((teamsResult.data as TeamRow[] | null) ?? []).length
     ? ((teamsResult.data as TeamRow[] | null) ?? [])
@@ -547,56 +559,58 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
   const officialScoreSummary = {
     ...decoratedOfficialScoreSummary,
     currentPoints:
-      decoratedOfficialScoreSummary.currentPoints ??
-      profile?.total_points ??
       globalRankResult.totalPoints ??
+      profile?.total_points ??
+      decoratedOfficialScoreSummary.currentPoints ??
       null,
-    currentRank: decoratedOfficialScoreSummary.currentRank ?? globalRankResult.rank ?? null
+    currentRank: globalRankResult.rank ?? decoratedOfficialScoreSummary.currentRank ?? null
   };
   const { score: effectiveScoreSummary, scoreKind } = selectDashboardProjectedScoreSummary({
     official: officialScoreSummary,
     projected: decoratedProjectedScoreSummary,
     projectedLeaderboardEnabled: projectedLeaderboardEnabledResult
   });
-  const projectedOutlook = buildProjectionOutlookViewModel({
-    official: officialScoreSummary,
-    projected: decoratedProjectedScoreSummary,
-    currentProjection:
-      projectedGroupPhaseResult.projectionKey && projectedGroupPhaseResult.summaries.get(userId)
-        ? {
-            checkpointId: projectedGroupPhaseResult.projectionKey,
-            createdAt:
-              getLatestTimestamp(
-                dashboardMatches
-                  .filter((match) => match.status === "live" || match.status === "final")
-                  .map((match) => match.kickoffTime)
-              ) ?? decoratedProjectedScoreSummary.latestSnapshotAt ?? null,
-            projectedFinalPoints: projectedGroupPhaseResult.summaries.get(userId)?.projectedPoints ?? null,
-            projectedRank: null
-          }
-        : null,
-    checkpointMatchesById,
-    snapshot,
-    currentStandings,
-    allMatches: dashboardMatches
-      .filter((match) => normalizeGroupKey(match.groupLabel))
-      .map((match) => ({
-        id: match.id,
-        status: match.status,
-        kickoffTime: match.kickoffTime,
-        groupLabel: match.groupLabel ?? null,
-        homeTeamId: match.homeTeamId ?? null,
-        awayTeamId: match.awayTeamId ?? null,
-        homeTeamName: match.homeTeamName,
-        awayTeamName: match.awayTeamName,
-        homeTeamShortName: match.homeTeamShortName,
-        awayTeamShortName: match.awayTeamShortName,
-        homeTeamFlagEmoji: match.homeTeamFlagEmoji ?? null,
-        awayTeamFlagEmoji: match.awayTeamFlagEmoji ?? null
-      })),
-    upcomingMatches: upcomingProjectedMatches,
-    language: null
-  });
+  const projectedOutlook = shouldLoadProjectedDashboardData
+    ? buildProjectionOutlookViewModel({
+        official: officialScoreSummary,
+        projected: decoratedProjectedScoreSummary,
+        currentProjection:
+          projectedGroupPhaseResult.projectionKey && projectedGroupPhaseResult.summaries.get(userId)
+            ? {
+                checkpointId: projectedGroupPhaseResult.projectionKey,
+                createdAt:
+                  getLatestTimestamp(
+                    dashboardMatches
+                      .filter((match) => match.status === "live" || match.status === "final")
+                      .map((match) => match.kickoffTime)
+                  ) ?? decoratedProjectedScoreSummary.latestSnapshotAt ?? null,
+                projectedFinalPoints: projectedGroupPhaseResult.summaries.get(userId)?.projectedPoints ?? null,
+                projectedRank: null
+              }
+            : null,
+        checkpointMatchesById,
+        snapshot,
+        currentStandings,
+        allMatches: dashboardMatches
+          .filter((match) => normalizeGroupKey(match.groupLabel))
+          .map((match) => ({
+            id: match.id,
+            status: match.status,
+            kickoffTime: match.kickoffTime,
+            groupLabel: match.groupLabel ?? null,
+            homeTeamId: match.homeTeamId ?? null,
+            awayTeamId: match.awayTeamId ?? null,
+            homeTeamName: match.homeTeamName,
+            awayTeamName: match.awayTeamName,
+            homeTeamShortName: match.homeTeamShortName,
+            awayTeamShortName: match.awayTeamShortName,
+            homeTeamFlagEmoji: match.homeTeamFlagEmoji ?? null,
+            awayTeamFlagEmoji: match.awayTeamFlagEmoji ?? null
+          })),
+        upcomingMatches: upcomingProjectedMatches,
+        language: null
+      })
+    : null;
 
   return {
     progress,
@@ -612,7 +626,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       side_picks_progress: sidePicksProgress
     },
     performance: {
-      globalPoints: profile?.total_points ?? globalRankResult.totalPoints ?? null,
+      globalPoints: globalRankResult.totalPoints ?? profile?.total_points ?? null,
       globalRank: globalRankResult.rank,
       invitedGroups: joinedGroupIds.length,
       managedGroups: managedGroupIds.length,

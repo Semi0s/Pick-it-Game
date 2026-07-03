@@ -1,4 +1,7 @@
-import type { DashboardScoringMovementSummary } from "./leaderboard-movement.ts";
+import type {
+  DashboardScoringHistoryPoint,
+  DashboardScoringMovementSummary
+} from "./leaderboard-movement.ts";
 import type { DashboardKnockoutProgressSummary } from "./knockout-progress.ts";
 import type { DashboardKnockoutOutlookSummary } from "./knockout-outlook.ts";
 import { normalizeGroupKey } from "./group-standings.ts";
@@ -73,6 +76,20 @@ export type DashboardMovementSummary = {
   projectedOutlook?: DashboardProjectedOutlookSummary | null;
   activity: DashboardPicksInPlaySummary | null;
 };
+
+export type DashboardScoringDisplaySummary = Pick<
+  DashboardScoringMovementSummary,
+  | "currentPoints"
+  | "currentRank"
+  | "currentPacePoints"
+  | "previousPoints"
+  | "previousRank"
+  | "previousPacePoints"
+  | "pointsChange"
+  | "rankChange"
+  | "deltaFromPace"
+  | "comparisonMode"
+>;
 
 export type DashboardProgressSummary = {
   phase: "group_stage" | "knockout_stage" | "last_chance";
@@ -402,6 +419,42 @@ export function hasMeaningfulScoreHistory(score: DashboardScoringMovementSummary
         (point.rankDelta ?? 0) !== 0
     )
   );
+}
+
+export function resolveDashboardScoringDisplaySummary(input: {
+  score: DashboardScoringMovementSummary;
+  relevantHistory: DashboardScoringHistoryPoint[];
+}): DashboardScoringDisplaySummary {
+  const latestPoint = input.relevantHistory.at(-1) ?? null;
+  const previousPoint = input.relevantHistory.length > 1 ? input.relevantHistory.at(-2) ?? null : null;
+  const currentPoints = input.score.currentPoints ?? latestPoint?.totalPoints ?? null;
+  const currentRank = input.score.currentRank ?? latestPoint?.rank ?? null;
+  const currentPacePoints = input.score.currentPacePoints ?? latestPoint?.pacePoints ?? null;
+  const previousPoints = previousPoint?.totalPoints ?? input.score.previousPoints ?? null;
+  const previousRank = previousPoint?.rank ?? input.score.previousRank ?? null;
+  const previousPacePoints = previousPoint?.pacePoints ?? input.score.previousPacePoints ?? null;
+
+  return {
+    currentPoints,
+    currentRank,
+    currentPacePoints,
+    previousPoints,
+    previousRank,
+    previousPacePoints,
+    pointsChange:
+      typeof currentPoints === "number" && typeof previousPoints === "number"
+        ? currentPoints - previousPoints
+        : latestPoint?.pointsDelta ?? input.score.pointsChange,
+    rankChange:
+      typeof currentRank === "number" && typeof previousRank === "number"
+        ? previousRank - currentRank
+        : latestPoint?.rankDelta ?? input.score.rankChange,
+    deltaFromPace:
+      typeof currentPoints === "number" && typeof currentPacePoints === "number"
+        ? currentPoints - currentPacePoints
+        : latestPoint?.paceDelta ?? input.score.deltaFromPace,
+    comparisonMode: input.score.comparisonMode
+  };
 }
 
 export function getDeadlineLabel(
