@@ -1,6 +1,9 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isKnockoutStage, normalizeKnockoutStage } from "@/lib/match-stage";
-import { shouldClearKnockoutParticipants } from "@/lib/knockout-advancement-logic";
+import {
+  shouldClearKnockoutParticipants,
+  shouldClearPredictionsForParticipantChange
+} from "@/lib/knockout-advancement-logic";
 import { buildKnockoutPreviousMatchesByTargetId } from "@/lib/knockout-team-resolution";
 import {
   buildGroupStandingsByGroup,
@@ -86,7 +89,6 @@ export async function rebuildKnockoutAdvancementWithClient(
   const knockoutMatches = ((data ?? []) as MatchRow[]).filter((match) => isKnockoutStage(match.stage));
   const matchesById = new Map(knockoutMatches.map((match) => [match.id, { ...match }]));
   const updatesByMatchId = new Map<string, KnockoutAdvancementUpdate>();
-  const stalePredictionMatchIds = new Set<string>();
   let populatedSlots = 0;
   let updatedSlots = 0;
 
@@ -101,10 +103,6 @@ export async function rebuildKnockoutAdvancementWithClient(
     const nextValue = teamId ?? null;
     if (currentValue === nextValue) {
       return;
-    }
-
-    if (match.status !== "final") {
-      stalePredictionMatchIds.add(matchId);
     }
 
     if (currentValue) {
@@ -235,6 +233,26 @@ export async function rebuildKnockoutAdvancementWithClient(
       const loserTeamId = match.home_team_id === match.winner_team_id ? match.away_team_id : match.home_team_id;
       assignTeamToSlot(thirdPlaceMatch.id, index === 0 ? "home" : "away", loserTeamId);
     });
+  }
+
+  const stalePredictionMatchIds = new Set<string>();
+  for (const match of knockoutMatches) {
+    const rebuiltMatch = matchesById.get(match.id);
+    if (!rebuiltMatch) {
+      continue;
+    }
+
+    if (
+      shouldClearPredictionsForParticipantChange({
+        status: match.status,
+        beforeHomeTeamId: match.home_team_id ?? null,
+        beforeAwayTeamId: match.away_team_id ?? null,
+        afterHomeTeamId: rebuiltMatch.home_team_id ?? null,
+        afterAwayTeamId: rebuiltMatch.away_team_id ?? null
+      })
+    ) {
+      stalePredictionMatchIds.add(match.id);
+    }
   }
 
   const touchedMatches = updatesByMatchId.size;

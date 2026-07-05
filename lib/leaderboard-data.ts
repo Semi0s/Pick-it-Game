@@ -23,6 +23,11 @@ import {
   persistProjectedLeaderboardSnapshots,
   type ProjectedGroupPhaseUserSummary
 } from "@/lib/projected-leaderboard";
+import {
+  getGlobalTopTenPoints,
+  getGlobalTopTenTiebreakPoints,
+  getLeaderboardPhaseStandardPoints
+} from "@/lib/leaderboard-phase-points";
 import { shouldUseProjectedLeaderboardMode } from "@/lib/projected-leaderboard-mode";
 import { isMissingAnyRelationError, isMissingColumnError, warnOptionalFeatureOnce } from "@/lib/schema-safety";
 import { assignDeterministicRanks, assignDeterministicRanksWithComparator, compareLeaderboardEntries } from "@/lib/scoring-engine";
@@ -714,24 +719,25 @@ async function fetchGlobalLeaderboardRows(
       const projectedGroupPhasePoints = projectedGroupPhaseResult.summaries.get(user.id)?.projectedPoints ?? groupPhasePoints;
       const knockoutPhasePoints = knockoutPointsByUserId.get(user.id) ?? 0;
       const standardSidePickPoints = standardSidePickTotals.get(user.id) ?? 0;
-      const totalPoints =
-        phase === "group_phase"
-          ? usesProjectedGroupPhasePoints
-            ? projectedGroupPhasePoints
-            : groupPhasePoints
-          : phase === "knockout_phase"
-            ? knockoutPhasePoints
-            : phase === "side_picks"
-              ? standardSidePickPoints
-              : usesProjectedGroupPhasePoints
-                ? projectedGroupPhasePoints + knockoutPhasePoints + standardSidePickPoints
-                : groupPhasePoints + knockoutPhasePoints + standardSidePickPoints;
+      const totalPoints = getLeaderboardPhaseStandardPoints({
+        phase,
+        mode: usesProjectedGroupPhasePoints ? "projected" : "official",
+        groupPhasePoints,
+        projectedGroupPhasePoints,
+        knockoutPhasePoints,
+        sidePickPoints: standardSidePickPoints
+      });
       return {
         user_id: user.id,
         total_points: totalPoints,
         tiebreak_points:
           phase === "global_top10"
-            ? groupPhasePoints + knockoutPhasePoints + standardSidePickPoints
+            ? getGlobalTopTenTiebreakPoints({
+                groupPhasePoints,
+                projectedGroupPhasePoints,
+                knockoutPhasePoints,
+                sidePickPoints: standardSidePickPoints
+              })
             : groupPhasePoints,
         tiebreak_name: user.name
       };
@@ -786,9 +792,13 @@ async function fetchGlobalLeaderboardRows(
         projectedPoints: projectedGroupPhasePoints,
         knockoutPhasePoints,
         sidePickPoints: standardSidePickPoints,
-        globalTopTenPoints: usesProjectedGroupPhasePoints
-          ? (projectedGroupPhasePoints ?? 0) + knockoutPhasePoints + standardSidePickPoints
-          : (groupPhaseSummary?.points ?? 0) + knockoutPhasePoints + standardSidePickPoints,
+        globalTopTenPoints: getGlobalTopTenPoints({
+          mode: usesProjectedGroupPhasePoints ? "projected" : "official",
+          groupPhasePoints: groupPhaseSummary?.points ?? 0,
+          projectedGroupPhasePoints: projectedGroupPhasePoints ?? groupPhaseSummary?.points ?? 0,
+          knockoutPhasePoints,
+          sidePickPoints: standardSidePickPoints
+        }),
         groupStrategyPoints: summary?.groupStrategy.points ?? null,
         knockoutGlobalPoints: summary?.knockout.points ?? null,
         globalChallengePoints: summary?.totalPoints ?? null,
@@ -851,16 +861,14 @@ async function fetchGroupLeaderboardRows(
       const knockoutPhasePoints = knockoutPointsByUserId.get(userId) ?? 0;
       const standardSidePickPoints = standardSidePickTotals.get(userId) ?? 0;
       const user = usersById.get(userId);
-      const phasePoints =
-        phase === "group_phase"
-          ? mode === "projected"
-            ? projectedGroupPhasePoints
-            : groupPhasePoints
-          : phase === "knockout_phase"
-            ? knockoutPhasePoints
-            : phase === "side_picks"
-              ? standardSidePickPoints
-              : groupPhasePoints + knockoutPhasePoints + standardSidePickPoints;
+      const phasePoints = getLeaderboardPhaseStandardPoints({
+        phase,
+        mode,
+        groupPhasePoints,
+        projectedGroupPhasePoints,
+        knockoutPhasePoints,
+        sidePickPoints: standardSidePickPoints
+      });
       return {
         user_id: userId,
         standard_points: phasePoints,
@@ -934,10 +942,12 @@ async function fetchGroupLeaderboardRows(
         projectedPoints: projectedGroupPhaseResult.summaries.get(entry.user_id)?.projectedPoints ?? null,
         knockoutPhasePoints: knockoutPointsByUserId.get(entry.user_id) ?? 0,
         sidePickPoints: standardSidePickTotals.get(entry.user_id) ?? 0,
-        globalTopTenPoints:
-          (groupPhaseSummaries.get(entry.user_id)?.points ?? 0) +
-          (knockoutPointsByUserId.get(entry.user_id) ?? 0) +
-          (standardSidePickTotals.get(entry.user_id) ?? 0),
+        globalTopTenPoints: getGlobalTopTenPoints({
+          groupPhasePoints: groupPhaseSummaries.get(entry.user_id)?.points ?? 0,
+          projectedGroupPhasePoints: projectedGroupPhaseResult.summaries.get(entry.user_id)?.projectedPoints ?? 0,
+          knockoutPhasePoints: knockoutPointsByUserId.get(entry.user_id) ?? 0,
+          sidePickPoints: standardSidePickTotals.get(entry.user_id) ?? 0
+        }),
         rank: entry.rank,
         rankDelta: movement.rankDelta,
         pointsDelta: movement.pointsDelta,
@@ -1594,7 +1604,7 @@ async function fetchKnockoutPointsByUserIds(
 }
 
 function normalizeLeaderboardPhase(value?: string | null): LeaderboardPhase {
-  return value === "global_top10" || value === "side_picks" || value === "knockout_phase"
+  return value === "global_top10" || value === "knockout_phase"
     ? value
     : "group_phase";
 }

@@ -17,3 +17,20 @@ export function shouldClearKnockoutParticipants(
 
   return true;
 }
+
+export function shouldClearPredictionsForParticipantChange(input: {
+  status: MatchStatus;
+  beforeHomeTeamId: string | null;
+  beforeAwayTeamId: string | null;
+  afterHomeTeamId: string | null;
+  afterAwayTeamId: string | null;
+}) {
+  if (input.status === "final") {
+    return false;
+  }
+
+  return (
+    input.beforeHomeTeamId !== input.afterHomeTeamId ||
+    input.beforeAwayTeamId !== input.afterAwayTeamId
+  );
+}
