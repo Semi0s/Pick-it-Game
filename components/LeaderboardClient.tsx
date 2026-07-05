@@ -81,11 +81,15 @@ type PhaseNavItem = {
 };
 
 function getAvailableLeaderboardPhase(phase?: LeaderboardPhase | null): LeaderboardPhase {
+  if (phase === "side_picks") {
+    return DEFAULT_LEADERBOARD_PHASE;
+  }
+
   return phase ?? DEFAULT_LEADERBOARD_PHASE;
 }
 
 function isLeaderboardPhase(value: LeaderboardPhaseRailValue): value is LeaderboardPhase {
-  return value === "group_phase" || value === "knockout_phase" || value === "side_picks" || value === "global_top10";
+  return value === "group_phase" || value === "knockout_phase" || value === "global_top10";
 }
 
 const DEFAULT_SUBSELECTION_STATE: LeaderboardSubselectionState = {
@@ -2034,36 +2038,53 @@ export function LeaderboardClient() {
           activeItemKey={getAvailableLeaderboardPhase(activePhase)}
           onActiveItemChange={(nextKey) => handleSelectPhase(nextKey as LeaderboardPhase)}
         >
-          {LEADERBOARD_PHASE_RAIL_ITEMS.map((phase) => (
-            <button
-              key={phase.value}
-              type="button"
-              onClick={() => {
-                if (!phase.disabled && isLeaderboardPhase(phase.value)) {
-                  handleSelectPhase(phase.value);
-                }
-              }}
-              data-choice-key={phase.disabled ? undefined : phase.value}
-              data-choice-active={isLeaderboardPhase(phase.value) && getAvailableLeaderboardPhase(activePhase) === phase.value ? "true" : "false"}
-              disabled={phase.disabled}
-              aria-disabled={phase.disabled ? "true" : undefined}
-              className={`shrink-0 ${LEADERBOARD_COCKPIT_BUTTON_CLASS} ${
-                phase.disabled
-                  ? "cursor-not-allowed border border-gray-200 bg-gray-100 text-gray-400"
-                  : getAvailableLeaderboardPhase(activePhase) === phase.value
-                  ? "bg-accent text-accent-text"
-                  : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
-              }`}
-            >
-              {phase.value === "group_phase"
+          {LEADERBOARD_PHASE_RAIL_ITEMS.map((phase) => {
+            const label =
+              phase.value === "group_phase"
                 ? t(uiLanguage, "leaderboard.groupStage")
                 : phase.value === "knockout_phase"
                   ? t(uiLanguage, "leaderboard.knockoutStage")
                   : phase.value === "side_picks"
                     ? t(uiLanguage, "dashboard.additionalTrophies")
-                    : t(uiLanguage, "leaderboard.global")}
-            </button>
-          ))}
+                    : t(uiLanguage, "leaderboard.global");
+
+            if (phase.value === "side_picks") {
+              return (
+                <Link
+                  key={phase.value}
+                  href="/side-picks"
+                  className={`shrink-0 border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light ${LEADERBOARD_COCKPIT_BUTTON_CLASS}`}
+                >
+                  {label}
+                </Link>
+              );
+            }
+
+            return (
+              <button
+                key={phase.value}
+                type="button"
+                onClick={() => {
+                  if (!phase.disabled && isLeaderboardPhase(phase.value)) {
+                    handleSelectPhase(phase.value);
+                  }
+                }}
+                data-choice-key={phase.disabled ? undefined : phase.value}
+                data-choice-active={isLeaderboardPhase(phase.value) && getAvailableLeaderboardPhase(activePhase) === phase.value ? "true" : "false"}
+                disabled={phase.disabled}
+                aria-disabled={phase.disabled ? "true" : undefined}
+                className={`shrink-0 ${LEADERBOARD_COCKPIT_BUTTON_CLASS} ${
+                  phase.disabled
+                    ? "cursor-not-allowed border border-gray-200 bg-gray-100 text-gray-400"
+                    : getAvailableLeaderboardPhase(activePhase) === phase.value
+                      ? "bg-accent text-accent-text"
+                      : "border border-gray-300 bg-white text-gray-800 hover:border-accent hover:bg-accent-light"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </LeaderboardChoiceRail>
         {shouldShowPhaseNavMenu ? (
           <div className="relative mx-auto w-[87%]">
