@@ -10,6 +10,7 @@ import { useAppLanguage } from "@/lib/app-language";
 import { showAppToast } from "@/lib/app-toast";
 import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { formatDateTime } from "@/lib/i18n-format";
+import { getCompatibleKnockoutPredictionState } from "@/lib/knockout-prediction-compat";
 import { shouldShowProjectedComparisonRound } from "@/lib/knockout-display";
 import { t, type TranslationParams } from "@/lib/strings";
 import {
@@ -2494,12 +2495,16 @@ function deriveEditorView(
         ? match.awayTeam
         : match.seededAwayTeam;
     const predictedWinnerTeamId = predictionByMatchId.get(match.matchId)?.predictedWinnerTeamId ?? null;
-    const savedHomeScore = predictionByMatchId.get(match.matchId)?.predictedHomeScore ?? null;
-    const savedAwayScore = predictionByMatchId.get(match.matchId)?.predictedAwayScore ?? null;
-    const savedWinnerTeamId =
-      predictedWinnerTeamId && [homeTeam?.id, awayTeam?.id].includes(predictedWinnerTeamId)
-        ? predictedWinnerTeamId
-        : null;
+    const compatiblePrediction = getCompatibleKnockoutPredictionState({
+      predictedWinnerTeamId,
+      predictedHomeScore: predictionByMatchId.get(match.matchId)?.predictedHomeScore ?? null,
+      predictedAwayScore: predictionByMatchId.get(match.matchId)?.predictedAwayScore ?? null,
+      homeTeamId: homeTeam?.id ?? null,
+      awayTeamId: awayTeam?.id ?? null
+    });
+    const savedHomeScore = compatiblePrediction.predictedHomeScore;
+    const savedAwayScore = compatiblePrediction.predictedAwayScore;
+    const savedWinnerTeamId = compatiblePrediction.predictedWinnerTeamId;
     const draftWinnerTeamId = draftWinnerByMatchId[match.matchId] ?? null;
     const draftScores = draftScoreByMatchId[match.matchId] ?? null;
     const matchupReady = Boolean(homeTeam && awayTeam);

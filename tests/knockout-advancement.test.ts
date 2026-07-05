@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   shouldClearKnockoutParticipants,
-  shouldClearPredictionsForParticipantChange
+  shouldClearKnockoutScoresForParticipantChange
 } from "../lib/knockout-advancement-logic.ts";
 
 test("round of 32 participants are preserved while the match is still upcoming", () => {
@@ -46,9 +46,9 @@ test("final knockout matches are never cleared", () => {
   );
 });
 
-test("prediction rows stay intact when rebuilt participants end where they started", () => {
+test("knockout score rows stay intact when rebuilt participants end where they started", () => {
   assert.equal(
-    shouldClearPredictionsForParticipantChange({
+    shouldClearKnockoutScoresForParticipantChange({
       status: "scheduled",
       beforeHomeTeamId: "can",
       beforeAwayTeamId: "mar",
@@ -59,9 +59,9 @@ test("prediction rows stay intact when rebuilt participants end where they start
   );
 });
 
-test("prediction rows clear when a rebuilt pairing actually changes", () => {
+test("knockout score rows clear when a rebuilt pairing actually changes", () => {
   assert.equal(
-    shouldClearPredictionsForParticipantChange({
+    shouldClearKnockoutScoresForParticipantChange({
       status: "scheduled",
       beforeHomeTeamId: "can",
       beforeAwayTeamId: "par",
@@ -72,9 +72,9 @@ test("prediction rows clear when a rebuilt pairing actually changes", () => {
   );
 });
 
-test("finalized matches never clear predictions during participant repair", () => {
+test("finalized matches never clear scores during participant repair", () => {
   assert.equal(
-    shouldClearPredictionsForParticipantChange({
+    shouldClearKnockoutScoresForParticipantChange({
       status: "final",
       beforeHomeTeamId: "can",
       beforeAwayTeamId: "par",

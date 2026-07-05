@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { isKnockoutStage, normalizeKnockoutStage } from "@/lib/match-stage";
 import {
   shouldClearKnockoutParticipants,
-  shouldClearPredictionsForParticipantChange
+  shouldClearKnockoutScoresForParticipantChange
 } from "@/lib/knockout-advancement-logic";
 import { buildKnockoutPreviousMatchesByTargetId } from "@/lib/knockout-team-resolution";
 import {
@@ -235,7 +235,7 @@ export async function rebuildKnockoutAdvancementWithClient(
     });
   }
 
-  const stalePredictionMatchIds = new Set<string>();
+  const staleScoreMatchIds = new Set<string>();
   for (const match of knockoutMatches) {
     const rebuiltMatch = matchesById.get(match.id);
     if (!rebuiltMatch) {
@@ -243,7 +243,7 @@ export async function rebuildKnockoutAdvancementWithClient(
     }
 
     if (
-      shouldClearPredictionsForParticipantChange({
+      shouldClearKnockoutScoresForParticipantChange({
         status: match.status,
         beforeHomeTeamId: match.home_team_id ?? null,
         beforeAwayTeamId: match.away_team_id ?? null,
@@ -251,7 +251,7 @@ export async function rebuildKnockoutAdvancementWithClient(
         afterAwayTeamId: rebuiltMatch.away_team_id ?? null
       })
     ) {
-      stalePredictionMatchIds.add(match.id);
+      staleScoreMatchIds.add(match.id);
     }
   }
 
@@ -276,19 +276,13 @@ export async function rebuildKnockoutAdvancementWithClient(
     }
   }
 
-  let clearedPredictions = 0;
+  const clearedPredictions = 0;
   let clearedScores = 0;
-  if (stalePredictionMatchIds.size > 0) {
-    const staleMatchIds = Array.from(stalePredictionMatchIds);
-
-    const { count: predictionCount, error: predictionCountError } = await adminSupabase
-      .from("bracket_predictions")
-      .select("id", { count: "exact", head: true })
-      .in("match_id", staleMatchIds);
-    if (predictionCountError) {
-      throw predictionCountError;
-    }
-
+  if (staleScoreMatchIds.size > 0) {
+    const staleMatchIds = Array.from(staleScoreMatchIds);
+    // Preserve user prediction rows here. Future-round knockout picks are user-path dependent,
+    // so rebuild can safely invalidate scored results, but not silently decide which saved picks
+    // should be deleted for every player.
     const { count: scoreCount, error: scoreCountError } = await adminSupabase
       .from("bracket_scores")
       .select("id", { count: "exact", head: true })
@@ -297,17 +291,11 @@ export async function rebuildKnockoutAdvancementWithClient(
       throw scoreCountError;
     }
 
-    const { error: deletePredictionsError } = await adminSupabase.from("bracket_predictions").delete().in("match_id", staleMatchIds);
-    if (deletePredictionsError) {
-      throw deletePredictionsError;
-    }
-
     const { error: deleteScoresError } = await adminSupabase.from("bracket_scores").delete().in("match_id", staleMatchIds);
     if (deleteScoresError) {
       throw deleteScoresError;
     }
 
-    clearedPredictions = predictionCount ?? 0;
     clearedScores = scoreCount ?? 0;
   }
 
