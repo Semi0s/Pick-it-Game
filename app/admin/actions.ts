@@ -4215,7 +4215,7 @@ export async function repairKnockoutAdvancementAction(): Promise<RepairKnockoutA
       message:
         summary.touchedMatches === 0
           ? "Knockout bracket already matched finalized winners."
-          : `Updated ${summary.populatedSlots + summary.updatedSlots} bracket slots across ${summary.touchedMatches} knockout matches and cleared ${summary.clearedPredictions} stale predictions.`
+          : `Updated ${summary.populatedSlots + summary.updatedSlots} bracket slots across ${summary.touchedMatches} knockout matches and preserved saved picks for review.`
     };
   } catch (error) {
     return { ok: false, message: (error as Error).message };

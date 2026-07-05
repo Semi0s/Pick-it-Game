@@ -22,6 +22,10 @@ import {
   buildProjectedRoundOf32SlotLabelMap,
   type ProjectedRoundOf32SlotLabels
 } from "@/lib/projected-r32-slot-labels";
+import {
+  getCompatibleKnockoutPredictionState,
+  isKnockoutPredictionCompatibleWithMatchup
+} from "@/lib/knockout-prediction-compat";
 import { loadProjectedRoundOf32FromPreferredSource } from "@/lib/projected-knockout-source";
 import { isMatchLockedAt } from "@/lib/scoring-engine";
 import type {
@@ -641,7 +645,16 @@ export async function fetchKnockoutBracketEditorView(userId: string): Promise<Kn
     fetchUserBracketScores(userId)
   ]);
 
-  const predictionsByMatchId = new Map(predictions.map((prediction) => [prediction.matchId, prediction]));
+  const visiblePredictions = buildVisibleBracketPredictions({
+    matches: knockoutData.matches,
+    previousMatchesByNextMatchId: knockoutData.previousMatchesByNextMatchId,
+    predictions,
+    teamsById: knockoutData.teamsById,
+    mode: "official"
+  });
+  const predictionsByMatchId = new Map(
+    visiblePredictions.predictions.map((prediction) => [prediction.matchId, prediction])
+  );
   const scoresByMatchId = new Map(scoreRows.map((score) => [score.matchId, score]));
   const scoreSummary = {
     bracketPoints: scoreRows.reduce((sum, score) => sum + (score.points ?? 0), 0),
@@ -671,7 +684,7 @@ export async function fetchKnockoutBracketEditorView(userId: string): Promise<Kn
     stages: stages.filter((stage) => stage.stage !== "third"),
     champion: championTeamId ? knockoutData.teamsById.get(championTeamId) ?? null : null,
     thirdPlace: stages.find((stage) => stage.stage === "third")?.matches[0] ?? null,
-    predictions,
+    predictions: visiblePredictions.predictions,
     title: "Official knockout bracket",
     description: "The official knockout bracket is now available.",
     secondaryNote: null
@@ -1124,47 +1137,21 @@ async function upsertBracketPrediction(
     now: string;
   }
 ) {
-  const { data: existingPrediction, error: existingPredictionError } = await adminSupabase
+  const { data, error } = await adminSupabase
     .from(tableName)
-    .select("id")
-    .eq("user_id", userId)
-    .eq("match_id", input.matchId)
-    .maybeSingle();
-
-  if (existingPredictionError) {
-    throw existingPredictionError;
-  }
-
-  if ((existingPrediction as { id?: string } | null)?.id) {
-    const { data, error } = await adminSupabase
-      .from(tableName)
-      .update({
+    .upsert(
+      {
+        user_id: userId,
+        match_id: input.matchId,
         predicted_home_score: input.homeScore,
         predicted_away_score: input.awayScore,
         predicted_winner_team_id: input.winnerTeamId,
         updated_at: input.now
-      })
-      .eq("id", (existingPrediction as { id: string }).id)
-      .select("id,user_id,match_id,predicted_home_score,predicted_away_score,predicted_winner_team_id,created_at,updated_at")
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    return mapBracketPredictionRow(data as BracketPredictionRow);
-  }
-
-  const { data, error } = await adminSupabase
-    .from(tableName)
-    .insert({
-      user_id: userId,
-      match_id: input.matchId,
-      predicted_home_score: input.homeScore,
-      predicted_away_score: input.awayScore,
-      predicted_winner_team_id: input.winnerTeamId,
-      updated_at: input.now
-    })
+      },
+      {
+        onConflict: "user_id,match_id"
+      }
+    )
     .select("id,user_id,match_id,predicted_home_score,predicted_away_score,predicted_winner_team_id,created_at,updated_at")
     .single();
 
@@ -1217,11 +1204,13 @@ async function clearInvalidDescendantPredictions(
       input.projectedTeamByMatchId,
       input.mode
     );
-    const validTeamIds = [availableTeams.homeTeam?.id ?? null, availableTeams.awayTeam?.id ?? null].filter(
-      (teamId): teamId is string => Boolean(teamId)
-    );
-
-    if (!validTeamIds.includes(prediction.predicted_winner_team_id)) {
+    if (
+      !isKnockoutPredictionCompatibleWithMatchup({
+        predictedWinnerTeamId: prediction.predicted_winner_team_id,
+        homeTeamId: availableTeams.homeTeam?.id ?? null,
+        awayTeamId: availableTeams.awayTeam?.id ?? null
+      })
+    ) {
       invalidPredictionIds.push(prediction.id);
       predictionsByMatchId.delete(match.id);
     }
@@ -1303,11 +1292,13 @@ async function computeDownstreamImpactForProposedSave(
       input.projectedTeamByMatchId,
       input.mode
     );
-    const validTeamIds = [availableTeams.homeTeam?.id ?? null, availableTeams.awayTeam?.id ?? null].filter(
-      (teamId): teamId is string => Boolean(teamId)
-    );
-
-    if (!validTeamIds.includes(prediction.predicted_winner_team_id)) {
+    if (
+      !isKnockoutPredictionCompatibleWithMatchup({
+        predictedWinnerTeamId: prediction.predicted_winner_team_id,
+        homeTeamId: availableTeams.homeTeam?.id ?? null,
+        awayTeamId: availableTeams.awayTeam?.id ?? null
+      })
+    ) {
       affectedCount += 1;
       predictionsByMatchId.delete(match.id);
     }
@@ -1506,11 +1497,13 @@ function buildVisibleBracketPredictions(input: {
       input.projectedTeamByMatchId,
       input.mode
     );
-    const validTeamIds = [availableTeams.homeTeam?.id, availableTeams.awayTeam?.id].filter(
-      (teamId): teamId is string => Boolean(teamId)
-    );
-
-    if (!validTeamIds.includes(savedPrediction.predictedWinnerTeamId)) {
+    if (
+      !isKnockoutPredictionCompatibleWithMatchup({
+        predictedWinnerTeamId: savedPrediction.predictedWinnerTeamId,
+        homeTeamId: availableTeams.homeTeam?.id ?? null,
+        awayTeamId: availableTeams.awayTeam?.id ?? null
+      })
+    ) {
       invalidCount += 1;
       continue;
     }
@@ -1562,12 +1555,19 @@ function buildKnockoutBracketStages(
       mode
     );
     const savedPrediction = predictionsByMatchId.get(match.id) ?? null;
-    const savedHomeScore = savedPrediction?.predictedHomeScore ?? null;
-    const savedAwayScore = savedPrediction?.predictedAwayScore ?? null;
-    const predictedWinnerTeamId = savedPrediction?.predictedWinnerTeamId ?? null;
+    const compatiblePrediction = getCompatibleKnockoutPredictionState({
+      predictedWinnerTeamId: savedPrediction?.predictedWinnerTeamId ?? null,
+      predictedHomeScore: savedPrediction?.predictedHomeScore ?? null,
+      predictedAwayScore: savedPrediction?.predictedAwayScore ?? null,
+      homeTeamId: availableTeams.homeTeam?.id ?? null,
+      awayTeamId: availableTeams.awayTeam?.id ?? null
+    });
+    const savedHomeScore = compatiblePrediction.predictedHomeScore;
+    const savedAwayScore = compatiblePrediction.predictedAwayScore;
+    const predictedWinnerTeamId = compatiblePrediction.predictedWinnerTeamId;
     const persistedScore = scoresByMatchId.get(match.id) ?? null;
     const computedScoreBreakdown =
-      savedPrediction && match.status === "final"
+      compatiblePrediction.isCompatible && savedPrediction && match.status === "final"
         ? scoreBracketPrediction(
             {
               stage: match.stage,
@@ -1584,11 +1584,6 @@ function buildKnockoutBracketStages(
           )
         : null;
     const isProjectedComparison = mode === "projected";
-    const validPredictedWinnerTeamId =
-      predictedWinnerTeamId &&
-      [availableTeams.homeTeam?.id, availableTeams.awayTeam?.id].includes(predictedWinnerTeamId)
-        ? predictedWinnerTeamId
-        : null;
     const projectedSources = options.projectedSourceByMatchId?.get(match.id);
     const projectedSlotLabels = mode === "projected" && stage === "r32"
       ? options.projectedSlotLabelByMatchId?.get(match.id) ?? null
@@ -1620,9 +1615,9 @@ function buildKnockoutBracketStages(
       predictedAwayScore: savedAwayScore,
       savedHomeScore,
       savedAwayScore,
-      predictedWinnerTeamId: validPredictedWinnerTeamId,
-      savedWinnerTeamId: validPredictedWinnerTeamId,
-      savedAt: savedPrediction?.updatedAt ?? null,
+      predictedWinnerTeamId,
+      savedWinnerTeamId: predictedWinnerTeamId,
+      savedAt: compatiblePrediction.isCompatible ? savedPrediction?.updatedAt ?? null : null,
       actualWinnerTeamId: match.winner_team_id ?? null,
       awardedPoints: isProjectedComparison ? null : computedScoreBreakdown?.points ?? persistedScore?.points ?? null,
       exactScorePoints: isProjectedComparison

@@ -18,7 +18,7 @@ export function shouldClearKnockoutParticipants(
   return true;
 }
 
-export function shouldClearPredictionsForParticipantChange(input: {
+export function shouldClearKnockoutScoresForParticipantChange(input: {
   status: MatchStatus;
   beforeHomeTeamId: string | null;
   beforeAwayTeamId: string | null;
