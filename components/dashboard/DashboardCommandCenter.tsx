@@ -5,6 +5,7 @@ import { BellRing, ChevronDown, ChevronUp, Clock3, Moon, SunMedium, X } from "lu
 import { Component, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type MouseEvent, type ReactNode, type TouchEvent } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { SidePicksIcon } from "@/components/SidePicksIcon";
+import { TeamFlag } from "@/components/TeamFlag";
 import {
   getDeadlineUrgency,
   resolveDashboardScoringDisplaySummary,
@@ -3201,9 +3202,13 @@ function MatchFlag({
 }) {
   if (flagEmoji) {
     return (
-      <span aria-label={teamName} title={teamName} className={`native-flag-emoji inline-flex h-[1.25em] w-[1.65em] items-center justify-center overflow-hidden leading-none ${className}`}>
-        <span aria-hidden className="block text-[1.7em] leading-none">{flagEmoji}</span>
-      </span>
+      <TeamFlag
+        flagEmoji={flagEmoji}
+        teamName={teamName}
+        shortName={fallback}
+        className={`h-[1.25em] w-[1.65em] ${className}`}
+        emojiClassName="text-[1.7em]"
+      />
     );
   }
 

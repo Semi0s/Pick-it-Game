@@ -11,6 +11,7 @@ import {
   updateAdminTournamentPlayerActiveAction
 } from "@/app/admin/side-picks/actions";
 import { SidePicksIcon } from "@/components/SidePicksIcon";
+import { TeamFlag, formatTeamInlineLabel } from "@/components/TeamFlag";
 import { AdminMessage } from "@/components/admin/AdminHomeClient";
 import { showAppToast } from "@/lib/app-toast";
 import {
@@ -376,7 +377,17 @@ function EligibilityCard({
               className="h-4 w-4 accent-[var(--accent)]"
             />
             <span className="min-w-0 truncate">
-              {team.flagEmoji} {team.name}
+              <span className="inline-flex items-center gap-2">
+                <TeamFlag
+                  flagEmoji={team.flagEmoji}
+                  teamId={team.id}
+                  teamName={team.name}
+                  shortName={team.shortName}
+                  className="h-[1em] w-[1.4em]"
+                  emojiClassName="text-[1.15em]"
+                />
+                <span className="truncate">{team.name}</span>
+              </span>
             </span>
           </label>
         ))}
@@ -429,7 +440,12 @@ function TournamentPlayersCard({
           <option value="">Team optional</option>
           {teams.map((team) => (
             <option key={team.id} value={team.id}>
-              {team.flagEmoji} {team.name}
+              {formatTeamInlineLabel({
+                flagEmoji: team.flagEmoji,
+                teamId: team.id,
+                teamName: team.name,
+                shortName: team.shortName
+              })}
             </option>
           ))}
         </select>

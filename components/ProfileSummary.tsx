@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
+import { TeamFlag } from "@/components/TeamFlag";
 import { TeamPickerMenu } from "@/components/TeamPickerMenu";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import { VisualThemeMenu } from "@/components/VisualThemeMenu";
@@ -640,10 +641,28 @@ export function ProfileSummary() {
                         <div key={team.id} className="flex items-start justify-between gap-3 rounded-[0.9rem] border border-gray-200 bg-white px-3 py-2">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-black text-gray-950">
-                              {team.flagEmoji ? `${team.flagEmoji} ` : ""}{team.name}
+                              <span className="inline-flex items-center gap-1">
+                                <TeamFlag
+                                  flagEmoji={team.flagEmoji}
+                                  teamId={team.id}
+                                  shortName={team.shortName}
+                                  teamName={team.name}
+                                  className="h-[1em] w-[1.45em]"
+                                />
+                                <span>{team.name}</span>
+                              </span>
                             </p>
                             <p className="mt-1 text-xs font-semibold text-gray-500">
-                              {team.groupName} {team.flagEmoji ? team.flagEmoji : ""}
+                              <span className="inline-flex items-center gap-1">
+                                <span>{team.groupName}</span>
+                                <TeamFlag
+                                  flagEmoji={team.flagEmoji}
+                                  teamId={team.id}
+                                  shortName={team.shortName}
+                                  teamName={team.name}
+                                  className="h-[1em] w-[1.45em]"
+                                />
+                              </span>
                             </p>
                           </div>
                           <button

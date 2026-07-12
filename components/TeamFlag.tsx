@@ -1,5 +1,3 @@
-"use client";
-
 type TeamFlagProps = {
   flagEmoji?: string | null;
   teamId?: string | null;
@@ -8,6 +6,8 @@ type TeamFlagProps = {
   className?: string;
   emojiClassName?: string;
 };
+
+export const ENGLAND_FLAG_EMOJI = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
 
 export function TeamFlag({
   flagEmoji,
@@ -19,7 +19,7 @@ export function TeamFlag({
 }: TeamFlagProps) {
   const label = teamName ?? shortName ?? undefined;
 
-  if (isEnglandTeam({ teamId, teamName, shortName })) {
+  if (isEnglandTeam({ teamId, teamName, shortName, flagEmoji })) {
     return (
       <span
         aria-label={label ?? "England"}
@@ -52,20 +52,51 @@ export function TeamFlag({
   );
 }
 
-export function isEnglandTeam({
+export function formatTeamInlineLabel({
+  flagEmoji,
   teamId,
   teamName,
   shortName
 }: {
+  flagEmoji?: string | null;
   teamId?: string | null;
   teamName?: string | null;
   shortName?: string | null;
 }) {
+  const label = shortName ?? teamName ?? "";
+
+  if (!label) {
+    return "";
+  }
+
+  if (isEnglandTeam({ teamId, teamName, shortName, flagEmoji })) {
+    return label;
+  }
+
+  return flagEmoji ? `${flagEmoji} ${label}` : label;
+}
+
+export function isEnglandTeam({
+  teamId,
+  teamName,
+  shortName,
+  flagEmoji
+}: {
+  teamId?: string | null;
+  teamName?: string | null;
+  shortName?: string | null;
+  flagEmoji?: string | null;
+}) {
   return (
     normalizeTeamKey(teamId) === "eng" ||
     normalizeTeamKey(shortName) === "eng" ||
-    normalizeTeamKey(teamName) === "england"
+    normalizeTeamKey(teamName) === "england" ||
+    isEnglandFlagEmoji(flagEmoji)
   );
+}
+
+export function isEnglandFlagEmoji(flagEmoji?: string | null) {
+  return (flagEmoji ?? "").trim() === ENGLAND_FLAG_EMOJI;
 }
 
 function normalizeTeamKey(value?: string | null) {

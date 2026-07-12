@@ -1,5 +1,6 @@
 "use client";
 
+import { TeamFlag } from "@/components/TeamFlag";
 import { t } from "@/lib/strings";
 import type { PickProbabilityResult } from "@/lib/group-pick-probability";
 
@@ -152,11 +153,16 @@ export function GroupStandingsMiniTable({
                     </span>
                   </td>
                   <td className="py-1 pl-2 pr-0 text-left min-[390px]:pl-5 sm:pl-6 md:py-2.5 md:pl-8">
-                    <span className="flex min-w-0 items-center gap-1.5 md:gap-2">
+                      <span className="flex min-w-0 items-center gap-1.5 md:gap-2">
                       {row.flagEmoji ? (
-                        <span aria-hidden className="inline shrink-0 text-xs leading-none min-[390px]:text-sm sm:text-base md:text-lg">
-                          {row.flagEmoji}
-                        </span>
+                        <TeamFlag
+                          flagEmoji={row.flagEmoji}
+                          teamId={row.teamId}
+                          shortName={row.teamCode ?? row.teamName}
+                          teamName={row.teamName}
+                          className="h-[1em] w-[1.45em] text-xs min-[390px]:text-sm sm:text-base md:text-lg"
+                          emojiClassName="text-[1em]"
+                        />
                       ) : null}
                       <span className="triptych-micro-copy triptych-micro-copy-left truncate font-semibold uppercase tracking-wide text-gray-900">
                         {row.teamCode ?? row.teamName}

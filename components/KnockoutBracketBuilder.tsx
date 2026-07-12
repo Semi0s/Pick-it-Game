@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useSearchParams } from "next/navigation";
 import { previewBracketPredictionImpactAction, saveBracketPredictionAction } from "@/app/knockout/actions";
 import { WindowChoiceRail, useSessionJsonState } from "@/components/player-management/Shared";
-import { isEnglandTeam, TeamFlag } from "@/components/TeamFlag";
+import { TeamFlag, formatTeamInlineLabel } from "@/components/TeamFlag";
 import { useAppLanguage } from "@/lib/app-language";
 import { showAppToast } from "@/lib/app-toast";
 import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
@@ -2893,9 +2893,12 @@ function formatTeamToken(team: BracketTeamOption | null): MatchContextChip | nul
   }
 
   return {
-    primary: team.flagEmoji && !isEnglandTeam({ teamId: team.id, teamName: team.name, shortName: team.shortName })
-      ? `${team.flagEmoji} ${team.shortName}`
-      : team.shortName
+    primary: formatTeamInlineLabel({
+      flagEmoji: team.flagEmoji,
+      teamId: team.id,
+      teamName: team.name,
+      shortName: team.shortName
+    })
   };
 }
 

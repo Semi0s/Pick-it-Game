@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, GripVertical } from "lucide-react";
 import { saveLightSeedBuilderAction } from "@/app/groups/actions";
 import { ActionButton } from "@/components/player-management/Shared";
+import { TeamFlag } from "@/components/TeamFlag";
 import { showAppToast } from "@/lib/app-toast";
 import {
   buildDefaultLightSeedBuilderSnapshot,
@@ -211,7 +212,14 @@ export function LightSeedBuilder({
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span aria-hidden className="text-base">{team.flagEmoji ?? ""}</span>
+                        <TeamFlag
+                          flagEmoji={team.flagEmoji ?? null}
+                          teamId={team.id}
+                          shortName={team.shortName}
+                          teamName={team.name}
+                          className="h-[1em] w-[1.45em] text-base"
+                          emojiClassName="text-[1em]"
+                        />
                         <span className="truncate text-sm font-black text-gray-950">{team.name}</span>
                       </div>
                       <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
@@ -283,7 +291,14 @@ export function LightSeedBuilder({
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span aria-hidden className="text-base">{team.flagEmoji ?? ""}</span>
+                      <TeamFlag
+                        flagEmoji={team.flagEmoji ?? null}
+                        teamId={team.id}
+                        shortName={team.shortName}
+                        teamName={team.name}
+                        className="h-[1em] w-[1.45em] text-base"
+                        emojiClassName="text-[1em]"
+                      />
                       <span className="truncate text-sm font-black text-gray-950">{team.name}</span>
                     </div>
                     <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">

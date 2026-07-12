@@ -45,6 +45,7 @@ import {
 import type { MatchStage, MatchStatus } from "@/lib/types";
 import type { AdminScoringAuditReport } from "@/lib/admin-scoring-audit";
 import { AdminHeader } from "@/components/admin/AdminInvitesClient";
+import { formatTeamInlineLabel } from "@/components/TeamFlag";
 import { InlineDisclosureButton, useSessionDisclosureState } from "@/components/player-management/Shared";
 import { useCurrentUser } from "@/lib/use-current-user";
 
@@ -2845,7 +2846,12 @@ function getSideLabel(match: AdminMatch, side: "home" | "away") {
     const fullName = team.name || shortName;
 
     return {
-      short: `${team.flagEmoji ? `${team.flagEmoji} ` : ""}${shortName}`,
+      short: formatTeamInlineLabel({
+        flagEmoji: team.flagEmoji,
+        teamId: team.id,
+        teamName: team.name,
+        shortName
+      }),
       full: fullName
     };
   }

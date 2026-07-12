@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TeamFlag } from "@/components/TeamFlag";
 import { useViewportAwarePopoverPlacement } from "@/lib/use-viewport-aware-popover-placement";
 
 type TeamPickerOption = {
@@ -76,9 +77,13 @@ export function TeamPickerMenu({
         className="flex w-full items-center justify-between gap-3 rounded-[0.9rem] border border-gray-300 bg-white px-3 py-3 text-left text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent-light disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-500"
       >
         <span className="flex min-w-0 items-center gap-2">
-          <span aria-hidden className="inline-flex h-5 w-6 shrink-0 items-center justify-center text-base leading-none">
-            {selectedOption?.flagEmoji ?? ""}
-          </span>
+          <TeamFlag
+            flagEmoji={selectedOption?.flagEmoji ?? null}
+            teamId={selectedOption?.id ?? null}
+            teamName={selectedOption?.name ?? null}
+            className="h-5 w-6 text-base"
+            emojiClassName="text-[1em]"
+          />
           <span className={`truncate ${selectedOption ? "font-bold text-gray-900" : "font-semibold text-gray-500"}`}>
             {selectedOption ? `${selectedOption.groupName} · ${selectedOption.name}` : placeholder}
           </span>
@@ -119,13 +124,17 @@ export function TeamPickerMenu({
                 onChange(option.id);
                 setIsOpen(false);
               }}
-              className={`flex w-full items-center gap-2 rounded-[0.75rem] px-2.5 py-2 text-left text-sm font-semibold transition ${
-                option.id === value ? "bg-accent-light text-accent-dark" : "text-gray-700 hover:bg-gray-50"
-              }`}
-            >
-              <span aria-hidden className="inline-flex h-5 w-6 shrink-0 items-center justify-center text-base leading-none">
-                {option.flagEmoji ?? ""}
-              </span>
+            className={`flex w-full items-center gap-2 rounded-[0.75rem] px-2.5 py-2 text-left text-sm font-semibold transition ${
+              option.id === value ? "bg-accent-light text-accent-dark" : "text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+              <TeamFlag
+                flagEmoji={option.flagEmoji ?? null}
+                teamId={option.id}
+                teamName={option.name}
+                className="h-5 w-6 text-base"
+                emojiClassName="text-[1em]"
+              />
               <span className="min-w-0 flex-1 truncate">
                 {option.groupName} · {option.name}
               </span>
