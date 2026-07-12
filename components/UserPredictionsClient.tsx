@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { HomeTeamBadge } from "@/components/HomeTeamBadge";
 import { ReportBlockDialog, type ReportTargetOption } from "@/components/ReportBlockDialog";
+import { TeamFlag } from "@/components/TeamFlag";
 import { TrophyBadge } from "@/components/TrophyBadge";
 import { getGroupMatches, getTeam } from "@/lib/mock-data";
 import { getPredictionStateLabel } from "@/lib/prediction-state";
@@ -189,13 +190,21 @@ export function UserPredictionsClient({ userId }: UserPredictionsClientProps) {
                     <div key={prediction.id} className="ui-card-soft min-w-0 overflow-hidden p-3">
                       <div className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
                         <p className="min-w-0 truncate text-sm font-black text-gray-950">
-                          <span className="native-flag-emoji inline-flex h-[1.2em] w-[1.45em] items-center justify-center overflow-hidden align-[-0.15em] leading-none">
-                            <span aria-hidden className="block leading-none">{match.homeTeam?.flagEmoji}</span>
-                          </span>{" "}
+                          <TeamFlag
+                            flagEmoji={match.homeTeam?.flagEmoji ?? null}
+                            teamId={match.homeTeam?.id ?? null}
+                            shortName={match.homeTeam?.shortName ?? match.homeTeam?.name ?? null}
+                            teamName={match.homeTeam?.name ?? null}
+                            className="h-[1.2em] w-[1.45em] align-[-0.15em]"
+                          />{" "}
                           {match.homeTeam?.shortName} vs{" "}
-                          <span className="native-flag-emoji inline-flex h-[1.2em] w-[1.45em] items-center justify-center overflow-hidden align-[-0.15em] leading-none">
-                            <span aria-hidden className="block leading-none">{match.awayTeam?.flagEmoji}</span>
-                          </span>{" "}
+                          <TeamFlag
+                            flagEmoji={match.awayTeam?.flagEmoji ?? null}
+                            teamId={match.awayTeam?.id ?? null}
+                            shortName={match.awayTeam?.shortName ?? match.awayTeam?.name ?? null}
+                            teamName={match.awayTeam?.name ?? null}
+                            className="h-[1.2em] w-[1.45em] align-[-0.15em]"
+                          />{" "}
                           {match.awayTeam?.shortName}
                         </p>
                         <span className="shrink-0 rounded-md bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-gray-600">

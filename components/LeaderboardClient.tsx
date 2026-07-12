@@ -17,6 +17,7 @@ import { LocalizedCardBackground } from "@/components/localized-card/LocalizedCa
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { ReportBlockDialog, type ReportTargetOption } from "@/components/ReportBlockDialog";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
+import { TeamFlag } from "@/components/TeamFlag";
 import { useAppLanguage } from "@/lib/app-language";
 import { parseJsonResponse } from "@/lib/fetch-json";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
@@ -207,15 +208,13 @@ function LeaderboardPlayerRow({
         ) : null}
         <span className="leaderboard-score-chip ui-chip-sm border border-gray-200 bg-white/95 px-1.5 text-[8px] font-black text-gray-950">
           {homeTeam?.flagEmoji ? (
-            <span
-              aria-hidden
-              title={homeTeam.name}
-              className="leaderboard-score-android-home-flag native-flag-emoji"
-            >
-              <span aria-hidden className="block leading-none">
-                {homeTeam.flagEmoji}
-              </span>
-            </span>
+            <TeamFlag
+              flagEmoji={homeTeam.flagEmoji}
+              teamId={homeTeam.id}
+              shortName={homeTeam.shortName}
+              teamName={homeTeam.name}
+              className="leaderboard-score-android-home-flag"
+            />
           ) : null}
           {scoreLabel}: {scoreValue}
         </span>

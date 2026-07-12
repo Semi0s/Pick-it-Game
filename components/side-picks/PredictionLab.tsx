@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type CSSProperties } from "react";
 import { ChevronDown, RotateCcw, Sparkles } from "lucide-react";
 import { savePredictionLabSettingsAction } from "@/app/side-picks/actions";
+import { TeamFlag } from "@/components/TeamFlag";
 import { showAppToast } from "@/lib/app-toast";
 import { useAppLanguage } from "@/lib/app-language";
 import type { PredictionLabPublicMatchPulse } from "@/lib/prediction-lab-public-pulse";
@@ -503,11 +504,29 @@ function MatchScopeDisplay({
 
       <div className="relative z-10 flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-[0.18em] text-white/48">
         <span className="min-w-0 truncate">
-          {lens.homeTeam.flagEmoji} {lens.homeTeam.shortName}
+          <span className="inline-flex items-center gap-1">
+            <TeamFlag
+              flagEmoji={lens.homeTeam.flagEmoji}
+              teamId={lens.homeTeam.teamId}
+              shortName={lens.homeTeam.shortName}
+              teamName={lens.homeTeam.name}
+              className="h-[1em] w-[1.45em]"
+            />
+            <span>{lens.homeTeam.shortName}</span>
+          </span>
         </span>
         <span>{predictionLabLabel(language, "matchLens.even")}</span>
         <span className="min-w-0 truncate text-right">
-          {lens.awayTeam.shortName} {lens.awayTeam.flagEmoji}
+          <span className="inline-flex items-center gap-1">
+            <span>{lens.awayTeam.shortName}</span>
+            <TeamFlag
+              flagEmoji={lens.awayTeam.flagEmoji}
+              teamId={lens.awayTeam.teamId}
+              shortName={lens.awayTeam.shortName}
+              teamName={lens.awayTeam.name}
+              className="h-[1em] w-[1.45em]"
+            />
+          </span>
         </span>
       </div>
 

@@ -1271,13 +1271,19 @@ function formatStakeProbabilityChip(teamShortName: string, probability: PickProb
 
 function formatFlagCodeLabel(flagEmoji: string | null | undefined, code: string | null | undefined) {
   const normalizedCode = (code ?? "").trim().toUpperCase();
-  if (flagEmoji && normalizedCode) {
-    return `${flagEmoji} ${normalizedCode}`;
+  const normalizedFlagEmoji = (flagEmoji ?? "").trim();
+  const isEnglandFlag =
+    normalizedFlagEmoji === "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+  if (isEnglandFlag && normalizedCode) {
+    return normalizedCode;
+  }
+  if (normalizedFlagEmoji && normalizedCode) {
+    return `${normalizedFlagEmoji} ${normalizedCode}`;
   }
   if (normalizedCode) {
     return normalizedCode;
   }
-  return flagEmoji ?? "TBD";
+  return normalizedFlagEmoji || "TBD";
 }
 
 function formatPlainOutlookNumber(value: number | null | undefined) {

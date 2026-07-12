@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Sparkles, Heart, TrendingDown, TrendingUp } from "lucide-react";
 import { saveStrategyModeEntryAction } from "@/app/strategy/actions";
+import { TeamFlag } from "@/components/TeamFlag";
 import { showAppToast } from "@/lib/app-toast";
 import {
   clampGroupStrategyAdjustments,
@@ -215,7 +216,16 @@ export function StrategyModeClient({
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-base font-black text-gray-950">
-                          {team.flagEmoji} {team.name}
+                          <span className="inline-flex items-center gap-1.5">
+                            <TeamFlag
+                              flagEmoji={team.flagEmoji}
+                              teamId={team.id}
+                              shortName={team.shortName}
+                              teamName={team.name}
+                              className="h-[1em] w-[1.45em]"
+                            />
+                            <span>{team.name}</span>
+                          </span>
                         </p>
                         <p className="mt-1 text-xs font-bold uppercase tracking-wide text-gray-500">
                           {BUCKET_COPY[bucket].title} · Group {team.groupName} · FIFA Rank {team.fifaRank}

@@ -3878,7 +3878,14 @@ export function BracketBuilderClient({
               <span className="absolute left-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-text">
                 {customDragGhostRankLabel}
               </span>
-              <span className="flex items-center justify-center text-[1.3rem] leading-none">{customDragGhostTeam.flagEmoji}</span>
+              <TeamFlag
+                flagEmoji={customDragGhostTeam.flagEmoji}
+                teamId={customDragGhostTeam.id}
+                shortName={customDragGhostTeam.shortName}
+                teamName={customDragGhostTeam.name}
+                className="h-[1em] w-[1.45em] text-[1.3rem]"
+                emojiClassName="text-[1em]"
+              />
               <span className="block w-full truncate text-[9px] font-black">{customDragGhostTeam.name}</span>
             </>
           ) : (
@@ -3886,7 +3893,14 @@ export function BracketBuilderClient({
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent text-[12px] font-black text-accent-text">
                 {customDragGhostRankLabel}
               </span>
-              <span className="flex items-center justify-center text-[1.6rem] leading-none">{customDragGhostTeam.flagEmoji}</span>
+              <TeamFlag
+                flagEmoji={customDragGhostTeam.flagEmoji}
+                teamId={customDragGhostTeam.id}
+                shortName={customDragGhostTeam.shortName}
+                teamName={customDragGhostTeam.name}
+                className="h-[1em] w-[1.45em] text-[1.6rem]"
+                emojiClassName="text-[1em]"
+              />
               <span className="block truncate text-[11px] font-black">{customDragGhostTeam.name}</span>
             </>
           )}
@@ -3929,7 +3943,14 @@ export function BracketBuilderClient({
                     {t(language, "bracket.thirdPlaceReplacementIncoming")}
                   </p>
                   <div className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-2">
-                    <span className="text-[1.35rem] leading-none">{replacementCandidateTeam.flagEmoji}</span>
+                    <TeamFlag
+                      flagEmoji={replacementCandidateTeam.flagEmoji}
+                      teamId={replacementCandidateTeam.id}
+                      shortName={replacementCandidateTeam.shortName}
+                      teamName={replacementCandidateTeam.name}
+                      className="h-[1em] w-[1.45em] text-[1.35rem]"
+                      emojiClassName="text-[1em]"
+                    />
                     <span className="block min-w-0 truncate text-xs font-black text-gray-950">
                       {replacementCandidateTeam.name}
                     </span>
@@ -3954,7 +3975,14 @@ export function BracketBuilderClient({
                     onClick={() => addExplicitThirdPlaceQualifier(replacementCandidateTeam.id, teamId)}
                     aria-label={getThirdPlaceReplacementRowAria(selectedTeam, replacementCandidateTeam, probability)}
                   >
-                    <span className="text-[1.35rem] leading-none">{selectedTeam.flagEmoji}</span>
+                    <TeamFlag
+                      flagEmoji={selectedTeam.flagEmoji}
+                      teamId={selectedTeam.id}
+                      shortName={selectedTeam.shortName}
+                      teamName={selectedTeam.name}
+                      className="h-[1em] w-[1.45em] text-[1.35rem]"
+                      emojiClassName="text-[1em]"
+                    />
                     <span className="block min-w-0 truncate text-xs font-black text-gray-950">
                       {selectedTeam.name}
                     </span>
@@ -4023,7 +4051,14 @@ export function BracketBuilderClient({
                       probability
                     )}
                   >
-                    <span className="text-[1.35rem] leading-none">{team.flagEmoji}</span>
+                    <TeamFlag
+                      flagEmoji={team.flagEmoji}
+                      teamId={team.id}
+                      shortName={team.shortName}
+                      teamName={team.name}
+                      className="h-[1em] w-[1.45em] text-[1.35rem]"
+                      emojiClassName="text-[1em]"
+                    />
                     <span className="block min-w-0 truncate text-xs font-black text-gray-950">
                       {team.name}
                     </span>
@@ -4341,7 +4376,14 @@ export function BracketBuilderClient({
                 </div>
                 {team ? (
                   <div className="flex min-w-0 items-center gap-2">
-                    <span aria-hidden className="text-[1.55rem] leading-none">{team.flagEmoji}</span>
+                    <TeamFlag
+                      flagEmoji={team.flagEmoji}
+                      teamId={team.id}
+                      shortName={team.shortName}
+                      teamName={team.name}
+                      className="h-[1em] w-[1.45em] text-[1.55rem]"
+                      emojiClassName="text-[1em]"
+                    />
                     <span className="min-w-0 truncate text-[12px] font-black text-gray-950 sm:text-[13px]">
                       {team.name}
                     </span>
@@ -4444,7 +4486,14 @@ export function BracketBuilderClient({
                   } ${supportsNativeRowDrag && !isReadOnly ? "cursor-grab active:cursor-grabbing" : ""}`}
                   aria-label={t(language, "bracket.topTwoAvailableTeamAria", { teamName: team.name })}
                 >
-                  <span aria-hidden className="text-[1.2rem] leading-none sm:text-[1.35rem]">{team.flagEmoji}</span>
+                  <TeamFlag
+                    flagEmoji={team.flagEmoji}
+                    teamId={team.id}
+                    shortName={team.shortName}
+                    teamName={team.name}
+                    className="h-[1em] w-[1.45em] text-[1.2rem] sm:text-[1.35rem]"
+                    emojiClassName="text-[1em]"
+                  />
                   <span className="w-full max-w-full truncate text-[9px] font-black text-gray-800 sm:text-[10px]">
                     {team.name}
                   </span>
@@ -4786,7 +4835,14 @@ export function BracketBuilderClient({
                           </div>
                           <div className="min-w-0">
                             <div className="flex items-center gap-3">
-                              <span aria-hidden className={`text-[1.6rem] leading-none transition ${isThirdPlaceDemotedTeam ? "opacity-35 grayscale" : ""}`}>{team.flagEmoji}</span>
+                              <TeamFlag
+                                flagEmoji={team.flagEmoji}
+                                teamId={team.id}
+                                shortName={team.shortName}
+                                teamName={team.name}
+                                className={`h-[1em] w-[1.45em] text-[1.6rem] transition ${isThirdPlaceDemotedTeam ? "opacity-35 grayscale" : ""}`}
+                                emojiClassName="text-[1em]"
+                              />
                               <span className={`truncate text-xs font-black ${isThirdPlaceDemotedTeam ? "text-gray-400" : "text-gray-950"}`}>{team.name}</span>
                             </div>
                           </div>

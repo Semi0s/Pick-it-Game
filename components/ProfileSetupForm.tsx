@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { fetchGroupInvitePreviewAction } from "@/app/group-invite-preview/actions";
 import { completeProfileSetupAction } from "@/app/profile-setup/actions";
 import { TeamPickerMenu } from "@/components/TeamPickerMenu";
+import { TeamFlag } from "@/components/TeamFlag";
 import { VisualThemeMenu } from "@/components/VisualThemeMenu";
 import { showAppToast } from "@/lib/app-toast";
 import {
@@ -315,7 +316,13 @@ export function ProfileSetupForm({ nextPath }: { nextPath?: string }) {
                   className="ui-chip-sm border border-gray-200 bg-white font-bold text-gray-700 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
                   aria-label={`${t(uiLanguage, "common.remove")} ${team.name}`}
                 >
-                  <span aria-hidden>{team.flagEmoji}</span>
+                  <TeamFlag
+                    flagEmoji={team.flagEmoji}
+                    teamId={team.id}
+                    shortName={team.shortName}
+                    teamName={team.name}
+                    className="h-[1em] w-[1.45em]"
+                  />
                   <span>{team.shortName}</span>
                   <span aria-hidden>×</span>
                 </button>

@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronUp, LockKeyhole, X } from "lucide-react";
+import { TeamFlag } from "@/components/TeamFlag";
 import { formatDateTimeWithZone } from "@/lib/date-time";
 import { scoreGroupStagePrediction } from "@/lib/group-scoring";
 import { canEditPrediction } from "@/lib/prediction-state";
@@ -346,6 +347,7 @@ export function GroupPredictionCard({
           <ScoreInput
             side="left"
             flag={match.homeTeam?.flagEmoji}
+            teamId={match.homeTeam?.id ?? null}
             fullName={match.homeTeam?.name ?? match.homeTeam?.shortName ?? "Home"}
             language={language}
             value={displayPredictionHomeScore}
@@ -369,6 +371,7 @@ export function GroupPredictionCard({
           <ScoreInput
             side="right"
             flag={match.awayTeam?.flagEmoji}
+            teamId={match.awayTeam?.id ?? null}
             fullName={match.awayTeam?.name ?? match.awayTeam?.shortName ?? "Away"}
             language={language}
             value={displayPredictionAwayScore}
@@ -529,6 +532,7 @@ export function GroupPredictionCard({
 type ScoreInputProps = {
   side: "left" | "right";
   flag?: string;
+  teamId?: string | null;
   fullName: string;
   language?: string | null;
   value: string;
@@ -542,6 +546,7 @@ type ScoreInputProps = {
 function ScoreInput({
   side,
   flag,
+  teamId,
   fullName,
   language,
   value,
@@ -561,7 +566,13 @@ function ScoreInput({
   const teamCopy = (
     <span className="min-w-0 px-2 pb-0 pt-0.5 text-center">
       <span className={`inline-flex min-w-8 items-center justify-center rounded-sm px-1.5 py-0.5 text-lg leading-none ${badgeTone}`}>
-        {flag}
+        <TeamFlag
+          flagEmoji={flag ?? null}
+          teamId={teamId}
+          teamName={fullName}
+          shortName={fullName}
+          className="h-[1em] w-[1.45em]"
+        />
       </span>
       <span
         className={`mt-0.5 block truncate text-sm font-semibold ${
