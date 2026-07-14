@@ -3,8 +3,8 @@ import {
   getFifa2026CanonicalKnockoutSources,
   normalizeFifa2026KnockoutStoredMatchId
 } from "./fifa-2026-knockout-seeding.ts";
-import type { MatchNextSlot } from "./types.ts";
 import type { ProjectedMatchScoreSource } from "./knockout-seeding.ts";
+import type { MatchNextSlot } from "./types.ts";
 
 type KnockoutLinkedMatchLike = {
   id: string;
@@ -14,6 +14,36 @@ type KnockoutLinkedMatchLike = {
   next_match_slot?: MatchNextSlot | null;
   nextMatchId?: string | null;
   nextMatchSlot?: MatchNextSlot | null;
+};
+
+type KnockoutSourceMatchLike = {
+  id: string;
+  status?: string | null;
+  winner_team_id?: string | null;
+  actualWinnerTeamId?: string | null;
+  home_team_id?: string | null;
+  away_team_id?: string | null;
+  homeTeamId?: string | null;
+  awayTeamId?: string | null;
+  homeTeam?: { id: string } | null;
+  awayTeam?: { id: string } | null;
+  seededHomeTeam?: { id: string } | null;
+  seededAwayTeam?: { id: string } | null;
+};
+
+type KnockoutPredictionsByMatchId = Map<
+  string,
+  {
+    predictedWinnerTeamId?: string | null;
+    predicted_winner_team_id?: string | null;
+  }
+>;
+
+export type KnockoutSourceOutcome = "winner" | "loser";
+
+export type ParsedKnockoutSourceLabel = {
+  matchId: string;
+  outcome: KnockoutSourceOutcome;
 };
 
 export function buildKnockoutPreviousMatchesByTargetId<T extends KnockoutLinkedMatchLike>(matches: T[]) {
@@ -131,27 +161,86 @@ export function resolveVisibleKnockoutTeamForSlot(input: {
   };
 }
 
-function resolveFeederMatchFromSourceLabel<T extends KnockoutLinkedMatchLike>(
-  sourceLabel: string | null | undefined,
-  matchesByNormalizedId: Map<string, T>
-) {
-  const matchId = parseWinnerSourceMatchId(sourceLabel);
-  if (!matchId) {
-    return null;
-  }
-
-  const normalizedId = normalizeFifa2026KnockoutStoredMatchId(matchId);
-  return normalizedId ? matchesByNormalizedId.get(normalizedId) ?? null : null;
-}
-
-function parseWinnerSourceMatchId(sourceLabel: string | null | undefined) {
+export function parseKnockoutSourceLabel(sourceLabel: string | null | undefined): ParsedKnockoutSourceLabel | null {
   const normalized = (sourceLabel ?? "").trim();
   if (!normalized) {
     return null;
   }
 
-  const match = normalized.match(/^Winner of\s+([A-Za-z0-9-]+)$/i);
-  return match?.[1] ?? null;
+  const match = normalized.match(/^(Winner|Loser) of\s+([A-Za-z0-9-]+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    outcome: match[1]?.toLowerCase() === "loser" ? "loser" : "winner",
+    matchId: match[2] ?? ""
+  };
+}
+
+export function resolveKnockoutSourceTeam(input: {
+  sourceMatch: KnockoutSourceMatchLike | null | undefined;
+  sourceLabel: string | null | undefined;
+  predictionsByMatchId?: KnockoutPredictionsByMatchId;
+  mode: "official" | "projected";
+}): { teamId: string | null; source: ProjectedMatchScoreSource } {
+  const sourceMatch = input.sourceMatch;
+  if (!sourceMatch) {
+    return { teamId: null, source: input.mode === "projected" ? "prediction" : "missing" };
+  }
+
+  const parsedSource = parseKnockoutSourceLabel(input.sourceLabel);
+  const outcome = parsedSource?.outcome ?? "winner";
+  const actualWinnerTeamId = getWinnerTeamId(sourceMatch);
+  const [homeTeamId, awayTeamId] = getParticipantTeamIds(sourceMatch);
+
+  if (isFinalMatch(sourceMatch) && actualWinnerTeamId) {
+    const actualTeamId =
+      outcome === "winner"
+        ? actualWinnerTeamId
+        : resolveOpposingTeamId({
+            homeTeamId,
+            awayTeamId,
+            selectedTeamId: actualWinnerTeamId
+          });
+    if (actualTeamId) {
+      return { teamId: actualTeamId, source: "actual" };
+    }
+  }
+
+  const predictedWinnerTeamId =
+    input.predictionsByMatchId?.get(sourceMatch.id)?.predictedWinnerTeamId ??
+    input.predictionsByMatchId?.get(sourceMatch.id)?.predicted_winner_team_id ??
+    null;
+
+  if (predictedWinnerTeamId) {
+    const predictedTeamId =
+      outcome === "winner"
+        ? predictedWinnerTeamId
+        : resolveOpposingTeamId({
+            homeTeamId,
+            awayTeamId,
+            selectedTeamId: predictedWinnerTeamId
+          });
+    if (predictedTeamId) {
+      return { teamId: predictedTeamId, source: "prediction" };
+    }
+  }
+
+  return { teamId: null, source: input.mode === "projected" ? "prediction" : "missing" };
+}
+
+function resolveFeederMatchFromSourceLabel<T extends KnockoutLinkedMatchLike>(
+  sourceLabel: string | null | undefined,
+  matchesByNormalizedId: Map<string, T>
+) {
+  const parsedSource = parseKnockoutSourceLabel(sourceLabel);
+  if (!parsedSource) {
+    return null;
+  }
+
+  const normalizedId = normalizeFifa2026KnockoutStoredMatchId(parsedSource.matchId);
+  return normalizedId ? matchesByNormalizedId.get(normalizedId) ?? null : null;
 }
 
 function withResolvedTargetSlot<T extends KnockoutLinkedMatchLike>(
@@ -166,4 +255,33 @@ function withResolvedTargetSlot<T extends KnockoutLinkedMatchLike>(
     nextMatchId: targetMatchId,
     nextMatchSlot: targetMatchSlot
   };
+}
+
+function isFinalMatch(match: KnockoutSourceMatchLike) {
+  return match.status === "final";
+}
+
+function getWinnerTeamId(match: KnockoutSourceMatchLike) {
+  return match.winner_team_id ?? match.actualWinnerTeamId ?? null;
+}
+
+function getParticipantTeamIds(match: KnockoutSourceMatchLike): [string | null, string | null] {
+  return [
+    match.home_team_id ?? match.homeTeamId ?? match.homeTeam?.id ?? match.seededHomeTeam?.id ?? null,
+    match.away_team_id ?? match.awayTeamId ?? match.awayTeam?.id ?? match.seededAwayTeam?.id ?? null
+  ];
+}
+
+function resolveOpposingTeamId(input: {
+  homeTeamId: string | null;
+  awayTeamId: string | null;
+  selectedTeamId: string;
+}) {
+  if (input.homeTeamId === input.selectedTeamId) {
+    return input.awayTeamId;
+  }
+  if (input.awayTeamId === input.selectedTeamId) {
+    return input.homeTeamId;
+  }
+  return null;
 }

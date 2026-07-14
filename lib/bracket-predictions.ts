@@ -16,7 +16,12 @@ import {
   buildUserProjectedRoundOf32,
   type ProjectedMatchScoreSource
 } from "@/lib/knockout-seeding";
-import { buildKnockoutPreviousMatchesByTargetId, resolveVisibleKnockoutTeamForSlot } from "@/lib/knockout-team-resolution";
+import { getFifa2026CanonicalKnockoutSources } from "@/lib/fifa-2026-knockout-seeding";
+import {
+  buildKnockoutPreviousMatchesByTargetId,
+  resolveKnockoutSourceTeam,
+  resolveVisibleKnockoutTeamForSlot
+} from "@/lib/knockout-team-resolution";
 import {
   buildCanonicalRoundOf32SlotLabelMap,
   buildProjectedRoundOf32SlotLabelMap,
@@ -1700,9 +1705,20 @@ function getAvailableKnockoutTeamIdsForMatch(
   const previousMatches = previousMatchesByNextMatchId.get(match.id) ?? [];
   const homeSource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "home");
   const awaySource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "away");
+  const canonicalSources = getFifa2026CanonicalKnockoutSources(match.id);
   const projectedTeams = projectedTeamByMatchId?.get(match.id);
-  const resolvedHome = resolveKnockoutSourceTeam(homeSource, predictionsByMatchId, mode);
-  const resolvedAway = resolveKnockoutSourceTeam(awaySource, predictionsByMatchId, mode);
+  const resolvedHome = resolveKnockoutSourceTeam({
+    sourceMatch: homeSource,
+    sourceLabel: canonicalSources?.homeSource ?? match.home_source ?? null,
+    predictionsByMatchId,
+    mode
+  });
+  const resolvedAway = resolveKnockoutSourceTeam({
+    sourceMatch: awaySource,
+    sourceLabel: canonicalSources?.awaySource ?? match.away_source ?? null,
+    predictionsByMatchId,
+    mode
+  });
   const homeSelection = resolveVisibleKnockoutTeamForSlot({
     mode,
     seededTeamId: match.home_team_id ?? null,
@@ -1728,30 +1744,6 @@ function getAvailableKnockoutTeamIdsForMatch(
 
 function buildPreviousMatchesByNextMatchId(matches: MatchRow[]) {
   return buildKnockoutPreviousMatchesByTargetId(matches);
-}
-
-function resolveKnockoutSourceTeam(
-  sourceMatch: MatchRow | undefined,
-  predictionsByMatchId: Map<string, { predictedWinnerTeamId?: string; predicted_winner_team_id?: string }>,
-  mode: "official" | "projected"
-): { teamId: string | null; source: ProjectedMatchScoreSource } {
-  if (!sourceMatch) {
-    return { teamId: null, source: "missing" as const };
-  }
-
-  if (sourceMatch.status === "final" && sourceMatch.winner_team_id) {
-    return { teamId: sourceMatch.winner_team_id, source: "actual" as const };
-  }
-
-  const predictedWinnerTeamId =
-    predictionsByMatchId.get(sourceMatch.id)?.predictedWinnerTeamId ??
-    predictionsByMatchId.get(sourceMatch.id)?.predicted_winner_team_id ??
-    null;
-  if (predictedWinnerTeamId) {
-    return { teamId: predictedWinnerTeamId, source: "prediction" as const };
-  }
-
-  return { teamId: null, source: mode === "projected" ? "prediction" : "missing" };
 }
 
 function resolveSlotUnresolvedReason(sourceMatch: MatchRow | undefined, mode: "official" | "projected") {

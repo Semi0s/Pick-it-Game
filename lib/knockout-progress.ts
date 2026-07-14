@@ -91,7 +91,7 @@ export function buildDashboardKnockoutProgressSummary(input: {
 
   for (const match of input.matches) {
     const stage = normalizeKnockoutStage(match.stage);
-    if (!stage || stage === "third") {
+    if (!stage) {
       continue;
     }
     stageMatches.get(stage)?.push(match);
@@ -102,7 +102,7 @@ export function buildDashboardKnockoutProgressSummary(input: {
     return null;
   }
 
-  const nextRoundStage = getNextRoundStage(currentRoundStage);
+  const nextRoundStage = resolveNextRoundStage(currentRoundStage, stageMatches);
   if (!nextRoundStage) {
     return {
       currentRoundStage,
@@ -164,7 +164,9 @@ export function buildDashboardKnockoutProgressSummary(input: {
 }
 
 export function buildDashboardKnockoutProgressSummaryFromEditorView(
-  view: Pick<KnockoutBracketEditorView, "stages">
+  view: Pick<KnockoutBracketEditorView, "stages"> & {
+    thirdPlace?: KnockoutBracketEditorView["thirdPlace"];
+  }
 ): DashboardKnockoutProgressSummary | null {
   const stageMatches = new Map<CanonicalKnockoutStage, KnockoutBracketMatchView[]>([
     ["r32", []],
@@ -178,13 +180,14 @@ export function buildDashboardKnockoutProgressSummaryFromEditorView(
   for (const stage of view.stages) {
     stageMatches.set(stage.stage, stage.matches);
   }
+  stageMatches.set("third", view.thirdPlace ? [view.thirdPlace] : []);
 
   const currentRoundStage = resolveCurrentRoundStageFromBracketView(stageMatches);
   if (!currentRoundStage) {
     return null;
   }
 
-  const nextRoundStage = getNextRoundStage(currentRoundStage);
+  const nextRoundStage = resolveNextRoundStage(currentRoundStage, stageMatches);
   if (!nextRoundStage) {
     return {
       currentRoundStage,
@@ -377,7 +380,10 @@ function resolveCurrentRoundStageFromBracketView(stageMatches: Map<CanonicalKnoc
   return null;
 }
 
-function getNextRoundStage(stage: KnockoutProgressSourceStage): CanonicalKnockoutStage | null {
+function resolveNextRoundStage<T extends { kickoffTime: string | null; status: MatchStatus }>(
+  stage: KnockoutProgressSourceStage,
+  stageMatches: Map<CanonicalKnockoutStage, T[]>
+): CanonicalKnockoutStage | null {
   switch (stage) {
     case "r32":
       return "r16";
@@ -386,10 +392,43 @@ function getNextRoundStage(stage: KnockoutProgressSourceStage): CanonicalKnockou
     case "qf":
       return "sf";
     case "sf":
-      return "final";
+      return resolveSemifinalTargetStage({
+        thirdMatches: stageMatches.get("third") ?? [],
+        finalMatches: stageMatches.get("final") ?? []
+      });
     default:
       return null;
   }
+}
+
+function resolveSemifinalTargetStage<T extends { kickoffTime: string | null; status: MatchStatus }>(input: {
+  thirdMatches: T[];
+  finalMatches: T[];
+}): CanonicalKnockoutStage | null {
+  const candidates = [
+    { stage: "third" as const, matches: input.thirdMatches },
+    { stage: "final" as const, matches: input.finalMatches }
+  ]
+    .filter((candidate) => candidate.matches.length > 0)
+    .filter((candidate) => candidate.matches.some((match) => match.status !== "final"));
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((left, right) => getEarliestKickoffTime(left.matches) - getEarliestKickoffTime(right.matches));
+  return candidates[0]?.stage ?? null;
+}
+
+function getEarliestKickoffTime<T extends { kickoffTime: string | null }>(matches: T[]) {
+  const kickoffTimes = matches
+    .map((match) => {
+      const kickoffTime = match.kickoffTime ? new Date(match.kickoffTime).getTime() : Number.POSITIVE_INFINITY;
+      return Number.isFinite(kickoffTime) ? kickoffTime : Number.POSITIVE_INFINITY;
+    })
+    .sort((left, right) => left - right);
+
+  return kickoffTimes[0] ?? Number.POSITIVE_INFINITY;
 }
 
 function getDecidedMatchCount(matches: KnockoutProgressMatchRow[]) {
@@ -519,10 +558,45 @@ function buildSlotSummaryFromBracketView(input: {
   const awayTeam = sourceMatch.awayTeam ?? sourceMatch.seededAwayTeam ?? null;
   const homeSummary = homeTeam ? mapBracketTeamSummary(homeTeam) : null;
   const awaySummary = awayTeam ? mapBracketTeamSummary(awayTeam) : null;
+  const directSummary = input.directTeam ? mapBracketTeamSummary(input.directTeam) : null;
   const scoreLabel =
     typeof sourceMatch.homeScore === "number" && typeof sourceMatch.awayScore === "number"
       ? `${sourceMatch.homeScore}-${sourceMatch.awayScore}`
       : null;
+  const sourceMatchIncludesDirectTeam = Boolean(
+    input.directTeam &&
+      [homeTeam?.id, awayTeam?.id].includes(input.directTeam.id)
+  );
+
+  if (sourceMatchIncludesDirectTeam && directSummary) {
+    const otherTeam =
+      homeTeam && awayTeam
+        ? homeTeam.id === directSummary.teamId
+          ? awayTeam
+          : homeTeam
+        : null;
+
+    return {
+      sourceMatchId: sourceMatch.matchId,
+      sourceMatchStatus: sourceMatch.status,
+      state:
+        sourceMatch.status === "final"
+          ? "advanced"
+          : sourceMatch.status === "live" || sourceMatch.status === "locked"
+            ? "live"
+            : "pending",
+      primaryTeam: directSummary,
+      secondaryTeam: otherTeam ? mapBracketTeamSummary(otherTeam) : null,
+      candidates: [directSummary, otherTeam ? mapBracketTeamSummary(otherTeam) : null].filter(
+        (team): team is KnockoutProgressTeamSummary => Boolean(team)
+      ),
+      scoreLabel:
+        sourceMatch.status === "final" || sourceMatch.status === "live" || sourceMatch.status === "locked"
+          ? scoreLabel
+          : null,
+      live: sourceMatch.status === "live" || sourceMatch.status === "locked"
+    };
+  }
 
   if (sourceMatch.status === "final" && sourceMatch.actualWinnerTeamId) {
     const winner = resolveMatchViewTeamById(sourceMatch, sourceMatch.actualWinnerTeamId);

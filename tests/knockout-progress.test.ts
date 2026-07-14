@@ -794,3 +794,202 @@ test("knockout progress can mirror the resolved official bracket view", () => {
   assert.equal(summary?.matchups[0]?.homeSlot.scoreLabel, "0-1");
   assert.equal(summary?.matchups[0]?.awaySlot.scoreLabel, "1-1");
 });
+
+test("knockout progress chooses the third-place match before the final when semifinals have finished", () => {
+  const summary = buildDashboardKnockoutProgressSummary({
+    teams: [
+      ...teams,
+      { id: "fra", name: "France", shortName: "FRA", flagEmoji: "🇫🇷" },
+      { id: "nor", name: "Norway", shortName: "NOR", flagEmoji: "🇳🇴" }
+    ],
+    matches: [
+      {
+        id: "sf-01",
+        stage: "sf",
+        status: "final",
+        kickoffTime: "2026-07-14T19:00:00.000Z",
+        homeTeamId: "bra",
+        awayTeamId: "can",
+        homeSource: "Winner of qf-01",
+        awaySource: "Winner of qf-02",
+        homeScore: 2,
+        awayScore: 1,
+        winnerTeamId: "bra"
+      },
+      {
+        id: "sf-02",
+        stage: "sf",
+        status: "final",
+        kickoffTime: "2026-07-15T19:00:00.000Z",
+        homeTeamId: "fra",
+        awayTeamId: "nor",
+        homeSource: "Winner of qf-03",
+        awaySource: "Winner of qf-04",
+        homeScore: 0,
+        awayScore: 1,
+        winnerTeamId: "nor"
+      },
+      {
+        id: "third-01",
+        stage: "third",
+        status: "scheduled",
+        kickoffTime: "2026-07-17T16:00:00.000Z",
+        homeTeamId: "can",
+        awayTeamId: "fra",
+        homeSource: "Loser of sf-01",
+        awaySource: "Loser of sf-02",
+        homeScore: null,
+        awayScore: null,
+        winnerTeamId: null
+      },
+      {
+        id: "final-01",
+        stage: "final",
+        status: "scheduled",
+        kickoffTime: "2026-07-19T19:00:00.000Z",
+        homeTeamId: "bra",
+        awayTeamId: "nor",
+        homeSource: "Winner of sf-01",
+        awaySource: "Winner of sf-02",
+        homeScore: null,
+        awayScore: null,
+        winnerTeamId: null
+      }
+    ]
+  });
+
+  assert.ok(summary);
+  assert.equal(summary?.currentRoundStage, "sf");
+  assert.equal(summary?.nextRoundStage, "third");
+  assert.equal(summary?.matchupCount, 1);
+  assert.equal(summary?.matchups[0]?.homeSlot.primaryTeam?.teamId, "can");
+  assert.equal(summary?.matchups[0]?.awaySlot.primaryTeam?.teamId, "fra");
+});
+
+test("knockout progress keeps the bronze match in the editor-view dashboard summary", () => {
+  const summary = buildDashboardKnockoutProgressSummaryFromEditorView({
+    stages: [
+      {
+        stage: "sf",
+        label: "Semifinals",
+        matches: [
+          {
+            matchId: "sf-01",
+            stage: "sf",
+            stageLabel: "Semifinal",
+            title: "Semifinal 1",
+            kickoffTime: "2026-07-14T19:00:00.000Z",
+            status: "final",
+            seededHomeTeam: { id: "bra", name: "Brazil", shortName: "BRA", flagEmoji: "🇧🇷" },
+            seededAwayTeam: { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },
+            homeSourceMatchId: null,
+            awaySourceMatchId: null,
+            homeSourceLabel: null,
+            awaySourceLabel: null,
+            projectedHomeSourceLabel: null,
+            projectedAwaySourceLabel: null,
+            homeTeam: { id: "bra", name: "Brazil", shortName: "BRA", flagEmoji: "🇧🇷" },
+            awayTeam: { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },
+            homeScore: 2,
+            awayScore: 1,
+            predictedHomeScore: null,
+            predictedAwayScore: null,
+            savedHomeScore: null,
+            savedAwayScore: null,
+            predictedWinnerTeamId: null,
+            savedWinnerTeamId: null,
+            savedAt: null,
+            actualWinnerTeamId: "bra",
+            awardedPoints: null,
+            exactScorePoints: null,
+            isCorrectWinner: null,
+            isLocked: true,
+            canSelectWinner: false,
+            viewMode: "official",
+            homeResolutionSource: "actual",
+            awayResolutionSource: "actual"
+          },
+          {
+            matchId: "sf-02",
+            stage: "sf",
+            stageLabel: "Semifinal",
+            title: "Semifinal 2",
+            kickoffTime: "2026-07-15T19:00:00.000Z",
+            status: "final",
+            seededHomeTeam: { id: "fra", name: "France", shortName: "FRA", flagEmoji: "🇫🇷" },
+            seededAwayTeam: { id: "nor", name: "Norway", shortName: "NOR", flagEmoji: "🇳🇴" },
+            homeSourceMatchId: null,
+            awaySourceMatchId: null,
+            homeSourceLabel: null,
+            awaySourceLabel: null,
+            projectedHomeSourceLabel: null,
+            projectedAwaySourceLabel: null,
+            homeTeam: { id: "fra", name: "France", shortName: "FRA", flagEmoji: "🇫🇷" },
+            awayTeam: { id: "nor", name: "Norway", shortName: "NOR", flagEmoji: "🇳🇴" },
+            homeScore: 0,
+            awayScore: 1,
+            predictedHomeScore: null,
+            predictedAwayScore: null,
+            savedHomeScore: null,
+            savedAwayScore: null,
+            predictedWinnerTeamId: null,
+            savedWinnerTeamId: null,
+            savedAt: null,
+            actualWinnerTeamId: "nor",
+            awardedPoints: null,
+            exactScorePoints: null,
+            isCorrectWinner: null,
+            isLocked: true,
+            canSelectWinner: false,
+            viewMode: "official",
+            homeResolutionSource: "actual",
+            awayResolutionSource: "actual"
+          }
+        ]
+      }
+    ],
+    thirdPlace: {
+      matchId: "third-01",
+      stage: "third",
+      stageLabel: "Third Place",
+      title: "Third Place Match",
+      kickoffTime: "2026-07-17T16:00:00.000Z",
+      status: "scheduled",
+      seededHomeTeam: { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },
+      seededAwayTeam: { id: "fra", name: "France", shortName: "FRA", flagEmoji: "🇫🇷" },
+      homeSourceMatchId: "sf-01",
+      awaySourceMatchId: "sf-02",
+      homeSourceLabel: "Loser of sf-01",
+      awaySourceLabel: "Loser of sf-02",
+      projectedHomeSourceLabel: null,
+      projectedAwaySourceLabel: null,
+      homeTeam: { id: "can", name: "Canada", shortName: "CAN", flagEmoji: "🇨🇦" },
+      awayTeam: { id: "fra", name: "France", shortName: "FRA", flagEmoji: "🇫🇷" },
+      homeScore: null,
+      awayScore: null,
+      predictedHomeScore: null,
+      predictedAwayScore: null,
+      savedHomeScore: null,
+      savedAwayScore: null,
+      predictedWinnerTeamId: null,
+      savedWinnerTeamId: null,
+      savedAt: null,
+      actualWinnerTeamId: null,
+      awardedPoints: null,
+      exactScorePoints: null,
+      isCorrectWinner: null,
+      isLocked: false,
+      canSelectWinner: true,
+      viewMode: "official",
+      homeResolutionSource: "actual",
+      awayResolutionSource: "actual"
+    }
+  });
+
+  assert.ok(summary);
+  assert.equal(summary?.currentRoundStage, "sf");
+  assert.equal(summary?.nextRoundStage, "third");
+  assert.equal(summary?.matchupCount, 1);
+  assert.equal(summary?.matchups[0]?.homeSlot.primaryTeam?.teamId, "can");
+  assert.equal(summary?.matchups[0]?.awaySlot.primaryTeam?.teamId, "fra");
+});

@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   buildKnockoutPreviousMatchesByTargetId,
+  parseKnockoutSourceLabel,
+  resolveKnockoutSourceTeam,
   resolveVisibleKnockoutTeamForSlot
 } from "../lib/knockout-team-resolution.ts";
 
@@ -123,4 +125,52 @@ test("canonical knockout sources override stale next-match wiring when resolving
       { id: "r32-03", slot: "away" }
     ]
   );
+});
+
+test("knockout source parser recognizes loser labels for third-place mapping", () => {
+  assert.deepEqual(parseKnockoutSourceLabel("Loser of M101"), {
+    matchId: "M101",
+    outcome: "loser"
+  });
+});
+
+test("knockout source team resolves semifinal losers for the third-place match", () => {
+  const resolved = resolveKnockoutSourceTeam({
+    sourceMatch: {
+      id: "sf-01",
+      status: "final",
+      home_team_id: "can",
+      away_team_id: "mar",
+      winner_team_id: "can"
+    },
+    sourceLabel: "Loser of sf-01",
+    mode: "official"
+  });
+
+  assert.deepEqual(resolved, {
+    teamId: "mar",
+    source: "actual"
+  });
+});
+
+test("projected knockout source team can infer a predicted loser when the feeder is not final", () => {
+  const resolved = resolveKnockoutSourceTeam({
+    sourceMatch: {
+      id: "sf-02",
+      status: "scheduled",
+      home_team_id: "bra",
+      away_team_id: "nor",
+      winner_team_id: null
+    },
+    sourceLabel: "Loser of sf-02",
+    predictionsByMatchId: new Map([
+      ["sf-02", { predictedWinnerTeamId: "bra" }]
+    ]),
+    mode: "projected"
+  });
+
+  assert.deepEqual(resolved, {
+    teamId: "nor",
+    source: "prediction"
+  });
 });
