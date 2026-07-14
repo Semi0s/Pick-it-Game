@@ -134,3 +134,52 @@ test("knockout outlook marks waiting rounds and open saved rounds correctly", ()
   assert.equal(r32?.savedMatches, 2);
   assert.equal(qf?.status, "waiting");
 });
+
+test("knockout outlook includes the third-place round when it is the next open official pick", () => {
+  const summary = buildKnockoutOutlookSummary({
+    matches: [
+      {
+        id: "sf-01",
+        stage: "sf",
+        status: "final",
+        kickoffTime: "2026-07-14T19:00:00.000Z",
+        homeTeamId: "bra",
+        awayTeamId: "can"
+      },
+      {
+        id: "sf-02",
+        stage: "sf",
+        status: "final",
+        kickoffTime: "2026-07-15T19:00:00.000Z",
+        homeTeamId: "fra",
+        awayTeamId: "nor"
+      },
+      {
+        id: "third-01",
+        stage: "third",
+        status: "scheduled",
+        kickoffTime: "2026-07-17T16:00:00.000Z",
+        homeTeamId: "can",
+        awayTeamId: "fra"
+      },
+      {
+        id: "final-01",
+        stage: "final",
+        status: "scheduled",
+        kickoffTime: "2026-07-19T19:00:00.000Z",
+        homeTeamId: "bra",
+        awayTeamId: "nor"
+      }
+    ],
+    savedPredictionMatchIds: []
+  });
+
+  const third = summary.rounds.find((round) => round.stage === "third");
+  const final = summary.rounds.find((round) => round.stage === "final");
+
+  assert.equal(summary.nextOpenStage, "third");
+  assert.equal(third?.status, "open");
+  assert.equal(third?.savedMatches, 0);
+  assert.equal(third?.totalMatches, 1);
+  assert.equal(final?.status, "open");
+});

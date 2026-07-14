@@ -4,7 +4,7 @@ import {
   shouldClearKnockoutParticipants,
   shouldClearKnockoutScoresForParticipantChange
 } from "@/lib/knockout-advancement-logic";
-import { buildKnockoutPreviousMatchesByTargetId } from "@/lib/knockout-team-resolution";
+import { buildKnockoutPreviousMatchesByTargetId, resolveKnockoutSourceTeam } from "@/lib/knockout-team-resolution";
 import {
   buildGroupStandingsByGroup,
   buildQualifiedTeamSeeds,
@@ -13,6 +13,7 @@ import {
   type GroupStageMatchForSeeding,
   type KnockoutPlaceholderMatch
 } from "@/lib/knockout-seeding";
+import { getFifa2026CanonicalKnockoutSources } from "@/lib/fifa-2026-knockout-seeding";
 import type { MatchNextSlot, MatchStage } from "@/lib/types";
 import type { Team } from "@/lib/types";
 
@@ -206,33 +207,25 @@ export async function rebuildKnockoutAdvancementWithClient(
     const previousMatches = previousMatchesByTargetId.get(match.id) ?? [];
     const homeSource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "home");
     const awaySource = previousMatches.find((previousMatch) => previousMatch.next_match_slot === "away");
-
-    if (homeSource?.status === "final" && homeSource.winner_team_id) {
-      assignTeamToSlot(match.id, "home", homeSource.winner_team_id);
-    }
-
-    if (awaySource?.status === "final" && awaySource.winner_team_id) {
-      assignTeamToSlot(match.id, "away", awaySource.winner_team_id);
-    }
-  }
-
-  const thirdPlaceMatch = knockoutMatches.find((match) => normalizeKnockoutStage(match.stage) === "third") ?? null;
-  const semifinalMatches = knockoutMatches
-    .filter((match) => normalizeKnockoutStage(match.stage) === "sf")
-    .sort((a, b) => {
-      const kickoffCompare = (a.kickoff_time ?? "").localeCompare(b.kickoff_time ?? "");
-      return kickoffCompare !== 0 ? kickoffCompare : a.id.localeCompare(b.id);
+    const canonicalSources = getFifa2026CanonicalKnockoutSources(match.id);
+    const resolvedHome = resolveKnockoutSourceTeam({
+      sourceMatch: homeSource,
+      sourceLabel: canonicalSources?.homeSource ?? match.home_source ?? null,
+      mode: "official"
+    });
+    const resolvedAway = resolveKnockoutSourceTeam({
+      sourceMatch: awaySource,
+      sourceLabel: canonicalSources?.awaySource ?? match.away_source ?? null,
+      mode: "official"
     });
 
-  if (thirdPlaceMatch && semifinalMatches.length >= 2) {
-    semifinalMatches.slice(0, 2).forEach((match, index) => {
-      if (match.status !== "final" || !match.winner_team_id || !match.home_team_id || !match.away_team_id) {
-        return;
-      }
+    if (resolvedHome.source === "actual" && resolvedHome.teamId) {
+      assignTeamToSlot(match.id, "home", resolvedHome.teamId);
+    }
 
-      const loserTeamId = match.home_team_id === match.winner_team_id ? match.away_team_id : match.home_team_id;
-      assignTeamToSlot(thirdPlaceMatch.id, index === 0 ? "home" : "away", loserTeamId);
-    });
+    if (resolvedAway.source === "actual" && resolvedAway.teamId) {
+      assignTeamToSlot(match.id, "away", resolvedAway.teamId);
+    }
   }
 
   const staleScoreMatchIds = new Set<string>();

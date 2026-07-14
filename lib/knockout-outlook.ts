@@ -3,7 +3,7 @@ import { EXPECTED_KNOCKOUT_MATCH_COUNTS, normalizeKnockoutStage } from "./match-
 import type { ManagedGroupRulesetSummary } from "./scoped-scoring.ts";
 import type { MatchStage, MatchStatus } from "./types.ts";
 
-const KNOCKOUT_OUTLOOK_STAGES = ["r32", "r16", "qf", "sf", "final"] as const;
+const KNOCKOUT_OUTLOOK_STAGES = ["r32", "r16", "qf", "sf", "third", "final"] as const;
 
 export type KnockoutOutlookRoundState =
   | "waiting"
@@ -121,7 +121,7 @@ export function buildKnockoutOutlookSummary(input: {
 
   for (const match of input.matches) {
     const stage = normalizeKnockoutStage(match.stage);
-    if (!stage || stage === "third" || !stageMatches.has(stage)) {
+    if (!stage || !stageMatches.has(stage)) {
       continue;
     }
 
@@ -469,12 +469,18 @@ function getStageLabel(stage: (typeof KNOCKOUT_OUTLOOK_STAGES)[number]) {
       return "QF";
     case "sf":
       return "SF";
+    case "third":
+      return "3rd";
     case "final":
       return "Final";
   }
 }
 
 function getStageShortLabel(stage: (typeof KNOCKOUT_OUTLOOK_STAGES)[number]) {
+  if (stage === "third") {
+    return "Third Place";
+  }
+
   return stage === "final" ? "Final" : getStageLabel(stage);
 }
 

@@ -146,7 +146,11 @@ function getKnockoutPhaseChip(counts: {
     return t(language, "knockout.final");
   }
 
-  if (counts.third > 0 || counts.sf > 0) {
+  if (counts.third > 0) {
+    return t(language, "knockout.thirdPlace");
+  }
+
+  if (counts.sf > 0) {
     return "SF";
   }
 
