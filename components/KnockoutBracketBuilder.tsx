@@ -11,6 +11,7 @@ import { showAppToast } from "@/lib/app-toast";
 import { normalizeLanguage, type SupportedLanguage } from "@/lib/i18n";
 import { formatDateTime } from "@/lib/i18n-format";
 import { getCompatibleKnockoutPredictionState } from "@/lib/knockout-prediction-compat";
+import { resolveKnockoutSourceParticipant } from "@/lib/knockout-team-resolution";
 import { shouldShowProjectedComparisonRound } from "@/lib/knockout-display";
 import { t, type TranslationParams } from "@/lib/strings";
 import {
@@ -2485,12 +2486,26 @@ function deriveEditorView(
 
   for (const match of orderedMatches) {
     const homeTeam = match.homeSourceMatchId
-      ? getAdvancedTeam(match.homeSourceMatchId, resolvedMatches, predictionByMatchId, initialView.mode)
+      ? getAdvancedTeam(
+          match.homeSourceMatchId,
+          match.homeSourceLabel,
+          resolvedMatches,
+          predictionByMatchId,
+          initialView.mode,
+          teamById
+        )
       : isProjected
         ? match.homeTeam
         : match.seededHomeTeam;
     const awayTeam = match.awaySourceMatchId
-      ? getAdvancedTeam(match.awaySourceMatchId, resolvedMatches, predictionByMatchId, initialView.mode)
+      ? getAdvancedTeam(
+          match.awaySourceMatchId,
+          match.awaySourceLabel,
+          resolvedMatches,
+          predictionByMatchId,
+          initialView.mode,
+          teamById
+        )
       : isProjected
         ? match.awayTeam
         : match.seededAwayTeam;
@@ -2667,49 +2682,24 @@ function resolveCurrentWinnerTeamId({
 
 function getAdvancedTeam(
   sourceMatchId: string,
+  sourceLabel: string | null,
   resolvedMatches: Map<string, KnockoutBracketMatchView>,
   predictionByMatchId: Map<string, BracketPrediction>,
-  viewMode: KnockoutBracketEditorView["mode"]
+  viewMode: KnockoutBracketEditorView["mode"],
+  teamById: Map<string, BracketTeamOption>
 ) {
   const sourceMatch = resolvedMatches.get(sourceMatchId);
   if (!sourceMatch) {
     return null;
   }
 
-  if (viewMode === "official" && sourceMatch.status === "final" && sourceMatch.actualWinnerTeamId) {
-    if (sourceMatch.homeTeam?.id === sourceMatch.actualWinnerTeamId) {
-      return sourceMatch.homeTeam;
-    }
-
-    if (sourceMatch.awayTeam?.id === sourceMatch.actualWinnerTeamId) {
-      return sourceMatch.awayTeam;
-    }
-
-    if (sourceMatch.seededHomeTeam?.id === sourceMatch.actualWinnerTeamId) {
-      return sourceMatch.seededHomeTeam;
-    }
-
-    if (sourceMatch.seededAwayTeam?.id === sourceMatch.actualWinnerTeamId) {
-      return sourceMatch.seededAwayTeam;
-    }
-
-    return null;
-  }
-
-  const predictedWinnerTeamId = predictionByMatchId.get(sourceMatchId)?.predictedWinnerTeamId ?? null;
-  if (!predictedWinnerTeamId) {
-    return null;
-  }
-
-  if (sourceMatch.homeTeam?.id === predictedWinnerTeamId) {
-    return sourceMatch.homeTeam;
-  }
-
-  if (sourceMatch.awayTeam?.id === predictedWinnerTeamId) {
-    return sourceMatch.awayTeam;
-  }
-
-  return null;
+  return resolveKnockoutSourceParticipant({
+    sourceMatch,
+    sourceLabel,
+    predictionsByMatchId: predictionByMatchId,
+    mode: viewMode,
+    fallbackTeamsById: teamById
+  }).team;
 }
 
 function stageSortValue(stage: KnockoutBracketMatchView["stage"]) {
