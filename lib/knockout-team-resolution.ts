@@ -17,7 +17,8 @@ type KnockoutLinkedMatchLike = {
 };
 
 type KnockoutSourceMatchLike = {
-  id: string;
+  id?: string;
+  matchId?: string;
   status?: string | null;
   winner_team_id?: string | null;
   actualWinnerTeamId?: string | null;
@@ -40,6 +41,10 @@ type KnockoutPredictionsByMatchId = Map<
 >;
 
 export type KnockoutSourceOutcome = "winner" | "loser";
+
+type KnockoutSourceTeamRef = {
+  id: string;
+};
 
 export type ParsedKnockoutSourceLabel = {
   matchId: string;
@@ -193,6 +198,7 @@ export function resolveKnockoutSourceTeam(input: {
   const outcome = parsedSource?.outcome ?? "winner";
   const actualWinnerTeamId = getWinnerTeamId(sourceMatch);
   const [homeTeamId, awayTeamId] = getParticipantTeamIds(sourceMatch);
+  const sourceMatchId = sourceMatch.id ?? sourceMatch.matchId ?? null;
 
   if (isFinalMatch(sourceMatch) && actualWinnerTeamId) {
     const actualTeamId =
@@ -208,10 +214,11 @@ export function resolveKnockoutSourceTeam(input: {
     }
   }
 
-  const predictedWinnerTeamId =
-    input.predictionsByMatchId?.get(sourceMatch.id)?.predictedWinnerTeamId ??
-    input.predictionsByMatchId?.get(sourceMatch.id)?.predicted_winner_team_id ??
-    null;
+  const predictedWinnerTeamId = sourceMatchId
+    ? input.predictionsByMatchId?.get(sourceMatchId)?.predictedWinnerTeamId ??
+      input.predictionsByMatchId?.get(sourceMatchId)?.predicted_winner_team_id ??
+      null
+    : null;
 
   if (predictedWinnerTeamId) {
     const predictedTeamId =
@@ -228,6 +235,49 @@ export function resolveKnockoutSourceTeam(input: {
   }
 
   return { teamId: null, source: input.mode === "projected" ? "prediction" : "missing" };
+}
+
+export function resolveKnockoutSourceParticipant<T extends KnockoutSourceTeamRef>(input: {
+  sourceMatch:
+    | (KnockoutSourceMatchLike & {
+        homeTeam?: T | null;
+        awayTeam?: T | null;
+        seededHomeTeam?: T | null;
+        seededAwayTeam?: T | null;
+      })
+    | null
+    | undefined;
+  sourceLabel: string | null | undefined;
+  predictionsByMatchId?: KnockoutPredictionsByMatchId;
+  mode: "official" | "projected";
+  fallbackTeamsById?: Map<string, T>;
+}): { team: T | null; teamId: string | null; source: ProjectedMatchScoreSource } {
+  const resolved = resolveKnockoutSourceTeam({
+    sourceMatch: input.sourceMatch,
+    sourceLabel: input.sourceLabel,
+    predictionsByMatchId: input.predictionsByMatchId,
+    mode: input.mode
+  });
+
+  if (!resolved.teamId) {
+    return {
+      team: null,
+      teamId: null,
+      source: resolved.source
+    };
+  }
+
+  const sourceMatch = input.sourceMatch;
+  const matchTeam =
+    [sourceMatch?.homeTeam, sourceMatch?.awayTeam, sourceMatch?.seededHomeTeam, sourceMatch?.seededAwayTeam].find(
+      (team) => team?.id === resolved.teamId
+    ) ?? null;
+
+  return {
+    team: matchTeam ?? input.fallbackTeamsById?.get(resolved.teamId) ?? null,
+    teamId: resolved.teamId,
+    source: resolved.source
+  };
 }
 
 function resolveFeederMatchFromSourceLabel<T extends KnockoutLinkedMatchLike>(

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildKnockoutPreviousMatchesByTargetId,
   parseKnockoutSourceLabel,
+  resolveKnockoutSourceParticipant,
   resolveKnockoutSourceTeam,
   resolveVisibleKnockoutTeamForSlot
 } from "../lib/knockout-team-resolution.ts";
@@ -172,5 +173,25 @@ test("projected knockout source team can infer a predicted loser when the feeder
   assert.deepEqual(resolved, {
     teamId: "nor",
     source: "prediction"
+  });
+});
+
+test("knockout source participant resolves semifinal losers for the third-place match", () => {
+  const resolved = resolveKnockoutSourceParticipant({
+    sourceMatch: {
+      id: "sf-01",
+      status: "final",
+      homeTeam: { id: "can", shortName: "CAN" },
+      awayTeam: { id: "mar", shortName: "MAR" },
+      winner_team_id: "can"
+    },
+    sourceLabel: "Loser of sf-01",
+    mode: "official"
+  });
+
+  assert.deepEqual(resolved, {
+    team: { id: "mar", shortName: "MAR" },
+    teamId: "mar",
+    source: "actual"
   });
 });
