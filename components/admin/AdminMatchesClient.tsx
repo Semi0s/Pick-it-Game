@@ -2452,8 +2452,8 @@ function MatchResultCard({ match, isReviewTarget = false, onSaved, onScored, onE
   const predictionStateLabel = getPredictionStateLabel(status);
   const homeLabel = getSideLabel(match, "home");
   const awayLabel = getSideLabel(match, "away");
-  const validationIssues = getMatchValidationIssues(match);
-  const operationState = getMatchOperationState(match, validationIssues);
+  const parsedHomeScore = homeScore === "" ? undefined : Number(homeScore);
+  const parsedAwayScore = awayScore === "" ? undefined : Number(awayScore);
   const resolvedWinnerTeamId = resolveAdminMatchWinnerTeamId({
     stage: match.stage,
     homeScore,
@@ -2462,9 +2462,19 @@ function MatchResultCard({ match, isReviewTarget = false, onSaved, onScored, onE
     awayTeamId: match.awayTeamId,
     tiedWinnerTeamId: tiedWinnerTeamId || null
   });
+  const draftMatch: AdminMatch = {
+    ...match,
+    status,
+    homeScore: parsedHomeScore,
+    awayScore: parsedAwayScore,
+    winnerTeamId: resolvedWinnerTeamId ?? undefined
+  };
+  const validationIssues = getMatchValidationIssues(draftMatch);
+  const operationState = getMatchOperationState(draftMatch, validationIssues);
   const hasBothScores = homeScore !== "" && awayScore !== "";
   const hasTiedScore = hasBothScores && Number(homeScore) === Number(awayScore);
   const needsTieWinnerSelection = isKnockout && hasTiedScore;
+  const isSubmitBlockedByMissingFinalScore = status === "final" && !hasBothScores;
   const isSubmitBlockedByMissingKnockoutWinner = requiresAdminKnockoutTiebreakWinner({
     stage: match.stage,
     status,
@@ -2472,6 +2482,10 @@ function MatchResultCard({ match, isReviewTarget = false, onSaved, onScored, onE
     awayScore,
     winnerTeamId: resolvedWinnerTeamId
   });
+  const isSubmitBlockedByWinnerConflict = validationIssues.some((issue) =>
+    ["winner/score conflict", "winner/team ID mismatch", "impossible score", "missing team"].includes(issue)
+  );
+  const isSubmitBlocked = isSubmitBlockedByMissingFinalScore || isSubmitBlockedByMissingKnockoutWinner || isSubmitBlockedByWinnerConflict;
   const resolvedWinnerLabel =
     needsTieWinnerSelection && !resolvedWinnerTeamId
       ? "Select tie-break winner"
@@ -2763,19 +2777,23 @@ function MatchResultCard({ match, isReviewTarget = false, onSaved, onScored, onE
 
         <button
           type="submit"
-          disabled={isSaving || !hasUnsavedChanges || isSubmitBlockedByMissingKnockoutWinner}
+          disabled={isSaving || !hasUnsavedChanges || isSubmitBlocked}
           className={`w-full rounded-md px-4 py-3 text-base font-bold ${
-            isSaving || !hasUnsavedChanges || isSubmitBlockedByMissingKnockoutWinner
+            isSaving || !hasUnsavedChanges || isSubmitBlocked
               ? "bg-gray-300 text-gray-600"
               : "bg-accent text-white"
           }`}
         >
           {isSaving ? "Saving..." : "Save Match"}
         </button>
-        {isSubmitBlockedByMissingKnockoutWinner ? (
+        {isSubmitBlockedByMissingFinalScore ? (
+          <p className="text-sm font-semibold text-rose-700">Enter both scores before marking this match final.</p>
+        ) : isSubmitBlockedByMissingKnockoutWinner ? (
           <p className="text-sm font-semibold text-rose-700">
             Choose the tie-break winner before finalizing a knockout draw.
           </p>
+        ) : isSubmitBlockedByWinnerConflict ? (
+          <p className="text-sm font-semibold text-rose-700">{getMatchIssueRecommendation(draftMatch, validationIssues)}</p>
         ) : null}
       </div>
     </form>
@@ -2812,8 +2830,8 @@ function ScoreInput({
   );
 }
 
-function getAdminInitialScoreInput(score?: number) {
-  return score === undefined ? "0" : String(score);
+function getAdminInitialScoreInput(score?: number | null) {
+  return typeof score === "number" ? String(score) : "";
 }
 
 function getResolvedWinnerLabel(match: AdminMatch, winnerTeamId: string | null | undefined) {

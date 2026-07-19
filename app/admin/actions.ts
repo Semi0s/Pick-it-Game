@@ -43,6 +43,10 @@ import { KNOCKOUT_MATCH_STAGE_FILTER, isKnockoutStage } from "@/lib/match-stage"
 import { appendMatchEvent } from "@/lib/match-events";
 import { syncMatches } from "@/lib/match-sync/syncMatches";
 import {
+  hasAdminWinnerScoreConflict,
+  requiresAdminKnockoutTiebreakWinner
+} from "@/lib/admin-match-winner";
+import {
   clearKnockoutSeedingFlags,
   fetchKnockoutSeedingAdminStatus,
   seedOfficialKnockoutFromFinalGroupResults,
@@ -3592,12 +3596,62 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
   const adminSupabase = createAdminClient();
   const { data: previousMatch, error: previousMatchError } = await adminSupabase
     .from("matches")
-    .select("id,status,stage,home_score,away_score,winner_team_id")
+    .select("id,status,stage,home_team_id,away_team_id,home_score,away_score,winner_team_id")
     .eq("id", input.id)
     .single();
 
   if (previousMatchError) {
     return { ok: false, message: previousMatchError.message };
+  }
+
+  const previous = previousMatch as MatchRow;
+
+  if (input.status === "final") {
+    const hasHomeScore = typeof input.homeScore === "number" && Number.isFinite(input.homeScore);
+    const hasAwayScore = typeof input.awayScore === "number" && Number.isFinite(input.awayScore);
+
+    if (!hasHomeScore || !hasAwayScore) {
+      return { ok: false, message: "Enter both scores before marking this match final." };
+    }
+
+    if ((input.homeScore ?? 0) < 0 || (input.awayScore ?? 0) < 0) {
+      return { ok: false, message: "Use non-negative scores only." };
+    }
+
+    if (!previous.home_team_id || !previous.away_team_id) {
+      return {
+        ok: false,
+        message:
+          previous.stage === "group"
+            ? "Assign both teams before publishing this group match."
+            : "Seed the knockout teams first; do not publish this match until both teams are known."
+      };
+    }
+
+    if (
+      hasAdminWinnerScoreConflict({
+        stage: previous.stage,
+        homeScore: input.homeScore,
+        awayScore: input.awayScore,
+        homeTeamId: previous.home_team_id,
+        awayTeamId: previous.away_team_id,
+        winnerTeamId: input.winnerTeamId
+      })
+    ) {
+      return { ok: false, message: "Make the saved winner match the score, or correct the score before publishing." };
+    }
+
+    if (
+      requiresAdminKnockoutTiebreakWinner({
+        stage: previous.stage,
+        status: input.status,
+        homeScore: input.homeScore,
+        awayScore: input.awayScore,
+        winnerTeamId: input.winnerTeamId
+      })
+    ) {
+      return { ok: false, message: "Knockout matches need an official winner; enter the tie-break winner before finalizing." };
+    }
   }
 
   const isResettingToOpen = input.status === "scheduled";
@@ -3625,8 +3679,8 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
     return { ok: false, message: error.message };
   }
 
-  if ((previousMatch as MatchRow).status === "final" && input.status !== "final") {
-    if ((previousMatch as MatchRow).stage === "group") {
+  if (previous.status === "final" && input.status !== "final") {
+    if (previous.stage === "group") {
       const resetResult = await clearDerivedGroupMatchScoringState(adminSupabase, input.id);
       if (!resetResult.ok) {
         return resetResult;
@@ -3652,7 +3706,7 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
     }
   }
 
-  if ((previousMatch as MatchRow).status === "final" && input.status !== "final" && (previousMatch as MatchRow).stage !== "group") {
+  if (previous.status === "final" && input.status !== "final" && previous.stage !== "group") {
     needsKnockoutLeaderboardRefresh = true;
   }
 
@@ -3663,7 +3717,6 @@ export async function updateAdminMatchResultAction(input: UpdateMatchResultInput
     }
   }
 
-  const previous = previousMatch as MatchRow;
   const current = data as MatchRow;
   const eventType =
     current.status === "final"
