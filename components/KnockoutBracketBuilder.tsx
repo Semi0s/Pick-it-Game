@@ -2712,9 +2712,9 @@ function stageSortValue(stage: KnockoutBracketMatchView["stage"]) {
       return 2;
     case "sf":
       return 3;
-    case "final":
-      return 4;
     case "third":
+      return 4;
+    case "final":
       return 5;
     default:
       return 99;

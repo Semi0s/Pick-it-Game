@@ -5,10 +5,9 @@ import { formatSafeSupabaseError, logSafeSupabaseError } from "@/lib/supabase-er
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   EXPECTED_KNOCKOUT_MATCH_COUNTS,
+  KNOCKOUT_MATCH_STAGE_FILTER,
   formatMatchStage,
-  isKnockoutStage,
-  isRoundOf32Stage,
-  normalizeKnockoutStage,
+  normalizeKnockoutStageForMatch,
   type CanonicalKnockoutStage
 } from "@/lib/match-stage";
 import {
@@ -16,7 +15,10 @@ import {
   buildUserProjectedRoundOf32,
   type ProjectedMatchScoreSource
 } from "@/lib/knockout-seeding";
-import { getFifa2026CanonicalKnockoutSources } from "@/lib/fifa-2026-knockout-seeding";
+import {
+  collapseFifa2026KnockoutAliasRows,
+  getFifa2026CanonicalKnockoutSources
+} from "@/lib/fifa-2026-knockout-seeding";
 import {
   buildKnockoutPreviousMatchesByTargetId,
   resolveKnockoutSourceTeam,
@@ -55,6 +57,7 @@ type MatchRow = {
   winner_team_id?: string | null;
   next_match_id?: string | null;
   next_match_slot?: MatchNextSlot | null;
+  updated_at?: string | null;
 };
 
 type BracketPredictionRow = {
@@ -583,8 +586,8 @@ export async function fetchKnockoutStructureStatus(): Promise<KnockoutStructureS
   const adminSupabase = createAdminClient();
   const { data, error } = await adminSupabase
     .from("matches")
-    .select("id,stage,kickoff_time,home_team_id,away_team_id")
-    .neq("stage", "group");
+    .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at")
+    .or(KNOCKOUT_MATCH_STAGE_FILTER);
 
   if (error) {
     logSafeSupabaseError("fetch-knockout-structure-status", error);
@@ -602,21 +605,18 @@ export async function fetchKnockoutStructureStatus(): Promise<KnockoutStructureS
 
   let firstRoundOf32Kickoff: string | null = null;
   let seededRoundOf32Count = 0;
-  for (const row of ((data ?? []) as Array<{
-    id: string;
-    stage: MatchStage;
-    kickoff_time: string;
-    home_team_id?: string | null;
-    away_team_id?: string | null;
-  }>)) {
-    const canonicalStage = normalizeKnockoutStage(row.stage);
+  for (const row of normalizeFetchedKnockoutMatches((data ?? []) as MatchRow[])) {
+    const canonicalStage = normalizeKnockoutStageForMatch({
+      stage: row.stage,
+      matchId: row.id
+    });
     if (!canonicalStage) {
       continue;
     }
 
     counts[canonicalStage] += 1;
 
-    if (isRoundOf32Stage(row.stage) && row.kickoff_time) {
+    if (canonicalStage === "r32" && row.kickoff_time) {
       if (!firstRoundOf32Kickoff || row.kickoff_time < firstRoundOf32Kickoff) {
         firstRoundOf32Kickoff = row.kickoff_time;
       }
@@ -893,8 +893,8 @@ export async function fetchGroupBracketComparisonView(
         .in("user_id", memberIds),
       adminSupabase
         .from("matches")
-        .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,winner_team_id,next_match_id,next_match_slot")
-        .neq("stage", "group")
+        .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at")
+        .or(KNOCKOUT_MATCH_STAGE_FILTER)
     ]);
 
   if (predictionRowsError) {
@@ -905,10 +905,11 @@ export async function fetchGroupBracketComparisonView(
     throw matchRowsError;
   }
 
-  const knockoutMatches = ((matchRows ?? []) as MatchRow[])
-    .filter((match) => isKnockoutStage(match.stage))
+  const knockoutMatches = normalizeFetchedKnockoutMatches((matchRows ?? []) as MatchRow[])
     .sort((left, right) => {
-      const stageOrder = getStageOrder(normalizeKnockoutStage(left.stage)) - getStageOrder(normalizeKnockoutStage(right.stage));
+      const stageOrder =
+        getStageOrder(normalizeKnockoutStageForMatch({ stage: left.stage, matchId: left.id })) -
+        getStageOrder(normalizeKnockoutStageForMatch({ stage: right.stage, matchId: right.id }));
       if (stageOrder !== 0) {
         return stageOrder;
       }
@@ -948,8 +949,13 @@ export async function fetchGroupBracketComparisonView(
     predictionsByUserId.set(prediction.user_id, userPredictions);
   }
 
-  const finalMatch = knockoutMatches.find((match) => normalizeKnockoutStage(match.stage) === "final") ?? null;
-  const semifinalMatches = knockoutMatches.filter((match) => normalizeKnockoutStage(match.stage) === "sf");
+  const finalMatch =
+    knockoutMatches.find(
+      (match) => normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }) === "final"
+    ) ?? null;
+  const semifinalMatches = knockoutMatches.filter(
+    (match) => normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }) === "sf"
+  );
   const previousMatchesByNextMatchId = buildPreviousMatchesByNextMatchId(knockoutMatches);
 
   const championPickCounts = new Map<string, number>();
@@ -1022,8 +1028,10 @@ export async function fetchGroupBracketComparisonView(
           status: selectedMember.status,
           matches: knockoutMatches.map((match) => ({
             matchId: match.id,
-            stage: normalizeKnockoutStage(match.stage) ?? "final",
-            stageLabel: formatMatchStage(match.stage),
+            stage: normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }) ?? "final",
+            stageLabel: formatMatchStage(
+              normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }) ?? match.stage
+            ),
             homeTeamName: getTeamName(teamNameById, match.home_team_id) ?? "TBD",
             awayTeamName: getTeamName(teamNameById, match.away_team_id) ?? "TBD",
             predictedWinnerName: getTeamName(
@@ -1041,8 +1049,8 @@ export async function fetchGroupBracketComparisonView(
 async function getBracketEditState(adminSupabase: ReturnType<typeof createAdminClient>): Promise<BracketEditState> {
   const { data: matches, error } = await adminSupabase
     .from("matches")
-    .select("kickoff_time,stage,home_team_id,away_team_id")
-    .neq("stage", "group")
+    .select("id,kickoff_time,stage,status,home_team_id,away_team_id,home_source,away_source,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at")
+    .or(KNOCKOUT_MATCH_STAGE_FILTER)
     .order("kickoff_time", { ascending: true });
 
   if (error) {
@@ -1051,13 +1059,13 @@ async function getBracketEditState(adminSupabase: ReturnType<typeof createAdminC
   }
 
   const firstRoundOf32Kickoff =
-    ((matches ?? []) as Array<{
-      kickoff_time: string;
-      stage: MatchStage;
-      home_team_id?: string | null;
-      away_team_id?: string | null;
-    }>)
-      .filter((match) => isRoundOf32Stage(match.stage) && match.home_team_id && match.away_team_id)
+    normalizeFetchedKnockoutMatches((matches ?? []) as MatchRow[])
+      .filter(
+        (match) =>
+          normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }) === "r32" &&
+          match.home_team_id &&
+          match.away_team_id
+      )
       .map((match) => match.kickoff_time)
       .find(Boolean) ?? null;
   if (!firstRoundOf32Kickoff) {
@@ -1084,7 +1092,7 @@ async function loadPredictionSaveContext(
   }
 
   const matchRow = match as MatchRow;
-  if (!isKnockoutStage(matchRow.stage)) {
+  if (!normalizeKnockoutStageForMatch({ stage: matchRow.stage, matchId: matchRow.id })) {
     throw new Error("Bracket picks can only be saved for knockout matches.");
   }
 
@@ -1094,14 +1102,14 @@ async function loadPredictionSaveContext(
 
   const { data: allKnockoutMatches, error: allKnockoutMatchesError } = await adminSupabase
     .from("matches")
-    .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,winner_team_id,next_match_id,next_match_slot")
-    .neq("stage", "group");
+    .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at")
+    .or(KNOCKOUT_MATCH_STAGE_FILTER);
 
   if (allKnockoutMatchesError) {
     throw allKnockoutMatchesError;
   }
 
-  const knockoutMatches = ((allKnockoutMatches ?? []) as MatchRow[]).filter((candidate) => isKnockoutStage(candidate.stage));
+  const knockoutMatches = normalizeFetchedKnockoutMatches((allKnockoutMatches ?? []) as MatchRow[]);
   const previousMatchesByNextMatchId = buildPreviousMatchesByNextMatchId(knockoutMatches);
   const predictionRows = await fetchPredictionRowsForUser(adminSupabase, tableName, userId);
   const predictionsByMatchId = new Map(predictionRows.map((row) => [row.match_id, mapBracketPredictionRow(row)]));
@@ -1192,7 +1200,11 @@ async function clearInvalidDescendantPredictions(
   const descendantIds = collectDescendantMatchIds(input.rootMatchId, knockoutData.matchesById);
   const descendants = knockoutData.matches
     .filter((match) => descendantIds.has(match.id))
-    .sort((left, right) => getStageOrder(normalizeKnockoutStage(left.stage)) - getStageOrder(normalizeKnockoutStage(right.stage)));
+    .sort(
+      (left, right) =>
+        getStageOrder(normalizeKnockoutStageForMatch({ stage: left.stage, matchId: left.id })) -
+        getStageOrder(normalizeKnockoutStageForMatch({ stage: right.stage, matchId: right.id }))
+    );
 
   const invalidPredictionIds: string[] = [];
   for (const match of descendants) {
@@ -1280,7 +1292,11 @@ async function computeDownstreamImpactForProposedSave(
   const descendantIds = collectDescendantMatchIds(input.rootMatchId, knockoutData.matchesById);
   const descendants = knockoutData.matches
     .filter((match) => descendantIds.has(match.id))
-    .sort((left, right) => getStageOrder(normalizeKnockoutStage(left.stage)) - getStageOrder(normalizeKnockoutStage(right.stage)));
+    .sort(
+      (left, right) =>
+        getStageOrder(normalizeKnockoutStageForMatch({ stage: left.stage, matchId: left.id })) -
+        getStageOrder(normalizeKnockoutStageForMatch({ stage: right.stage, matchId: right.id }))
+    );
 
   let affectedCount = 0;
   for (const match of descendants) {
@@ -1328,12 +1344,18 @@ export function isDownstreamConfirmationRequiredError(
   return error instanceof DownstreamConfirmationRequiredError;
 }
 
+function normalizeFetchedKnockoutMatches(rows: MatchRow[]) {
+  return collapseFifa2026KnockoutAliasRows(rows).filter((match) =>
+    Boolean(normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }))
+  );
+}
+
 async function fetchKnockoutData(adminSupabase: ReturnType<typeof createAdminClient>) {
   const [{ data: matchRows, error: matchesError }, status] = await Promise.all([
     adminSupabase
     .from("matches")
-    .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,home_score,away_score,winner_team_id,next_match_id,next_match_slot")
-    .neq("stage", "group"),
+    .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at")
+    .or(KNOCKOUT_MATCH_STAGE_FILTER),
     fetchKnockoutStructureStatus()
   ]);
 
@@ -1342,10 +1364,11 @@ async function fetchKnockoutData(adminSupabase: ReturnType<typeof createAdminCli
     throw formatSafeSupabaseError(matchesError, "Could not load knockout matches.", "Knockout matches");
   }
 
-  const matches = ((matchRows ?? []) as MatchRow[])
-    .filter((match) => isKnockoutStage(match.stage))
+  const matches = normalizeFetchedKnockoutMatches((matchRows ?? []) as MatchRow[])
     .sort((left, right) => {
-      const stageOrder = getStageOrder(normalizeKnockoutStage(left.stage)) - getStageOrder(normalizeKnockoutStage(right.stage));
+      const stageOrder =
+        getStageOrder(normalizeKnockoutStageForMatch({ stage: left.stage, matchId: left.id })) -
+        getStageOrder(normalizeKnockoutStageForMatch({ stage: right.stage, matchId: right.id }));
       if (stageOrder !== 0) {
         return stageOrder;
       }
@@ -1403,8 +1426,8 @@ async function loadProjectedBracketContext(
     await Promise.all([
       adminSupabase
         .from("matches")
-        .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,home_score,away_score,winner_team_id,next_match_id,next_match_slot")
-        .neq("stage", "group"),
+        .select("id,stage,kickoff_time,status,home_team_id,away_team_id,home_source,away_source,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at")
+        .or(KNOCKOUT_MATCH_STAGE_FILTER),
       adminSupabase
         .from("teams")
         .select("id,name,short_name,flag_emoji,group_name,fifa_rank"),
@@ -1415,10 +1438,11 @@ async function loadProjectedBracketContext(
   if (knockoutError) throw knockoutError;
   if (teamError) throw teamError;
 
-  const knockoutMatches = ((knockoutRows ?? []) as MatchRow[])
-    .filter((match) => isKnockoutStage(match.stage))
+  const knockoutMatches = normalizeFetchedKnockoutMatches((knockoutRows ?? []) as MatchRow[])
     .sort((left, right) => {
-      const stageOrder = getStageOrder(normalizeKnockoutStage(left.stage)) - getStageOrder(normalizeKnockoutStage(right.stage));
+      const stageOrder =
+        getStageOrder(normalizeKnockoutStageForMatch({ stage: left.stage, matchId: left.id })) -
+        getStageOrder(normalizeKnockoutStageForMatch({ stage: right.stage, matchId: right.id }));
       if (stageOrder !== 0) {
         return stageOrder;
       }
@@ -1543,7 +1567,7 @@ function buildKnockoutBracketStages(
   const canonicalRoundOf32SlotLabelByMatchId = buildCanonicalRoundOf32SlotLabelMap(matches);
 
   for (const match of matches) {
-    const stage = normalizeKnockoutStage(match.stage);
+    const stage = normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id });
     if (!stage) {
       continue;
     }
@@ -1575,7 +1599,7 @@ function buildKnockoutBracketStages(
       compatiblePrediction.isCompatible && savedPrediction && match.status === "final"
         ? scoreBracketPrediction(
             {
-              stage: match.stage,
+              stage,
               status: match.status,
               homeScore: match.home_score ?? null,
               awayScore: match.away_score ?? null,
@@ -1600,7 +1624,7 @@ function buildKnockoutBracketStages(
     currentStageMatches.push({
       matchId: match.id,
       stage,
-      stageLabel: formatMatchStage(match.stage),
+      stageLabel: formatMatchStage(stage),
       title: buildMatchTitle(stage, currentStageMatches.length + 1),
       kickoffTime: match.kickoff_time,
       status: match.status,
@@ -1652,7 +1676,7 @@ function buildKnockoutBracketStages(
     stagesById.set(stage, currentStageMatches);
   }
 
-  return (["r32", "r16", "qf", "sf", "final", "third"] as CanonicalKnockoutStage[])
+  return (["r32", "r16", "qf", "sf", "third", "final"] as CanonicalKnockoutStage[])
     .map((stage) => ({
       stage,
       label: formatMatchStage(stage),
@@ -1888,7 +1912,11 @@ export async function scoreFinalizedKnockoutMatchWithClient(
   }
 
   const matchRow = match as Pick<MatchRow, "id" | "stage" | "status" | "home_score" | "away_score" | "winner_team_id">;
-  if (!matchRow.winner_team_id || matchRow.status !== "final" || !isKnockoutStage(matchRow.stage)) {
+  if (
+    !matchRow.winner_team_id ||
+    matchRow.status !== "final" ||
+    !normalizeKnockoutStageForMatch({ stage: matchRow.stage, matchId: matchRow.id })
+  ) {
     return 0;
   }
 
@@ -1920,10 +1948,11 @@ export async function scoreFinalizedKnockoutMatchWithClient(
     predictionRows.map((prediction) => {
       const breakdown = scoreBracketPrediction(
         {
-          stage: matchRow.stage,
-          status: matchRow.status,
-          homeScore: matchRow.home_score ?? null,
-          awayScore: matchRow.away_score ?? null,
+              stage:
+                normalizeKnockoutStageForMatch({ stage: matchRow.stage, matchId: matchRow.id }) ?? matchRow.stage,
+              status: matchRow.status,
+              homeScore: matchRow.home_score ?? null,
+              awayScore: matchRow.away_score ?? null,
           winnerTeamId: matchRow.winner_team_id
         },
         {
@@ -1936,7 +1965,7 @@ export async function scoreFinalizedKnockoutMatchWithClient(
       return {
         user_id: prediction.user_id,
         match_id: prediction.match_id,
-        stage: matchRow.stage,
+        stage: normalizeKnockoutStageForMatch({ stage: matchRow.stage, matchId: matchRow.id }) ?? matchRow.stage,
         predicted_winner_team_id: prediction.predicted_winner_team_id,
         actual_winner_team_id: matchRow.winner_team_id,
         round_points: breakdown.roundPoints,

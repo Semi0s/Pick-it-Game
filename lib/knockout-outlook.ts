@@ -1,5 +1,5 @@
 import { getKnockoutMatchMaxPoints } from "./bracket-scoring.ts";
-import { EXPECTED_KNOCKOUT_MATCH_COUNTS, normalizeKnockoutStage } from "./match-stage.ts";
+import { EXPECTED_KNOCKOUT_MATCH_COUNTS, normalizeKnockoutStageForMatch } from "./match-stage.ts";
 import type { ManagedGroupRulesetSummary } from "./scoped-scoring.ts";
 import type { MatchStage, MatchStatus } from "./types.ts";
 
@@ -120,7 +120,7 @@ export function buildKnockoutOutlookSummary(input: {
   );
 
   for (const match of input.matches) {
-    const stage = normalizeKnockoutStage(match.stage);
+    const stage = normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id });
     if (!stage || !stageMatches.has(stage)) {
       continue;
     }
@@ -194,16 +194,21 @@ function buildRoundSummary(input: {
     0
   );
   const pointsStillAvailable = input.matches.reduce((sum, match) => {
+    const canonicalStage = normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id });
     if (match.status === "final") {
       return sum;
     }
 
+    if (!canonicalStage) {
+      return sum;
+    }
+
     if (match.status === "scheduled") {
-      return sum + getKnockoutMatchMaxPoints(match.stage);
+      return sum + getKnockoutMatchMaxPoints(canonicalStage);
     }
 
     if ((match.status === "locked" || match.status === "live") && input.savedPredictionMatchIds.has(match.id)) {
-      return sum + getKnockoutMatchMaxPoints(match.stage);
+      return sum + getKnockoutMatchMaxPoints(canonicalStage);
     }
 
     return sum;

@@ -2,7 +2,12 @@ import {
   expandFifa2026KnockoutStoredMatchIds,
 } from "./fifa-2026-knockout-seeding.ts";
 import { buildKnockoutPreviousMatchesByTargetId } from "./knockout-team-resolution.ts";
-import { EXPECTED_KNOCKOUT_MATCH_COUNTS, formatMatchStage, normalizeKnockoutStage, type CanonicalKnockoutStage } from "./match-stage.ts";
+import {
+  EXPECTED_KNOCKOUT_MATCH_COUNTS,
+  formatMatchStage,
+  normalizeKnockoutStageForMatch,
+  type CanonicalKnockoutStage
+} from "./match-stage.ts";
 import type { BracketTeamOption, KnockoutBracketEditorView, KnockoutBracketMatchView } from "./bracket-predictions.ts";
 import type { MatchNextSlot, MatchStage, MatchStatus } from "./types.ts";
 
@@ -90,7 +95,7 @@ export function buildDashboardKnockoutProgressSummary(input: {
   ]);
 
   for (const match of input.matches) {
-    const stage = normalizeKnockoutStage(match.stage);
+    const stage = normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id });
     if (!stage) {
       continue;
     }

@@ -39,7 +39,7 @@ import {
 } from "@/lib/bracket-predictions";
 import { rebuildKnockoutAdvancementWithClient as rebuildKnockoutAdvancementSharedWithClient } from "@/lib/knockout-advancement";
 import { canScoreGroupMatch, scoreGroupStagePrediction } from "@/lib/group-scoring";
-import { isKnockoutStage } from "@/lib/match-stage";
+import { KNOCKOUT_MATCH_STAGE_FILTER, isKnockoutStage } from "@/lib/match-stage";
 import { appendMatchEvent } from "@/lib/match-events";
 import { syncMatches } from "@/lib/match-sync/syncMatches";
 import {
@@ -3710,7 +3710,7 @@ export async function rescoreKnockoutScoresAction(): Promise<RescoreKnockoutScor
     .from("matches")
     .select("id,stage,status")
     .eq("status", "final")
-    .neq("stage", "group");
+    .or(KNOCKOUT_MATCH_STAGE_FILTER);
 
   if (error) {
     return { ok: false, message: error.message };
@@ -4681,7 +4681,7 @@ async function resetKnockoutTestingDataWithClient(adminSupabase: ReturnType<type
   const { data: knockoutMatches, error: knockoutMatchesError } = await adminSupabase
     .from("matches")
     .select("id,stage,status")
-    .neq("stage", "group");
+    .or(KNOCKOUT_MATCH_STAGE_FILTER);
 
   if (knockoutMatchesError) {
     throw knockoutMatchesError;
@@ -4861,7 +4861,7 @@ async function resetGroupStageTestingDataWithClient(adminSupabase: ReturnType<ty
   const { data: knockoutMatches, error: knockoutMatchesError } = await adminSupabase
     .from("matches")
     .select("id,stage,status,home_team_id,away_team_id,home_score,away_score,winner_team_id")
-    .neq("stage", "group");
+    .or(KNOCKOUT_MATCH_STAGE_FILTER);
 
   if (knockoutMatchesError) {
     throw new Error(buildAdminActionErrorMessage(knockoutMatchesError, "Could not load knockout matches for derived artifact reset."));

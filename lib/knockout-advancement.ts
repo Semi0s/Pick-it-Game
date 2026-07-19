@@ -1,5 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isKnockoutStage, normalizeKnockoutStage } from "@/lib/match-stage";
+import { KNOCKOUT_MATCH_STAGE_FILTER, normalizeKnockoutStageForMatch } from "@/lib/match-stage";
 import {
   shouldClearKnockoutParticipants,
   shouldClearKnockoutScoresForParticipantChange
@@ -13,7 +13,10 @@ import {
   type GroupStageMatchForSeeding,
   type KnockoutPlaceholderMatch
 } from "@/lib/knockout-seeding";
-import { getFifa2026CanonicalKnockoutSources } from "@/lib/fifa-2026-knockout-seeding";
+import {
+  collapseFifa2026KnockoutAliasRows,
+  getFifa2026CanonicalKnockoutSources
+} from "@/lib/fifa-2026-knockout-seeding";
 import type { MatchNextSlot, MatchStage } from "@/lib/types";
 import type { Team } from "@/lib/types";
 
@@ -63,7 +66,7 @@ export async function rebuildKnockoutAdvancementWithClient(
       .select(
         "id,stage,status,home_team_id,away_team_id,home_source,away_source,kickoff_time,home_score,away_score,winner_team_id,next_match_id,next_match_slot,updated_at"
       )
-      .neq("stage", "group")
+      .or(KNOCKOUT_MATCH_STAGE_FILTER)
       .order("kickoff_time", { ascending: true }),
     adminSupabase
       .from("matches")
@@ -87,7 +90,11 @@ export async function rebuildKnockoutAdvancementWithClient(
     throw teamsError;
   }
 
-  const knockoutMatches = ((data ?? []) as MatchRow[]).filter((match) => isKnockoutStage(match.stage));
+  const knockoutMatches = collapseFifa2026KnockoutAliasRows(
+    ((data ?? []) as MatchRow[]).filter((match) =>
+      Boolean(normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }))
+    )
+  );
   const matchesById = new Map(knockoutMatches.map((match) => [match.id, { ...match }]));
   const updatesByMatchId = new Map<string, KnockoutAdvancementUpdate>();
   let populatedSlots = 0;
@@ -122,7 +129,9 @@ export async function rebuildKnockoutAdvancementWithClient(
     updatesByMatchId.set(matchId, currentUpdate);
   };
 
-  const roundOf32Matches = knockoutMatches.filter((match) => normalizeKnockoutStage(match.stage) === "r32");
+  const roundOf32Matches = knockoutMatches.filter(
+    (match) => normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }) === "r32"
+  );
   const hasMissingRoundOf32Teams = roundOf32Matches.some((match) => !match.home_team_id || !match.away_team_id);
   const mappedGroupMatches = ((groupMatchRows ?? []) as Array<{
     id: string;

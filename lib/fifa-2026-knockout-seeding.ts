@@ -246,6 +246,29 @@ export const FIFA_2026_OFFICIAL_KNOCKOUT_KICKOFF_BY_STORED_MATCH_ID = new Map<st
   ["final-01", "2026-07-19T15:00:00-04:00"]
 ]);
 
+export const FIFA_2026_KNOCKOUT_STORED_MATCH_IDS = Array.from(
+  FIFA_2026_OFFICIAL_KNOCKOUT_KICKOFF_BY_STORED_MATCH_ID.keys()
+);
+
+type KnockoutStoredRowLike = {
+  id: string;
+  status?: string | null;
+  stage?: string | null;
+  home_team_id?: string | null;
+  away_team_id?: string | null;
+  home_score?: number | null;
+  away_score?: number | null;
+  winner_team_id?: string | null;
+  next_match_id?: string | null;
+  next_match_slot?: string | null;
+  home_source?: string | null;
+  away_source?: string | null;
+  kickoff_time?: string | null;
+  kickoff_at?: string | null;
+  updated_at?: string | null;
+  updatedAt?: string | null;
+};
+
 export function buildFifa2026RoundOf32(input: {
   groupStandings: Map<string, Fifa2026StandingsTeam[]>;
 }): Fifa2026RoundOf32Match[] {
@@ -310,12 +333,144 @@ export function buildFifa2026RoundOf32StoredMatchIdLookup(
 }
 
 export function normalizeFifa2026KnockoutStoredMatchId(matchId: string | null | undefined) {
-  const normalized = (matchId ?? "").trim();
+  const trimmed = (matchId ?? "").trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = trimmed.replace(/\s+/g, "").replace(/_/g, "-");
+  const legacyKey = normalized.toLowerCase();
+  const mappedLegacyId = OFFICIAL_KNOCKOUT_ID_BY_LEGACY_MATCH_ID.get(legacyKey);
+  if (mappedLegacyId) {
+    return mappedLegacyId;
+  }
+
+  const officialMatchId = normalized.toUpperCase().match(/^M-?(\d+)$/);
+  if (officialMatchId) {
+    return `M${officialMatchId[1]}`;
+  }
+
+  return normalized;
+}
+
+function inferFifa2026KnockoutStageFromCanonicalId(matchId: string | null | undefined) {
+  const normalized = normalizeFifa2026KnockoutStoredMatchId(matchId);
   if (!normalized) {
     return null;
   }
 
-  return OFFICIAL_KNOCKOUT_ID_BY_LEGACY_MATCH_ID.get(normalized) ?? normalized;
+  if (/^M(7[3-9]|8[0-8])$/.test(normalized)) {
+    return "r32" as const;
+  }
+
+  if (/^M(89|9[0-6])$/.test(normalized)) {
+    return "r16" as const;
+  }
+
+  if (/^M(97|98|99|100)$/.test(normalized)) {
+    return "qf" as const;
+  }
+
+  if (/^M10[12]$/.test(normalized)) {
+    return "sf" as const;
+  }
+
+  if (normalized === "M103") {
+    return "third" as const;
+  }
+
+  if (normalized === "M104") {
+    return "final" as const;
+  }
+
+  return null;
+}
+
+function normalizeFifa2026KnockoutSourceLabel(sourceLabel: string | null | undefined) {
+  const normalized = (sourceLabel ?? "").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const match = normalized.match(/^(Winner|Loser)\s+of\s+(.+)$/i);
+  if (!match) {
+    return normalized;
+  }
+
+  const outcome = match[1]?.toLowerCase() === "loser" ? "Loser" : "Winner";
+  const canonicalMatchId = normalizeFifa2026KnockoutStoredMatchId(match[2] ?? "");
+  if (!canonicalMatchId) {
+    return `${outcome} of ${(match[2] ?? "").trim()}`;
+  }
+
+  return `${outcome} of ${canonicalMatchId}`;
+}
+
+function buildFifa2026CanonicalSourcePairLookup() {
+  const lookup = new Map<string, string>();
+
+  for (const [matchId, sources] of FIFA_2026_CANONICAL_KNOCKOUT_SOURCES.entries()) {
+    const homeSource = normalizeFifa2026KnockoutSourceLabel(sources.homeSource);
+    const awaySource = normalizeFifa2026KnockoutSourceLabel(sources.awaySource);
+    if (!homeSource || !awaySource) {
+      continue;
+    }
+
+    lookup.set(`${homeSource}__${awaySource}`, matchId);
+  }
+
+  return lookup;
+}
+
+const FIFA_2026_CANONICAL_MATCH_ID_BY_SOURCE_PAIR = buildFifa2026CanonicalSourcePairLookup();
+
+export function inferFifa2026CanonicalKnockoutMatchIdFromRow(row: Pick<KnockoutStoredRowLike, "id" | "home_source" | "away_source">) {
+  const normalizedId = normalizeFifa2026KnockoutStoredMatchId(row.id);
+  if (inferFifa2026KnockoutStageFromCanonicalId(normalizedId)) {
+    return normalizedId;
+  }
+
+  const normalizedHomeSource = normalizeFifa2026KnockoutSourceLabel(row.home_source);
+  const normalizedAwaySource = normalizeFifa2026KnockoutSourceLabel(row.away_source);
+  if (!normalizedHomeSource || !normalizedAwaySource) {
+    return normalizedId;
+  }
+
+  return FIFA_2026_CANONICAL_MATCH_ID_BY_SOURCE_PAIR.get(
+    `${normalizedHomeSource}__${normalizedAwaySource}`
+  ) ?? normalizedId;
+}
+
+function hydrateFifa2026KnockoutAliasRow<T extends KnockoutStoredRowLike>(row: T): T {
+  const canonicalId = inferFifa2026CanonicalKnockoutMatchIdFromRow(row);
+  const canonicalStage = inferFifa2026KnockoutStageFromCanonicalId(canonicalId);
+  const canonicalSources = canonicalId ? getFifa2026CanonicalKnockoutSources(canonicalId) : null;
+  const canonicalKickoff =
+    canonicalId ? FIFA_2026_OFFICIAL_KNOCKOUT_KICKOFF_BY_STORED_MATCH_ID.get(canonicalId) ?? null : null;
+
+  const nextRow = { ...row } as T;
+
+  if (canonicalStage && nextRow.stage !== canonicalStage) {
+    nextRow.stage = canonicalStage;
+  }
+
+  if (canonicalSources?.homeSource && nextRow.home_source !== canonicalSources.homeSource) {
+    nextRow.home_source = canonicalSources.homeSource;
+  }
+
+  if (canonicalSources?.awaySource && nextRow.away_source !== canonicalSources.awaySource) {
+    nextRow.away_source = canonicalSources.awaySource;
+  }
+
+  if (!nextRow.kickoff_time && canonicalKickoff) {
+    nextRow.kickoff_time = canonicalKickoff;
+  }
+
+  if ("kickoff_at" in nextRow && !nextRow.kickoff_at && canonicalKickoff) {
+    nextRow.kickoff_at = canonicalKickoff;
+  }
+
+  return nextRow;
 }
 
 export function expandFifa2026KnockoutStoredMatchIds(matchId: string | null | undefined) {
@@ -335,6 +490,78 @@ export function getFifa2026CanonicalKnockoutSources(matchId: string | null | und
   }
 
   return FIFA_2026_CANONICAL_KNOCKOUT_SOURCES.get(normalized) ?? null;
+}
+
+export function scoreFifa2026KnockoutStoredRowCompleteness(row: KnockoutStoredRowLike) {
+  let score = 0;
+
+  if (row.home_team_id) score += 8;
+  if (row.away_team_id) score += 8;
+  if (typeof row.home_score === "number") score += 4;
+  if (typeof row.away_score === "number") score += 4;
+  if (row.winner_team_id) score += 6;
+  if (row.home_source) score += 1;
+  if (row.away_source) score += 1;
+  if (row.next_match_id) score += 2;
+  if (row.next_match_slot) score += 1;
+
+  switch (row.status) {
+    case "final":
+      score += 3;
+      break;
+    case "live":
+      score += 2;
+      break;
+    case "locked":
+      score += 1;
+      break;
+    default:
+      break;
+  }
+
+  return score;
+}
+
+export function collapseFifa2026KnockoutAliasRows<T extends KnockoutStoredRowLike>(rows: T[]) {
+  const preferredByCanonicalId = new Map<string, T>();
+
+  for (const row of rows) {
+    const canonicalId = inferFifa2026CanonicalKnockoutMatchIdFromRow(row) ?? row.id;
+    const existing = preferredByCanonicalId.get(canonicalId) ?? null;
+
+    if (!existing) {
+      preferredByCanonicalId.set(canonicalId, row);
+      continue;
+    }
+
+    const rowScore = scoreFifa2026KnockoutStoredRowCompleteness(row);
+    const existingScore = scoreFifa2026KnockoutStoredRowCompleteness(existing);
+    if (rowScore > existingScore) {
+      preferredByCanonicalId.set(canonicalId, row);
+      continue;
+    }
+    if (rowScore < existingScore) {
+      continue;
+    }
+
+    const rowUpdatedAt = getKnockoutStoredRowUpdatedAtTime(row);
+    const existingUpdatedAt = getKnockoutStoredRowUpdatedAtTime(existing);
+    if (rowUpdatedAt > existingUpdatedAt) {
+      preferredByCanonicalId.set(canonicalId, row);
+    }
+  }
+
+  return Array.from(preferredByCanonicalId.values()).map((row) => hydrateFifa2026KnockoutAliasRow(row));
+}
+
+function getKnockoutStoredRowUpdatedAtTime(row: KnockoutStoredRowLike) {
+  const updatedAt = row.updated_at ?? row.updatedAt ?? null;
+  if (!updatedAt) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const timestamp = new Date(updatedAt).getTime();
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
 export function rankFifa2026ThirdPlaceTeams(
