@@ -669,7 +669,7 @@ async function fetchTeamStandings(): Promise<TeamStandingItem[]> {
     }));
 }
 
-async function fetchGlobalLeaderboardRows(
+export async function fetchGlobalLeaderboardRows(
   phase: LeaderboardPhase,
   perfectPickEnabled: boolean,
   mode: LeaderboardMode = "official"
@@ -957,7 +957,7 @@ async function fetchGroupLeaderboardRows(
     .filter(Boolean) as LeaderboardListItem[];
 }
 
-async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherContext> {
+export async function fetchLeaderboardSwitcherContext(): Promise<LeaderboardSwitcherContext> {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },

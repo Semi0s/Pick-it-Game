@@ -1,5 +1,6 @@
 import { AppShell } from "@/components/AppShell";
 import { DashboardOverview } from "@/components/DashboardOverview";
+import { fetchChampionshipFinaleSummary } from "@/lib/championship-finale";
 import { fetchDashboardGroupAccessForUser } from "@/lib/dashboard-group-access";
 import { fetchDashboardCommandCenterData } from "@/lib/dashboard-home-data";
 import { fetchGlobalChallengeSummaryForUser } from "@/lib/global-challenge-data";
@@ -34,6 +35,9 @@ export default async function DashboardPage() {
     ? await fetchUserLightSeedBuilderSnapshot(createAdminClient(), user.id).catch(() => null)
     : null;
   const tournamentTransitionSettings = await fetchTournamentTransitionSettings().catch(() => null);
+  const finaleSummary = user
+    ? await fetchChampionshipFinaleSummary(user.id).catch(() => null)
+    : null;
 
   return (
     <AppShell>
@@ -126,6 +130,7 @@ export default async function DashboardPage() {
           dashboardUiResetEpoch: groupAccessResult.dashboardUiResetEpoch
         } : null}
         initialLightSeedSnapshot={lightSeedSnapshot}
+        finaleSummary={finaleSummary}
         tournamentTransitionSettings={tournamentTransitionSettings}
         showKnockoutOutlook={tournamentTransitionSettings?.showKnockoutOutlook ?? false}
       />

@@ -17,8 +17,10 @@ import { LocalizedCardBackground } from "@/components/localized-card/LocalizedCa
 import { ManagedTrophyAwardSheet } from "@/components/ManagedTrophyAwardSheet";
 import { ReportBlockDialog, type ReportTargetOption } from "@/components/ReportBlockDialog";
 import { TrophyCelebration } from "@/components/TrophyCelebration";
+import { ChampionshipFinaleBanner } from "@/components/finale/ChampionshipFinaleBanner";
 import { TeamFlag } from "@/components/TeamFlag";
 import { useAppLanguage } from "@/lib/app-language";
+import type { ChampionshipFinaleSummary } from "@/lib/championship-finale-types";
 import { parseJsonResponse } from "@/lib/fetch-json";
 import type { LeaderboardActivityItem } from "@/lib/leaderboard-activity";
 import type {
@@ -184,6 +186,7 @@ function LeaderboardPlayerRow({
   return (
     <div
       key={profile.id}
+      id={isCurrentUser ? "leaderboard-current-user-row" : undefined}
       className={`relative isolate overflow-hidden rounded-[1.2rem] border bg-white px-3 py-2 ${rowTone}`}
       style={localizedCardVars}
     >
@@ -299,7 +302,11 @@ function SafetyButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-export function LeaderboardClient() {
+export function LeaderboardClient({
+  initialFinaleSummary = null
+}: {
+  initialFinaleSummary?: ChampionshipFinaleSummary | null;
+}) {
   const { user, isLoading: isUserLoading } = useCurrentUser();
   const { activeLanguage: uiLanguage } = useAppLanguage();
   const searchParams = useSearchParams();
@@ -1284,6 +1291,13 @@ export function LeaderboardClient() {
       setSelectedGroupId(item.groupId);
     }
   }, [activePhase, rememberedViewByPhase, switcher]);
+  const jumpToMyRankHref =
+    initialFinaleSummary?.isFinalized &&
+    activeView === "global" &&
+    activePhase === "global_top10" &&
+    activeMode === "official"
+      ? "#leaderboard-current-user-row"
+      : null;
 
   function renderActivityCard(event: LeaderboardActivityItem, isNewest: boolean) {
     const activityMessage = event.messageKey ? t(uiLanguage, event.messageKey, event.messageParams ?? {}) : event.message;
@@ -1492,6 +1506,12 @@ export function LeaderboardClient() {
 
   return (
     <div className="space-y-5">
+      <ChampionshipFinaleBanner
+        summary={initialFinaleSummary}
+        leaderboardHref="/leaderboard?view=global&phase=global_top10"
+        recapHref="/finale"
+        jumpToRankHref={jumpToMyRankHref}
+      />
       <section
         className="relative overflow-hidden rounded-[1.15rem] p-5"
         style={{
