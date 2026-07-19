@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode, type SetStateAction, type TouchEvent, type WheelEvent } from "react";
 import { X } from "lucide-react";
 import { AppUpdatesCard } from "@/components/AppUpdatesCard";
+import { ChampionshipFinaleBanner } from "@/components/finale/ChampionshipFinaleBanner";
 import { GroupStandingsMiniTable } from "@/components/GroupStandingsMiniTable";
 import { KnockoutProgressMiniBracket } from "@/components/KnockoutProgressMiniBracket";
 import { SidePicksIcon } from "@/components/SidePicksIcon";
@@ -56,6 +57,7 @@ import {
 } from "@/lib/tournament-transition-helpers";
 import type { LightSeedBuilderSnapshot } from "@/lib/group-stage-modes";
 import { buildPredictedAdvancementByTeamId } from "@/lib/group-stage-predicted-advancement";
+import type { ChampionshipFinaleSummary } from "@/lib/championship-finale-types";
 import type { MatchWithTeams } from "@/lib/types";
 import { useCurrentUser } from "@/lib/use-current-user";
 import { useSessionViewState } from "@/lib/session-view-state";
@@ -127,6 +129,7 @@ export function DashboardOverview({
   initialCommandCenterSummary,
   initialGroupAccess,
   initialLightSeedSnapshot,
+  finaleSummary,
   tournamentTransitionSettings,
   showKnockoutOutlook = false
 }: {
@@ -145,6 +148,7 @@ export function DashboardOverview({
     dashboardUiResetEpoch: number;
   } | null;
   initialLightSeedSnapshot?: LightSeedBuilderSnapshot | null;
+  finaleSummary?: ChampionshipFinaleSummary | null;
   tournamentTransitionSettings?: TournamentTransitionSettings | null;
   showKnockoutOutlook?: boolean;
 }) {
@@ -1038,6 +1042,8 @@ export function DashboardOverview({
         homeTeamId={user?.homeTeamId ?? null}
         preferredLanguage={user?.preferredLanguage ?? null}
       />
+
+      <ChampionshipFinaleBanner summary={finaleSummary} />
 
       {tournamentTransitionSettings?.dashboardMessage.active && showTournamentTransitionMessage ? (
         <section className="rounded-[1.15rem] border border-accent-light bg-accent-light/25 p-4">

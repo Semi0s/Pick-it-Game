@@ -1,5 +1,6 @@
 import { AppShell } from "@/components/AppShell";
 import { LeaderboardClient } from "@/components/LeaderboardClient";
+import { fetchChampionshipFinaleSummary } from "@/lib/championship-finale";
 import { redirectIfLegacyScoringSetupRequired } from "@/lib/group-scoring-setup-gate";
 import { redirectIfLaunchOnboardingRequired } from "@/lib/launch-onboarding-gate";
 import { createClient as createServerSupabaseClient } from "@/lib/supabase/server";
@@ -14,10 +15,11 @@ export default async function LeaderboardPage() {
     await redirectIfLaunchOnboardingRequired({ userId: user.id });
     await redirectIfLegacyScoringSetupRequired({ userId: user.id, pathname: "/leaderboard" });
   }
+  const finaleSummary = user ? await fetchChampionshipFinaleSummary(user.id) : null;
 
   return (
     <AppShell>
-      <LeaderboardClient />
+      <LeaderboardClient initialFinaleSummary={finaleSummary} />
     </AppShell>
   );
 }
