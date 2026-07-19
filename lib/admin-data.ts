@@ -1,8 +1,9 @@
 "use client";
 
+import { resolveAdminMatchParticipants } from "./admin-match-participants.ts";
+import type { MatchNextSlot, MatchStage, MatchStatus, UserRole, UserStatus } from "./types.ts";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/client";
-import type { MatchStage, MatchStatus, UserRole, UserStatus } from "@/lib/types";
 
 export type AdminInvite = {
   email: string;
@@ -55,6 +56,8 @@ export type AdminMatch = {
   isManualOverride?: boolean;
   syncStatus?: "ok" | "skipped" | "error" | null;
   syncError?: string | null;
+  nextMatchId?: string | null;
+  nextMatchSlot?: MatchNextSlot | null;
   homeTeam?: AdminTeam;
   awayTeam?: AdminTeam;
 };
@@ -116,6 +119,8 @@ type MatchRow = {
   is_manual_override?: boolean | null;
   sync_status?: "ok" | "skipped" | "error" | null;
   sync_error?: string | null;
+  next_match_id?: string | null;
+  next_match_slot?: MatchNextSlot | null;
   home_team?: TeamRow | TeamRow[] | null;
   away_team?: TeamRow | TeamRow[] | null;
 };
@@ -141,6 +146,8 @@ const ADMIN_MATCH_SELECT = `
   is_manual_override,
   sync_status,
   sync_error,
+  next_match_id,
+  next_match_slot,
   home_team:teams!matches_home_team_id_fkey(id,name,short_name,flag_emoji),
   away_team:teams!matches_away_team_id_fkey(id,name,short_name,flag_emoji)
 `;
@@ -165,7 +172,9 @@ const ADMIN_MATCH_BASE_SELECT = `
   external_id,
   is_manual_override,
   sync_status,
-  sync_error
+  sync_error,
+  next_match_id,
+  next_match_slot
 `;
 
 export async function fetchAdminCounts(): Promise<AdminCounts> {
@@ -422,6 +431,8 @@ function mapMatchRow(row: MatchRow): AdminMatch {
     isManualOverride: row.is_manual_override ?? false,
     syncStatus: row.sync_status ?? null,
     syncError: row.sync_error ?? null,
+    nextMatchId: row.next_match_id ?? null,
+    nextMatchSlot: row.next_match_slot ?? null,
     homeTeam: mapTeamJoin(row.home_team),
     awayTeam: mapTeamJoin(row.away_team)
   };
@@ -449,17 +460,19 @@ async function fillMissingTeams(
   supabase: ReturnType<typeof createClient>,
   matches: AdminMatch[]
 ): Promise<AdminMatch[]> {
+  const resolvedMatches = resolveAdminMatchParticipants(matches);
+  const existingTeamMap = buildAdminTeamMap(resolvedMatches);
   const missingTeamIds = Array.from(
     new Set(
-      matches.flatMap((match) => [
-        !match.homeTeam && match.homeTeamId ? match.homeTeamId : undefined,
-        !match.awayTeam && match.awayTeamId ? match.awayTeamId : undefined
+      resolvedMatches.flatMap((match) => [
+        !hasResolvedAdminTeam(match.homeTeam, match.homeTeamId) && match.homeTeamId ? match.homeTeamId : undefined,
+        !hasResolvedAdminTeam(match.awayTeam, match.awayTeamId) && match.awayTeamId ? match.awayTeamId : undefined
       ])
     )
   ).filter(Boolean) as string[];
 
   if (missingTeamIds.length === 0) {
-    return matches;
+    return applyResolvedAdminTeamMap(resolvedMatches, existingTeamMap);
   }
 
   const { data, error } = await supabase
@@ -468,14 +481,69 @@ async function fillMissingTeams(
     .in("id", missingTeamIds);
 
   if (error) {
-    return matches;
+    return applyResolvedAdminTeamMap(resolvedMatches, existingTeamMap);
   }
 
-  const teamMap = new Map((data as TeamRow[]).map((team) => [team.id, mapTeamJoin(team)]));
+  const teamMap = new Map(existingTeamMap);
+  for (const team of data as TeamRow[]) {
+    const mappedTeam = mapTeamJoin(team);
+    if (mappedTeam) {
+      teamMap.set(team.id, mappedTeam);
+    }
+  }
 
+  return applyResolvedAdminTeamMap(resolvedMatches, teamMap);
+}
+
+function buildAdminTeamMap(matches: AdminMatch[]) {
+  const teamMap = new Map<string, AdminTeam>();
+
+  for (const match of matches) {
+    if (match.homeTeam) {
+      teamMap.set(match.homeTeam.id, match.homeTeam);
+    }
+
+    if (match.awayTeam) {
+      teamMap.set(match.awayTeam.id, match.awayTeam);
+    }
+  }
+
+  return teamMap;
+}
+
+function hasResolvedAdminTeam(team: AdminTeam | undefined, teamId: string | undefined) {
+  return Boolean(team && teamId && team.id === teamId);
+}
+
+function applyResolvedAdminTeamMap(matches: AdminMatch[], teamMap: Map<string, AdminTeam>) {
   return matches.map((match) => ({
     ...match,
-    homeTeam: match.homeTeam ?? (match.homeTeamId ? teamMap.get(match.homeTeamId) : undefined),
-    awayTeam: match.awayTeam ?? (match.awayTeamId ? teamMap.get(match.awayTeamId) : undefined)
+    homeTeam: selectResolvedAdminTeam({
+      selectedTeamId: match.homeTeamId ?? null,
+      currentTeam: match.homeTeam,
+      fallbackTeam: match.homeTeamId ? teamMap.get(match.homeTeamId) : undefined
+    }),
+    awayTeam: selectResolvedAdminTeam({
+      selectedTeamId: match.awayTeamId ?? null,
+      currentTeam: match.awayTeam,
+      fallbackTeam: match.awayTeamId ? teamMap.get(match.awayTeamId) : undefined
+    })
   }));
+}
+
+function selectResolvedAdminTeam(input: {
+  selectedTeamId: string | null;
+  currentTeam?: AdminTeam;
+  sourceTeam?: AdminTeam | null;
+  fallbackTeam?: AdminTeam;
+}) {
+  const candidates = [input.currentTeam, input.sourceTeam ?? undefined, input.fallbackTeam];
+  if (input.selectedTeamId) {
+    const matchingCandidate = candidates.find((team) => team?.id === input.selectedTeamId);
+    if (matchingCandidate) {
+      return matchingCandidate;
+    }
+  }
+
+  return candidates.find(Boolean);
 }

@@ -38,13 +38,17 @@ import {
 } from "@/lib/projected-leaderboard";
 import { selectDashboardProjectedScoreSummary } from "@/lib/projected-leaderboard-mode";
 import { buildProjectedGroupStandings } from "@/lib/knockout-seeding";
+import { collapseFifa2026KnockoutAliasRows } from "@/lib/fifa-2026-knockout-seeding";
 import {
   buildProjectionOutlookViewModel,
   type ProjectedOutlookCurrentStandings,
   type ProjectedOutlookMatchSummary,
   type ProjectionCheckpointMatch
 } from "@/lib/projected-outlook";
-import { EXPECTED_KNOCKOUT_MATCH_COUNTS, isRoundOf32Stage, normalizeKnockoutStage } from "@/lib/match-stage";
+import {
+  EXPECTED_KNOCKOUT_MATCH_COUNTS,
+  normalizeKnockoutStageForMatch
+} from "@/lib/match-stage";
 import { getGroupMatches, teams as demoTeams } from "@/lib/mock-data";
 import { GROUP_PHASE_START_AT } from "@/lib/play-mode";
 import { loadProjectedRoundOf32FromPreferredSource } from "@/lib/projected-knockout-source";
@@ -105,6 +109,14 @@ type OwnedGroupRow = {
 type UpdatedAtRow = {
   updated_at: string | null;
 };
+
+function normalizeDashboardMatchRows(rows: MatchRow[]) {
+  const groupMatches = rows.filter((match) => match.stage === "group");
+  const knockoutMatches = collapseFifa2026KnockoutAliasRows(rows.filter((match) => match.stage !== "group"));
+  return [...groupMatches, ...knockoutMatches].sort((left, right) =>
+    String(left.kickoff_time ?? "").localeCompare(String(right.kickoff_time ?? ""))
+  );
+}
 
 export async function fetchDashboardCommandCenterData(userId: string): Promise<DashboardCommandCenterSummary> {
   if (!userId) {
@@ -214,7 +226,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         group_name: team.groupName
       }));
   const matches = ((matchesResult.data as MatchRow[] | null) ?? []).length
-    ? ((matchesResult.data as MatchRow[] | null) ?? [])
+    ? normalizeDashboardMatchRows((matchesResult.data as MatchRow[] | null) ?? [])
     : getGroupMatches().map((match) => ({
         id: match.id,
         stage: match.stage,
@@ -384,7 +396,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
   });
   const completedGroupCount = topTwoCompletionStatus.completeGroupNames.size;
   const roundOf32Placeholders = matches
-    .filter((match) => isRoundOf32Stage(match.stage))
+    .filter((match) => normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }) === "r32")
     .map((match) => ({
       id: match.id,
       stage: match.stage,
@@ -430,7 +442,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
   };
   let seededRoundOf32Count = 0;
   const officialKnockoutMatches = matches.filter((match) => {
-    const canonicalStage = normalizeKnockoutStage(match.stage);
+    const canonicalStage = normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id });
     if (!canonicalStage) {
       return false;
     }
@@ -452,7 +464,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
       .filter((match) => match.status !== "final" && match.kickoff_time)
       .sort((left, right) => String(left.kickoff_time).localeCompare(String(right.kickoff_time)))[0]?.kickoff_time ?? null;
   const hasFinalPrediction = officialKnockoutMatches
-    .filter((match) => normalizeKnockoutStage(match.stage) === "final")
+    .filter((match) => normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }) === "final")
     .some((match) => savedKnockoutPredictions.includes(match.id));
 
   const groupStageProgress = getPredictionProgress({
@@ -475,7 +487,9 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
     totalPredictionCount: officialKnockoutMatches.length,
     hasFinalPrediction,
     deadlineAt: nextKnockoutDeadline,
-    isLive: dashboardMatches.some((match) => match.status === "live" && normalizeKnockoutStage(match.stage) !== null)
+    isLive: dashboardMatches.some(
+      (match) => match.status === "live" && normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }) !== null
+    )
   });
   const knockoutOutlook = buildKnockoutOutlookSummary({
     matches: officialKnockoutMatches.map((match) => ({
@@ -498,7 +512,7 @@ export async function fetchDashboardCommandCenterData(userId: string): Promise<D
         }
       : null,
     officialRoundOf32Matches: officialKnockoutMatches
-      .filter((match) => normalizeKnockoutStage(match.stage) === "r32")
+      .filter((match) => normalizeKnockoutStageForMatch({ stage: match.stage, matchId: match.id }) === "r32")
       .map((match) => ({
         id: match.id,
         homeTeamId: match.home_team_id,

@@ -156,7 +156,7 @@ test("knockout outlook includes the third-place round when it is the next open o
       },
       {
         id: "third-01",
-        stage: "third",
+        stage: "final",
         status: "scheduled",
         kickoffTime: "2026-07-17T16:00:00.000Z",
         homeTeamId: "can",
@@ -164,7 +164,7 @@ test("knockout outlook includes the third-place round when it is the next open o
       },
       {
         id: "final-01",
-        stage: "final",
+        stage: "third",
         status: "scheduled",
         kickoffTime: "2026-07-19T19:00:00.000Z",
         homeTeamId: "bra",
