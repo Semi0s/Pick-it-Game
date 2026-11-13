@@ -7,3 +7,5 @@ node_modules
 .env*.local
 .DS_Store
 .vercel
+.playwright-after-signin.png
+.playwright-prep-after-signin.png
